@@ -217,10 +217,23 @@ Rules:
 
 The repository should maintain these top-level files:
 
+- `README.md`: public project overview and current usage expectations
 - `AGENTS.md`: system operating rules and review policy
 - `CLAUDE.md`: Claude Code implementation contract
 - `ROADMAP.md`: phased delivery plan
 - `TASK.md`: current human-authored task or objective
+
+## README Maintenance
+
+This repository should maintain a concise, public-safe `README.md`.
+
+Rules:
+
+- create `README.md` when a repository does not already have one and the project is intended for reuse, collaboration, or GitHub publication
+- update `README.md` when changes affect project purpose, workflow, setup, file structure, validation flow, usage, or current status
+- keep the README concise and accurate
+- do not place secrets, tokens, internal-only notes, or local machine details in the README
+- prefer updating existing README sections over letting documentation drift
 
 The local controller should write transient loop artifacts under:
 
@@ -461,6 +474,7 @@ Claude Code responsibilities:
 - avoid speculative refactors
 - provide a structured summary of actual changes
 - report validation or execution limitations honestly
+- update `README.md` when the task changes user-facing project behavior or documented usage expectations
 - wait for the next prompt when a fix cycle is required
 
 The orchestrator responsibilities:

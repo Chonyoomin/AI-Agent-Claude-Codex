@@ -52,6 +52,7 @@ Required behavior:
 - avoid broad renames or structural rewrites unless explicitly requested
 - prefer simple, local, inspectable solutions over speculative abstraction
 - leave the repository in a reviewable state after each loop iteration
+- update `README.md` when the assigned work changes project behavior, usage, setup, workflow, or other user-facing expectations
 
 ## Structured Summary Requirement
 
