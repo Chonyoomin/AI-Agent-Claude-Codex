@@ -131,6 +131,61 @@ Verdict rules:
 
 Codex must return exactly one of those strings as the terminal review outcome. Do not invent synonyms such as `approved`, `rejected`, or `human intervention required`.
 
+## Required Codex Review Format
+
+Codex review output should be written to `.agent-loop/codex-review.md`.
+
+Use the exact format below unless a human explicitly changes the project standard:
+
+```md
+# Codex Review
+
+## Verdict
+APPROVED_FOR_HUMAN_REVIEW | NEEDS_FIXES | FAILED_REQUIRES_HUMAN
+
+## Review summary
+[brief explanation of the review result]
+
+## Claude summary accuracy
+Accurate | Partially accurate | Inaccurate
+
+## Scope control
+In scope | Minor scope drift | Major scope drift
+
+## Validation result
+Passed | Failed | Not run | Inconclusive
+
+## Issues found
+
+### Issue 1
+Severity: Low | Medium | High | Critical
+Category: Bug | Test Failure | Scope Drift | Architecture Violation | Instruction Violation | Summary Mismatch | Other
+File(s): [file paths]
+Problem:
+[clear explanation of the issue]
+
+Evidence:
+[reference the diff, Claude summary, validation logs, or instruction files]
+
+Required fix:
+[concrete fix required]
+
+## Fix prompt for Claude
+[Only include this section if verdict is NEEDS_FIXES. Write a direct repair prompt Claude Code can execute.]
+
+## Human attention required
+[Only include this section if verdict is FAILED_REQUIRES_HUMAN. Explain why the loop must stop.]
+```
+
+Rules:
+
+- return exactly one allowed verdict
+- base the review on objective evidence, not Claude's claims alone
+- reference evidence for every issue
+- omit `## Fix prompt for Claude` unless the verdict is `NEEDS_FIXES`
+- omit `## Human attention required` unless the verdict is `FAILED_REQUIRES_HUMAN`
+- if no issues are found, keep `## Issues found` and write `None`
+
 ## Safety Constraints
 
 The loop must preserve human control.
@@ -199,8 +254,115 @@ Minimum expectations:
 - raw git status
 - raw validation logs
 - Codex review decision with exactly one required verdict
+- Codex review written in the required review format
 - next fix prompt if review fails
 - current cycle number and terminal state
+
+## Required Claude Task Format
+
+Codex should write the implementation handoff prompt to `.agent-loop/claude-prompt.md`.
+
+Use the exact format below unless a human explicitly changes the project standard:
+
+```md
+# Claude Code Task
+
+## Phase
+[phase name]
+
+## Objective
+[clear objective]
+
+## Context
+[relevant context from TASK.md, ROADMAP.md, AGENTS.md, CLAUDE.md, and repository state]
+
+## Required work
+- [specific required item]
+- [specific required item]
+
+## Files likely involved
+- [path or area]
+- [path or area]
+
+## Constraints
+- Follow `CLAUDE.md`.
+- Stay within the current task scope.
+- Do not modify `AGENTS.md`.
+- Do not modify `CLAUDE.md`.
+- Do not rewrite unrelated files.
+- Do not delete files unless explicitly instructed.
+- Prefer small, testable, reversible changes.
+- Add or update tests when behavior changes.
+
+## Validation expected
+- [expected command, such as npm test]
+- [expected command, such as npm run lint]
+- [expected command, such as npm run typecheck]
+- [expected command, such as npm run build]
+
+## Required output
+After implementation, write `.agent-loop/claude-summary.md` using the required Claude Implementation Summary format.
+```
+
+Rules:
+
+- keep the objective and required work specific to the active phase
+- keep context concise but sufficient to execute safely
+- do not omit the constraints section
+- do not relax protected-file constraints unless a human explicitly changes the standard
+- list expected validation commands or state that none are expected only if a human explicitly allows that
+
+## Required Claude Fix Task Format
+
+Codex should write the repair handoff prompt to `.agent-loop/fix-prompt.md` when the review verdict is `NEEDS_FIXES`.
+
+Use the exact format below unless a human explicitly changes the project standard:
+
+```md
+# Claude Code Fix Task
+
+## Objective
+Fix only the issues found in `.agent-loop/codex-review.md`.
+
+## Context
+The previous implementation was reviewed by Codex and received the verdict `NEEDS_FIXES`.
+
+Read:
+- `CLAUDE.md`
+- `.agent-loop/claude-prompt.md`
+- `.agent-loop/codex-review.md`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+## Required fixes
+- [specific fix from Codex review]
+- [specific fix from Codex review]
+
+## Constraints
+- Fix only the listed issues.
+- Do not redesign unrelated code.
+- Do not expand the product scope.
+- Do not modify `AGENTS.md`.
+- Do not modify `CLAUDE.md`.
+- Do not delete files unless explicitly required and approved.
+- Preserve the original task objective.
+- Update tests if behavior changes.
+- Prefer minimal, targeted changes.
+
+## Required output
+After applying fixes, update `.agent-loop/claude-summary.md` using the required Claude Implementation Summary format.
+```
+
+Rules:
+
+- only use this format for repair cycles after a `NEEDS_FIXES` verdict
+- required fixes must map directly to issues listed in `.agent-loop/codex-review.md`
+- do not add new product work to the fix prompt
+- preserve the original task objective and scope boundaries
+- keep the fix prompt specific, minimal, and executable
 
 ## Required Claude Summary Format
 
