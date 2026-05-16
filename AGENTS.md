@@ -202,6 +202,58 @@ Minimum expectations:
 - next fix prompt if review fails
 - current cycle number and terminal state
 
+## Required Claude Summary Format
+
+Claude Code must write `.agent-loop/claude-summary.md` after every implementation or fix cycle.
+
+The summary must describe what Claude actually changed.
+
+Rules:
+
+- do not use vague claims
+- do not claim validation passed unless validation was actually run
+- do not omit risk areas
+- use the exact project-standard Markdown format below unless a human explicitly changes it
+
+Required format:
+
+```md
+# Claude Implementation Summary
+
+## Phase
+[phase name]
+
+## Task
+[task name]
+
+## Files changed
+- [file path]: [short explanation of what changed in this file]
+
+## What was implemented
+- [specific implemented behavior or change]
+- [specific implemented behavior or change]
+
+## What was not implemented
+- [known excluded item]
+- [known excluded item]
+
+## Tests added or changed
+- [test file or test behavior added/changed]
+- [write "None" if no tests were added or changed]
+
+## Validation run
+- [command run, such as npm test, npm run lint, npm run typecheck, npm run build]
+- [write "Not run" if validation was not run]
+
+## Assumptions
+- [assumption made during implementation]
+- [write "None" if no assumptions were made]
+
+## Risk areas
+- [potential issue, fragile area, untested behavior, integration concern]
+- [write "None identified" only if there are genuinely no known risks]
+```
+
 ## MVP Implementation Priorities
 
 Build in this order unless `TASK.md` says otherwise:

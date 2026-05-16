@@ -55,33 +55,57 @@ Required behavior:
 
 ## Structured Summary Requirement
 
-After implementation, Claude should write `.agent-loop/claude-summary.md` in a consistent structure.
+After implementation, Claude must write `.agent-loop/claude-summary.md` after every implementation or fix cycle.
 
-Recommended structure:
+The summary must describe what Claude actually changed.
 
-```text
-# Claude Summary
+Claude must:
 
-## Requested Scope
-- brief restatement of the assigned phase
+- not use vague claims
+- not claim validation passed unless validation was actually run
+- not omit risk areas
+- use the exact project-standard format below unless a human explicitly changes it
 
-## Files Changed
-- path: concise description of actual change
+Required format:
 
-## Implementation Notes
-- important design or execution notes
+```md
+# Claude Implementation Summary
 
-## Validation
-- test: pass / fail / not run
-- lint: pass / fail / not run
-- typecheck: pass / fail / not run
-- build: pass / fail / not run
+## Phase
+[phase name]
 
-## Risks Or Follow-Ups
-- remaining uncertainty, if any
+## Task
+[task name]
+
+## Files changed
+- [file path]: [short explanation of what changed in this file]
+
+## What was implemented
+- [specific implemented behavior or change]
+- [specific implemented behavior or change]
+
+## What was not implemented
+- [known excluded item]
+- [known excluded item]
+
+## Tests added or changed
+- [test file or test behavior added/changed]
+- [write "None" if no tests were added or changed]
+
+## Validation run
+- [command run, such as npm test, npm run lint, npm run typecheck, npm run build]
+- [write "Not run" if validation was not run]
+
+## Assumptions
+- [assumption made during implementation]
+- [write "None" if no assumptions were made]
+
+## Risk areas
+- [potential issue, fragile area, untested behavior, integration concern]
+- [write "None identified" only if there are genuinely no known risks]
 ```
 
-The summary must describe actual changes only. If no files were changed, say so explicitly.
+If no files were changed, say so explicitly in `## Files changed`.
 
 ## Behavior During Fix Cycles
 
