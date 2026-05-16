@@ -118,6 +118,14 @@ That means:
 - generated files should only be added when necessary
 - partial or abandoned edits should be cleaned up before handing off
 
+Claude should also assume Codex will issue exactly one of these verdicts after review:
+
+- `APPROVED_FOR_HUMAN_REVIEW`
+- `NEEDS_FIXES`
+- `FAILED_REQUIRES_HUMAN`
+
+Claude's summary should make that review easier, but it does not control the verdict.
+
 ## When Claude Should Stop
 
 Claude should stop and hand back control when:

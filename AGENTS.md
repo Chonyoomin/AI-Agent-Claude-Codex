@@ -81,6 +81,21 @@ If summary text conflicts with the diff or logs, trust the diff and logs.
 
 Codex review must be evidence-based, not impression-based.
 
+When acting as the review and validation agent, Codex must review these inputs when available:
+
+- `AGENTS.md`
+- `CLAUDE.md`
+- `.agent-loop/claude-prompt.md`
+- `.agent-loop/claude-summary.md`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/git-status.log`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+The git diff and validation logs are the source of truth.
+
 Every review should answer:
 
 - Did Claude implement the requested scope and only that scope?
@@ -95,6 +110,26 @@ Codex should classify findings with clear severity:
 - `major`: meaningful bug, regression risk, missing validation, or weak repair needed
 - `minor`: quality issue that does not block the phase
 - `note`: observation or follow-up idea
+
+## Required Review Verdict
+
+Each Codex review must return exactly one final verdict.
+
+Allowed verdicts:
+
+```text
+APPROVED_FOR_HUMAN_REVIEW
+NEEDS_FIXES
+FAILED_REQUIRES_HUMAN
+```
+
+Verdict rules:
+
+- `APPROVED_FOR_HUMAN_REVIEW`: use only when the requested phase is complete, the diff matches the claimed work, no blocking issue remains, and validation status is explicitly recorded
+- `NEEDS_FIXES`: use when the phase is reviewable but there are correctable implementation, scope, or validation issues that should be sent back to Claude Code
+- `FAILED_REQUIRES_HUMAN`: use when the work is unsafe, ambiguous, non-converging, materially out of scope, or cannot be responsibly resolved through another automated fix cycle
+
+Codex must return exactly one of those strings as the terminal review outcome. Do not invent synonyms such as `approved`, `rejected`, or `human intervention required`.
 
 ## Safety Constraints
 
@@ -163,7 +198,7 @@ Minimum expectations:
 - raw diff or patch
 - raw git status
 - raw validation logs
-- Codex review decision
+- Codex review decision with exactly one required verdict
 - next fix prompt if review fails
 - current cycle number and terminal state
 
@@ -191,7 +226,7 @@ Work is ready for human approval only if all of the following are true:
 - validation status is explicitly recorded
 - any skipped validation is clearly disclosed with reason
 - the diff is understandable and attributable to the active phase
-- Codex has issued an `approved` review outcome
+- Codex has issued an `APPROVED_FOR_HUMAN_REVIEW` review outcome
 
 Even then, the system must stop and wait for a human before commit.
 
@@ -202,6 +237,7 @@ Codex responsibilities:
 - choose the next small phase
 - generate precise prompts for Claude Code
 - compare claims against diff and logs
+- issue exactly one allowed review verdict per review cycle
 - generate repair prompts when necessary
 - stop the loop when approval or escalation criteria are met
 
