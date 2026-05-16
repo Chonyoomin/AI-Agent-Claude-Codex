@@ -81,6 +81,21 @@ If summary text conflicts with the diff or logs, trust the diff and logs.
 
 Codex review must be evidence-based, not impression-based.
 
+When acting as the review and validation agent, Codex must review these inputs when available:
+
+- `AGENTS.md`
+- `CLAUDE.md`
+- `.agent-loop/claude-prompt.md`
+- `.agent-loop/claude-summary.md`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/git-status.log`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+The git diff and validation logs are the source of truth.
+
 Every review should answer:
 
 - Did Claude implement the requested scope and only that scope?
@@ -95,6 +110,81 @@ Codex should classify findings with clear severity:
 - `major`: meaningful bug, regression risk, missing validation, or weak repair needed
 - `minor`: quality issue that does not block the phase
 - `note`: observation or follow-up idea
+
+## Required Review Verdict
+
+Each Codex review must return exactly one final verdict.
+
+Allowed verdicts:
+
+```text
+APPROVED_FOR_HUMAN_REVIEW
+NEEDS_FIXES
+FAILED_REQUIRES_HUMAN
+```
+
+Verdict rules:
+
+- `APPROVED_FOR_HUMAN_REVIEW`: use only when the requested phase is complete, the diff matches the claimed work, no blocking issue remains, and validation status is explicitly recorded
+- `NEEDS_FIXES`: use when the phase is reviewable but there are correctable implementation, scope, or validation issues that should be sent back to Claude Code
+- `FAILED_REQUIRES_HUMAN`: use when the work is unsafe, ambiguous, non-converging, materially out of scope, or cannot be responsibly resolved through another automated fix cycle
+
+Codex must return exactly one of those strings as the terminal review outcome. Do not invent synonyms such as `approved`, `rejected`, or `human intervention required`.
+
+## Required Codex Review Format
+
+Codex review output should be written to `.agent-loop/codex-review.md`.
+
+Use the exact format below unless a human explicitly changes the project standard:
+
+```md
+# Codex Review
+
+## Verdict
+APPROVED_FOR_HUMAN_REVIEW | NEEDS_FIXES | FAILED_REQUIRES_HUMAN
+
+## Review summary
+[brief explanation of the review result]
+
+## Claude summary accuracy
+Accurate | Partially accurate | Inaccurate
+
+## Scope control
+In scope | Minor scope drift | Major scope drift
+
+## Validation result
+Passed | Failed | Not run | Inconclusive
+
+## Issues found
+
+### Issue 1
+Severity: Low | Medium | High | Critical
+Category: Bug | Test Failure | Scope Drift | Architecture Violation | Instruction Violation | Summary Mismatch | Other
+File(s): [file paths]
+Problem:
+[clear explanation of the issue]
+
+Evidence:
+[reference the diff, Claude summary, validation logs, or instruction files]
+
+Required fix:
+[concrete fix required]
+
+## Fix prompt for Claude
+[Only include this section if verdict is NEEDS_FIXES. Write a direct repair prompt Claude Code can execute.]
+
+## Human attention required
+[Only include this section if verdict is FAILED_REQUIRES_HUMAN. Explain why the loop must stop.]
+```
+
+Rules:
+
+- return exactly one allowed verdict
+- base the review on objective evidence, not Claude's claims alone
+- reference evidence for every issue
+- omit `## Fix prompt for Claude` unless the verdict is `NEEDS_FIXES`
+- omit `## Human attention required` unless the verdict is `FAILED_REQUIRES_HUMAN`
+- if no issues are found, keep `## Issues found` and write `None`
 
 ## Safety Constraints
 
@@ -127,10 +217,23 @@ Rules:
 
 The repository should maintain these top-level files:
 
+- `README.md`: public project overview and current usage expectations
 - `AGENTS.md`: system operating rules and review policy
 - `CLAUDE.md`: Claude Code implementation contract
 - `ROADMAP.md`: phased delivery plan
 - `TASK.md`: current human-authored task or objective
+
+## README Maintenance
+
+This repository should maintain a concise, public-safe `README.md`.
+
+Rules:
+
+- create `README.md` when a repository does not already have one and the project is intended for reuse, collaboration, or GitHub publication
+- update `README.md` when changes affect project purpose, workflow, setup, file structure, validation flow, usage, or current status
+- keep the README concise and accurate
+- do not place secrets, tokens, internal-only notes, or local machine details in the README
+- prefer updating existing README sections over letting documentation drift
 
 The local controller should write transient loop artifacts under:
 
@@ -163,9 +266,168 @@ Minimum expectations:
 - raw diff or patch
 - raw git status
 - raw validation logs
-- Codex review decision
+- Codex review decision with exactly one required verdict
+- Codex review written in the required review format
 - next fix prompt if review fails
 - current cycle number and terminal state
+
+## Required Claude Task Format
+
+Codex should write the implementation handoff prompt to `.agent-loop/claude-prompt.md`.
+
+Use the exact format below unless a human explicitly changes the project standard:
+
+```md
+# Claude Code Task
+
+## Phase
+[phase name]
+
+## Objective
+[clear objective]
+
+## Context
+[relevant context from TASK.md, ROADMAP.md, AGENTS.md, CLAUDE.md, and repository state]
+
+## Required work
+- [specific required item]
+- [specific required item]
+
+## Files likely involved
+- [path or area]
+- [path or area]
+
+## Constraints
+- Follow `CLAUDE.md`.
+- Stay within the current task scope.
+- Do not modify `AGENTS.md`.
+- Do not modify `CLAUDE.md`.
+- Do not rewrite unrelated files.
+- Do not delete files unless explicitly instructed.
+- Prefer small, testable, reversible changes.
+- Add or update tests when behavior changes.
+
+## Validation expected
+- [expected command, such as npm test]
+- [expected command, such as npm run lint]
+- [expected command, such as npm run typecheck]
+- [expected command, such as npm run build]
+
+## Required output
+After implementation, write `.agent-loop/claude-summary.md` using the required Claude Implementation Summary format.
+```
+
+Rules:
+
+- keep the objective and required work specific to the active phase
+- keep context concise but sufficient to execute safely
+- do not omit the constraints section
+- do not relax protected-file constraints unless a human explicitly changes the standard
+- list expected validation commands or state that none are expected only if a human explicitly allows that
+
+## Required Claude Fix Task Format
+
+Codex should write the repair handoff prompt to `.agent-loop/fix-prompt.md` when the review verdict is `NEEDS_FIXES`.
+
+Use the exact format below unless a human explicitly changes the project standard:
+
+```md
+# Claude Code Fix Task
+
+## Objective
+Fix only the issues found in `.agent-loop/codex-review.md`.
+
+## Context
+The previous implementation was reviewed by Codex and received the verdict `NEEDS_FIXES`.
+
+Read:
+- `CLAUDE.md`
+- `.agent-loop/claude-prompt.md`
+- `.agent-loop/codex-review.md`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+## Required fixes
+- [specific fix from Codex review]
+- [specific fix from Codex review]
+
+## Constraints
+- Fix only the listed issues.
+- Do not redesign unrelated code.
+- Do not expand the product scope.
+- Do not modify `AGENTS.md`.
+- Do not modify `CLAUDE.md`.
+- Do not delete files unless explicitly required and approved.
+- Preserve the original task objective.
+- Update tests if behavior changes.
+- Prefer minimal, targeted changes.
+
+## Required output
+After applying fixes, update `.agent-loop/claude-summary.md` using the required Claude Implementation Summary format.
+```
+
+Rules:
+
+- only use this format for repair cycles after a `NEEDS_FIXES` verdict
+- required fixes must map directly to issues listed in `.agent-loop/codex-review.md`
+- do not add new product work to the fix prompt
+- preserve the original task objective and scope boundaries
+- keep the fix prompt specific, minimal, and executable
+
+## Required Claude Summary Format
+
+Claude Code must write `.agent-loop/claude-summary.md` after every implementation or fix cycle.
+
+The summary must describe what Claude actually changed.
+
+Rules:
+
+- do not use vague claims
+- do not claim validation passed unless validation was actually run
+- do not omit risk areas
+- use the exact project-standard Markdown format below unless a human explicitly changes it
+
+Required format:
+
+```md
+# Claude Implementation Summary
+
+## Phase
+[phase name]
+
+## Task
+[task name]
+
+## Files changed
+- [file path]: [short explanation of what changed in this file]
+
+## What was implemented
+- [specific implemented behavior or change]
+- [specific implemented behavior or change]
+
+## What was not implemented
+- [known excluded item]
+- [known excluded item]
+
+## Tests added or changed
+- [test file or test behavior added/changed]
+- [write "None" if no tests were added or changed]
+
+## Validation run
+- [command run, such as npm test, npm run lint, npm run typecheck, npm run build]
+- [write "Not run" if validation was not run]
+
+## Assumptions
+- [assumption made during implementation]
+- [write "None" if no assumptions were made]
+
+## Risk areas
+- [potential issue, fragile area, untested behavior, integration concern]
+- [write "None identified" only if there are genuinely no known risks]
+```
 
 ## MVP Implementation Priorities
 
@@ -191,7 +453,7 @@ Work is ready for human approval only if all of the following are true:
 - validation status is explicitly recorded
 - any skipped validation is clearly disclosed with reason
 - the diff is understandable and attributable to the active phase
-- Codex has issued an `approved` review outcome
+- Codex has issued an `APPROVED_FOR_HUMAN_REVIEW` review outcome
 
 Even then, the system must stop and wait for a human before commit.
 
@@ -202,6 +464,7 @@ Codex responsibilities:
 - choose the next small phase
 - generate precise prompts for Claude Code
 - compare claims against diff and logs
+- issue exactly one allowed review verdict per review cycle
 - generate repair prompts when necessary
 - stop the loop when approval or escalation criteria are met
 
@@ -211,6 +474,7 @@ Claude Code responsibilities:
 - avoid speculative refactors
 - provide a structured summary of actual changes
 - report validation or execution limitations honestly
+- update `README.md` when the task changes user-facing project behavior or documented usage expectations
 - wait for the next prompt when a fix cycle is required
 
 The orchestrator responsibilities:
