@@ -85,7 +85,7 @@ Loop artifacts:
 
 While the orchestrator is not yet built, the loop runs by hand against the artifact formats defined in `AGENTS.md`. One full manual cycle:
 
-1. Codex updates `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` for the active phase.
+1. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
 2. Codex writes the implementation prompt to `.agent-loop/claude-prompt.md` using the required Claude task format.
 3. A human pastes that prompt into Claude Code.
 4. Claude Code implements only the active phase and writes `.agent-loop/claude-summary.md` using the required Claude implementation summary format.

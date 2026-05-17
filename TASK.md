@@ -16,7 +16,11 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 1 - Manual File-Based Loop (Complete - awaiting human approval to advance to Phase 2)
+Phase 1 - Manual File-Based Loop
+
+## Phase Status
+
+Complete - awaiting human approval to advance to Phase 2
 
 ## Active Task
 
