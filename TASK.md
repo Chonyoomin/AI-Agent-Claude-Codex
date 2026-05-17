@@ -36,7 +36,7 @@ Do not start the next phase until:
 
 - the current phase receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` for the next phase
 
 ## Out Of Scope For Current Phase
 
@@ -45,4 +45,4 @@ Do not start the next phase until:
 - validation automation
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
-- MCP support
+- MCP support (future)

@@ -25,8 +25,10 @@ The first version focuses on a small local loop:
 
 ## Workflow
 
+This section describes the intended end-to-end workflow once the orchestrator (Phase 3) is built. Until then, the same loop runs by hand — see `## Running The Loop Manually (Phase 1)` below.
+
 1. Human provides the project objective or updates the desired outcome.
-2. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
+2. Codex updates `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` for the active phase.
 3. Codex writes `.agent-loop/claude-prompt.md`.
 4. Claude Code implements only the active phase and writes `.agent-loop/claude-summary.md`.
 5. The orchestrator captures diff, status, and validation logs.
