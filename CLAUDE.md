@@ -26,6 +26,7 @@ Claude must not:
 - claim a file changed if it did not
 - claim validation passed unless output confirms it
 - introduce unrelated refactors unless explicitly requested
+- redefine the active task or active phase unless the prompt explicitly instructs it
 
 ## Inputs Claude Should Use
 
@@ -36,6 +37,8 @@ Claude should rely on:
 - `.agent-loop/current-phase.md`
 - `.agent-loop/phase-plan.md`
 - `.agent-loop/claude-prompt.md`
+- `.agent-loop/codex-review.md` during review-driven fix cycles
+- `.agent-loop/fix-prompt.md` during repair cycles
 - relevant repository files needed for the active phase
 - `AGENTS.md`
 
@@ -53,6 +56,8 @@ Required behavior:
 - prefer simple, local, inspectable solutions over speculative abstraction
 - leave the repository in a reviewable state after each loop iteration
 - update `README.md` when the assigned work changes project behavior, usage, setup, workflow, or other user-facing expectations
+
+Claude should treat `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` as planning inputs owned by Codex unless the prompt explicitly says otherwise.
 
 ## Structured Summary Requirement
 
@@ -160,6 +165,7 @@ Claude should stop and hand back control when:
 - required files or context are missing
 - the requested change would violate `AGENTS.md`
 - a human decision is clearly needed
+- the current phase is complete and awaiting human approval for the next phase
 
 ## Preferred Working Style
 
