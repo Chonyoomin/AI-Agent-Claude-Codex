@@ -79,6 +79,25 @@ Loop artifacts:
 - no phase advancement without human approval
 - no final commit without human approval
 
+## Running The Loop Manually (Phase 1)
+
+While the orchestrator is not yet built, the loop runs by hand against the artifact formats defined in `AGENTS.md`. One full manual cycle:
+
+1. Codex updates `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` for the active phase.
+2. Codex writes the implementation prompt to `.agent-loop/claude-prompt.md` using the required Claude task format.
+3. A human pastes that prompt into Claude Code.
+4. Claude Code implements only the active phase and writes `.agent-loop/claude-summary.md` using the required Claude implementation summary format.
+5. A human captures evidence into `.agent-loop/`:
+   - `git diff > .agent-loop/git-diff.patch`
+   - `git status > .agent-loop/git-status.log`
+   - test, lint, typecheck, and build output to `.agent-loop/test-output.log`, `.agent-loop/lint-output.log`, `.agent-loop/typecheck-output.log`, `.agent-loop/build-output.log` (or record "Not run" explicitly).
+6. A human pastes the prompt, summary, diff, and logs into Codex.
+7. Codex writes `.agent-loop/codex-review.md` with exactly one verdict: `APPROVED_FOR_HUMAN_REVIEW`, `NEEDS_FIXES`, or `FAILED_REQUIRES_HUMAN`.
+8. If the verdict is `NEEDS_FIXES`, Codex writes `.agent-loop/fix-prompt.md` and the cycle repeats from step 3 within `max_cycles`.
+9. The cycle stops for human approval before any commit, and again before the next phase begins.
+
+`.agent-loop/loop-state.json` records the active phase, task, cycle count, max cycles, and last verdict by hand.
+
 ## Current Status
 
-This repository currently defines the operating contract, prompt formats, review formats, task and phase ownership rules, and safety model for the loop. The orchestrator implementation is still to be built.
+The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. The project is currently in **Phase 1 - Manual File-Based Loop**: the workflow above runs by hand. The evidence-collection script (Phase 2) and orchestrator (Phase 3) are not yet built.

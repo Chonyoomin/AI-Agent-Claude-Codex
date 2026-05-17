@@ -16,19 +16,19 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 0 - Instruction Foundation
+Phase 1 - Manual File-Based Loop
 
 ## Active Task
 
-Establish the instruction foundation and initial loop-control artifacts so future implementation phases can run against a clear, enforced contract.
+Prove the Codex/Claude/human workflow end to end using only files and documented handoffs, with no orchestrator script and no validation automation.
 
 ## Phase Outcome Required Now
 
-- the repository has aligned project instructions
-- the repository has a public-safe README
-- the repository has a roadmap aligned with the instruction contract
-- the repository has initial `.agent-loop/` control files for the first loop iteration
-- task and phase ownership are documented clearly
+- the repository's task and phase control files reflect Phase 1 as the active phase
+- the phase plan records the Phase 1 definition of done aligned with `ROADMAP.md`
+- the repository documents how the manual loop is run, so a human can execute one full cycle by hand using the existing artifact formats from `AGENTS.md`
+- the repository is ready to capture, for the first real review cycle, a manual Claude prompt, Claude summary, git diff, git status, validation logs, Codex review, and fix prompt (if needed) — all as files under `.agent-loop/`
+- `README.md` reflects that the manual file-based loop is the current operating mode
 
 ## Next-Phase Gate
 
@@ -40,9 +40,9 @@ Do not start the next phase until:
 
 ## Out Of Scope For Current Phase
 
-- orchestrator implementation
-- evidence collection scripts
+- orchestrator implementation (Phase 3)
+- evidence collection script `scripts/run_checks.sh` (Phase 2)
 - validation automation
-- approval mode implementation
-- editor integration
+- approval mode implementation (Phase 5)
+- editor integration (Phase 7)
 - MCP support
