@@ -17,7 +17,7 @@ Build the smallest local MVP that proves the loop works end to end.
 
 The MVP must support:
 
-- a user-authored `TASK.md`
+- a human-provided objective with Codex-managed `TASK.md`
 - Codex-generated implementation prompts for Claude Code
 - Claude Code implementation against that prompt
 - a structured Claude implementation summary
@@ -44,26 +44,28 @@ Do not build these in the first version unless a human explicitly reprioritizes 
 
 The intended loop is:
 
-1. Human writes or updates `TASK.md`.
+1. Human provides the project objective or updates the desired outcome.
 2. Codex reads repository instructions and task context.
-3. Codex selects the next phase and writes a focused Claude implementation prompt.
-4. Claude Code performs implementation work only within the requested phase.
-5. Claude Code writes a structured summary of what changed.
-6. The orchestrator captures objective evidence:
+3. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` to reflect the active phase.
+4. Codex writes a focused Claude implementation prompt for only the active phase.
+5. Claude Code performs implementation work only within the requested phase.
+6. Claude Code writes a structured summary of what changed.
+7. The orchestrator captures objective evidence:
    - `git diff`
    - `git status`
    - test output
    - lint output
    - typecheck output
    - build output
-7. Codex reviews the prompt, summary, diff, and logs.
-8. Codex decides one of:
+8. Codex reviews the prompt, summary, diff, and logs.
+9. Codex decides one of:
    - `APPROVED_FOR_HUMAN_REVIEW`
    - `NEEDS_FIXES`
    - `FAILED_REQUIRES_HUMAN`
-9. If fixes are required, Codex writes a focused repair prompt for Claude Code.
-10. The loop repeats until `APPROVED_FOR_HUMAN_REVIEW`, max cycles reached, or `FAILED_REQUIRES_HUMAN`.
-11. The system stops and waits for human approval before any commit.
+10. If fixes are required, Codex writes a focused repair prompt for Claude Code.
+11. The loop repeats within the same phase until `APPROVED_FOR_HUMAN_REVIEW`, max cycles reached, or `FAILED_REQUIRES_HUMAN`.
+12. When a phase reaches `APPROVED_FOR_HUMAN_REVIEW`, the system stops and waits for human approval to start the next phase.
+13. The system never commits without separate human approval.
 
 ## Source Of Truth
 
@@ -209,9 +211,24 @@ Rules:
 
 - prefer small phases over large autonomous changes
 - require each Claude prompt to define allowed work and exclusions
+- require phase completion and review before the next phase begins
 - record active phase and cycle count in `.agent-loop/loop-state.json`
 - stop when the maximum fix-cycle count is reached
 - escalate to human review when repeated repair prompts do not converge
+
+## Task And Phase Ownership
+
+Task and phase state must have clear ownership.
+
+Rules:
+
+- the human provides the initial project objective and any later priority changes
+- Codex owns planning and phase decomposition
+- Codex updates `TASK.md` to reflect the current objective, active phase, and expected outcome
+- Codex updates `.agent-loop/current-task.md` and `.agent-loop/current-phase.md` when selecting or advancing phases
+- the orchestrator records runtime state in `.agent-loop/loop-state.json`
+- Claude Code reads task and phase state but does not redefine it
+- a completed phase must stop for human confirmation before Codex starts the next phase
 
 ## Required Repository Files
 
@@ -221,7 +238,7 @@ The repository should maintain these top-level files:
 - `AGENTS.md`: system operating rules and review policy
 - `CLAUDE.md`: Claude Code implementation contract
 - `ROADMAP.md`: phased delivery plan
-- `TASK.md`: current human-authored task or objective
+- `TASK.md`: Codex-maintained task and phase record derived from the human objective
 
 ## README Maintenance
 
@@ -462,11 +479,12 @@ Even then, the system must stop and wait for a human before commit.
 Codex responsibilities:
 
 - choose the next small phase
+- update `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase
 - generate precise prompts for Claude Code
 - compare claims against diff and logs
 - issue exactly one allowed review verdict per review cycle
 - generate repair prompts when necessary
-- stop the loop when approval or escalation criteria are met
+- stop the loop when phase approval or escalation criteria are met
 
 Claude Code responsibilities:
 
@@ -475,6 +493,7 @@ Claude Code responsibilities:
 - provide a structured summary of actual changes
 - report validation or execution limitations honestly
 - update `README.md` when the task changes user-facing project behavior or documented usage expectations
+- not redefine the active task or phase on its own
 - wait for the next prompt when a fix cycle is required
 
 The orchestrator responsibilities:
@@ -483,6 +502,7 @@ The orchestrator responsibilities:
 - run validation commands
 - capture raw evidence without interpretation
 - hand the same evidence back to Codex for review
+- stop between phases until the human explicitly starts the next phase
 - require human approval before any commit action
 
 ## Documentation Style
