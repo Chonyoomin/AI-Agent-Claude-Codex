@@ -27,7 +27,7 @@ Prove the Codex/Claude/human workflow end to end using only files and documented
 - the repository's task and phase control files reflect Phase 1 as the active phase
 - the phase plan records the Phase 1 definition of done aligned with `ROADMAP.md`
 - the repository documents how the manual loop is run, so a human can execute one full cycle by hand using the existing artifact formats from `AGENTS.md`
-- the repository is ready to capture, for the first real review cycle, a manual Claude prompt, Claude summary, git diff, git status, validation logs, Codex review, and fix prompt (if needed) — all as files under `.agent-loop/`
+- the repository is ready to capture, for the first real review cycle, a manual Claude prompt, Claude summary, git diff, git status, validation logs, Codex review, and fix prompt (if needed) - all as files under `.agent-loop/`
 - `README.md` reflects that the manual file-based loop is the current operating mode
 
 ## Next-Phase Gate
@@ -36,7 +36,7 @@ Do not start the next phase until:
 
 - the current phase receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` for the next phase
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
 
 ## Out Of Scope For Current Phase
 
