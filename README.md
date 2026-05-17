@@ -1,8 +1,8 @@
 # Agentic AI Coding Loop
 
-Agentic AI Coding Loop is a local orchestration project for running a controlled build-review-fix workflow between Codex and Claude Code.
+Agentic AI Coding Loop is a local orchestration project for running a controlled, phase-gated build-review-fix workflow between Codex and Claude Code.
 
-Codex acts as the planner, reviewer, validator, and fix-prompt generator. Claude Code acts as the implementation agent. A local orchestrator manages prompts, artifacts, validation logs, and loop state. A human must approve the result before any commit.
+Codex acts as the planner, task-state manager, reviewer, validator, and fix-prompt generator. Claude Code acts as the implementation agent for the active phase only. A local orchestrator manages prompts, artifacts, validation logs, and loop state. A human approves movement between phases and separately approves any eventual commit.
 
 ## Goal
 
@@ -12,7 +12,8 @@ Reduce manual copy/paste between Codex and Claude Code while keeping the workflo
 
 The first version focuses on a small local loop:
 
-- read a human-authored `TASK.md`
+- read a human-provided objective
+- let Codex maintain `TASK.md` and active phase state
 - generate a focused Claude implementation prompt
 - let Claude implement the requested phase
 - capture Claude's structured summary
@@ -20,22 +21,24 @@ The first version focuses on a small local loop:
 - run validation commands and save logs
 - let Codex review the prompt, summary, diff, and logs
 - generate a fix prompt if needed
-- stop for human approval before commit
+- stop after each approved phase until the human starts the next one
 
 ## Workflow
 
-1. Human writes or updates `TASK.md`.
-2. Codex selects the next phase and writes `.agent-loop/claude-prompt.md`.
-3. Claude Code implements the phase and writes `.agent-loop/claude-summary.md`.
-4. The orchestrator captures diff, status, and validation logs.
-5. Codex writes `.agent-loop/codex-review.md` with one verdict:
+1. Human provides the project objective or updates the desired outcome.
+2. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
+3. Codex writes `.agent-loop/claude-prompt.md`.
+4. Claude Code implements only the active phase and writes `.agent-loop/claude-summary.md`.
+5. The orchestrator captures diff, status, and validation logs.
+6. Codex writes `.agent-loop/codex-review.md` with one verdict:
    - `APPROVED_FOR_HUMAN_REVIEW`
    - `NEEDS_FIXES`
    - `FAILED_REQUIRES_HUMAN`
-6. If fixes are required, Codex writes `.agent-loop/fix-prompt.md`.
-7. Claude applies targeted fixes.
-8. The loop repeats until approval, escalation, or max cycles reached.
-9. The system stops for human approval before commit.
+7. If fixes are required, Codex writes `.agent-loop/fix-prompt.md`.
+8. Claude applies targeted fixes within the same phase.
+9. The loop repeats until the phase is approved, escalated, or reaches max cycles.
+10. When a phase is approved, the system stops until the human starts the next phase.
+11. The system never commits without separate human approval.
 
 ## Repository Files
 
@@ -45,7 +48,7 @@ Top-level project files:
 - `AGENTS.md`: operating rules, review standards, and artifact formats
 - `CLAUDE.md`: Claude Code implementation contract
 - `ROADMAP.md`: phased delivery plan
-- `TASK.md`: current task definition
+- `TASK.md`: Codex-maintained task and phase record derived from the human objective
 
 Loop artifacts:
 
@@ -73,8 +76,9 @@ Loop artifacts:
 - no auto-push
 - no hidden validation failures
 - no trusting summary text over actual diffs and logs
+- no phase advancement without human approval
 - no final commit without human approval
 
 ## Current Status
 
-This repository currently defines the operating contract, prompt formats, review formats, and safety rules for the loop. The orchestrator implementation is still to be built.
+This repository currently defines the operating contract, prompt formats, review formats, task and phase ownership rules, and safety model for the loop. The orchestrator implementation is still to be built.
