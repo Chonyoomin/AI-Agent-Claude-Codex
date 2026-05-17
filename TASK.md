@@ -16,33 +16,38 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 0 - Instruction Foundation
+Phase 2 - Evidence Collection Automation
+
+## Active Sub-Phase
+
+Phase 2A - Evidence Collection Contract
 
 ## Active Task
 
-Establish the instruction foundation and initial loop-control artifacts so future implementation phases can run against a clear, enforced contract.
+Define the command-discovery and logging contract for evidence collection so the Phase 2B script (`scripts/run_checks.sh`) can be built later against a precise, predictable specification. Planning and documentation only; the script itself is intentionally not implemented in this sub-phase.
 
 ## Phase Outcome Required Now
 
-- the repository has aligned project instructions
-- the repository has a public-safe README
-- the repository has a roadmap aligned with the instruction contract
-- the repository has initial `.agent-loop/` control files for the first loop iteration
-- task and phase ownership are documented clearly
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 2 / 2A as active
+- `.agent-loop/phase-plan.md` records the Phase 2A objective, definition of done, exclusions, and the full Evidence Collection Contract
+- `README.md` documents that Phase 2A is the current operating mode and points readers at the contract
+- `ROADMAP.md` reflects the 2A / 2B decomposition of Phase 2
+- the contract is concrete enough that Phase 2B can be implemented from it without further design decisions
 
 ## Next-Phase Gate
 
-Do not start the next phase until:
+Do not start Phase 2B (or any later phase) until:
 
-- the current phase receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human explicitly approves moving to the next phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
+- Phase 2A receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human explicitly approves moving to the next sub-phase or phase
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase or phase
 
 ## Out Of Scope For Current Phase
 
-- orchestrator implementation
-- evidence collection scripts
-- validation automation
-- approval mode implementation
-- editor integration
-- MCP support
+- implementation of `scripts/run_checks.sh` (Phase 2B)
+- orchestrator implementation (Phase 3)
+- approval mode implementation (Phase 5)
+- editor integration (Phase 7)
+- MCP support (future)
+- adding any real test/lint/typecheck/build suite to the repository (this is still a documentation-only project)
+- creating fabricated `.agent-loop/git-diff.patch`, `.agent-loop/git-status.log`, or `.agent-loop/*-output.log` files

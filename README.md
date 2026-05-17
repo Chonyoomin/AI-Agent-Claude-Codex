@@ -81,4 +81,6 @@ Loop artifacts:
 
 ## Current Status
 
-This repository currently defines the operating contract, prompt formats, review formats, task and phase ownership rules, and safety model for the loop. The orchestrator implementation is still to be built.
+The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop) closed with `APPROVED_FOR_HUMAN_REVIEW`. The project is currently in **Phase 2A - Evidence Collection Contract**, a planning sub-phase that defines how the future `scripts/run_checks.sh` (Phase 2B) must behave.
+
+The full Evidence Collection Contract - command discovery, state vocabulary, log file format, and script-side safety constraints - lives in `.agent-loop/phase-plan.md` under `## Phase 2A - Evidence Collection Contract`. No script has been implemented yet; Phase 2A is documentation only.

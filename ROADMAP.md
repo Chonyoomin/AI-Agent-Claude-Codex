@@ -198,7 +198,12 @@ Success:
 
 Automate the evidence-gathering part of the loop.
 
-Build:
+Phase 2 is delivered in two sub-phases:
+
+- Phase 2A - Evidence Collection Contract: define how validation commands are discovered, how each pass/fail/not-run/inconclusive state is recorded, and what each evidence file is expected to contain. The contract lives in `.agent-loop/phase-plan.md` under `## Phase 2A - Evidence Collection Contract`.
+- Phase 2B - Implement `scripts/run_checks.sh` against the contract. Activated only after 2A is approved.
+
+Build (Phase 2B):
 
 - `scripts/run_checks.sh`
 
