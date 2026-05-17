@@ -58,11 +58,11 @@ The intended loop is:
    - build output
 7. Codex reviews the prompt, summary, diff, and logs.
 8. Codex decides one of:
-   - approved
-   - fix required
-   - human intervention required
+   - `APPROVED_FOR_HUMAN_REVIEW`
+   - `NEEDS_FIXES`
+   - `FAILED_REQUIRES_HUMAN`
 9. If fixes are required, Codex writes a focused repair prompt for Claude Code.
-10. The loop repeats until approval, max cycles reached, or human intervention required.
+10. The loop repeats until `APPROVED_FOR_HUMAN_REVIEW`, max cycles reached, or `FAILED_REQUIRES_HUMAN`.
 11. The system stops and waits for human approval before any commit.
 
 ## Source Of Truth

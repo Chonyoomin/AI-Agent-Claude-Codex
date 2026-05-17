@@ -36,6 +36,8 @@ Claude should rely on:
 - `.agent-loop/current-phase.md`
 - `.agent-loop/phase-plan.md`
 - `.agent-loop/claude-prompt.md`
+- `.agent-loop/codex-review.md` during review-driven fix cycles
+- `.agent-loop/fix-prompt.md` during repair cycles
 - relevant repository files needed for the active phase
 - `AGENTS.md`
 
