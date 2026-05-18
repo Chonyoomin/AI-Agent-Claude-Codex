@@ -20,34 +20,34 @@ Phase 2 - Evidence Collection Automation
 
 ## Active Sub-Phase
 
-Phase 2A - Evidence Collection Contract
+Phase 2B - Implement scripts/run_checks.sh
 
 ## Active Task
 
-Define the command-discovery and logging contract for evidence collection so the Phase 2B script (`scripts/run_checks.sh`) can be built later against a precise, predictable specification. Planning and documentation only; the script itself is intentionally not implemented in this sub-phase.
+Implement `scripts/run_checks.sh` against the approved Phase 2A Evidence Collection Contract. Implementation only; do not redesign the contract.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 2 / 2A as active
-- `.agent-loop/phase-plan.md` records the Phase 2A objective, definition of done, exclusions, and the full Evidence Collection Contract
-- `README.md` documents that Phase 2A is the current operating mode and points readers at the contract
-- `ROADMAP.md` reflects the 2A / 2B decomposition of Phase 2
-- the contract is concrete enough that Phase 2B can be implemented from it without further design decisions
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 2 / 2B as active
+- `.agent-loop/phase-plan.md` records Phase 2A as complete and Phase 2B as active without changing the contract text
+- `scripts/run_checks.sh` exists, is executable, and implements the Phase 2A contract exactly
+- `README.md` documents how to run the script and reflects the Phase 2B status
+- the script has been run at least once and the evidence files in `.agent-loop/` reflect a real run
 
 ## Next-Phase Gate
 
-Do not start Phase 2B (or any later phase) until:
+Do not start Phase 3 (or any later phase) until:
 
-- Phase 2A receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human explicitly approves moving to the next sub-phase or phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase or phase
+- Phase 2B receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human explicitly approves moving to the next phase
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
 
 ## Out Of Scope For Current Phase
 
-- implementation of `scripts/run_checks.sh` (Phase 2B)
-- orchestrator implementation (Phase 3)
+- orchestrator implementation (`scripts/agent_loop.py`, Phase 3)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
-- adding any real test/lint/typecheck/build suite to the repository (this is still a documentation-only project)
-- creating fabricated `.agent-loop/git-diff.patch`, `.agent-loop/git-status.log`, or `.agent-loop/*-output.log` files
+- any change to the Phase 2A Evidence Collection Contract
+- adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
+- creating `.agent-loop/checks.json` (script must work with or without it)
