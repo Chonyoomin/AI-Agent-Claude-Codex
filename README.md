@@ -79,6 +79,40 @@ Loop artifacts:
 - no phase advancement without human approval
 - no final commit without human approval
 
+## Evidence Collection (`scripts/run_checks.sh`)
+
+`scripts/run_checks.sh` captures objective review evidence into `.agent-loop/` per the Phase 2A Evidence Collection Contract. Run from any directory; it anchors itself at the repository root:
+
+```bash
+bash scripts/run_checks.sh
+```
+
+This always captures:
+
+- `.agent-loop/git-status.log` (from `git status`)
+- `.agent-loop/git-diff.patch` (from `git diff HEAD`, text diffs only)
+
+And one log per validation command, even when the command is not configured:
+
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+Validation commands are resolved in this order (highest precedence first):
+
+1. environment variables: `AGENT_LOOP_TEST_CMD`, `AGENT_LOOP_LINT_CMD`, `AGENT_LOOP_TYPECHECK_CMD`, `AGENT_LOOP_BUILD_CMD`
+2. `.agent-loop/checks.json`, e.g.:
+   ```json
+   {"test": "pytest -q", "lint": null, "typecheck": "mypy .", "build": null}
+   ```
+
+Unset or `null` commands are recorded as `Not run` (not as errors). Commands configured but not found are recorded as `Failed`. Every log file starts with a contract-format header (`captured_at`, `command`, `exit_code`, `state`, optional `reason`) followed by a `----` separator and the raw merged stdout+stderr.
+
+The script exits `0` only if every command's state is `Passed` or `Not run`; it exits non-zero if any command is `Failed` or `Inconclusive`. It never commits, pushes, mutates Git state, deletes files, or modifies project files outside `.agent-loop/`.
+
+The full contract is in `.agent-loop/phase-plan.md` under `## Phase 2A - Evidence Collection Contract`.
+
 ## Current Status
 
-This repository currently defines the operating contract, prompt formats, review formats, task and phase ownership rules, and safety model for the loop. The orchestrator implementation is still to be built.
+The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop) and Phase 2A (Evidence Collection Contract) both closed with `APPROVED_FOR_HUMAN_REVIEW`. The project is currently in **Phase 2B - Implement `scripts/run_checks.sh`**: the evidence-collection script exists and runs against the approved contract. The orchestrator (Phase 3) is not yet built.

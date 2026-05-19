@@ -16,33 +16,42 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 0 - Instruction Foundation
+Phase 2 - Evidence Collection Automation
+
+## Active Sub-Phase
+
+Phase 2B - Implement scripts/run_checks.sh
+
+## Phase Status
+
+Implementation complete and awaiting human approval to advance to Phase 3. Codex will persist the final Phase 2B / Phase 2 review separately to `.agent-loop/codex-review.md`.
 
 ## Active Task
 
-Establish the instruction foundation and initial loop-control artifacts so future implementation phases can run against a clear, enforced contract.
+Implement `scripts/run_checks.sh` against the approved Phase 2A Evidence Collection Contract. Implementation only; do not redesign the contract.
 
 ## Phase Outcome Required Now
 
-- the repository has aligned project instructions
-- the repository has a public-safe README
-- the repository has a roadmap aligned with the instruction contract
-- the repository has initial `.agent-loop/` control files for the first loop iteration
-- task and phase ownership are documented clearly
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 2 / 2B as active
+- `.agent-loop/phase-plan.md` records Phase 2A as complete and Phase 2B as active without changing the contract text
+- `scripts/run_checks.sh` exists, is executable, and implements the Phase 2A contract exactly
+- `README.md` documents how to run the script and reflects the Phase 2B status
+- the script has been run at least once and the evidence files in `.agent-loop/` reflect a real run
 
 ## Next-Phase Gate
 
-Do not start the next phase until:
+Do not start Phase 3 (or any later phase) until:
 
-- the current phase receives `APPROVED_FOR_HUMAN_REVIEW`
+- Phase 2B receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
 
 ## Out Of Scope For Current Phase
 
-- orchestrator implementation
-- evidence collection scripts
-- validation automation
-- approval mode implementation
-- editor integration
-- MCP support
+- orchestrator implementation (`scripts/agent_loop.py`, Phase 3)
+- approval mode implementation (Phase 5)
+- editor integration (Phase 7)
+- MCP support (future)
+- any change to the Phase 2A Evidence Collection Contract
+- adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
+- creating `.agent-loop/checks.json` (script must work with or without it)
