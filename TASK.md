@@ -22,6 +22,10 @@ Phase 2 - Evidence Collection Automation
 
 Phase 2B - Implement scripts/run_checks.sh
 
+## Phase Status
+
+Implementation complete and awaiting human approval to advance to Phase 3. Codex will persist the final Phase 2B / Phase 2 review separately to `.agent-loop/codex-review.md`.
+
 ## Active Task
 
 Implement `scripts/run_checks.sh` against the approved Phase 2A Evidence Collection Contract. Implementation only; do not redesign the contract.
