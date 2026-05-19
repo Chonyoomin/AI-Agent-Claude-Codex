@@ -81,23 +81,32 @@ write_header() {
   } > "$file"
 }
 
-# Translate an exit code to (state, reason) per the contract.
-# Sets globals STATE and REASON.
+# Translate an exit code to (state, reason, exit_code_field) per the contract.
+# Sets globals STATE, REASON, and EXIT_CODE_FIELD. EXIT_CODE_FIELD is "n/a" for
+# failed-to-launch cases (per the contract's validation log template); otherwise
+# it carries the integer rc.
 classify_exit() {
   local rc="$1"
   if [ "$rc" -eq 0 ]; then
     STATE="Passed"
     REASON=""
+    EXIT_CODE_FIELD="$rc"
+  elif [ "$rc" -eq 126 ]; then
+    STATE="Failed"
+    REASON="command not executable"
+    EXIT_CODE_FIELD="n/a"
   elif [ "$rc" -eq 127 ]; then
     STATE="Failed"
     REASON="command not found"
+    EXIT_CODE_FIELD="n/a"
   elif [ "$rc" -ge 128 ] && [ "$rc" -le 192 ]; then
-    # Conventionally 128+signum when terminated by a signal.
     STATE="Inconclusive"
     REASON="killed by signal $((rc - 128))"
+    EXIT_CODE_FIELD="$rc"
   else
     STATE="Failed"
     REASON="non-zero exit"
+    EXIT_CODE_FIELD="$rc"
   fi
 }
 
@@ -111,7 +120,7 @@ capture_git() {
   $cmd_str > "$tmp" 2>&1
   local rc=$?
   classify_exit "$rc"
-  write_header "$file" "$logical" "$captured_at" "$cmd_str" "$rc" "$STATE" "$REASON"
+  write_header "$file" "$logical" "$captured_at" "$cmd_str" "$EXIT_CODE_FIELD" "$STATE" "$REASON"
   cat "$tmp" >> "$file"
   rm -f "$tmp"
   if [ "$STATE" != "Passed" ] && [ "$STATE" != "Not run" ]; then
@@ -159,7 +168,7 @@ run_validation() {
   local rc=$?
   classify_exit "$rc"
 
-  write_header "$file" "$logical" "$captured_at" "$resolved_cmd" "$rc" "$STATE" "$REASON"
+  write_header "$file" "$logical" "$captured_at" "$resolved_cmd" "$EXIT_CODE_FIELD" "$STATE" "$REASON"
   cat "$tmp" >> "$file"
   rm -f "$tmp"
 
@@ -169,7 +178,7 @@ run_validation() {
 }
 
 capture_git "git status" "git status" "$EVIDENCE_DIR/git-status.log"
-capture_git "git diff (working tree vs HEAD)" "git diff HEAD" "$EVIDENCE_DIR/git-diff.patch"
+capture_git "git diff (working tree vs HEAD, includes unstaged and staged changes)" "git diff HEAD" "$EVIDENCE_DIR/git-diff.patch"
 
 run_validation test      AGENT_LOOP_TEST_CMD
 run_validation lint      AGENT_LOOP_LINT_CMD
