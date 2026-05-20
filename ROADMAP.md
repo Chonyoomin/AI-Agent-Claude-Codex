@@ -226,18 +226,22 @@ Success:
 
 Build the first functional local orchestrator.
 
-Build:
+Phase 3 is delivered in sub-phases:
+
+- Phase 3A - Orchestrator Contract: specify, before implementation, the orchestrator's inputs, allowed writes, normal-cycle and fix-cycle order of operations, evidence-capture invocation, verdict handling, `loop-state.json` updates, cycle counting, and stop conditions. The contract lives in `.agent-loop/phase-plan.md` under `## Phase 3A - Orchestrator Contract`.
+- Phase 3B - Implement `scripts/agent_loop.py` against the contract. Activated only after 3A is approved.
+- additional 3x sub-phases may be added if the human or Codex decides the implementation needs to be split further.
+
+Build (Phase 3B):
 
 - `scripts/agent_loop.py`
-- `.agent-loop/loop-state.json`
 
 The orchestrator should:
 
 - read `TASK.md`
-- manage loop state
+- manage loop state in `.agent-loop/loop-state.json`
 - send prompts to Claude Code
-- update task and phase state before each phase
-- run evidence collection
+- run evidence collection via `scripts/run_checks.sh`
 - send review context to Codex
 - parse Codex verdicts
 - send fix prompts to Claude Code
@@ -245,10 +249,18 @@ The orchestrator should:
 - stop for human approval
 - stop between phases until the human starts the next one
 
+The orchestrator should not:
+
+- author or modify `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md` (Codex-owned)
+- author or modify `.agent-loop/claude-prompt.md`, `.agent-loop/claude-summary.md`, `.agent-loop/codex-review.md`, `.agent-loop/fix-prompt.md`
+- modify `AGENTS.md`, `CLAUDE.md`, `ROADMAP.md`, `README.md`
+- overwrite the six `scripts/run_checks.sh`-owned evidence files directly
+- commit, push, or otherwise mutate Git state
+
 Success:
 
 - one command can run the Claude -> Codex -> Claude loop
-- the orchestrator saves all artifacts
+- the orchestrator saves runtime state and routes artifacts
 - the orchestrator enforces max fix cycles
 - the orchestrator blocks phase progression without human confirmation
 - the orchestrator never auto-commits or auto-pushes

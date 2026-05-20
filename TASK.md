@@ -16,42 +16,43 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 2 - Evidence Collection Automation
+Phase 3 - Scripted Orchestrator MVP
 
 ## Active Sub-Phase
 
-Phase 2B - Implement scripts/run_checks.sh
+Phase 3A - Orchestrator Contract
 
 ## Phase Status
 
-Phase 2B implementation submitted. Awaiting Codex's persisted Phase 2 review at `.agent-loop/codex-review.md`. Human approval to advance to Phase 3 will be requested after Codex's verdict.
+Phase 3A submitted. Awaiting Codex's review of the orchestrator contract at `.agent-loop/codex-review.md`. Human approval to advance to Phase 3B will be requested after Codex's verdict. No `scripts/agent_loop.py` is implemented in this sub-phase; Phase 3A is planning and documentation only.
 
 ## Active Task
 
-Implement `scripts/run_checks.sh` against the approved Phase 2A Evidence Collection Contract. Implementation only; do not redesign the contract.
+Define the orchestrator contract and file I/O flow for `scripts/agent_loop.py` so that Phase 3B can implement against a clear, constrained specification. Planning and documentation only; no orchestrator code.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 2 / 2B as active
-- `.agent-loop/phase-plan.md` records Phase 2A as complete and Phase 2B as active without changing the contract text
-- `scripts/run_checks.sh` exists, is executable, and implements the Phase 2A contract exactly
-- `README.md` documents how to run the script and reflects the Phase 2B status
-- the script has been run at least once and the evidence files in `.agent-loop/` reflect a real run
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3A as active
+- `.agent-loop/phase-plan.md` records Phase 2 / 2B as complete history and contains a Phase 3A section that defines the Orchestrator Contract
+- the contract concretely specifies orchestrator inputs, allowed writes, prohibited writes, normal-cycle order of operations, fix-cycle order of operations, evidence-capture invocation, verdict handling, `loop-state.json` updates, cycle counting, stop conditions, and prohibited actions
+- `README.md` reflects the Phase 3A active status and points readers at the contract
+- `ROADMAP.md` reflects the 3A / 3B decomposition of Phase 3
+- no `scripts/agent_loop.py` is created
 
 ## Next-Phase Gate
 
-Do not start Phase 3 (or any later phase) until:
+Do not start Phase 3B (or any later phase) until:
 
-- Phase 2B receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human explicitly approves moving to the next phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
+- Phase 3A receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human explicitly approves moving to Phase 3B
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for Phase 3B
 
 ## Out Of Scope For Current Phase
 
-- orchestrator implementation (`scripts/agent_loop.py`, Phase 3)
+- implementation of `scripts/agent_loop.py` (Phase 3B)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
 - any change to the Phase 2A Evidence Collection Contract
+- any change to `scripts/run_checks.sh`
 - adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
-- creating `.agent-loop/checks.json` (script must work with or without it)
