@@ -115,4 +115,4 @@ The full contract is in `.agent-loop/phase-plan.md` under `## Phase 2A - Evidenc
 
 ## Current Status
 
-The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop) and Phase 2A (Evidence Collection Contract) both closed with `APPROVED_FOR_HUMAN_REVIEW`. The project is currently in **Phase 2B - Implement `scripts/run_checks.sh`**: the evidence-collection script exists and runs against the approved contract. The orchestrator (Phase 3) is not yet built.
+The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop) and Phase 2A (Evidence Collection Contract) both closed with `APPROVED_FOR_HUMAN_REVIEW`. **Phase 2B - Implement `scripts/run_checks.sh`** is in review: the evidence-collection script exists and runs against the approved contract, and the implementation has been submitted awaiting Codex's persisted Phase 2 review at `.agent-loop/codex-review.md`. Human approval to advance to Phase 3 will be requested after Codex's verdict. The orchestrator (Phase 3) is not yet built.
