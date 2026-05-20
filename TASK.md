@@ -24,7 +24,7 @@ Phase 2B - Implement scripts/run_checks.sh
 
 ## Phase Status
 
-Implementation complete and awaiting human approval to advance to Phase 3. Codex will persist the final Phase 2B / Phase 2 review separately to `.agent-loop/codex-review.md`.
+Phase 2B implementation submitted. Awaiting Codex's persisted Phase 2 review at `.agent-loop/codex-review.md`. Human approval to advance to Phase 3 will be requested after Codex's verdict.
 
 ## Active Task
 
