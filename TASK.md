@@ -36,11 +36,11 @@ Prove the Codex/Claude/human workflow end to end using only files and documented
 
 ## Next-Phase Gate
 
-Do not start the next phase until:
+Do not start Phase 3B (or any later phase) until:
 
-- the current phase receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human explicitly approves moving to the next phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next phase
+- Phase 3A receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human explicitly approves moving to Phase 3B
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for Phase 3B
 
 ## Out Of Scope For Current Phase
 
