@@ -16,39 +16,46 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 1 - Manual File-Based Loop
+Phase 3 - Scripted Orchestrator MVP
+
+## Active Sub-Phase
+
+Phase 3B - Implement `scripts/agent_loop.py` (initial slice)
 
 ## Phase Status
 
-Complete - awaiting human approval to advance to Phase 2
+Phase 3A is complete and approved by the human to advance. The Orchestrator Contract is frozen at `.agent-loop/phase-plan.md` under `## Phase 3A - Orchestrator Contract`. Phase 3B implements `scripts/agent_loop.py` against that contract. This initial slice covers the scaffold and the normal-cycle control path only; fix-cycle automation, real Claude/Codex subprocess adapters, approval modes, Git automation, and editor integration are deferred to later 3x sub-phases.
 
 ## Active Task
 
-Prove the Codex/Claude/human workflow end to end using only files and documented handoffs, with no orchestrator script and no validation automation.
+Implement the first working slice of `scripts/agent_loop.py`: repository-root discovery, `.agent-loop/loop-state.json` load/validate/save helpers that honor the orchestrator's allowed write set, artifact validation scaffolding (prompt presence, Claude summary structure + `## Phase` match, Codex review structure + single-verdict parse, evidence-file presence + contract-vocabulary `state:` field), the normal-cycle control path (Claude adapter boundary -> `scripts/run_checks.sh` -> wait for `codex-review.md` -> parse verdict -> branch), and fail-closed halt behavior for malformed or missing required artifacts. The Claude and Codex adapter boundaries exist as real Python classes; their current implementations are manual-handoff stubs that pause for the human to drive the actual CLIs.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3A as active
-- `.agent-loop/phase-plan.md` records Phase 2 / 2B as complete history and contains a Phase 3A section that defines the Orchestrator Contract
-- the contract concretely specifies orchestrator inputs, allowed writes, prohibited writes, normal-cycle order of operations, fix-cycle order of operations, evidence-capture invocation, version-aware adapter layer, fail-closed artifact schema validation, verdict handling, `loop-state.json` updates (including `claude_version`, `codex_version`, `orchestrator_version`, and `contract_version` metadata), cycle counting, stop conditions, and prohibited actions
-- `.agent-loop/loop-state.json` carries `contract_version`, `claude_version`, `codex_version`, and `orchestrator_version` fields per the contract
-- `README.md` reflects the Phase 3A active status and points readers at the contract
-- `ROADMAP.md` reflects the 3A / 3B decomposition of Phase 3
-- no `scripts/agent_loop.py` is created
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3B as active
+- `.agent-loop/phase-plan.md` marks Phase 3A complete and contains a Phase 3B section
+- `scripts/agent_loop.py` exists, is runnable on a Python 3 + Bash system, and implements the normal-cycle control path against the Phase 3A contract
+- the orchestrator never writes any file outside the contract's allowed set; the per-cycle artifact validators halt the loop with the contract's `halted_*` status vocabulary
+- `README.md` reflects the Phase 3B active status and documents how to invoke the orchestrator
+- no fix-cycle automation, no real subprocess-driven Claude/Codex adapters, no approval modes, no Git automation, and no editor integration are introduced in this slice
 
 ## Next-Phase Gate
 
-Do not start Phase 3B (or any later phase) until:
+Do not start the next 3x sub-phase (fix-cycle automation, real Claude/Codex subprocess adapters, etc.) until:
 
-- Phase 3A receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human explicitly approves moving to Phase 3B
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for Phase 3B
+- this Phase 3B slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human explicitly approves moving to the next sub-phase
+- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- orchestrator implementation (Phase 3)
-- evidence collection script `scripts/run_checks.sh` (Phase 2)
-- validation automation
+- fix-cycle automation (deferred to a later 3x sub-phase)
+- real subprocess-driven Claude or Codex CLI adapters (the only adapters wired up in this slice are manual-handoff stubs)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
+- any change to the Phase 2A Evidence Collection Contract
+- any change to `scripts/run_checks.sh`
+- any change to the Phase 3A Orchestrator Contract
+- adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
+- Git automation (no commit, push, branch, stash, reset, checkout, tag)

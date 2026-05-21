@@ -213,8 +213,11 @@ Rules:
 - require each Claude prompt to define allowed work and exclusions
 - require phase completion and review before the next phase begins
 - record active phase and cycle count in `.agent-loop/loop-state.json`
-- stop when the maximum fix-cycle count is reached
-- escalate to human review when repeated repair prompts do not converge
+- treat `max_cycles` as a safety threshold, not as an automatic failure by itself
+- when the threshold is reached, compare the latest findings with the prior findings before allowing another automated fix cycle
+- if the same issue repeats with materially the same outcome and no meaningful progress, escalate to human review
+- if the issue set has materially changed or narrowed, another cycle may proceed only with explicit human approval
+- the loop must never continue indefinitely without a human decision once the threshold has been reached
 
 ## Task And Phase Ownership
 
