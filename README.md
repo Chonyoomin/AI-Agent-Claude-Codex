@@ -102,4 +102,20 @@ While the orchestrator is not yet built, the loop runs by hand against the artif
 
 ## Current Status
 
-The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop), Phase 2A (Evidence Collection Contract), and Phase 2B (`scripts/run_checks.sh`) all closed with `APPROVED_FOR_HUMAN_REVIEW`. The project is currently in **Phase 3A - Orchestrator Contract**: planning and documentation for the Scripted Orchestrator MVP. The contract lives in `.agent-loop/phase-plan.md` under `## Phase 3A - Orchestrator Contract` and specifies the inputs, allowed writes, cycle order of operations, evidence-capture invocation, version-aware adapter layer, fail-closed artifact schema validation, verdict handling, loop-state updates (including `claude_version`, `codex_version`, `orchestrator_version`, and `contract_version` metadata), cycle counting, stop conditions, and prohibited actions that `scripts/agent_loop.py` must satisfy. The orchestrator itself (`scripts/agent_loop.py`, Phase 3B) is not yet implemented.
+The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop), Phase 2A (Evidence Collection Contract), Phase 2B (`scripts/run_checks.sh`), and Phase 3A (Orchestrator Contract) are all complete and approved by the human. The project is currently in **Phase 3B - Implement `scripts/agent_loop.py` (initial slice)**: a first working slice of the orchestrator that covers the scaffold and the normal-cycle control path described in the Phase 3A contract.
+
+This slice implements: repository-root discovery; `.agent-loop/loop-state.json` load / structural validation / contract-version check / runtime-field-only save; per-cycle artifact validators for `.agent-loop/claude-prompt.md` (presence), `.agent-loop/claude-summary.md` (header order + `## Phase` match), `.agent-loop/codex-review.md` (header order + single-verdict parse), `.agent-loop/fix-prompt.md` (header order, when present), and the six evidence files (presence + contract-vocabulary `state:` field); the normal-cycle control path through Claude handoff, `bash scripts/run_checks.sh`, and Codex review waiting; and fail-closed halts that persist the contract's `halted_*` status vocabulary into `loop-state.json` on any malformed or missing required artifact.
+
+Deferred to later 3x sub-phases: fix-cycle automation, real subprocess-driven Claude/Codex CLI adapters (this slice ships only manual-handoff stubs that pause for the human to drive the actual CLI), approval modes (Phase 5), editor integration (Phase 7), and Git automation.
+
+### Running The Orchestrator (Phase 3B Initial Slice)
+
+Prerequisites: Python 3 and Bash on `PATH`.
+
+```text
+python scripts/agent_loop.py check-state           # load + validate loop-state.json
+python scripts/agent_loop.py validate-artifacts    # run all per-cycle validators
+python scripts/agent_loop.py run                   # execute one normal cycle
+```
+
+`run` will pause and prompt the human to drive Claude Code (against `.agent-loop/claude-prompt.md`) and Codex (against the captured evidence), pressing Enter at each handoff. The orchestrator never writes any file outside `.agent-loop/loop-state.json` and the optional `.agent-loop/orchestrator.log`.
