@@ -38,6 +38,7 @@ Codex should:
   - `NEEDS_FIXES`
   - `FAILED_REQUIRES_HUMAN`
 - generate focused fix prompts when needed
+- directly correct Codex-owned artifacts or decisions when Codex is the owner of the issue, instead of routing those fixes through Claude Code
 - stop the loop when human judgment is required
 - stop after each approved phase until the human explicitly starts the next phase
 

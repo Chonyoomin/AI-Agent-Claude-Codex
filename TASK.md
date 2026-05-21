@@ -28,11 +28,13 @@ Prove the Codex/Claude/human workflow end to end using only files and documented
 
 ## Phase Outcome Required Now
 
-- the repository's task and phase control files reflect Phase 1 as the active phase
-- the phase plan records the Phase 1 definition of done aligned with `ROADMAP.md`
-- the repository documents how the manual loop is run, so a human can execute one full cycle by hand using the existing artifact formats from `AGENTS.md`
-- the repository is ready to capture, for the first real review cycle, a manual Claude prompt, Claude summary, git diff, git status, validation logs, Codex review, and fix prompt (if needed) - all as files under `.agent-loop/`
-- `README.md` reflects that the manual file-based loop is the current operating mode
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3A as active
+- `.agent-loop/phase-plan.md` records Phase 2 / 2B as complete history and contains a Phase 3A section that defines the Orchestrator Contract
+- the contract concretely specifies orchestrator inputs, allowed writes, prohibited writes, normal-cycle order of operations, fix-cycle order of operations, evidence-capture invocation, version-aware adapter layer, fail-closed artifact schema validation, verdict handling, `loop-state.json` updates (including `claude_version`, `codex_version`, `orchestrator_version`, and `contract_version` metadata), cycle counting, stop conditions, and prohibited actions
+- `.agent-loop/loop-state.json` carries `contract_version`, `claude_version`, `codex_version`, and `orchestrator_version` fields per the contract
+- `README.md` reflects the Phase 3A active status and points readers at the contract
+- `ROADMAP.md` reflects the 3A / 3B decomposition of Phase 3
+- no `scripts/agent_loop.py` is created
 
 ## Next-Phase Gate
 
