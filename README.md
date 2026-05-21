@@ -25,6 +25,8 @@ The first version focuses on a small local loop:
 
 ## Workflow
 
+This section describes the intended end-to-end workflow once the orchestrator (Phase 3) is built. Until then, the same loop runs by hand - see `## Running The Loop Manually (Phase 1)` below.
+
 1. Human provides the project objective or updates the desired outcome.
 2. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
 3. Codex writes `.agent-loop/claude-prompt.md`.
@@ -79,39 +81,24 @@ Loop artifacts:
 - no phase advancement without human approval
 - no final commit without human approval
 
-## Evidence Collection (`scripts/run_checks.sh`)
+## Running The Loop Manually (Phase 1)
 
-`scripts/run_checks.sh` captures objective review evidence into `.agent-loop/` per the Phase 2A Evidence Collection Contract. Run from any directory; it anchors itself at the repository root:
+While the orchestrator is not yet built, the loop runs by hand against the artifact formats defined in `AGENTS.md`. One full manual cycle:
 
-```bash
-bash scripts/run_checks.sh
-```
+1. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
+2. Codex writes the implementation prompt to `.agent-loop/claude-prompt.md` using the required Claude task format.
+3. A human pastes that prompt into Claude Code.
+4. Claude Code implements only the active phase and writes `.agent-loop/claude-summary.md` using the required Claude implementation summary format.
+5. A human captures evidence into `.agent-loop/`:
+   - `git diff > .agent-loop/git-diff.patch`
+   - `git status > .agent-loop/git-status.log`
+   - test, lint, typecheck, and build output to `.agent-loop/test-output.log`, `.agent-loop/lint-output.log`, `.agent-loop/typecheck-output.log`, `.agent-loop/build-output.log` (or record "Not run" explicitly).
+6. A human pastes the prompt, summary, diff, and logs into Codex.
+7. Codex writes `.agent-loop/codex-review.md` with exactly one verdict: `APPROVED_FOR_HUMAN_REVIEW`, `NEEDS_FIXES`, or `FAILED_REQUIRES_HUMAN`.
+8. If the verdict is `NEEDS_FIXES`, Codex writes `.agent-loop/fix-prompt.md` and the cycle repeats from step 3 within `max_cycles`.
+9. The cycle stops for human approval before any commit, and again before the next phase begins.
 
-This always captures:
-
-- `.agent-loop/git-status.log` (from `git status`)
-- `.agent-loop/git-diff.patch` (from `git diff HEAD`, text diffs only)
-
-And one log per validation command, even when the command is not configured:
-
-- `.agent-loop/test-output.log`
-- `.agent-loop/lint-output.log`
-- `.agent-loop/typecheck-output.log`
-- `.agent-loop/build-output.log`
-
-Validation commands are resolved in this order (highest precedence first):
-
-1. environment variables: `AGENT_LOOP_TEST_CMD`, `AGENT_LOOP_LINT_CMD`, `AGENT_LOOP_TYPECHECK_CMD`, `AGENT_LOOP_BUILD_CMD`
-2. `.agent-loop/checks.json`, e.g.:
-   ```json
-   {"test": "pytest -q", "lint": null, "typecheck": "mypy .", "build": null}
-   ```
-
-Unset or `null` commands are recorded as `Not run` (not as errors). Commands configured but not found are recorded as `Failed`. Every log file starts with a contract-format header (`captured_at`, `command`, `exit_code`, `state`, optional `reason`) followed by a `----` separator and the raw merged stdout+stderr.
-
-The script exits `0` only if every command's state is `Passed` or `Not run`; it exits non-zero if any command is `Failed` or `Inconclusive`. It never commits, pushes, mutates Git state, deletes files, or modifies project files outside `.agent-loop/`.
-
-The full contract is in `.agent-loop/phase-plan.md` under `## Phase 2A - Evidence Collection Contract`.
+`.agent-loop/loop-state.json` records the active phase, task, cycle count, max cycles, and last verdict by hand.
 
 ## Current Status
 
