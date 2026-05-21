@@ -76,7 +76,7 @@ The orchestrator should:
 - run validation commands
 - save logs
 - pass review context to Codex
-- enforce max fix cycles
+- enforce cycle-safety thresholds and require human review when the same issue repeats without meaningful progress
 - pause between phases until the human starts the next phase
 - stop safely when human approval is required
 
