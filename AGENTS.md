@@ -229,6 +229,9 @@ Rules:
 - the orchestrator records runtime state in `.agent-loop/loop-state.json`
 - Claude Code reads task and phase state but does not redefine it
 - a completed phase must stop for human confirmation before Codex starts the next phase
+- if a review finding concerns a Codex-owned artifact or decision, Codex must correct it directly instead of issuing a Claude fix prompt
+- if a review finding concerns a Claude-owned artifact or implementation result, Codex should return it to Claude through a focused fix prompt
+- the loop must not assign a fix to the wrong agent
 
 ## Required Repository Files
 

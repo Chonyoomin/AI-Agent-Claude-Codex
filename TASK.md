@@ -34,7 +34,8 @@ Define the orchestrator contract and file I/O flow for `scripts/agent_loop.py` s
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3A as active
 - `.agent-loop/phase-plan.md` records Phase 2 / 2B as complete history and contains a Phase 3A section that defines the Orchestrator Contract
-- the contract concretely specifies orchestrator inputs, allowed writes, prohibited writes, normal-cycle order of operations, fix-cycle order of operations, evidence-capture invocation, verdict handling, `loop-state.json` updates, cycle counting, stop conditions, and prohibited actions
+- the contract concretely specifies orchestrator inputs, allowed writes, prohibited writes, normal-cycle order of operations, fix-cycle order of operations, evidence-capture invocation, version-aware adapter layer, fail-closed artifact schema validation, verdict handling, `loop-state.json` updates (including `claude_version`, `codex_version`, `orchestrator_version`, and `contract_version` metadata), cycle counting, stop conditions, and prohibited actions
+- `.agent-loop/loop-state.json` carries `contract_version`, `claude_version`, `codex_version`, and `orchestrator_version` fields per the contract
 - `README.md` reflects the Phase 3A active status and points readers at the contract
 - `ROADMAP.md` reflects the 3A / 3B decomposition of Phase 3
 - no `scripts/agent_loop.py` is created
