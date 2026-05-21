@@ -117,6 +117,14 @@ CODEX_OR_HUMAN_OWNED_FIELDS = frozenset({
     "contract_version",
 })
 
+# Per the contract's "Normal cycle" preconditions, a normal cycle may only
+# start from a ready-to-start status. The orchestrator refuses to begin
+# a cycle from any other status (including halted_* or in-flight states)
+# until a human or Codex explicitly resets `status` to a ready value.
+ALLOWED_NORMAL_CYCLE_START_STATUSES = frozenset({
+    "awaiting_claude_implementation",
+})
+
 REPO_ROOT_MARKERS = ("TASK.md", "AGENTS.md", ".agent-loop")
 
 
@@ -168,8 +176,20 @@ class ManualHandoffClaudeAdapter:
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
+        # Fail closed: if the human pressed Enter without actually saving a
+        # fresh summary for this cycle, the file's mtime will match what we
+        # captured before the handoff. Treat that as "Claude did not produce
+        # an artifact for this cycle" so the orchestrator halts rather than
+        # validating a stale summary as if it were current.
         if summary_path.stat().st_mtime == prev_mtime:
-            print(f"[orchestrator] WARNING: {summary_path.name} mtime unchanged.")
+            print(
+                f"[orchestrator] {summary_path.name} mtime unchanged - "
+                f"no fresh summary was produced for this cycle.",
+                file=sys.stderr,
+            )
+            return ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=duration,
+            )
         return ExecutionResult(
             exit_code=0,
             model_id=self.default_model_id,
@@ -203,8 +223,18 @@ class ManualHandoffCodexAdapter:
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
+        # Fail closed: an unchanged mtime means Codex did not produce a
+        # review for this cycle. Treat as "no review" rather than parsing
+        # a stale verdict.
         if review_path.stat().st_mtime == prev_mtime:
-            print(f"[orchestrator] WARNING: {review_path.name} mtime unchanged.")
+            print(
+                f"[orchestrator] {review_path.name} mtime unchanged - "
+                f"no fresh review was produced for this cycle.",
+                file=sys.stderr,
+            )
+            return ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=duration,
+            )
         return ExecutionResult(
             exit_code=0,
             model_id=self.default_model_id,
@@ -504,6 +534,24 @@ def run_normal_cycle(repo_root: Path) -> int:
         validate_claude_prompt_present(prompt_path)
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
+
+    # 3a. Enforce the contract's normal-cycle start precondition: status
+    #     must be a ready-to-start value. The orchestrator refuses to
+    #     start a cycle from an in-flight, halted, or post-verdict state.
+    #     Resetting `status` to a ready value is a human / Codex action.
+    current_status = data.get("status")
+    if current_status not in ALLOWED_NORMAL_CYCLE_START_STATUSES:
+        return _halt(
+            state_path, data,
+            HaltError(
+                "halted_input_missing",
+                f"loop-state.json status is {current_status!r}; "
+                f"normal cycle requires one of "
+                f"{sorted(ALLOWED_NORMAL_CYCLE_START_STATUSES)}. "
+                f"Reset status (Codex- or human-owned) before re-running.",
+            ),
+            log_path,
+        )
 
     # 4. Check the cycle counter before incrementing.
     if data["cycle_count"] + 1 > data["max_cycles"]:
