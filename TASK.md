@@ -16,15 +16,19 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 1 - Manual File-Based Loop
+Phase 3 - Scripted Orchestrator MVP
+
+## Active Sub-Phase
+
+Phase 3A - Orchestrator Contract
 
 ## Phase Status
 
-Complete - awaiting human approval to advance to Phase 2
+Phase 3A fix cycle submitted. Awaiting Codex's review of the orchestrator contract at `.agent-loop/codex-review.md`. Human approval to advance to Phase 3B will be requested after Codex's verdict. No `scripts/agent_loop.py` is implemented in this sub-phase; Phase 3A is planning and documentation only.
 
 ## Active Task
 
-Prove the Codex/Claude/human workflow end to end using only files and documented handoffs, with no orchestrator script and no validation automation.
+Define the orchestrator contract and file I/O flow for `scripts/agent_loop.py` so that Phase 3B can implement against a clear, constrained specification. Planning and documentation only; no orchestrator code. The contract includes version-tolerant safeguards (version metadata in `.agent-loop/loop-state.json`, fail-closed artifact schema validation, and a version-aware adapter layer that isolates model invocation specifics from the core loop).
 
 ## Phase Outcome Required Now
 
@@ -46,9 +50,11 @@ Do not start Phase 3B (or any later phase) until:
 
 ## Out Of Scope For Current Phase
 
-- orchestrator implementation (Phase 3)
-- evidence collection script `scripts/run_checks.sh` (Phase 2)
-- validation automation
+- implementation of `scripts/agent_loop.py` (Phase 3B)
+- any `scripts/agent_loop/adapters/` modules (Phase 3B)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
+- any change to the Phase 2A Evidence Collection Contract
+- any change to `scripts/run_checks.sh`
+- adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
