@@ -1,26 +1,40 @@
 #!/usr/bin/env python3
-"""scripts/agent_loop.py - Phase 3B initial slice of the local orchestrator.
+"""scripts/agent_loop.py - local orchestrator (Phase 3B scaffold + Phase 3C fix cycle).
 
-Implements the normal-cycle control path of the Phase 3A Orchestrator
-Contract (`.agent-loop/phase-plan.md` -> "## Phase 3A - Orchestrator
-Contract"):
+Implements the Phase 3A Orchestrator Contract (`.agent-loop/phase-plan.md`
+-> "## Phase 3A - Orchestrator Contract"):
 
-  load state -> validate inputs -> increment cycle_count and set
-  status=claude_implementing -> invoke Claude adapter boundary -> wait
-  for `.agent-loop/claude-summary.md` -> validate summary structure +
-  `## Phase` match -> set status=evidence_capture -> invoke
-  `bash scripts/run_checks.sh` -> validate six evidence files -> set
-  status=awaiting_codex_review -> wait for `.agent-loop/codex-review.md`
-  -> validate review structure and parse exactly one allowed verdict ->
-  branch on verdict.
+  Normal cycle (Phase 3B):
+    load state -> validate inputs -> enforce ready start status ->
+    increment cycle_count and set status=claude_implementing -> invoke
+    Claude adapter boundary -> wait for `.agent-loop/claude-summary.md`
+    -> validate summary structure + `## Phase` match -> set
+    status=evidence_capture -> invoke `bash scripts/run_checks.sh` ->
+    validate six evidence files -> set status=awaiting_codex_review ->
+    wait for `.agent-loop/codex-review.md` -> validate review structure
+    and parse exactly one allowed verdict -> hand off to verdict loop.
 
-Out of scope for this slice (deferred to later 3x sub-phases):
-  - fix-cycle automation
+  Verdict loop (Phase 3C):
+    APPROVED_FOR_HUMAN_REVIEW -> persist completion, return 0.
+    FAILED_REQUIRES_HUMAN     -> persist halt, return 2.
+    NEEDS_FIXES               -> record verdict; if cycle_count >=
+      max_cycles, halt halted_max_cycles_reached (no auto-continue,
+      raising the limit is a Codex/human action). Otherwise validate
+      `.agent-loop/fix-prompt.md`, run one fix cycle (increment
+      cycle_count, status=claude_fixing -> Claude adapter ->
+      claude-summary validation -> evidence capture -> evidence
+      validation -> wait for fresh codex-review.md -> parse verdict),
+      then re-enter the verdict loop with the new verdict.
+
+Out of scope (deferred to later 3x sub-phases):
   - real subprocess-driven Claude or Codex CLI adapters (only
     manual-handoff stubs are wired up; the human drives the actual CLI)
   - approval modes (Phase 5)
   - editor integration (Phase 7)
   - any Git automation (commit, push, branch, stash, reset, ...)
+  - automatic "materially changed / narrowed" cycle-extension judgment
+    (orchestrator only enforces the threshold; the policy escape is
+    explicit Codex/human action on max_cycles or a new sub-phase)
 
 The orchestrator must never write any file outside its allowed set
 (`.agent-loop/loop-state.json` and the optional `.agent-loop/orchestrator.log`).
@@ -43,7 +57,7 @@ from typing import Callable, Iterable, Optional
 
 # ----- contract constants -----
 
-ORCHESTRATOR_VERSION = "phase-3b-v0"
+ORCHESTRATOR_VERSION = "phase-3c-v0"
 SUPPORTED_CONTRACT_VERSIONS = frozenset({"phase-3a-v2"})
 
 ALLOWED_VERDICTS = (
@@ -631,46 +645,187 @@ def run_normal_cycle(repo_root: Path) -> int:
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
 
-    # 11. Branch on verdict.
-    last_verdict_phase = data.get("sub_phase") or data.get("phase")
-    if verdict == "APPROVED_FOR_HUMAN_REVIEW":
-        save_loop_state(state_path, data, {
-            "status": "phase_complete_awaiting_human_approval",
+    # 11. Hand off to the verdict-handling loop (Phase 3C). The loop
+    #     either reaches a terminal state and returns, or drives one or
+    #     more fix cycles before reaching a terminal state.
+    return _handle_verdict_loop(state_path, data, verdict, repo_root, log_path)
+
+
+def _handle_verdict_loop(
+    state_path: Path,
+    data: dict,
+    verdict: str,
+    repo_root: Path,
+    log_path: Path,
+) -> int:
+    """Drive verdict handling, including any consecutive fix cycles.
+
+    Phase 3C implements the contract's `#### Fix cycle` and the
+    `NEEDS_FIXES` branch of `#### Verdict handling`. The function loops
+    on the latest verdict until a terminal state is reached:
+
+      - `APPROVED_FOR_HUMAN_REVIEW` -> persist completion, return 0
+      - `FAILED_REQUIRES_HUMAN`     -> persist halt, return 2
+      - `NEEDS_FIXES` AND `cycle_count >= max_cycles`
+                                    -> persist halt_max_cycles_reached, return 2
+      - `NEEDS_FIXES` AND threshold not reached
+                                    -> validate fix-prompt, run a fix cycle,
+                                       re-enter the loop with the new verdict
+
+    Any structural validation failure, fail-closed adapter signal, or
+    schema/parse failure in a fix cycle halts via `_halt` as in the
+    normal cycle.
+    """
+    al = repo_root / ".agent-loop"
+    while True:
+        last_verdict_phase = data.get("sub_phase") or data.get("phase")
+        if verdict == "APPROVED_FOR_HUMAN_REVIEW":
+            save_loop_state(state_path, data, {
+                "status": "phase_complete_awaiting_human_approval",
+                "last_verdict": verdict,
+                "last_verdict_phase": last_verdict_phase,
+            })
+            print(
+                f"[orchestrator] verdict={verdict}; phase complete, "
+                f"awaiting human approval to start the next phase."
+            )
+            return 0
+        if verdict == "FAILED_REQUIRES_HUMAN":
+            save_loop_state(state_path, data, {
+                "status": "halted_failed_requires_human",
+                "last_verdict": verdict,
+                "last_verdict_phase": last_verdict_phase,
+            })
+            print(
+                f"[orchestrator] verdict={verdict}; halted, human "
+                f"intervention required.",
+                file=sys.stderr,
+            )
+            return 2
+        # NEEDS_FIXES from here on. Record the verdict regardless of
+        # whether we go on to run a fix cycle or halt on the threshold.
+        data = save_loop_state(state_path, data, {
             "last_verdict": verdict,
             "last_verdict_phase": last_verdict_phase,
         })
-        print(
-            f"[orchestrator] verdict={verdict}; phase complete, "
-            f"awaiting human approval to start the next phase."
-        )
-        return 0
-    if verdict == "FAILED_REQUIRES_HUMAN":
-        save_loop_state(state_path, data, {
-            "status": "halted_failed_requires_human",
-            "last_verdict": verdict,
-            "last_verdict_phase": last_verdict_phase,
-        })
-        print(
-            f"[orchestrator] verdict={verdict}; halted, human intervention "
-            f"required.",
-            file=sys.stderr,
-        )
-        return 2
-    # NEEDS_FIXES: fix-cycle automation is deferred to a later 3x slice.
-    # Park the loop in awaiting_claude_implementation with the verdict
-    # recorded; a human must drive the fix prompt for now.
-    save_loop_state(state_path, data, {
-        "status": "awaiting_claude_implementation",
-        "last_verdict": verdict,
-        "last_verdict_phase": last_verdict_phase,
+        # Threshold-policy enforcement: do not auto-continue past the
+        # threshold. The contract's "materially changed / narrowed"
+        # judgment is NOT made automatically here; raising max_cycles or
+        # activating a new sub-phase is a Codex- or human-owned action.
+        if data["cycle_count"] >= data["max_cycles"]:
+            return _halt(
+                state_path, data,
+                HaltError(
+                    "halted_max_cycles_reached",
+                    f"cycle_count ({data['cycle_count']}) has reached "
+                    f"max_cycles ({data['max_cycles']}) on a NEEDS_FIXES "
+                    f"verdict; orchestrator will not auto-continue. Raise "
+                    f"max_cycles (Codex/human action) or activate a new "
+                    f"sub-phase to proceed.",
+                ),
+                log_path,
+            )
+        # Validate fix-prompt.md before starting the fix cycle.
+        fix_prompt_path = al / "fix-prompt.md"
+        try:
+            validate_fix_prompt(fix_prompt_path)
+        except HaltError as halt:
+            return _halt(state_path, data, halt, log_path)
+        # Run one fix cycle. On success, get a new verdict and loop.
+        try:
+            verdict, data = _run_fix_cycle(state_path, data, repo_root, log_path)
+        except _FixCycleHalt as halted:
+            return halted.exit_code
+
+
+class _FixCycleHalt(Exception):
+    """Internal carrier: a fix-cycle step has already halted via _halt."""
+
+    def __init__(self, exit_code: int) -> None:
+        super().__init__(f"fix cycle halted with exit code {exit_code}")
+        self.exit_code = exit_code
+
+
+def _run_fix_cycle(
+    state_path: Path,
+    data: dict,
+    repo_root: Path,
+    log_path: Path,
+) -> tuple[str, dict]:
+    """Execute one fix cycle per the contract's `#### Fix cycle` steps.
+
+    Returns `(new_verdict, updated_data)` on success. On any halt path
+    raises `_FixCycleHalt(exit_code)`, which the caller surfaces. The
+    function increments `cycle_count` exactly once (at the start of the
+    Claude fix invocation) so the threshold check in
+    `_handle_verdict_loop` reflects the real cycle count after the call
+    returns.
+    """
+    al = repo_root / ".agent-loop"
+    fix_prompt_path = al / "fix-prompt.md"
+    summary_path = al / "claude-summary.md"
+    review_path = al / "codex-review.md"
+
+    # 1. Increment cycle_count and set status = claude_fixing.
+    data = save_loop_state(state_path, data, {
+        "cycle_count": data["cycle_count"] + 1,
+        "status": "claude_fixing",
     })
-    print(
-        f"[orchestrator] verdict={verdict}; fix-cycle automation is not yet "
-        f"implemented. Have Codex write .agent-loop/fix-prompt.md and re-run "
-        f"the orchestrator (or drive the fix manually) once a later slice "
-        f"adds the fix-cycle path."
-    )
-    return 0
+
+    # 2. Invoke Claude adapter with the fix prompt (manual handoff).
+    claude_adapter = ManualHandoffClaudeAdapter()
+    result = claude_adapter.invoke(fix_prompt_path, summary_path)
+    if result.model_id is None:
+        raise _FixCycleHalt(_halt(
+            state_path, data,
+            HaltError(
+                "halted_input_missing",
+                "Claude adapter did not resolve a model_id in fix cycle "
+                "(no fresh claude-summary.md or aborted handoff)",
+            ),
+            log_path,
+        ))
+    data = save_loop_state(state_path, data, {"claude_version": result.model_id})
+
+    # 3. Validate fix-cycle claude-summary.md structurally + `## Phase` match.
+    try:
+        validate_claude_summary(summary_path, data["phase"], data.get("sub_phase"))
+    except HaltError as halt:
+        raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
+
+    # 4. Evidence capture.
+    data = save_loop_state(state_path, data, {"status": "evidence_capture"})
+    try:
+        invoke_run_checks(repo_root)
+    except HaltError as halt:
+        raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
+    try:
+        validate_evidence_files(repo_root)
+    except HaltError as halt:
+        raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
+
+    # 5. Wait for the fix-cycle Codex review.
+    data = save_loop_state(state_path, data, {"status": "awaiting_codex_review"})
+    codex_adapter = ManualHandoffCodexAdapter()
+    review_result = codex_adapter.wait_for_review(review_path)
+    if review_result.exit_code != 0:
+        raise _FixCycleHalt(_halt(
+            state_path, data,
+            HaltError(
+                "halted_input_missing",
+                "Codex adapter returned no review in fix cycle "
+                "(no fresh codex-review.md)",
+            ),
+            log_path,
+        ))
+
+    # 6. Validate review + parse exactly one verdict.
+    try:
+        verdict = validate_codex_review_and_parse_verdict(review_path)
+    except HaltError as halt:
+        raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
+
+    return verdict, data
 
 
 # ----- cli -----
@@ -769,9 +924,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent_loop",
         description=(
-            "Agentic AI Coding Loop orchestrator - Phase 3B initial slice. "
-            "Implements the Phase 3A Orchestrator Contract's normal-cycle "
-            "control path; fix-cycle automation is deferred."
+            "Agentic AI Coding Loop orchestrator. Implements the Phase 3A "
+            "Orchestrator Contract: normal-cycle control path (Phase 3B) "
+            "and automated NEEDS_FIXES handling with threshold-policy "
+            "enforcement (Phase 3C). Manual-handoff Claude/Codex adapters."
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -780,7 +936,13 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-artifacts",
         help="validate per-cycle artifact structure against the contract",
     )
-    sub.add_parser("run", help="execute one normal cycle")
+    sub.add_parser(
+        "run",
+        help=(
+            "execute one normal cycle and, on NEEDS_FIXES, walk through "
+            "automated fix cycles until a terminal state"
+        ),
+    )
     return parser
 
 
