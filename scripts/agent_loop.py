@@ -500,6 +500,21 @@ def invoke_run_checks(repo_root: Path) -> int:
 
 # ----- cycle =====
 
+def _log_note(log_path: Optional[Path], message: str) -> None:
+    """Append a single line to .agent-loop/orchestrator.log if writable.
+
+    Best-effort: the contract treats the log as optional and never
+    authoritative, so a write failure is swallowed.
+    """
+    if log_path is None:
+        return
+    try:
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(message + "\n")
+    except OSError:
+        pass
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -512,12 +527,7 @@ def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[P
             f"[orchestrator] additionally failed to persist halt status: {exc}",
             file=sys.stderr,
         )
-    if log_path is not None:
-        try:
-            with log_path.open("a", encoding="utf-8") as fh:
-                fh.write(f"HALT {halt.status}: {halt.reason}\n")
-        except OSError:
-            pass
+    _log_note(log_path, f"HALT {halt.status}: {halt.reason}")
     return 2
 
 
@@ -625,10 +635,6 @@ def run_normal_cycle(repo_root: Path) -> int:
     data = save_loop_state(state_path, data, {"status": "awaiting_codex_review"})
     codex_adapter = ManualHandoffCodexAdapter()
     review_result = codex_adapter.wait_for_review(review_path)
-    if codex_adapter.default_model_id is not None:
-        data = save_loop_state(
-            state_path, data, {"codex_version": codex_adapter.default_model_id},
-        )
     if review_result.exit_code != 0:
         return _halt(
             state_path, data,
@@ -637,6 +643,19 @@ def run_normal_cycle(repo_root: Path) -> int:
                 "Codex adapter returned no review (no codex-review.md)",
             ),
             log_path,
+        )
+    # Per the Phase 3A contract: codex_version is null when the adapter
+    # cannot self-report, and a note must be written to orchestrator.log
+    # (the orchestrator must not fabricate a version).
+    if review_result.model_id is not None:
+        data = save_loop_state(
+            state_path, data, {"codex_version": review_result.model_id},
+        )
+    else:
+        _log_note(
+            log_path,
+            "note: codex_version remains null because the Codex adapter "
+            "did not self-report a version for this review cycle",
         )
 
     # 10. Validate review structure + parse exactly one verdict.
@@ -818,6 +837,19 @@ def _run_fix_cycle(
             ),
             log_path,
         ))
+    # Same contract rule as the normal-cycle Codex handoff: write
+    # codex_version when the adapter self-reports, otherwise note the
+    # null to orchestrator.log; never fabricate a version.
+    if review_result.model_id is not None:
+        data = save_loop_state(
+            state_path, data, {"codex_version": review_result.model_id},
+        )
+    else:
+        _log_note(
+            log_path,
+            "note: codex_version remains null because the Codex adapter "
+            "did not self-report a version for this fix-cycle review",
+        )
 
     # 6. Validate review + parse exactly one verdict.
     try:
@@ -959,6 +991,27 @@ def main(argv: Optional[list[str]] = None) -> int:
     try:
         return HANDLERS[args.cmd](args)
     except KeyboardInterrupt:
+        # Per the Phase 3A contract: an explicit human stop signal
+        # (e.g. SIGINT) must persist `status = halted_human_stop` into
+        # loop-state.json. Best-effort: locate the repo, load state,
+        # overwrite status. Any failure here is logged but does not
+        # change the return code; we still exit 3 to signal interrupt.
+        try:
+            repo_root = find_repo_root()
+            state_path = repo_root / ".agent-loop" / "loop-state.json"
+            log_path = repo_root / ".agent-loop" / "orchestrator.log"
+            data = load_loop_state(state_path)
+            save_loop_state(state_path, data, {"status": "halted_human_stop"})
+            _log_note(
+                log_path,
+                "HALT halted_human_stop: orchestrator received "
+                "KeyboardInterrupt / explicit human stop signal",
+            )
+        except Exception as exc:
+            print(
+                f"[orchestrator] could not persist halted_human_stop: {exc}",
+                file=sys.stderr,
+            )
         print("[orchestrator] halted_human_stop: interrupted by human", file=sys.stderr)
         return 3
     except FileNotFoundError as exc:
