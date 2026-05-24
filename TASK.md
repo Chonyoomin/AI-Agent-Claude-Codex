@@ -20,41 +20,46 @@ Phase 3 - Scripted Orchestrator MVP
 
 ## Active Sub-Phase
 
-Phase 3C - Automated Fix-Cycle Handling
+Phase 3D - Subprocess-Driven Claude/Codex Adapters
 
 ## Phase Status
 
-Phase 3B (initial Orchestrator MVP slice) is complete and approved by the human to advance. Phase 3C extends `scripts/agent_loop.py` with the contract's automated fix-cycle path (fix-prompt validation, `claude_fixing` -> evidence -> review transitions, manual-handoff Claude/Codex re-invocation, threshold-policy halt), so a `NEEDS_FIXES` verdict drives a fix cycle automatically instead of parking the loop. Approval modes, Git automation, editor integration, and real subprocess-driven CLI adapters remain deferred.
+Phase 3C (automated fix-cycle handling) is complete and approved by the human to advance. Phase 3D replaces the manual-handoff Claude and Codex adapter stubs in `scripts/agent_loop.py` with real subprocess-driven adapters that invoke the user's configured Claude / Codex CLI command, while preserving the verdict loop, the fix-cycle, the fail-closed validators, the threshold-policy halt, the `halted_human_stop` persistence, and the `codex_version` null-note behavior. The manual-handoff adapters remain available as the fallback when the user has not configured a subprocess command.
 
 ## Active Task
 
-Implement the next 3x sub-phase for Phase 3B: automated `NEEDS_FIXES` handling in `scripts/agent_loop.py`. Validate `.agent-loop/fix-prompt.md` (presence, non-empty, contract header sequence) before any fix cycle; enforce the threshold policy (`cycle_count >= max_cycles` halts with `halted_max_cycles_reached`); implement the fix-cycle control path with the contract's status transitions (`claude_fixing` -> `evidence_capture` -> `awaiting_codex_review`); reuse the manual-handoff Claude and Codex adapters (including their existing fail-closed mtime checks); rerun `bash scripts/run_checks.sh` after each Claude fix handoff; wait for an updated `codex-review.md`; parse the post-fix verdict; loop until any terminal state (approved, failed-requires-human, threshold reached, fail-closed halt, parse/schema failure, or human stop).
+Implement the next 3x sub-phase for Phase 3C: subprocess-driven Claude and Codex adapters in `scripts/agent_loop.py`. Add `SubprocessClaudeAdapter` and `SubprocessCodexAdapter` classes whose interface matches the existing manual-handoff classes; select adapters via `AGENT_LOOP_CLAUDE_CMD` / `AGENT_LOOP_CODEX_CMD` environment variables; resolve model identifiers via `AGENT_LOOP_CLAUDE_MODEL` / `AGENT_LOOP_CODEX_MODEL` with a sane fallback for Claude (command's first token) and a contract-correct null fallback for Codex (orchestrator's existing null-note path fires); shell-split the command via `shlex.split`; run via `subprocess.run` with `cwd` set to the repository root and the prompt file content piped to stdin; capture exit code and wall-clock duration; confirm the expected output artifact exists and its mtime has advanced, preserving fail-closed-on-stale-mtime; never parse model-specific output formats inside the core loop. Bump `ORCHESTRATOR_VERSION` to `phase-3d-v0`.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3C as active
-- `.agent-loop/phase-plan.md` marks Phase 3B complete and contains a Phase 3C section
-- `scripts/agent_loop.py` implements the contract's `#### Fix cycle` step order, the threshold-policy halt, and `fix-prompt.md` validation, with fail-closed behavior preserved on the manual-handoff Claude and Codex adapters
-- `README.md` reflects the Phase 3C active status and documents that a `NEEDS_FIXES` verdict now drives an automated fix cycle (with manual-handoff steps still gated by the human)
-- no approval modes, no real subprocess-driven Claude/Codex adapters, no Git automation, and no editor integration are introduced in this sub-phase
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3D as active
+- `.agent-loop/phase-plan.md` marks Phase 3C complete and contains a Phase 3D section
+- `scripts/agent_loop.py` defines `SubprocessClaudeAdapter` and `SubprocessCodexAdapter`; selection factories pick the subprocess adapter when the corresponding `*_CMD` env var is set, otherwise fall back to the existing manual-handoff stub
+- subprocess adapters honor the Phase 3A contract's adapter-boundary requirements: shell-split command via `shlex.split`, `subprocess.run` with `cwd = repo_root` and prompt piped to stdin, captured exit code and duration, fail-closed mtime check, no model-specific output parsing in the core loop, contract-correct model_id resolution rules (Claude falls back to binary name; Codex stays null and triggers the existing `orchestrator.log` note)
+- `ORCHESTRATOR_VERSION = "phase-3d-v0"`; the running orchestrator persists this into `loop-state.json` on the next `run`
+- `README.md` reflects the Phase 3D active status and documents the new env-var configuration plus the manual-handoff fallback
+- no approval modes, no Git automation, and no editor integration are introduced in this sub-phase
 
 ## Next-Phase Gate
 
-Do not start the next 3x sub-phase (real subprocess-driven Claude/Codex adapters, approval modes, etc.) until:
+Do not start the next 3x sub-phase (approval modes, editor integration, package-layout refactor, etc.) until:
 
-- this Phase 3C slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 3D slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- real subprocess-driven Claude or Codex CLI adapters (still manual-handoff only)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
-- automatic "materially changed / narrowed" cycle-extension judgment by the orchestrator (orchestrator only enforces the threshold; raising `max_cycles` is an explicit Codex/human action)
+- removal of the manual-handoff adapter classes (kept as the fallback)
+- parsing of Claude / Codex CLI output formats inside the core loop (the Phase 3A contract forbids that; subprocess stdout/stderr is captured but not interpreted)
+- streaming subprocess output to a TTY (subprocess output is captured, not streamed; future sub-phases can layer streaming on top)
+- a `scripts/agent_loop/` package layout (single-file keeps the diff minimal)
+- concurrent invocation of multiple Claude / Codex processes (single sequential subprocess per step)
 - any change to the Phase 2A Evidence Collection Contract
 - any change to `scripts/run_checks.sh`
-- any change to the Phase 3A Orchestrator Contract
+- any change to the Phase 3A Orchestrator Contract body
 - adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

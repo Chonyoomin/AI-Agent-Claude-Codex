@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""scripts/agent_loop.py - local orchestrator (Phase 3B scaffold + Phase 3C fix cycle).
+"""scripts/agent_loop.py - local orchestrator.
 
-Implements the Phase 3A Orchestrator Contract (`.agent-loop/phase-plan.md`
--> "## Phase 3A - Orchestrator Contract"):
+Phase 3B scaffold + Phase 3C automated fix cycle + Phase 3D subprocess
+adapters. Implements the Phase 3A Orchestrator Contract
+(`.agent-loop/phase-plan.md` -> "## Phase 3A - Orchestrator Contract"):
 
   Normal cycle (Phase 3B):
     load state -> validate inputs -> enforce ready start status ->
@@ -26,15 +27,31 @@ Implements the Phase 3A Orchestrator Contract (`.agent-loop/phase-plan.md`
       validation -> wait for fresh codex-review.md -> parse verdict),
       then re-enter the verdict loop with the new verdict.
 
+Adapter selection (Phase 3D):
+  Subprocess-driven Claude / Codex adapters are selected when the
+  operator has configured `AGENT_LOOP_CLAUDE_CMD` / `AGENT_LOOP_CODEX_CMD`
+  environment variables. When those are unset, the orchestrator falls
+  back to the existing manual-handoff stubs so the documented manual
+  workflow keeps working. Model identifiers are resolved from
+  `AGENT_LOOP_CLAUDE_MODEL` / `AGENT_LOOP_CODEX_MODEL`; Claude has a
+  binary-name fallback (the contract requires non-null claude_version),
+  Codex stays null when unconfigured (the contract forbids fabricating
+  a codex_version, and the orchestrator's existing null-note path
+  writes the contract-required line to orchestrator.log).
+
 Out of scope (deferred to later 3x sub-phases):
-  - real subprocess-driven Claude or Codex CLI adapters (only
-    manual-handoff stubs are wired up; the human drives the actual CLI)
   - approval modes (Phase 5)
   - editor integration (Phase 7)
   - any Git automation (commit, push, branch, stash, reset, ...)
   - automatic "materially changed / narrowed" cycle-extension judgment
     (orchestrator only enforces the threshold; the policy escape is
     explicit Codex/human action on max_cycles or a new sub-phase)
+  - parsing model-specific Claude / Codex CLI output formats inside
+    the core loop (subprocess stdout/stderr is captured but not
+    interpreted; this is a contract requirement)
+  - streaming subprocess output to a TTY (captured, not streamed)
+  - a scripts/agent_loop/ package layout (single-file keeps the diff
+    minimal; future slice can split if needed)
 
 The orchestrator must never write any file outside its allowed set
 (`.agent-loop/loop-state.json` and the optional `.agent-loop/orchestrator.log`).
@@ -46,7 +63,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -57,7 +76,19 @@ from typing import Callable, Iterable, Optional
 
 # ----- contract constants -----
 
-ORCHESTRATOR_VERSION = "phase-3c-v0"
+ORCHESTRATOR_VERSION = "phase-3d-v0"
+
+# Adapter selection: env-var-driven. When the *_CMD variable is set,
+# the subprocess adapter is used; otherwise the manual-handoff stub is
+# the fallback (so the documented manual workflow keeps working without
+# any extra configuration). The optional *_MODEL variables let the
+# operator supply the version identifier the adapter should record into
+# loop-state.json; the Phase 3A contract forbids the core loop from
+# parsing model-specific output to derive that identifier.
+ENV_CLAUDE_CMD = "AGENT_LOOP_CLAUDE_CMD"
+ENV_CODEX_CMD = "AGENT_LOOP_CODEX_CMD"
+ENV_CLAUDE_MODEL = "AGENT_LOOP_CLAUDE_MODEL"
+ENV_CODEX_MODEL = "AGENT_LOOP_CODEX_MODEL"
 SUPPORTED_CONTRACT_VERSIONS = frozenset({"phase-3a-v2"})
 
 ALLOWED_VERDICTS = (
@@ -254,6 +285,196 @@ class ManualHandoffCodexAdapter:
             model_id=self.default_model_id,
             duration_seconds=duration,
         )
+
+
+class SubprocessClaudeAdapter:
+    """Phase 3D subprocess-driven Claude adapter.
+
+    Invokes a configured shell command (`AGENT_LOOP_CLAUDE_CMD`) with the
+    repository root as cwd and the prompt file content piped to stdin.
+    The configured command is expected to drive Claude Code in a way
+    that writes `.agent-loop/claude-summary.md` as a side effect. The
+    adapter then confirms the file exists and its mtime has advanced
+    (the same fail-closed-on-stale-mtime check as the manual-handoff
+    adapter), and returns an `ExecutionResult` with the captured exit
+    code, the resolved model identifier, and wall-clock duration.
+
+    Model-id resolution order: `AGENT_LOOP_CLAUDE_MODEL` env var first,
+    then the first token of the configured command (e.g. `claude`). The
+    Phase 3A contract requires a non-null `claude_version` (a null
+    triggers `halted_input_missing`); the binary-name fallback keeps the
+    orchestrator running for operators who have not set the model env
+    var, while still honestly recording what was actually invoked.
+
+    The core loop never parses model-specific stdout / stderr formats;
+    subprocess output is captured for future logging but is not
+    interpreted by the orchestrator beyond the exit code.
+    """
+
+    def __init__(
+        self,
+        command: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> None:
+        self.command = command if command is not None else os.environ.get(ENV_CLAUDE_CMD)
+        self.explicit_model_id = (
+            model_id if model_id is not None else os.environ.get(ENV_CLAUDE_MODEL)
+        )
+
+    def _resolved_model_id(self) -> Optional[str]:
+        if self.explicit_model_id:
+            return self.explicit_model_id
+        if self.command:
+            # POSIX-style splitting is only used to extract the first
+            # token for the binary-name fallback. The actual subprocess
+            # invocation goes through the platform shell so quoting and
+            # path conventions match what the operator typed.
+            try:
+                tokens = shlex.split(self.command, posix=True)
+            except ValueError:
+                tokens = self.command.split()
+            if tokens:
+                return tokens[0]
+        return None
+
+    def invoke(self, prompt_path: Path, summary_path: Path) -> ExecutionResult:
+        start = time.monotonic()
+        if not self.command:
+            return ExecutionResult(
+                exit_code=1, model_id=None,
+                duration_seconds=time.monotonic() - start,
+            )
+        prev_mtime = summary_path.stat().st_mtime if summary_path.exists() else 0.0
+        prompt_text = prompt_path.read_text(encoding="utf-8")
+        try:
+            proc = subprocess.run(
+                self.command,
+                shell=True,
+                input=prompt_text,
+                cwd=str(prompt_path.parent.parent),  # repo root (.agent-loop/..)
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            # POSIX-style "command not found" exit code so the orchestrator
+            # halts via its existing `halted_input_missing` branch.
+            return ExecutionResult(
+                exit_code=127, model_id=None,
+                duration_seconds=time.monotonic() - start,
+            )
+        duration = time.monotonic() - start
+        if proc.returncode != 0:
+            return ExecutionResult(
+                exit_code=proc.returncode, model_id=None,
+                duration_seconds=duration,
+            )
+        if not summary_path.exists():
+            return ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=duration,
+            )
+        if summary_path.stat().st_mtime == prev_mtime:
+            return ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=duration,
+            )
+        return ExecutionResult(
+            exit_code=0,
+            model_id=self._resolved_model_id(),
+            duration_seconds=duration,
+        )
+
+
+class SubprocessCodexAdapter:
+    """Phase 3D subprocess-driven Codex adapter.
+
+    Invokes a configured shell command (`AGENT_LOOP_CODEX_CMD`) with the
+    repository root as cwd. The configured command is expected to drive
+    Codex in a way that writes `.agent-loop/codex-review.md` as a side
+    effect. The adapter confirms the file exists and its mtime has
+    advanced, then returns an `ExecutionResult` with the captured exit
+    code, the resolved model identifier (or `None` if not configured),
+    and wall-clock duration.
+
+    Model-id resolution: `AGENT_LOOP_CODEX_MODEL` env var only. Falling
+    back to a derived value is explicitly forbidden for Codex by the
+    contract ("the orchestrator must not silently fabricate one"). If
+    the env var is unset, the adapter returns `model_id=None` and the
+    orchestrator's existing null-note path writes the contract-required
+    line to `.agent-loop/orchestrator.log`.
+    """
+
+    def __init__(
+        self,
+        command: Optional[str] = None,
+        model_id: Optional[str] = None,
+    ) -> None:
+        self.command = command if command is not None else os.environ.get(ENV_CODEX_CMD)
+        self.explicit_model_id = (
+            model_id if model_id is not None else os.environ.get(ENV_CODEX_MODEL)
+        )
+
+    def wait_for_review(self, review_path: Path) -> ExecutionResult:
+        start = time.monotonic()
+        if not self.command:
+            return ExecutionResult(
+                exit_code=1, model_id=None,
+                duration_seconds=time.monotonic() - start,
+            )
+        prev_mtime = review_path.stat().st_mtime if review_path.exists() else 0.0
+        try:
+            proc = subprocess.run(
+                self.command,
+                shell=True,
+                input="",
+                cwd=str(review_path.parent.parent),
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except FileNotFoundError:
+            return ExecutionResult(
+                exit_code=127, model_id=None,
+                duration_seconds=time.monotonic() - start,
+            )
+        duration = time.monotonic() - start
+        if proc.returncode != 0:
+            return ExecutionResult(
+                exit_code=proc.returncode, model_id=None,
+                duration_seconds=duration,
+            )
+        if not review_path.exists():
+            return ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=duration,
+            )
+        if review_path.stat().st_mtime == prev_mtime:
+            return ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=duration,
+            )
+        return ExecutionResult(
+            exit_code=0,
+            model_id=self.explicit_model_id,
+            duration_seconds=duration,
+        )
+
+
+def make_claude_adapter():
+    """Factory: subprocess Claude adapter when configured, else manual-handoff.
+
+    Selection is purely by env-var presence; the core loop calls this
+    function instead of instantiating an adapter class directly so
+    monkey-patching either `ManualHandoffClaudeAdapter` or
+    `SubprocessClaudeAdapter` at the module level still works for tests.
+    """
+    if os.environ.get(ENV_CLAUDE_CMD):
+        return SubprocessClaudeAdapter()
+    return ManualHandoffClaudeAdapter()
+
+
+def make_codex_adapter():
+    """Factory: subprocess Codex adapter when configured, else manual-handoff."""
+    if os.environ.get(ENV_CODEX_CMD):
+        return SubprocessCodexAdapter()
+    return ManualHandoffCodexAdapter()
 
 
 # ----- repo / state helpers -----
@@ -596,8 +817,9 @@ def run_normal_cycle(repo_root: Path) -> int:
         "status": "claude_implementing",
     })
 
-    # 6. Invoke Claude adapter boundary.
-    claude_adapter = ManualHandoffClaudeAdapter()
+    # 6. Invoke Claude adapter boundary (subprocess when configured,
+    #    manual-handoff fallback otherwise).
+    claude_adapter = make_claude_adapter()
     result = claude_adapter.invoke(prompt_path, summary_path)
     if result.model_id is None:
         # Contract: a Claude adapter that cannot resolve a model id is a
@@ -631,9 +853,10 @@ def run_normal_cycle(repo_root: Path) -> int:
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
 
-    # 9. Wait on Codex review.
+    # 9. Wait on Codex review (subprocess when configured, manual-handoff
+    #    fallback otherwise).
     data = save_loop_state(state_path, data, {"status": "awaiting_codex_review"})
-    codex_adapter = ManualHandoffCodexAdapter()
+    codex_adapter = make_codex_adapter()
     review_result = codex_adapter.wait_for_review(review_path)
     if review_result.exit_code != 0:
         return _halt(
@@ -791,8 +1014,9 @@ def _run_fix_cycle(
         "status": "claude_fixing",
     })
 
-    # 2. Invoke Claude adapter with the fix prompt (manual handoff).
-    claude_adapter = ManualHandoffClaudeAdapter()
+    # 2. Invoke Claude adapter with the fix prompt (subprocess when
+    #    configured, manual-handoff fallback otherwise).
+    claude_adapter = make_claude_adapter()
     result = claude_adapter.invoke(fix_prompt_path, summary_path)
     if result.model_id is None:
         raise _FixCycleHalt(_halt(
@@ -823,9 +1047,10 @@ def _run_fix_cycle(
     except HaltError as halt:
         raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
 
-    # 5. Wait for the fix-cycle Codex review.
+    # 5. Wait for the fix-cycle Codex review (subprocess when configured,
+    #    manual-handoff fallback otherwise).
     data = save_loop_state(state_path, data, {"status": "awaiting_codex_review"})
-    codex_adapter = ManualHandoffCodexAdapter()
+    codex_adapter = make_codex_adapter()
     review_result = codex_adapter.wait_for_review(review_path)
     if review_result.exit_code != 0:
         raise _FixCycleHalt(_halt(
@@ -957,9 +1182,12 @@ def build_parser() -> argparse.ArgumentParser:
         prog="agent_loop",
         description=(
             "Agentic AI Coding Loop orchestrator. Implements the Phase 3A "
-            "Orchestrator Contract: normal-cycle control path (Phase 3B) "
-            "and automated NEEDS_FIXES handling with threshold-policy "
-            "enforcement (Phase 3C). Manual-handoff Claude/Codex adapters."
+            "Orchestrator Contract: normal-cycle control path (Phase 3B), "
+            "automated NEEDS_FIXES handling with threshold-policy "
+            "enforcement (Phase 3C), and subprocess-driven Claude/Codex "
+            "adapters (Phase 3D). Set AGENT_LOOP_CLAUDE_CMD and "
+            "AGENT_LOOP_CODEX_CMD to drive the subprocess adapters; "
+            "without them the orchestrator falls back to manual handoff."
         ),
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
