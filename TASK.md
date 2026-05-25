@@ -55,6 +55,9 @@ Do not start the next 4x sub-phase (planner implementation, planner adapter, etc
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
+- recursive invocation of the locally installed `claude` CLI (would spawn a nested Claude Code session inside the current one - unsafe and outside the operational verification scope)
+- fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
+- speculative code changes to `scripts/agent_loop.py` that are not justified by a concrete live-run observation
 - any change to the Phase 2A Evidence Collection Contract
 - any change to the Phase 3A Orchestrator Contract body
 - any change to `scripts/agent_loop.py` or `scripts/run_checks.sh`
