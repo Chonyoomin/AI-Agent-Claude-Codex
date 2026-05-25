@@ -320,23 +320,43 @@ Success:
 - strict mode pauses before major steps
 - autonomous mode respects all safety limits
 
-## Phase 6 - Optional Context and Tool Layer
+## Phase 6 - Durable Memory and Optional Context Layer
 
-Allow additional context files and future tools to support the loop.
+Add a durable memory system that preserves important project knowledge across compaction, phase boundaries, and long autonomous build runs, while still supporting optional context files and future tools.
 
-Support optional files:
+Build:
 
-- API docs
-- design system docs
-- architecture docs
-- security rules
-- testing rules
-- deployment rules
-- external tool docs
-- future MCP configuration
+- a memory contract that defines what counts as durable memory versus canonical task / state artifacts
+- structured in-repo memory storage such as:
+  - `.agent-loop/memory/decisions/`
+  - `.agent-loop/memory/failures/`
+  - `.agent-loop/memory/preferences/`
+  - `.agent-loop/memory/summaries/`
+- selective memory retrieval rules for prompt construction
+- memory distillation rules at approved phase boundaries and after repeated failure patterns
+- optional context-file support for:
+  - API docs
+  - design system docs
+  - architecture docs
+  - security rules
+  - testing rules
+  - deployment rules
+  - external tool docs
+  - future MCP configuration
+
+Design rules:
+
+- memory stores distilled durable knowledge, not raw transcript dumps
+- canonical project state remains the repo artifacts such as `TASK.md`, `.agent-loop/phase-plan.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json`
+- memory retrieval must be selective and relevance-based rather than loading the entire memory store into every prompt
+- human-reviewed policy changes and repeated operational failures should become durable memory entries
+- missing optional context files or missing memory notes must not break the loop
 
 Success:
 
+- important decisions and recurring failure patterns survive compaction without depending on the current chat window
+- the system can retrieve relevant durable memory to support longer autonomous product-building runs
+- memory does not become a competing source of truth for active task or loop state
 - optional context files can be loaded into prompts
 - missing optional files do not break the loop
 - MCP remains future support, not MVP dependency
