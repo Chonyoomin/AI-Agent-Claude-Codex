@@ -102,20 +102,8 @@ While the orchestrator is not yet built, the loop runs by hand against the artif
 
 ## Current Status
 
-The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop), Phase 2A (Evidence Collection Contract), Phase 2B (`scripts/run_checks.sh`), and Phase 3A (Orchestrator Contract) are all complete and approved by the human. The project is currently in **Phase 3B - Implement `scripts/agent_loop.py` (initial slice)**: a first working slice of the orchestrator that covers the scaffold and the normal-cycle control path described in the Phase 3A contract.
+The instruction contract, prompt formats, review formats, task and phase ownership rules, and safety model are in place. Phase 1 (Manual File-Based Loop), Phase 2A (Evidence Collection Contract), Phase 2B (`scripts/run_checks.sh`), and Phase 3 (Scripted Orchestrator MVP, delivered as sub-phases 3A through 3E) are all complete; the historical sub-phase record is preserved in `.agent-loop/phase-plan.md`. The project is currently in **Phase 4A - Planning Contract**: defining, before any code is written, the contract that a future automatic phase planner must satisfy when proposing the next phase or sub-phase. Phase 4A is documentation only; the planner implementation itself is deferred to a later 4x sub-phase activated only after 4A is approved.
 
-This slice implements: repository-root discovery; `.agent-loop/loop-state.json` load / structural validation / contract-version check / runtime-field-only save; per-cycle artifact validators for `.agent-loop/claude-prompt.md` (presence), `.agent-loop/claude-summary.md` (header order + `## Phase` match), `.agent-loop/codex-review.md` (header order + single-verdict parse), `.agent-loop/fix-prompt.md` (header order, when present), and the six evidence files (presence + contract-vocabulary `state:` field); the normal-cycle control path through Claude handoff, `bash scripts/run_checks.sh`, and Codex review waiting; and fail-closed halts that persist the contract's `halted_*` status vocabulary into `loop-state.json` on any malformed or missing required artifact.
+The Phase 4A contract lives in `.agent-loop/phase-plan.md` under `## Phase 4A - Planning Contract` and specifies: which files the planner reads (read-only), which artifacts the planner is allowed to write (the proposal `.agent-loop/proposed-phase.md` and the optional `.agent-loop/planner.log` autonomously; the planning-state files only on explicit human approval), the required structure of a valid proposal (label, objective, definition of done, exclusions, files likely involved, required contract changes, cycle-size estimate, dependencies, risk areas), bounded-scope rules (file-count cap, single-contract-revision cap, testability requirement, etc.), the explicit human-approval signal required for activation (`APPROVED_FOR_ACTIVATION` token in a `## Approval` section the planner did not author), refusal / halt conditions (unresolved `NEEDS_FIXES`, `FAILED_REQUIRES_HUMAN`, any `halted_*` status, stale evidence, vague proposals, etc.), and the failure modes the planner must handle gracefully. No planner code is shipped in this sub-phase.
 
-Deferred to later 3x sub-phases: fix-cycle automation, real subprocess-driven Claude/Codex CLI adapters (this slice ships only manual-handoff stubs that pause for the human to drive the actual CLI), approval modes (Phase 5), editor integration (Phase 7), and Git automation.
-
-### Running The Orchestrator (Phase 3B Initial Slice)
-
-Prerequisites: Python 3 and Bash on `PATH`.
-
-```text
-python scripts/agent_loop.py check-state           # load + validate loop-state.json
-python scripts/agent_loop.py validate-artifacts    # run all per-cycle validators
-python scripts/agent_loop.py run                   # execute one normal cycle
-```
-
-`run` will pause and prompt the human to drive Claude Code (against `.agent-loop/claude-prompt.md`) and Codex (against the captured evidence), pressing Enter at each handoff. The orchestrator never writes any file outside `.agent-loop/loop-state.json` and the optional `.agent-loop/orchestrator.log`.
+Deferred to later 4x sub-phases: planner implementation, planner-orchestrator integration, optional planner adapter. Deferred to later phases generally: approval modes (Phase 5), optional context and tool layer (Phase 6), editor integration (Phase 7), documentation and project polish (Phase 8). The Phase 3 orchestrator surface (`scripts/agent_loop.py`, `scripts/run_checks.sh`) is unchanged by Phase 4A.

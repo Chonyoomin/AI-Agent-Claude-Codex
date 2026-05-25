@@ -270,10 +270,16 @@ Success:
 
 Allow Codex to break larger objectives into smaller implementation phases.
 
-Build:
+Phase 4 is delivered in sub-phases:
 
-- `.agent-loop/phase-plan.md`
-- `.agent-loop/current-phase.md`
+- Phase 4A - Planning Contract: specify, before any planner code is written, the contract that an automatic phase planner must satisfy when proposing the next phase or sub-phase. Covers planner inputs, allowed writes, proposal structure, bounded-scope rules, human-approval requirements, refusal / halt conditions, and failure modes. The contract lives in `.agent-loop/phase-plan.md` under `## Phase 4A - Planning Contract`.
+- additional 4x sub-phases (planner implementation, optional planner adapter, planner-orchestrator integration) deferred until 4A is approved.
+
+Build (later 4x sub-phases):
+
+- `.agent-loop/proposed-phase.md` (the per-cycle planner-authored proposal artifact defined by the Phase 4A contract)
+- `.agent-loop/planner.log` (optional planner decision log defined by the Phase 4A contract)
+- planner code (location and packaging deferred to the implementing sub-phase)
 
 Codex should create phases that are:
 
@@ -289,6 +295,7 @@ Success:
 - a broad objective can be split into controlled implementation phases
 - each phase results in a focused Claude Code prompt
 - the system avoids uncontrolled broad implementation passes
+- the planner never auto-activates its own proposals; activation always requires explicit human approval per the Phase 4A contract
 
 ## Phase 5 - Approval Modes
 
