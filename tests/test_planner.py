@@ -292,21 +292,92 @@ class GenerationSuccessTests(_RepoTestCase):
         # The contract validator must pass against the generated text.
         self.assertIsNone(agent_loop.validate_proposal_structure(text))
 
-    def test_proposed_label_does_not_collide_with_active_sub_phase(self) -> None:
+    def test_proposed_label_is_concrete_phase_4c(self) -> None:
+        """The synthetic repo's active sub-phase is Phase 4B; the planner
+        must dispatch to the concrete Phase 4C - Planner Activation
+        Writes proposal, not a generic 'Phase 4C - Next slice' stub."""
         agent_loop.run_planner(self.repo.root)
         text = (self.repo.root / agent_loop.PROPOSAL_PATH_REL).read_text(encoding="utf-8")
         # The active sub-phase is Phase 4B; the next-letter bump must
         # land on Phase 4C, not collide back onto Phase 4B.
         self.assertNotIn("## Label\n\nPhase 4B", text)
-        self.assertIn("Phase 4C", text)
+        self.assertIn("Phase 4C - Planner Activation Writes", text)
+        # The body must NOT be a generic stub: the vague meta-planning
+        # phrases the validator rejects must not appear.
+        for vague in ("planner-generated stub", "intended to be refined", "stub against the"):
+            self.assertNotIn(vague, text)
 
-    def test_planner_log_contains_outcome_line(self) -> None:
+    def test_planner_log_contains_outcome_line_with_note_prefix(self) -> None:
         agent_loop.run_planner(self.repo.root)
         log_path = self.repo.root / agent_loop.PLANNER_LOG_PATH_REL
         self.assertTrue(log_path.exists())
         text = log_path.read_text(encoding="utf-8")
+        # The Phase 4A contract requires a `note:`-style line for every
+        # planner outcome (refusal or proposal-written).
+        self.assertIn(" note: ", text)
         self.assertIn("proposal written", text)
         self.assertIn(agent_loop.PLANNER_VERSION, text)
+
+    def test_refuses_when_no_concrete_template_registered(self) -> None:
+        """Active sub-phases that have no entry in the planner's
+        concrete-next-phase dispatch table must trigger a clean refusal
+        rather than a generic stub proposal."""
+        self.repo.with_state(sub_phase="Phase 9X - Unknown future slice")
+        rc = agent_loop.run_planner(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertNoProposal()
+        log_text = (self.repo.root / agent_loop.PLANNER_LOG_PATH_REL).read_text(encoding="utf-8")
+        self.assertIn("no_concrete_template", log_text)
+        self.assertIn(" note: ", log_text)
+
+
+# --- additional input-loading coverage ---
+
+class PlannerInputLoadingTests(_RepoTestCase):
+    """The Phase 4A contract enumerates every file the planner is allowed
+    to read. These tests assert that `load_planner_inputs` populates a
+    `PlannerInputs` snapshot containing every additional file (beyond
+    `loop-state.json` / `phase-plan.md` / `TASK.md` / `ROADMAP.md` /
+    evidence) the contract names: `.agent-loop/current-task.md`,
+    `.agent-loop/current-phase.md`, `.agent-loop/claude-prompt.md`,
+    `.agent-loop/fix-prompt.md`, `.agent-loop/orchestrator.log`,
+    `AGENTS.md`, and `CLAUDE.md`.
+    """
+
+    def test_loads_every_contract_enumerated_input(self) -> None:
+        # Plant a unique marker in each additional input file.
+        files_and_markers = {
+            ".agent-loop/current-task.md": "MARKER_CURRENT_TASK",
+            ".agent-loop/current-phase.md": "MARKER_CURRENT_PHASE",
+            ".agent-loop/claude-prompt.md": "MARKER_CLAUDE_PROMPT",
+            ".agent-loop/fix-prompt.md": "MARKER_FIX_PROMPT",
+            ".agent-loop/orchestrator.log": "MARKER_ORCHESTRATOR_LOG",
+            "AGENTS.md": "MARKER_AGENTS_MD",
+            "CLAUDE.md": "MARKER_CLAUDE_MD",
+        }
+        for rel, marker in files_and_markers.items():
+            (self.repo.root / rel).write_text(marker + "\n", encoding="utf-8")
+
+        inputs = agent_loop.load_planner_inputs(self.repo.root)
+        self.assertIn("MARKER_CURRENT_TASK", inputs.current_task_text)
+        self.assertIn("MARKER_CURRENT_PHASE", inputs.current_phase_text)
+        self.assertIn("MARKER_CLAUDE_PROMPT", inputs.claude_prompt_text)
+        self.assertIn("MARKER_FIX_PROMPT", inputs.fix_prompt_text)
+        self.assertIn("MARKER_ORCHESTRATOR_LOG", inputs.orchestrator_log_text)
+        self.assertIn("MARKER_AGENTS_MD", inputs.agents_md_text)
+        self.assertIn("MARKER_CLAUDE_MD", inputs.claude_md_text)
+
+    def test_missing_optional_inputs_do_not_block_load(self) -> None:
+        """Optional inputs (fix-prompt, orchestrator.log, etc.) that
+        legitimately do not exist outside their cycle context must NOT
+        raise during input loading; they should fall through to empty
+        strings so the planner can still propose on a fresh-start state.
+        """
+        # The _Repo builder does NOT write .agent-loop/fix-prompt.md or
+        # .agent-loop/orchestrator.log by default; relying on that.
+        inputs = agent_loop.load_planner_inputs(self.repo.root)
+        self.assertEqual(inputs.fix_prompt_text, "")
+        self.assertEqual(inputs.orchestrator_log_text, "")
 
 
 # --- proposal-content validator tests ---
@@ -332,11 +403,21 @@ class ProposalValidatorTests(unittest.TestCase):
     def _baseline_draft(self) -> agent_loop.ProposalDraft:
         return agent_loop.ProposalDraft(
             label="Phase 4C - Test slice",
-            objective="Implement a small slice.",
+            objective="Add a small subcommand to scripts/agent_loop.py.",
             definition_of_done=[
                 "scripts/agent_loop.py exposes a new CLI subcommand with exit code 0 on success"
             ],
-            exclusions=["no Git automation"],
+            # The validator requires every later 4x / 5+ sub-phase to be
+            # enumerated; the baseline draft proposes Phase 4C, so it must
+            # list Phase 4D plus the Phase 5 / 6 / 7 / 8 markers.
+            exclusions=[
+                "no Phase 4D planner-orchestrator integration",
+                "no Phase 5 approval-mode behavior",
+                "no Phase 6 optional context and tool layer",
+                "no Phase 7 editor / VS Code integration",
+                "no Phase 8 documentation polish",
+                "no Git automation",
+            ],
             files_likely_involved=["scripts/agent_loop.py"],
             required_contract_changes="None",
             cycle_size_estimate=2,
@@ -422,13 +503,61 @@ class ProposalValidatorTests(unittest.TestCase):
     def test_self_approval_token_is_refused(self) -> None:
         draft = self._baseline_draft()
         draft.objective = (
-            "Implement the slice. APPROVED_FOR_ACTIVATION should never appear here."
+            "Add the slice. APPROVED_FOR_ACTIVATION should never appear here."
         )
         problem = agent_loop.validate_proposal_against_contract(
             draft, self._baseline_inputs(),
         )
         self.assertIsNotNone(problem)
         self.assertIn(agent_loop.APPROVAL_TOKEN, problem)
+
+    def test_refuses_when_objective_uses_vague_meta_planning_language(self) -> None:
+        """The Phase 4A contract requires the Objective to be concrete and
+        actionable; meta-planning phrases like 'planner-generated stub' or
+        'intended to be refined' must be refused."""
+        for phrase in agent_loop.VAGUE_OBJECTIVE_PHRASES:
+            with self.subTest(phrase=phrase):
+                draft = self._baseline_draft()
+                draft.objective = (
+                    f"Add the slice. This proposal is a {phrase} for review."
+                )
+                problem = agent_loop.validate_proposal_against_contract(
+                    draft, self._baseline_inputs(),
+                )
+                self.assertIsNotNone(problem)
+                self.assertIn("vague meta-planning", problem)
+
+    def test_refuses_when_exclusions_omit_required_later_phases(self) -> None:
+        """The Phase 4A contract requires `## Exclusions` to enumerate
+        every later 4x / 5+ sub-phase the proposal does not cover. A
+        proposal whose Exclusions omit Phase 5 / 6 / 7 / 8 markers
+        must be refused."""
+        draft = self._baseline_draft()
+        draft.exclusions = ["no Git automation"]   # missing Phase 5/6/7/8
+        problem = agent_loop.validate_proposal_against_contract(
+            draft, self._baseline_inputs(),
+        )
+        self.assertIsNotNone(problem)
+        self.assertIn("Phase 5", problem)
+
+    def test_refuses_when_exclusions_omit_deferred_4x_sub_phase(self) -> None:
+        """When the proposal is Phase 4C (Activation Writes), the
+        Exclusions must explicitly enumerate the OTHER deferred 4x
+        sub-phase the planner knows about (Phase 4D)."""
+        draft = self._baseline_draft()
+        # Floor markers present, but no Phase 4D mention.
+        draft.exclusions = [
+            "no Phase 5 approval-mode behavior",
+            "no Phase 6 optional context and tool layer",
+            "no Phase 7 editor / VS Code integration",
+            "no Phase 8 documentation polish",
+            "no Git automation",
+        ]
+        problem = agent_loop.validate_proposal_against_contract(
+            draft, self._baseline_inputs(),
+        )
+        self.assertIsNotNone(problem)
+        self.assertIn("Phase 4D", problem)
 
 
 # --- write-boundary smoke test ---

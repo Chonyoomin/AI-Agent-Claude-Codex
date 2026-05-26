@@ -1220,6 +1220,43 @@ TESTABLE_DOD_MARKERS = (
     "refuses", "halts", "is written", "is created", "is updated",
 )
 
+# Vague meta-planning phrases that, when found in the `## Objective`
+# body, indicate the proposal is a generic stub rather than a concrete
+# next-phase plan. The Phase 4A contract requires the Objective to be
+# "concrete, actionable, in the present tense" and explicitly forbids
+# vague language; the planner refuses proposals that read as meta-talk
+# about future planning instead of describing the work itself.
+VAGUE_OBJECTIVE_PHRASES = (
+    "planner-generated stub",
+    "intended to be refined",
+    "stub against the",
+    "the implementing sub-phase will pick",
+    "pick exactly one",
+    "narrow scope to that capability",
+    "before activation",
+    "proposal is planner-generated",
+    "to be refined by codex",
+    "placeholder for review",
+    "tbd",
+    "to be determined",
+    "will pick one of",
+)
+
+# Phase-style references that the `## Exclusions` body must enumerate
+# explicitly when the proposal does NOT cover them. The contract says
+# "every later 4x / 5+ sub-phase that this proposal does NOT cover must
+# appear here"; the planner enforces a concrete floor by requiring at
+# least the Phase 5 / Phase 6 / Phase 7 / Phase 8 markers AND any
+# known-deferred 4x sub-phases that are not the proposed one. The list
+# of known-deferred 4x sub-phases is derived from the dispatch table
+# in `_concrete_next_proposal`.
+REQUIRED_EXCLUSIONS_FLOOR = (
+    "Phase 5",
+    "Phase 6",
+    "Phase 7",
+    "Phase 8",
+)
+
 
 @dataclass
 class PlannerInputs:
@@ -1235,6 +1272,20 @@ class PlannerInputs:
     task_md_text: str
     roadmap_md_text: str
     proposed_phase_existing: Optional[str]  # current contents, if any
+    # Additional planner inputs the Phase 4A contract enumerates as
+    # read-only. Stored on the inputs dataclass so the planner has a
+    # single in-memory snapshot of every input it is allowed to read,
+    # rather than re-reading from disk during proposal generation. These
+    # are best-effort reads: missing optional inputs return empty strings
+    # so the planner does not refuse a fresh-start state just because a
+    # mid-cycle artifact (e.g. fix-prompt.md) has not been authored.
+    current_task_text: str = ""
+    current_phase_text: str = ""
+    claude_prompt_text: str = ""
+    fix_prompt_text: str = ""
+    orchestrator_log_text: str = ""
+    agents_md_text: str = ""
+    claude_md_text: str = ""
 
 
 @dataclass
@@ -1268,18 +1319,21 @@ def _proposal_path(repo_root: Path) -> Path:
 
 
 def _planner_log_note(repo_root: Path, message: str) -> None:
-    """Append a single timestamped `note:` / `refused:` line. Best-effort.
+    """Append a single timestamped `note:`-style line. Best-effort.
 
-    The contract treats `.agent-loop/planner.log` as optional and never
-    authoritative, so a write failure must not raise. The line format is
-    deliberately simple so a future tool can `grep` for refusals.
+    The Phase 4A contract's "Refusal / halt conditions" and
+    "Failure modes worth naming" subsections both require the planner
+    log line to use `note:`-style; this helper prepends the literal
+    `note:` token so refusal and success entries share a uniform prefix
+    that a future tool can grep. Write failures are swallowed because
+    the contract treats the log as optional and never authoritative.
     """
     path = _planner_log_path(repo_root)
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         with path.open("a", encoding="utf-8") as fh:
-            fh.write(f"{stamp} {message}\n")
+            fh.write(f"{stamp} note: {message}\n")
     except OSError:
         pass
 
@@ -1407,6 +1461,19 @@ def load_planner_inputs(repo_root: Path) -> PlannerInputs:
         if proposed_path.exists() else None
     )
 
+    # Additional planner inputs per the Phase 4A "Inputs the planner
+    # reads" subsection. Read-only and best-effort: missing optional
+    # inputs (e.g. fix-prompt.md outside a fix cycle) return empty
+    # strings rather than raising, so the planner can still propose on
+    # a fresh-start state.
+    current_task_text = _read_text_or_empty(al / "current-task.md")
+    current_phase_text = _read_text_or_empty(al / "current-phase.md")
+    claude_prompt_text = _read_text_or_empty(al / "claude-prompt.md")
+    fix_prompt_text = _read_text_or_empty(al / "fix-prompt.md")
+    orchestrator_log_text = _read_text_or_empty(al / "orchestrator.log")
+    agents_md_text = _read_text_or_empty(repo_root / "AGENTS.md")
+    claude_md_text = _read_text_or_empty(repo_root / "CLAUDE.md")
+
     return PlannerInputs(
         repo_root=repo_root,
         loop_state=loop_state,
@@ -1420,6 +1487,13 @@ def load_planner_inputs(repo_root: Path) -> PlannerInputs:
         task_md_text=task_md_text,
         roadmap_md_text=roadmap_md_text,
         proposed_phase_existing=proposed_phase_existing,
+        current_task_text=current_task_text,
+        current_phase_text=current_phase_text,
+        claude_prompt_text=claude_prompt_text,
+        fix_prompt_text=fix_prompt_text,
+        orchestrator_log_text=orchestrator_log_text,
+        agents_md_text=agents_md_text,
+        claude_md_text=claude_md_text,
     )
 
 
@@ -1585,132 +1659,271 @@ def _label_exists(label: str, existing_labels: set) -> bool:
     return any(existing.split(" - ", 1)[0].strip() == prefix for existing in existing_labels)
 
 
-def generate_proposal_draft(inputs: PlannerInputs) -> ProposalDraft:
-    """Produce a templated, deterministic next-sub-phase proposal.
-
-    The initial slice is heuristic: increment the active sub-phase letter
-    (4B -> 4C), depend only on already-CLOSED prior sub-phases (so the
-    proposal does not list the active phase as `active-in-flight`, which
-    would be invalid), and pre-fill the structural fields with content
-    derived from the active task context. Codex / human review is
-    expected to refine the body before activation.
+def _recent_closed_dependencies(inputs: PlannerInputs) -> list:
+    """Return the dependency list for a generated proposal: the two most
+    recent CLOSED prior sub-phases, each marked `complete-approved`. The
+    active sub-phase is deliberately omitted because listing it as
+    `active-in-flight` would invalidate the proposal per the Phase 4A
+    contract; the implicit ordering ('the active sub-phase must close
+    first') is captured in the Risk areas instead.
     """
-    state = inputs.loop_state
-    active_sub_phase = state.get("sub_phase") or ""
-    active_phase = state.get("phase") or ""
-
-    next_token = _bump_subphase_letter(active_sub_phase) or "Phase TBD"
-    label = (
-        f"{next_token} - Next planner-implementation slice "
-        f"(planner-generated stub for review)"
-    )
-
-    objective = (
-        f"Continue the {active_phase} series by implementing the next concrete "
-        f"slice of work that {active_sub_phase or 'the currently active sub-phase'} "
-        f"sets up. This proposal is planner-generated as a stub against the Phase 4A "
-        f"contract and is intended to be refined by Codex and approved by a human "
-        f"before activation. The implementing sub-phase will pick exactly one of the "
-        f"deferred Phase 4 capabilities (planner activation writes, planner-orchestrator "
-        f"integration, or an optional planner adapter), narrow scope to that capability, "
-        f"and ship it behind the same structural validators the orchestrator already "
-        f"applies to per-cycle artifacts."
-    )
-
-    definition_of_done = [
-        (
-            "the implementing sub-phase ships planner-owned code whose exit code is "
-            "0 on success and 2 on refusal, exactly as the Phase 4B `plan` subcommand "
-            "already behaves"
-        ),
-        (
-            "`tests/` gains at least one new test case that covers the new capability "
-            "and at least one new test case that covers a refusal path the new code "
-            "introduces (no new capability ships without a refusal test)"
-        ),
-        (
-            "the new capability never writes any file in the Phase 4A "
-            "'Files the planner must never write' set without an explicit, contract-"
-            "disclosed activation step approved by a human"
-        ),
-        (
-            "`README.md` is updated so the Current Status section names the new "
-            "sub-phase as active and documents the new CLI invocation, if any"
-        ),
-    ]
-
-    exclusions = [
-        "no Phase 5 approval-mode behavior",
-        "no Phase 7 editor integration",
-        "no MCP support",
-        "no Git automation (commit, push, branch, stash, reset, checkout, tag)",
-        "no changes to the Phase 2A Evidence Collection Contract or `scripts/run_checks.sh`",
-        "no changes to the Phase 3A Orchestrator Contract body",
-        "no changes to the Phase 4A Planning Contract body",
-        "no changes to `AGENTS.md` or `CLAUDE.md`",
-        "no removal or rewrite of any historical phase-plan section",
-    ]
-
-    files_likely_involved = [
-        "scripts/agent_loop.py",
-        "tests/",
-        ".agent-loop/proposed-phase.md",
-        ".agent-loop/planner.log",
-        ".agent-loop/phase-plan.md",
-        "README.md",
-    ]
-
-    required_contract_changes = "None"
-    cycle_size_estimate = 2
-
-    # Depend only on CLOSED prior sub-phases. The active sub-phase is
-    # deliberately omitted because listing it as `active-in-flight` would
-    # invalidate the proposal per the Phase 4A contract; the implicit
-    # ordering ("4C runs after 4B") is captured in the Risk areas instead.
     dep_labels = list(inputs.closed_labels)
-    # Trim to the two most recent closed sub-phases so the dependency
-    # list stays focused; older history is implicit.
     recent_closed = dep_labels[-2:] if len(dep_labels) > 2 else dep_labels
-    dependencies = [(lbl, "complete-approved") for lbl in recent_closed]
-    if not dependencies:
+    if not recent_closed:
         # Fresh repository: no closed sub-phases yet. Use "pending"
         # against a placeholder; the per-proposal validator will then
         # refuse this draft, which is the correct fail-closed behavior.
-        dependencies = [("(no closed prior sub-phase found)", "pending")]
+        return [("(no closed prior sub-phase found)", "pending")]
+    return [(lbl, "complete-approved") for lbl in recent_closed]
 
+
+def _build_phase_4c_activation_proposal(inputs: PlannerInputs) -> ProposalDraft:
+    """Concrete proposal for the planner's activation-writes sub-phase.
+
+    Activation writes are the work the Phase 4A contract permits ONLY
+    after explicit human approval, and which Phase 4B explicitly defers.
+    Implementing them is the natural next sub-phase after Phase 4B.
+
+    The proposal text never spells out the literal Phase 4A approval-
+    token string (the planner's self-approval guard refuses any proposal
+    that contains that token in any section). The implementing slice
+    reads the token name from the Phase 4A contract body and the
+    `APPROVAL_TOKEN` constant in `scripts/agent_loop.py`.
+    """
+    active_sub_phase = inputs.loop_state.get("sub_phase") or "the active sub-phase"
+    objective = (
+        "Add an `activate` CLI subcommand to `scripts/agent_loop.py` that "
+        "parses `.agent-loop/proposed-phase.md` for a human-authored "
+        "`## Approval` section containing the Phase 4A approval-token "
+        "literal (defined in the contract body and mirrored by the "
+        "`APPROVAL_TOKEN` constant in `scripts/agent_loop.py`) on its own "
+        "line, verifies the approval section names the same `## Label` "
+        "the proposal carries, and on success rewrites the Codex-owned "
+        "planning files exactly as the Phase 4A contract authorizes: it "
+        "rewrites `TASK.md`'s `## Active Phase`, `## Active Sub-Phase`, "
+        "`## Phase Status`, `## Active Task`, `## Phase Outcome Required "
+        "Now`, `## Next-Phase Gate`, and `## Out Of Scope For Current "
+        "Phase` sections (preserving `## Human Objective` and `## Project "
+        "Intent` verbatim), rewrites `.agent-loop/current-task.md` and "
+        "`.agent-loop/current-phase.md`, appends a new `## Phase NX - ...` "
+        "sub-phase section to `.agent-loop/phase-plan.md` without "
+        "modifying any prior section, and resets "
+        "`.agent-loop/loop-state.json` to "
+        "`status = awaiting_claude_implementation`, `cycle_count = 0`, "
+        "`last_verdict = null`, `last_verdict_phase = null`, with "
+        "`phase` / `sub_phase` / `task` set from the approved proposal "
+        "and all orchestrator-owned runtime fields (`max_cycles`, "
+        "`contract_version`, `claude_version`, `codex_version`, "
+        "`orchestrator_version`) preserved. The approval parser scopes "
+        "its token match to the `## Approval` section only, so a stray "
+        "mention of the approval-token string in unrelated prose cannot "
+        "trigger activation, and refuses any approval line whose label "
+        "does not match `## Label` exactly."
+    )
+    definition_of_done = [
+        "scripts/agent_loop.py exposes an `activate` CLI subcommand whose exit code is 0 on a successful activation and 2 on any refusal",
+        "the activation parser refuses any .agent-loop/proposed-phase.md that lacks a `## Approval` section, lacks the Phase 4A approval-token literal on its own line within that section, or whose approval label does not exactly match the proposal's `## Label`",
+        "the activation path rewrites TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md, and .agent-loop/loop-state.json, and appends one new sub-phase section to .agent-loop/phase-plan.md, exactly as the Phase 4A contract's allowed-writes-on-activation list permits; no other file is modified",
+        "the activation path preserves TASK.md's `## Human Objective` and `## Project Intent` verbatim; a diff that mutates either of those sections fails closed",
+        "tests/test_planner_activation.py covers: one successful activation, one refusal on a missing approval section, one refusal on a forged token outside `## Approval`, one refusal on a label mismatch, and one refusal that confirms the planner.log records the activation-source line (file path, mtime, approval line)",
+        "README.md is updated so the Current Status section names Phase 4C as active and documents the new `python scripts/agent_loop.py activate` subcommand",
+    ]
+    exclusions = [
+        "no Phase 4D planner-orchestrator integration; the `activate` subcommand stays standalone in this sub-phase and is not auto-invoked from `run_normal_cycle` or `_run_fix_cycle`",
+        "no Phase 4E optional planner adapter (deferred)",
+        "no Phase 5 approval-mode behavior beyond the Phase 4A approval-token literal",
+        "no Phase 6 optional context and tool layer",
+        "no Phase 7 editor / VS Code integration",
+        "no Phase 8 documentation polish",
+        "no MCP support",
+        "no Git automation (commit, push, branch, stash, reset, checkout, tag)",
+        "no changes to the Phase 2A Evidence Collection Contract or `scripts/run_checks.sh`",
+        "no changes to the Phase 3A Orchestrator Contract body, the Phase 4A Planning Contract body, `AGENTS.md`, or `CLAUDE.md`",
+    ]
+    files_likely_involved = [
+        "scripts/agent_loop.py",
+        "tests/test_planner_activation.py",
+        ".agent-loop/proposed-phase.md",
+        ".agent-loop/planner.log",
+        "TASK.md",
+        ".agent-loop/current-task.md",
+        ".agent-loop/current-phase.md",
+        ".agent-loop/phase-plan.md",
+        ".agent-loop/loop-state.json",
+        "README.md",
+    ]
     risk_areas = [
         (
-            f"this proposal implicitly assumes {active_sub_phase or 'the active sub-phase'} "
-            f"will reach `APPROVED_FOR_HUMAN_REVIEW` before activation; the active "
-            f"sub-phase is intentionally omitted from `## Dependencies` to satisfy "
-            f"the Phase 4A 'no active-in-flight dependency' rule, but the proposal "
-            f"is not meaningful until the active sub-phase is closed"
+            "approval-token forgery surface: the activation parser must scope the "
+            "Phase 4A approval-token match to the `## Approval` section header, "
+            "not whole-file substring matching, so a stray mention in unrelated prose "
+            "cannot trigger activation"
         ),
         (
-            "the body is planner-generated stub content; Codex or a human must "
-            "refine the `## Objective`, `## Definition of done`, and "
-            "`## Files likely involved` sections to match the chosen next capability "
-            "before activation"
+            "label-mismatch defense: if the `## Approval` body names a different label "
+            "than `## Label`, the activation parser must refuse, because the approval "
+            "may be for an earlier draft that was later overwritten by a new proposal"
         ),
         (
-            "no activation writes are performed by this proposal-generation step; "
-            "activation remains a separate, human-approved sub-phase (deferred from "
-            "Phase 4B)"
+            "loop-state.json reset semantics: the activation path must set "
+            "`status = awaiting_claude_implementation`, `cycle_count = 0`, "
+            "`last_verdict = null`, `last_verdict_phase = null`, and preserve "
+            "`max_cycles` / `contract_version` / `claude_version` / `codex_version` / "
+            "`orchestrator_version` per the Phase 3A contract's write-ownership rules"
+        ),
+        (
+            "phase-plan.md history is append-only: the activation path must append the "
+            "new sub-phase section, never edit any prior section, and never rewrite the "
+            "approved Phase 4A Planning Contract body"
+        ),
+        (
+            "TASK.md `## Human Objective` and `## Project Intent` are human-owned: the "
+            "activation path must preserve both sections verbatim; "
+            f"the activation depends on {active_sub_phase} reaching "
+            f"`APPROVED_FOR_HUMAN_REVIEW` first, which is why this sub-phase is "
+            "Phase 4C rather than running concurrently with 4B"
         ),
     ]
-
     return ProposalDraft(
-        label=label,
+        label="Phase 4C - Planner Activation Writes",
         objective=objective,
         definition_of_done=definition_of_done,
         exclusions=exclusions,
         files_likely_involved=files_likely_involved,
-        required_contract_changes=required_contract_changes,
-        cycle_size_estimate=cycle_size_estimate,
+        required_contract_changes="None",
+        cycle_size_estimate=2,
         cycle_size_justification=None,
-        dependencies=dependencies,
+        dependencies=_recent_closed_dependencies(inputs),
         risk_areas=risk_areas,
     )
+
+
+def _build_phase_4d_integration_proposal(inputs: PlannerInputs) -> ProposalDraft:
+    """Concrete proposal for wiring the planner into the orchestrator's
+    post-approval handoff. Activated only after Phase 4C ships activation
+    writes, so the planner has somewhere to hand its approved proposal off
+    to.
+    """
+    objective = (
+        "Wire the planner into `scripts/agent_loop.py` so that after a "
+        "`APPROVED_FOR_HUMAN_REVIEW` verdict and the resulting "
+        "`phase_complete_awaiting_human_approval` status, the orchestrator "
+        "invokes `run_planner` to refresh `.agent-loop/proposed-phase.md` "
+        "before returning control to the human. The integration is read-only "
+        "with respect to the planner's own write-boundary: planner output "
+        "remains scoped to `.agent-loop/proposed-phase.md` and "
+        "`.agent-loop/planner.log`, and the orchestrator records the planner's "
+        "exit code into `.agent-loop/orchestrator.log` as a `note:` line so the "
+        "review chain remains auditable. Activation of the proposal still "
+        "requires explicit human approval; the integration does not bypass the "
+        "Phase 4A 'never autonomously activate' rule."
+    )
+    definition_of_done = [
+        "scripts/agent_loop.py's `_handle_verdict_loop` invokes `run_planner` after persisting `phase_complete_awaiting_human_approval` and before returning 0; the planner's exit code is logged to `.agent-loop/orchestrator.log` as a `note:` line",
+        "the orchestrator never auto-activates the planner's proposal; the existing 'never auto-activate' write boundary is preserved",
+        "tests/test_planner_integration.py covers: one successful integration call after APPROVED_FOR_HUMAN_REVIEW, one path where the planner refuses (stale evidence, etc.) and the orchestrator still returns 0 with the refusal logged, and one path verifying no activation-file writes occur from the integration call",
+        "README.md is updated so the Current Status section names Phase 4D as active and documents the post-approval planner invocation",
+    ]
+    exclusions = [
+        "no Phase 4E optional planner adapter (deferred)",
+        "no Phase 5 approval-mode behavior",
+        "no Phase 6 optional context and tool layer",
+        "no Phase 7 editor / VS Code integration",
+        "no Phase 8 documentation polish",
+        "no MCP support",
+        "no Git automation",
+        "no changes to the Phase 2A Evidence Collection Contract, the Phase 3A Orchestrator Contract body, the Phase 4A Planning Contract body, `AGENTS.md`, or `CLAUDE.md`",
+        "no auto-activation of any planner-authored proposal under any verdict",
+    ]
+    files_likely_involved = [
+        "scripts/agent_loop.py",
+        "tests/test_planner_integration.py",
+        ".agent-loop/proposed-phase.md",
+        ".agent-loop/planner.log",
+        ".agent-loop/orchestrator.log",
+        "README.md",
+    ]
+    risk_areas = [
+        "the integration must not block the orchestrator's return path: a planner refusal must be logged and ignored for control-flow purposes, never escalated to a halt",
+        "the planner runs after the verdict is persisted, so a planner failure can never reverse or rewrite the verdict",
+        "auto-invocation increases the surface area for planner.log noise; the integration must log exactly one `note:` line per invocation, not duplicates",
+    ]
+    return ProposalDraft(
+        label="Phase 4D - Planner-Orchestrator Integration",
+        objective=objective,
+        definition_of_done=definition_of_done,
+        exclusions=exclusions,
+        files_likely_involved=files_likely_involved,
+        required_contract_changes="None",
+        cycle_size_estimate=2,
+        cycle_size_justification=None,
+        dependencies=_recent_closed_dependencies(inputs),
+        risk_areas=risk_areas,
+    )
+
+
+# Dispatch from the active sub-phase prefix to a concrete proposal-builder
+# function. Keeping the mapping explicit makes the planner refuse cleanly
+# (rather than emit a generic stub) for any active sub-phase whose next
+# step has not been concretely planned. New entries are added as the
+# project progresses; the planner is fail-closed by default.
+_CONCRETE_NEXT_PHASE_DISPATCH = {
+    "Phase 4B": _build_phase_4c_activation_proposal,
+    "Phase 4C": _build_phase_4d_integration_proposal,
+}
+
+
+def _known_deferred_4x_labels() -> list:
+    """Return the labels of all known-concrete 4x sub-phases (one label
+    per dispatch entry). Used by the per-proposal validator to enforce
+    explicit enumeration in `## Exclusions`.
+    """
+    labels: list = []
+    for builder in _CONCRETE_NEXT_PHASE_DISPATCH.values():
+        # Each builder is a closure that needs PlannerInputs; we only
+        # need its label, so build a sentinel inputs object that has just
+        # the fields the builder reads (the recent-deps helper tolerates
+        # an empty closed_labels list).
+        sentinel = PlannerInputs(
+            repo_root=Path("."),
+            loop_state={},
+            summary_mtime=None,
+            review_mtime=None,
+            evidence_captured_ats={},
+            evidence_missing=[],
+            phase_plan_text="",
+            existing_labels=set(),
+            closed_labels=[],
+            task_md_text="",
+            roadmap_md_text="",
+            proposed_phase_existing=None,
+        )
+        labels.append(builder(sentinel).label)
+    return labels
+
+
+def generate_proposal_draft(inputs: PlannerInputs) -> Optional[ProposalDraft]:
+    """Produce a concrete next-sub-phase proposal via the dispatch table.
+
+    Returns the concrete ProposalDraft for the matched active sub-phase
+    prefix, or `None` if no concrete proposal is registered for the
+    current active sub-phase. The Phase 4A contract forbids vague
+    meta-planning content; returning `None` here lets the caller refuse
+    cleanly (with a clear `no_concrete_template` log line) rather than
+    emit a generic stub that the per-proposal validator would have to
+    reject anyway.
+    """
+    active_sub_phase = inputs.loop_state.get("sub_phase") or ""
+    if not active_sub_phase:
+        return None
+    prefix_match = _SUBPHASE_TOKEN_RE.search(active_sub_phase)
+    if prefix_match is None:
+        return None
+    prefix = f"Phase {prefix_match.group(1)}{prefix_match.group(2).upper()}"
+    builder = _CONCRETE_NEXT_PHASE_DISPATCH.get(prefix)
+    if builder is None:
+        return None
+    return builder(inputs)
 
 
 def validate_proposal_against_contract(
@@ -1733,11 +1946,57 @@ def validate_proposal_against_contract(
     if not draft.risk_areas:
         return "## Risk areas has no bullets"
 
-    # Label collision against existing historical sub-phase labels.
+    # Label collision against existing historical sub-phase labels. Run
+    # this before content-quality checks so label problems surface with
+    # the most-specific reason; the contract forbids re-use of labels
+    # under any circumstances.
     if _label_exists(draft.label, inputs.existing_labels):
         return (
             f"## Label {draft.label!r} collides with an existing phase-plan heading "
             f"(re-use of labels is forbidden by the Phase 4A contract)"
+        )
+
+    # Bounded-scope: the Objective must be concrete, not meta-planning prose.
+    # The Phase 4A contract: "concrete, actionable, in the present tense.
+    # Vague language ('improve X', 'refactor Y to be better') is forbidden."
+    objective_low = draft.objective.lower()
+    for phrase in VAGUE_OBJECTIVE_PHRASES:
+        if phrase in objective_low:
+            return (
+                f"## Objective contains vague meta-planning phrase {phrase!r}; "
+                f"the Phase 4A contract requires concrete, actionable, present-tense "
+                f"description of the work the proposed sub-phase performs"
+            )
+
+    # Bounded-scope: `## Exclusions` must explicitly enumerate every
+    # later 4x / 5+ sub-phase the proposal does NOT cover. The planner
+    # enforces a concrete floor (Phase 5 / 6 / 7 / 8) AND any deferred
+    # 4x sub-phase known to the dispatch table other than the proposed
+    # one itself.
+    exclusions_text = "\n".join(draft.exclusions)
+    missing_floor: list = []
+    for marker in REQUIRED_EXCLUSIONS_FLOOR:
+        if marker not in exclusions_text:
+            missing_floor.append(marker)
+    if missing_floor:
+        return (
+            f"## Exclusions does not enumerate the required later sub-phases: "
+            f"{missing_floor}; the Phase 4A contract requires every later "
+            f"4x / 5+ sub-phase the proposal does not cover to appear here"
+        )
+    proposed_prefix = draft.label.split(" - ", 1)[0].strip()
+    deferred_4x_missing: list = []
+    for deferred_label in _known_deferred_4x_labels():
+        deferred_prefix = deferred_label.split(" - ", 1)[0].strip()
+        if deferred_prefix == proposed_prefix:
+            continue
+        if deferred_prefix not in exclusions_text:
+            deferred_4x_missing.append(deferred_label)
+    if deferred_4x_missing:
+        return (
+            f"## Exclusions does not enumerate the deferred 4x sub-phases this "
+            f"proposal does not cover: {deferred_4x_missing}; each must be "
+            f"explicitly listed (by `Phase 4x` prefix)"
         )
 
     # Bounded-scope: at most PROPOSAL_MAX_FILES file paths.
@@ -1947,6 +2206,20 @@ def run_planner(repo_root: Path) -> int:
         return 2
 
     draft = generate_proposal_draft(inputs)
+    if draft is None:
+        active_sub_phase = inputs.loop_state.get("sub_phase") or "(unset)"
+        reason = (
+            f"no concrete next-phase template registered for active sub-phase "
+            f"{active_sub_phase!r}; a vague stub is explicitly refused by the "
+            f"Phase 4A contract, so a human must extend the planner's "
+            f"_CONCRETE_NEXT_PHASE_DISPATCH table before re-running"
+        )
+        _planner_log_note(repo_root, f"refused [no_concrete_template]: {reason}")
+        print(
+            f"[planner] refused [no_concrete_template]: {reason}",
+            file=sys.stderr,
+        )
+        return 2
     draft_problem = validate_proposal_against_contract(draft, inputs)
     if draft_problem is not None:
         _planner_log_note(
