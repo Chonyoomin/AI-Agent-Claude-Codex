@@ -270,10 +270,16 @@ Success:
 
 Allow Codex to break larger objectives into smaller implementation phases.
 
-Build:
+Phase 4 is delivered in sub-phases:
 
-- `.agent-loop/phase-plan.md`
-- `.agent-loop/current-phase.md`
+- Phase 4A - Planning Contract: specify, before any planner code is written, the contract that an automatic phase planner must satisfy when proposing the next phase or sub-phase. Covers planner inputs, allowed writes, proposal structure, bounded-scope rules, human-approval requirements, refusal / halt conditions, and failure modes. The contract lives in `.agent-loop/phase-plan.md` under `## Phase 4A - Planning Contract`.
+- additional 4x sub-phases (planner implementation, optional planner adapter, planner-orchestrator integration) deferred until 4A is approved.
+
+Build (later 4x sub-phases):
+
+- `.agent-loop/proposed-phase.md` (the per-cycle planner-authored proposal artifact defined by the Phase 4A contract)
+- `.agent-loop/planner.log` (optional planner decision log defined by the Phase 4A contract)
+- planner code (location and packaging deferred to the implementing sub-phase)
 
 Codex should create phases that are:
 
@@ -289,6 +295,7 @@ Success:
 - a broad objective can be split into controlled implementation phases
 - each phase results in a focused Claude Code prompt
 - the system avoids uncontrolled broad implementation passes
+- the planner never auto-activates its own proposals; activation always requires explicit human approval per the Phase 4A contract
 
 ## Phase 5 - Approval Modes
 
@@ -313,23 +320,43 @@ Success:
 - strict mode pauses before major steps
 - autonomous mode respects all safety limits
 
-## Phase 6 - Optional Context and Tool Layer
+## Phase 6 - Durable Memory and Optional Context Layer
 
-Allow additional context files and future tools to support the loop.
+Add a durable memory system that preserves important project knowledge across compaction, phase boundaries, and long autonomous build runs, while still supporting optional context files and future tools.
 
-Support optional files:
+Build:
 
-- API docs
-- design system docs
-- architecture docs
-- security rules
-- testing rules
-- deployment rules
-- external tool docs
-- future MCP configuration
+- a memory contract that defines what counts as durable memory versus canonical task / state artifacts
+- structured in-repo memory storage such as:
+  - `.agent-loop/memory/decisions/`
+  - `.agent-loop/memory/failures/`
+  - `.agent-loop/memory/preferences/`
+  - `.agent-loop/memory/summaries/`
+- selective memory retrieval rules for prompt construction
+- memory distillation rules at approved phase boundaries and after repeated failure patterns
+- optional context-file support for:
+  - API docs
+  - design system docs
+  - architecture docs
+  - security rules
+  - testing rules
+  - deployment rules
+  - external tool docs
+  - future MCP configuration
+
+Design rules:
+
+- memory stores distilled durable knowledge, not raw transcript dumps
+- canonical project state remains the repo artifacts such as `TASK.md`, `.agent-loop/phase-plan.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json`
+- memory retrieval must be selective and relevance-based rather than loading the entire memory store into every prompt
+- human-reviewed policy changes and repeated operational failures should become durable memory entries
+- missing optional context files or missing memory notes must not break the loop
 
 Success:
 
+- important decisions and recurring failure patterns survive compaction without depending on the current chat window
+- the system can retrieve relevant durable memory to support longer autonomous product-building runs
+- memory does not become a competing source of truth for active task or loop state
 - optional context files can be loaded into prompts
 - missing optional files do not break the loop
 - MCP remains future support, not MVP dependency

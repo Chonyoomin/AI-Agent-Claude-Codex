@@ -16,49 +16,51 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 3 - Scripted Orchestrator MVP
+Phase 4 - Phase Planning Automation
 
 ## Active Sub-Phase
 
-Phase 3E - End-to-End MVP Verification
+Phase 4B - Planner Initial Slice (Proposal Generation)
 
 ## Phase Status
 
-Phase 3D (subprocess-driven Claude/Codex adapters) is complete and approved by the human to advance. Phase 3E is operational verification: actually execute `python scripts/agent_loop.py run` against the repository's real `.agent-loop/` workflow, observe what happens, fix any concrete operational bug the live run reveals, and document the residual risks honestly. Approval modes, Git automation, editor integration, and a package-layout refactor remain deferred.
+Phase 4A (Planning Contract) is closed and approved. Phase 4B implements the first working slice of the automatic planner against the Phase 4A contract: read the current project state, enforce the Phase 4A refusal rules, and generate one valid `.agent-loop/proposed-phase.md` without activating it. The planner may also append decision notes to `.agent-loop/planner.log`. Activation writes (modifying `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`, `.agent-loop/loop-state.json`) are explicitly deferred to a later 4x sub-phase.
 
 ## Active Task
 
-Execute and harden the Phase 3E end-to-end MVP verification of `scripts/agent_loop.py`. Run at least one real bounded orchestrator cycle against the repository's actual `.agent-loop/` workflow; prefer the subprocess path if the required local commands are usable, otherwise fall back to the manual-handoff path and state that clearly. Observe and record: which adapter path was used, which status transitions actually landed in `.agent-loop/loop-state.json`, which artifact mtimes actually advanced, which lines appeared in `.agent-loop/orchestrator.log`, and what the cycle's terminal state was (success path, halt path, or fix-cycle path). Fix any concrete operational bug the live run reveals with a minimal targeted change to `scripts/agent_loop.py`; if no bug is revealed, do not make speculative code changes. Update `README.md` only if the real operator workflow differs from what is currently documented.
+Implement the planner's proposal-generation step inside `scripts/agent_loop.py` (or a small adjacent planner module if that keeps ownership boundaries clearer). The planner must: load the planner inputs listed in the Phase 4A contract; apply every refusal and halt condition defined in the contract; generate a `.agent-loop/proposed-phase.md` whose structure matches the contract's required sections in order; enforce the bounded-scope rules on its own generated proposal; optionally append proposal- or refusal-outcome notes to `.agent-loop/planner.log`; and refuse to write any activation file in this sub-phase. Add focused tests for the refusal paths and one valid proposal-generation path. Update `README.md` so the Current Status and usage notes describe the Phase 4B planner slice.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 3 / 3E as active
-- `.agent-loop/phase-plan.md` marks Phase 3D complete and contains a Phase 3E section
-- at least one real bounded orchestrator run was actually executed against the repository's `.agent-loop/` workflow; the chosen adapter path and the reason for the choice are explicitly recorded
-- `.agent-loop/claude-summary.md` truthfully describes the real run, clearly separating live-run observations from prior cycles' synthetic validation
-- `.agent-loop/orchestrator.log` reflects the real run (this file did not exist before Phase 3E)
-- any concrete operational bug revealed by the live run is fixed with minimal targeted code change; if no bug is revealed, `scripts/agent_loop.py` is unchanged
-- the final on-disk state is left coherent and reviewable
-- no approval modes, no Git automation, no editor integration, no recursive invocation of the locally installed `claude` CLI
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 4 / 4B as active
+- `.agent-loop/phase-plan.md` marks Phase 4A complete and contains a Phase 4B section with the same `### Status` / `### Objective` / `### Definition of done` / `### Exclusions` shape as prior sub-phase sections
+- `scripts/agent_loop.py` (or a small new planner file) implements: planner input loading, refusal/halt checks, proposal generation, optional `planner.log` notes, and a CLI subcommand to invoke the planner
+- `tests/` contains focused tests covering at least the major refusal paths and one valid proposal-generation path
+- `README.md` reflects the Phase 4B active status and documents how to invoke the planner
+- the planner never writes any file in the Phase 4A "Files the planner must never write" list
+- activation writes are NOT implemented in this sub-phase
+- no changes to `AGENTS.md`, `CLAUDE.md`, `scripts/run_checks.sh`, the Phase 2A Evidence Collection Contract, the Phase 3A Orchestrator Contract body, or the Phase 4A Planning Contract body
 
 ## Next-Phase Gate
 
-Do not start the next phase or 3x sub-phase (approval modes, editor integration, package-layout refactor, etc.) until:
+Do not start the next 4x sub-phase (planner activation writes, planner-orchestrator integration, optional planner adapter, etc.) until:
 
-- this Phase 3E slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 4B slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
+- planner activation writes (modifying `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`, `.agent-loop/loop-state.json` based on an approved proposal; deferred to a later 4x sub-phase)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI (would spawn a nested Claude Code session inside the current one - unsafe and outside the operational verification scope)
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
-- speculative code changes to `scripts/agent_loop.py` that are not justified by a concrete live-run observation
 - any change to the Phase 2A Evidence Collection Contract
-- any change to `scripts/run_checks.sh`
 - any change to the Phase 3A Orchestrator Contract body
-- adding any real test/lint/typecheck/build suite to the repository (still a documentation-only project)
+- any change to the Phase 4A Planning Contract body
+- any change to `scripts/run_checks.sh`
+- any change to `AGENTS.md` or `CLAUDE.md`
+- adding any real test/lint/typecheck/build suite to the repository (the new `tests/` directory is for the planner's own validators, not a project-wide CI suite)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
