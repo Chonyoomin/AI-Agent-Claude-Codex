@@ -69,7 +69,8 @@ import shlex
 import subprocess
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterable, Optional
 
@@ -1085,6 +1086,914 @@ def _run_fix_cycle(
     return verdict, data
 
 
+# ----- Phase 4B planner (proposal generation only) -----
+#
+# This block implements the first working slice of the automatic phase
+# planner against the Phase 4A Planning Contract
+# (`.agent-loop/phase-plan.md` -> "## Phase 4A - Planning Contract").
+#
+# Scope of this slice:
+#   - load the planner inputs the contract enumerates as read-only
+#   - apply every refusal / halt condition the contract names
+#   - generate one structurally valid `.agent-loop/proposed-phase.md`
+#     when planning is allowed
+#   - optionally append a single-line note to `.agent-loop/planner.log`
+#   - never write any file in the contract's "Files the planner must
+#     never write" set; never write the activation files; never write
+#     the `APPROVED_FOR_ACTIVATION` token (self-approval is forbidden)
+#
+# Activation writes (modifying TASK.md / current-task.md /
+# current-phase.md / phase-plan.md / loop-state.json on the basis of an
+# approved proposal) are deferred to a later 4x sub-phase. The planner
+# only WRITES the two planner-owned artifacts.
+#
+# Failure handling is fail-closed: any refusal or generation failure
+# returns a non-zero exit code, logs a single-line `note:` (best-effort)
+# to `.agent-loop/planner.log`, and leaves `.agent-loop/proposed-phase.md`
+# untouched.
+
+PLANNER_VERSION = "phase-4b-v0"
+APPROVAL_TOKEN = "APPROVED_FOR_ACTIVATION"
+PROPOSAL_PATH_REL = ".agent-loop/proposed-phase.md"
+PLANNER_LOG_PATH_REL = ".agent-loop/planner.log"
+
+PROPOSAL_TITLE = "# Proposed Phase"
+PROPOSAL_REQUIRED_SECTIONS = (
+    "## Label",
+    "## Objective",
+    "## Definition of done",
+    "## Exclusions",
+    "## Files likely involved",
+    "## Required contract changes",
+    "## Cycle-size estimate",
+    "## Dependencies",
+    "## Risk areas",
+)
+
+PROPOSAL_MAX_FILES = 10
+PROPOSAL_MAX_CONTRACT_REVISIONS = 1
+PROPOSAL_DEFAULT_MAX_CYCLE_SIZE = 3
+
+# Per the Phase 4A "Failure modes worth naming" subsection: when the
+# orchestrator is in flight on a cycle (mid-implement, mid-fix, mid-capture,
+# or mid-review), the cycle's view is not yet terminal and the planner
+# refuses to propose the next phase.
+ORCHESTRATOR_IN_FLIGHT_STATUSES = frozenset({
+    "claude_implementing",
+    "claude_fixing",
+    "evidence_capture",
+    "awaiting_codex_review",
+})
+
+DEPENDENCY_STATUS_TOKENS = frozenset({
+    "complete-approved",
+    "complete-superseded",
+    "active-in-flight",
+    "pending",
+})
+# A proposal that depends on an active-in-flight or pending phase is
+# invalid per the Phase 4A "Refusal / halt conditions".
+DEPENDENCY_BLOCKING_STATUSES = frozenset({
+    "active-in-flight",
+    "pending",
+})
+
+# Mirror of the Phase 4A "Files the planner must never write" list, used
+# for both write-time refusal (the planner never opens any of these for
+# write) and proposal-content validation (a proposal that names any of
+# these in its `## Files likely involved` AND does not itself disclose a
+# contract revision authorizing the change is suspect; the contract puts
+# the disclosure burden on the proposal author rather than on the
+# planner enforcing it line-by-line, but the planner still hard-refuses
+# attempting to author over these files itself).
+PLANNER_FORBIDDEN_WRITE_FILES = frozenset({
+    "scripts/agent_loop.py",
+    "scripts/run_checks.sh",
+    "AGENTS.md",
+    "CLAUDE.md",
+    "ROADMAP.md",
+    "README.md",
+    ".gitattributes",
+    ".gitignore",
+    ".agent-loop/claude-prompt.md",
+    ".agent-loop/claude-summary.md",
+    ".agent-loop/codex-review.md",
+    ".agent-loop/fix-prompt.md",
+    ".agent-loop/git-status.log",
+    ".agent-loop/git-diff.patch",
+    ".agent-loop/test-output.log",
+    ".agent-loop/lint-output.log",
+    ".agent-loop/typecheck-output.log",
+    ".agent-loop/build-output.log",
+    ".agent-loop/orchestrator.log",
+})
+# Files the planner is allowed to write in this sub-phase (proposal step
+# only; activation writes are deferred to a later 4x sub-phase).
+PLANNER_ALLOWED_WRITE_FILES = frozenset({
+    PROPOSAL_PATH_REL,
+    PLANNER_LOG_PATH_REL,
+})
+
+# Vague-language tokens forbidden in `## Definition of done` per the
+# Phase 4A contract ("Code is cleaner" is not testable; specific
+# file-state / CLI-behavior / validator-outcome bullets are required).
+VAGUE_DOD_PHRASES = (
+    "improve ",
+    "make better",
+    "make faster",
+    "clean up",
+    "cleaner",
+    "tidy",
+    "polish",
+    "general improvements",
+    "refactor for clarity",
+)
+
+# Heuristic: a Definition-of-done bullet counts as "testable" if it
+# names a file path, a CLI verb, or one of these markers. The set is
+# intentionally conservative; missing it does not silently pass.
+TESTABLE_DOD_MARKERS = (
+    "scripts/", "tests/", ".agent-loop/", "README.md", "TASK.md",
+    "exit code", "exit 0", "exit 2", "CLI", "subcommand",
+    "validator", "structurally valid", "structurally invalid",
+    "appends a", "writes a", "writes the", "fails closed",
+    "refuses", "halts", "is written", "is created", "is updated",
+)
+
+
+@dataclass
+class PlannerInputs:
+    repo_root: Path
+    loop_state: dict
+    summary_mtime: Optional[float]
+    review_mtime: Optional[float]
+    evidence_captured_ats: dict  # rel_path -> Optional[float epoch]
+    evidence_missing: list       # rel_path with no readable captured_at
+    phase_plan_text: str
+    existing_labels: set         # set[str]
+    closed_labels: list          # ordered list[str], oldest-first
+    task_md_text: str
+    roadmap_md_text: str
+    proposed_phase_existing: Optional[str]  # current contents, if any
+
+
+@dataclass
+class PlannerRefusal:
+    code: str
+    reason: str
+
+
+@dataclass
+class ProposalDraft:
+    label: str
+    objective: str
+    definition_of_done: list = field(default_factory=list)
+    exclusions: list = field(default_factory=list)
+    files_likely_involved: list = field(default_factory=list)
+    required_contract_changes: object = "None"   # "None" or list[str]
+    cycle_size_estimate: int = 2
+    cycle_size_justification: Optional[str] = None
+    dependencies: list = field(default_factory=list)  # list[(label, status)]
+    risk_areas: list = field(default_factory=list)
+
+
+# --- planner I/O helpers ---
+
+def _planner_log_path(repo_root: Path) -> Path:
+    return repo_root / PLANNER_LOG_PATH_REL
+
+
+def _proposal_path(repo_root: Path) -> Path:
+    return repo_root / PROPOSAL_PATH_REL
+
+
+def _planner_log_note(repo_root: Path, message: str) -> None:
+    """Append a single timestamped `note:` / `refused:` line. Best-effort.
+
+    The contract treats `.agent-loop/planner.log` as optional and never
+    authoritative, so a write failure must not raise. The line format is
+    deliberately simple so a future tool can `grep` for refusals.
+    """
+    path = _planner_log_path(repo_root)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(f"{stamp} {message}\n")
+    except OSError:
+        pass
+
+
+def _parse_captured_at(value: str) -> Optional[float]:
+    """Best-effort ISO-8601 -> epoch seconds. Returns None on failure.
+
+    Tolerates a trailing `Z` (UTC marker). Anything else falls through to
+    `None`, and the calling code records the file as "no readable
+    captured_at" rather than crashing.
+    """
+    if not value:
+        return None
+    s = value.strip()
+    if s.endswith("Z"):
+        s = s[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(s).timestamp()
+    except ValueError:
+        return None
+
+
+def _read_evidence_captured_at(path: Path) -> Optional[float]:
+    if not path.exists():
+        return None
+    head = path.read_text(encoding="utf-8", errors="replace").splitlines()[:25]
+    for ln in head:
+        low = ln.lower()
+        if low.startswith("captured_at:") or low.startswith("captured-at:"):
+            value = ln.split(":", 1)[1].strip()
+            return _parse_captured_at(value)
+    return None
+
+
+def _read_text_or_empty(path: Path) -> str:
+    if not path.exists():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+
+
+_PHASE_LABEL_RE = re.compile(r"^## (Phase\s+\S+\s+-\s+[^\n]+)", re.MULTILINE)
+
+
+def _extract_phase_labels(phase_plan_text: str) -> list:
+    """Return phase-plan `## Phase X - ...` headings, in file order.
+
+    The list is ordered as the headings appear in the file. The set of
+    "existing labels" is built from this, and the most recent CLOSED
+    label is used as the planner's "latest closed historical sub-phase"
+    anchor when the loop state is fresh-start.
+    """
+    return _PHASE_LABEL_RE.findall(phase_plan_text)
+
+
+_STATUS_PARA_RE = re.compile(
+    r"^## (Phase\s+\S+\s+-\s+[^\n]+)\n+### Status\n+([^\n]+)",
+    re.MULTILINE,
+)
+
+
+def _extract_closed_labels(phase_plan_text: str) -> list:
+    """Return ordered list of phase-plan labels whose `### Status` reads
+    as closed/complete. "Closed" is detected by case-insensitive
+    substring on the first line of the Status paragraph; the planner
+    treats both `Complete.` and `Closed and ...` as closed.
+    """
+    closed: list = []
+    for m in _STATUS_PARA_RE.finditer(phase_plan_text):
+        label = m.group(1).strip()
+        status_first_line = m.group(2).strip().lower()
+        if status_first_line.startswith("complete") or status_first_line.startswith("closed"):
+            closed.append(label)
+    return closed
+
+
+# --- planner inputs ---
+
+def load_planner_inputs(repo_root: Path) -> PlannerInputs:
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    summary_path = al / "claude-summary.md"
+    review_path = al / "codex-review.md"
+    phase_plan_path = al / "phase-plan.md"
+    proposed_path = _proposal_path(repo_root)
+    task_path = repo_root / "TASK.md"
+    roadmap_path = repo_root / "ROADMAP.md"
+
+    # loop-state.json is REQUIRED. A missing / malformed loop-state is a
+    # halt-type refusal (the planner cannot reason about cycle state).
+    if not state_path.exists():
+        raise HaltError(
+            "halted_input_missing",
+            f"{state_path} does not exist; planner requires loop-state.json",
+        )
+    try:
+        loop_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            f"loop-state.json is not valid JSON: {exc}",
+        ) from exc
+
+    summary_mtime = summary_path.stat().st_mtime if summary_path.exists() else None
+    review_mtime = review_path.stat().st_mtime if review_path.exists() else None
+
+    evidence_captured_ats: dict = {}
+    evidence_missing: list = []
+    for rel in EVIDENCE_FILES:
+        p = repo_root / rel
+        cap = _read_evidence_captured_at(p)
+        if cap is None:
+            evidence_missing.append(rel)
+        evidence_captured_ats[rel] = cap
+
+    phase_plan_text = _read_text_or_empty(phase_plan_path)
+    existing_labels = set(_extract_phase_labels(phase_plan_text))
+    closed_labels = _extract_closed_labels(phase_plan_text)
+    task_md_text = _read_text_or_empty(task_path)
+    roadmap_md_text = _read_text_or_empty(roadmap_path)
+    proposed_phase_existing = (
+        proposed_path.read_text(encoding="utf-8", errors="replace")
+        if proposed_path.exists() else None
+    )
+
+    return PlannerInputs(
+        repo_root=repo_root,
+        loop_state=loop_state,
+        summary_mtime=summary_mtime,
+        review_mtime=review_mtime,
+        evidence_captured_ats=evidence_captured_ats,
+        evidence_missing=evidence_missing,
+        phase_plan_text=phase_plan_text,
+        existing_labels=existing_labels,
+        closed_labels=closed_labels,
+        task_md_text=task_md_text,
+        roadmap_md_text=roadmap_md_text,
+        proposed_phase_existing=proposed_phase_existing,
+    )
+
+
+# --- planner refusal checks ---
+
+def check_planner_refusal(inputs: PlannerInputs) -> Optional[PlannerRefusal]:
+    """Apply every Phase 4A refusal condition that does NOT depend on a
+    generated proposal. Per-proposal bounded-scope checks run separately
+    after generation in `validate_proposal_against_contract`.
+    """
+    state = inputs.loop_state
+    status = state.get("status")
+    last_verdict = state.get("last_verdict")
+    cycle_count = state.get("cycle_count")
+    max_cycles = state.get("max_cycles")
+
+    # Unresolved NEEDS_FIXES blocks planning.
+    if last_verdict == "NEEDS_FIXES":
+        return PlannerRefusal(
+            code="needs_fixes_unresolved",
+            reason=(
+                "last_verdict is NEEDS_FIXES with no subsequent APPROVED verdict; "
+                "the fix cycle takes precedence over planning the next phase"
+            ),
+        )
+
+    # Unresolved FAILED_REQUIRES_HUMAN blocks planning.
+    if last_verdict == "FAILED_REQUIRES_HUMAN":
+        return PlannerRefusal(
+            code="failed_requires_human",
+            reason=(
+                "last_verdict is FAILED_REQUIRES_HUMAN; human escalation takes "
+                "precedence over planning the next phase"
+            ),
+        )
+
+    # Any halted_* status blocks planning.
+    if isinstance(status, str) and status.startswith("halted_"):
+        return PlannerRefusal(
+            code="halted_state",
+            reason=(
+                f"loop-state.json status is {status!r}; an existing halt must be "
+                f"resolved before planning the next phase"
+            ),
+        )
+
+    # Orchestrator in flight: the cycle's view is not yet terminal.
+    if status in ORCHESTRATOR_IN_FLIGHT_STATUSES:
+        return PlannerRefusal(
+            code="orchestrator_in_flight",
+            reason=(
+                f"loop-state.json status is {status!r} (orchestrator in flight); "
+                f"the planner refuses because the current cycle is not terminal"
+            ),
+        )
+
+    # Threshold halt: cycle_count >= max_cycles on NEEDS_FIXES. (The
+    # NEEDS_FIXES branch above is already a refusal; this guards the
+    # case where last_verdict was previously cleared but counts are
+    # still at the threshold.)
+    if (
+        isinstance(cycle_count, int)
+        and isinstance(max_cycles, int)
+        and cycle_count >= max_cycles
+        and last_verdict == "NEEDS_FIXES"
+    ):
+        return PlannerRefusal(
+            code="threshold_halt",
+            reason=(
+                f"cycle_count ({cycle_count}) >= max_cycles ({max_cycles}) on a "
+                f"NEEDS_FIXES verdict; the threshold halt takes precedence"
+            ),
+        )
+
+    # Stale evidence: any evidence captured_at older than max(summary, review)
+    # mtime indicates the evidence does not reflect the latest review state.
+    newest_artifact_mtime: Optional[float] = None
+    for mt in (inputs.summary_mtime, inputs.review_mtime):
+        if mt is not None and (newest_artifact_mtime is None or mt > newest_artifact_mtime):
+            newest_artifact_mtime = mt
+    if newest_artifact_mtime is not None:
+        stale_files: list = []
+        for rel, cap in inputs.evidence_captured_ats.items():
+            # Per the contract, an unreadable captured_at is "unreadable
+            # input" (separate refusal below). For the stale check we
+            # only count evidence whose timestamp parsed.
+            if cap is not None and cap < newest_artifact_mtime:
+                stale_files.append(rel)
+        if stale_files:
+            return PlannerRefusal(
+                code="stale_evidence",
+                reason=(
+                    f"evidence captured_at is older than the latest summary/review "
+                    f"mtime for: {sorted(stale_files)}; run "
+                    f"`bash scripts/run_checks.sh` before re-planning"
+                ),
+            )
+
+    # Unreadable required input: missing evidence captured_at header.
+    if inputs.evidence_missing:
+        return PlannerRefusal(
+            code="evidence_unreadable",
+            reason=(
+                f"evidence files lack a readable `captured_at:` header: "
+                f"{sorted(inputs.evidence_missing)}; the planner cannot reason "
+                f"about evidence freshness without it"
+            ),
+        )
+
+    # Existing proposal with mismatched approval token: refuse to overwrite.
+    existing = inputs.proposed_phase_existing
+    if existing and APPROVAL_TOKEN in existing:
+        # A previously-approved proposal must be human-archived before a
+        # new one is generated; silently overwriting an approved proposal
+        # is a contract-prohibited failure mode.
+        return PlannerRefusal(
+            code="prior_proposal_approved",
+            reason=(
+                f"{PROPOSAL_PATH_REL} already exists and contains the "
+                f"{APPROVAL_TOKEN!r} token; planner refuses to overwrite an "
+                f"approved proposal (archive or remove it manually first)"
+            ),
+        )
+
+    return None
+
+
+# --- proposal generation ---
+
+_SUBPHASE_TOKEN_RE = re.compile(r"Phase\s+(\d+)([A-Za-z]*)")
+
+
+def _bump_subphase_letter(active_sub_phase: str) -> Optional[str]:
+    """Given an active sub-phase string like 'Phase 4B - ...', return the
+    next-letter sub-phase token ('Phase 4C'). Returns None if the input
+    does not look like a sub-phased label.
+    """
+    if not active_sub_phase:
+        return None
+    m = _SUBPHASE_TOKEN_RE.search(active_sub_phase)
+    if m is None:
+        return None
+    number, letter = m.group(1), m.group(2)
+    if not letter:
+        # 'Phase 4' with no letter -> 'Phase 4A'
+        return f"Phase {number}A"
+    if len(letter) > 1:
+        # 'Phase 4AB' or similar: planner cannot mechanically increment.
+        return None
+    ch = letter.upper()
+    if ch == "Z":
+        # 'Phase 4Z' -> wraparound is not part of the convention.
+        return None
+    return f"Phase {number}{chr(ord(ch) + 1)}"
+
+
+def _label_exists(label: str, existing_labels: set) -> bool:
+    """Substring match: a generated label 'Phase 4C - ...' collides if
+    any existing phase-plan heading starts with 'Phase 4C'. Loose match
+    avoids false negatives from minor wording differences in the suffix.
+    """
+    prefix = label.split(" - ", 1)[0].strip()
+    return any(existing.split(" - ", 1)[0].strip() == prefix for existing in existing_labels)
+
+
+def generate_proposal_draft(inputs: PlannerInputs) -> ProposalDraft:
+    """Produce a templated, deterministic next-sub-phase proposal.
+
+    The initial slice is heuristic: increment the active sub-phase letter
+    (4B -> 4C), depend only on already-CLOSED prior sub-phases (so the
+    proposal does not list the active phase as `active-in-flight`, which
+    would be invalid), and pre-fill the structural fields with content
+    derived from the active task context. Codex / human review is
+    expected to refine the body before activation.
+    """
+    state = inputs.loop_state
+    active_sub_phase = state.get("sub_phase") or ""
+    active_phase = state.get("phase") or ""
+
+    next_token = _bump_subphase_letter(active_sub_phase) or "Phase TBD"
+    label = (
+        f"{next_token} - Next planner-implementation slice "
+        f"(planner-generated stub for review)"
+    )
+
+    objective = (
+        f"Continue the {active_phase} series by implementing the next concrete "
+        f"slice of work that {active_sub_phase or 'the currently active sub-phase'} "
+        f"sets up. This proposal is planner-generated as a stub against the Phase 4A "
+        f"contract and is intended to be refined by Codex and approved by a human "
+        f"before activation. The implementing sub-phase will pick exactly one of the "
+        f"deferred Phase 4 capabilities (planner activation writes, planner-orchestrator "
+        f"integration, or an optional planner adapter), narrow scope to that capability, "
+        f"and ship it behind the same structural validators the orchestrator already "
+        f"applies to per-cycle artifacts."
+    )
+
+    definition_of_done = [
+        (
+            "the implementing sub-phase ships planner-owned code whose exit code is "
+            "0 on success and 2 on refusal, exactly as the Phase 4B `plan` subcommand "
+            "already behaves"
+        ),
+        (
+            "`tests/` gains at least one new test case that covers the new capability "
+            "and at least one new test case that covers a refusal path the new code "
+            "introduces (no new capability ships without a refusal test)"
+        ),
+        (
+            "the new capability never writes any file in the Phase 4A "
+            "'Files the planner must never write' set without an explicit, contract-"
+            "disclosed activation step approved by a human"
+        ),
+        (
+            "`README.md` is updated so the Current Status section names the new "
+            "sub-phase as active and documents the new CLI invocation, if any"
+        ),
+    ]
+
+    exclusions = [
+        "no Phase 5 approval-mode behavior",
+        "no Phase 7 editor integration",
+        "no MCP support",
+        "no Git automation (commit, push, branch, stash, reset, checkout, tag)",
+        "no changes to the Phase 2A Evidence Collection Contract or `scripts/run_checks.sh`",
+        "no changes to the Phase 3A Orchestrator Contract body",
+        "no changes to the Phase 4A Planning Contract body",
+        "no changes to `AGENTS.md` or `CLAUDE.md`",
+        "no removal or rewrite of any historical phase-plan section",
+    ]
+
+    files_likely_involved = [
+        "scripts/agent_loop.py",
+        "tests/",
+        ".agent-loop/proposed-phase.md",
+        ".agent-loop/planner.log",
+        ".agent-loop/phase-plan.md",
+        "README.md",
+    ]
+
+    required_contract_changes = "None"
+    cycle_size_estimate = 2
+
+    # Depend only on CLOSED prior sub-phases. The active sub-phase is
+    # deliberately omitted because listing it as `active-in-flight` would
+    # invalidate the proposal per the Phase 4A contract; the implicit
+    # ordering ("4C runs after 4B") is captured in the Risk areas instead.
+    dep_labels = list(inputs.closed_labels)
+    # Trim to the two most recent closed sub-phases so the dependency
+    # list stays focused; older history is implicit.
+    recent_closed = dep_labels[-2:] if len(dep_labels) > 2 else dep_labels
+    dependencies = [(lbl, "complete-approved") for lbl in recent_closed]
+    if not dependencies:
+        # Fresh repository: no closed sub-phases yet. Use "pending"
+        # against a placeholder; the per-proposal validator will then
+        # refuse this draft, which is the correct fail-closed behavior.
+        dependencies = [("(no closed prior sub-phase found)", "pending")]
+
+    risk_areas = [
+        (
+            f"this proposal implicitly assumes {active_sub_phase or 'the active sub-phase'} "
+            f"will reach `APPROVED_FOR_HUMAN_REVIEW` before activation; the active "
+            f"sub-phase is intentionally omitted from `## Dependencies` to satisfy "
+            f"the Phase 4A 'no active-in-flight dependency' rule, but the proposal "
+            f"is not meaningful until the active sub-phase is closed"
+        ),
+        (
+            "the body is planner-generated stub content; Codex or a human must "
+            "refine the `## Objective`, `## Definition of done`, and "
+            "`## Files likely involved` sections to match the chosen next capability "
+            "before activation"
+        ),
+        (
+            "no activation writes are performed by this proposal-generation step; "
+            "activation remains a separate, human-approved sub-phase (deferred from "
+            "Phase 4B)"
+        ),
+    ]
+
+    return ProposalDraft(
+        label=label,
+        objective=objective,
+        definition_of_done=definition_of_done,
+        exclusions=exclusions,
+        files_likely_involved=files_likely_involved,
+        required_contract_changes=required_contract_changes,
+        cycle_size_estimate=cycle_size_estimate,
+        cycle_size_justification=None,
+        dependencies=dependencies,
+        risk_areas=risk_areas,
+    )
+
+
+def validate_proposal_against_contract(
+    draft: ProposalDraft, inputs: PlannerInputs,
+) -> Optional[str]:
+    """Apply the Phase 4A bounded-scope and refusal rules that depend on
+    the generated proposal's own content. Returns a human-readable reason
+    string when the draft must be refused, or None when it is acceptable.
+    """
+    if not draft.label or " - " not in draft.label:
+        return "## Label is empty or does not follow the 'Phase X - description' convention"
+    if not draft.objective.strip():
+        return "## Objective body is empty"
+    if not draft.definition_of_done:
+        return "## Definition of done has no bullets"
+    if not draft.exclusions:
+        return "## Exclusions has no bullets"
+    if not draft.files_likely_involved:
+        return "## Files likely involved has no bullets"
+    if not draft.risk_areas:
+        return "## Risk areas has no bullets"
+
+    # Label collision against existing historical sub-phase labels.
+    if _label_exists(draft.label, inputs.existing_labels):
+        return (
+            f"## Label {draft.label!r} collides with an existing phase-plan heading "
+            f"(re-use of labels is forbidden by the Phase 4A contract)"
+        )
+
+    # Bounded-scope: at most PROPOSAL_MAX_FILES file paths.
+    if len(draft.files_likely_involved) > PROPOSAL_MAX_FILES:
+        return (
+            f"## Files likely involved lists {len(draft.files_likely_involved)} files "
+            f"(> {PROPOSAL_MAX_FILES}); split the proposal into smaller sub-phases"
+        )
+
+    # Bounded-scope: at most one contract revision.
+    rcc = draft.required_contract_changes
+    if isinstance(rcc, list):
+        if len(rcc) > PROPOSAL_MAX_CONTRACT_REVISIONS:
+            return (
+                f"## Required contract changes lists {len(rcc)} revisions "
+                f"(> {PROPOSAL_MAX_CONTRACT_REVISIONS}); split into separate "
+                f"sequential sub-phases"
+            )
+    elif isinstance(rcc, str):
+        # "None" or a single textual revision; nothing further to enforce here.
+        pass
+    else:
+        return "## Required contract changes must be 'None' or a list of revisions"
+
+    # Bounded-scope: at least one testable Definition-of-done bullet.
+    if not _any_dod_bullet_is_testable(draft.definition_of_done):
+        return (
+            "## Definition of done has no bullet that names a file path, CLI verb, "
+            "validator outcome, or similar verifiable end state"
+        )
+    # Bounded-scope: vague-language bullets in Definition of done are refused
+    # (each bullet must also not be a pure vague-language sentence).
+    for bullet in draft.definition_of_done:
+        low = bullet.lower()
+        if any(phrase in low for phrase in VAGUE_DOD_PHRASES):
+            return (
+                f"## Definition of done bullet uses vague language "
+                f"forbidden by the Phase 4A contract: {bullet!r}"
+            )
+
+    # Bounded-scope: cycle-size estimate.
+    if not isinstance(draft.cycle_size_estimate, int) or draft.cycle_size_estimate < 1:
+        return "## Cycle-size estimate must be a positive integer"
+    if (
+        draft.cycle_size_estimate > PROPOSAL_DEFAULT_MAX_CYCLE_SIZE
+        and not (draft.cycle_size_justification or "").strip()
+    ):
+        return (
+            f"## Cycle-size estimate {draft.cycle_size_estimate} > "
+            f"{PROPOSAL_DEFAULT_MAX_CYCLE_SIZE} requires an explicit justification "
+            f"paragraph"
+        )
+
+    # Dependencies: each must use an allowed status token; no dependency may
+    # be in a blocking status (`active-in-flight`, `pending`).
+    if not draft.dependencies:
+        return "## Dependencies has no entries"
+    for dep_label, dep_status in draft.dependencies:
+        if dep_status not in DEPENDENCY_STATUS_TOKENS:
+            return (
+                f"## Dependencies entry {dep_label!r} has status {dep_status!r}; "
+                f"allowed tokens: {sorted(DEPENDENCY_STATUS_TOKENS)}"
+            )
+        if dep_status in DEPENDENCY_BLOCKING_STATUSES:
+            return (
+                f"## Dependencies entry {dep_label!r} has blocking status "
+                f"{dep_status!r}; a proposal that depends on an active-in-flight "
+                f"or pending phase is invalid per the Phase 4A contract"
+            )
+
+    # Self-approval guard: the planner must never write APPROVED_FOR_ACTIVATION
+    # into a proposal it authored.
+    serialized = serialize_proposal(draft)
+    if APPROVAL_TOKEN in serialized:
+        return (
+            f"draft contains the literal {APPROVAL_TOKEN!r} token; self-approval "
+            f"is forbidden by the Phase 4A contract"
+        )
+
+    return None
+
+
+def _any_dod_bullet_is_testable(bullets: list) -> bool:
+    for bullet in bullets:
+        low = bullet.lower()
+        if any(marker.lower() in low for marker in TESTABLE_DOD_MARKERS):
+            return True
+    return False
+
+
+def serialize_proposal(draft: ProposalDraft) -> str:
+    """Render a ProposalDraft into the markdown structure the Phase 4A
+    contract requires. Section order is fixed; each section must have a
+    non-empty body.
+    """
+    def bullets(items: list) -> str:
+        return "\n".join(f"- {it}" for it in items)
+
+    rcc = draft.required_contract_changes
+    if isinstance(rcc, list) and rcc:
+        rcc_body = bullets(rcc)
+    elif isinstance(rcc, str) and rcc.strip():
+        rcc_body = rcc.strip()
+    else:
+        rcc_body = "None"
+
+    if draft.cycle_size_justification:
+        cycle_body = (
+            f"{draft.cycle_size_estimate}\n\n{draft.cycle_size_justification.strip()}"
+        )
+    else:
+        cycle_body = str(draft.cycle_size_estimate)
+
+    dep_lines = [f"- {lbl}: {st}" for lbl, st in draft.dependencies]
+    dep_body = "\n".join(dep_lines)
+
+    sections = [
+        (PROPOSAL_TITLE, ""),
+        ("## Label", draft.label),
+        ("## Objective", draft.objective.strip()),
+        ("## Definition of done", bullets(draft.definition_of_done)),
+        ("## Exclusions", bullets(draft.exclusions)),
+        ("## Files likely involved", bullets(draft.files_likely_involved)),
+        ("## Required contract changes", rcc_body),
+        ("## Cycle-size estimate", cycle_body),
+        ("## Dependencies", dep_body),
+        ("## Risk areas", bullets(draft.risk_areas)),
+    ]
+    parts: list = []
+    for header, body in sections:
+        if header == PROPOSAL_TITLE:
+            parts.append(header)
+            continue
+        parts.append("")
+        parts.append(header)
+        parts.append("")
+        parts.append(body)
+    return "\n".join(parts).rstrip() + "\n"
+
+
+def validate_proposal_structure(text: str) -> Optional[str]:
+    """Structural re-check on the serialized proposal text. Mirrors the
+    artifact validators used by the orchestrator for Claude / Codex
+    artifacts: header order + non-empty bodies. Returns None on success.
+    """
+    if not text.startswith(PROPOSAL_TITLE):
+        return f"missing title header {PROPOSAL_TITLE!r}"
+    cursor = 0
+    for header in PROPOSAL_REQUIRED_SECTIONS:
+        idx = text.find(header, cursor)
+        if idx == -1:
+            return f"missing required header {header!r} (or out of order)"
+        cursor = idx + len(header)
+    # Each required section must have a non-empty body before the next header.
+    for i, header in enumerate(PROPOSAL_REQUIRED_SECTIONS):
+        start = text.find(header) + len(header)
+        if i + 1 < len(PROPOSAL_REQUIRED_SECTIONS):
+            end = text.find(PROPOSAL_REQUIRED_SECTIONS[i + 1], start)
+        else:
+            end = len(text)
+        body = text[start:end].strip()
+        if not body:
+            return f"section {header!r} has an empty body"
+    return None
+
+
+def write_proposal(repo_root: Path, text: str) -> Path:
+    """Write the proposal file. The planner is allowed to write only
+    `.agent-loop/proposed-phase.md`; this helper exists so the file path
+    is centralized and the planner never opens any other path for write.
+    """
+    path = _proposal_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def run_planner(repo_root: Path) -> int:
+    """End-to-end planner cycle: load -> refuse -> generate -> validate -> write.
+
+    Returns 0 when a valid proposal was written, 2 on any refusal or
+    structural failure. Always best-effort logs a single line to
+    `.agent-loop/planner.log` describing the outcome.
+    """
+    try:
+        inputs = load_planner_inputs(repo_root)
+    except HaltError as halt:
+        _planner_log_note(
+            repo_root,
+            f"refused [{halt.status}]: cannot load planner inputs: {halt.reason}",
+        )
+        print(
+            f"[planner] refused: cannot load planner inputs: {halt.reason}",
+            file=sys.stderr,
+        )
+        return 2
+
+    refusal = check_planner_refusal(inputs)
+    if refusal is not None:
+        _planner_log_note(
+            repo_root, f"refused [{refusal.code}]: {refusal.reason}",
+        )
+        print(
+            f"[planner] refused [{refusal.code}]: {refusal.reason}",
+            file=sys.stderr,
+        )
+        return 2
+
+    draft = generate_proposal_draft(inputs)
+    draft_problem = validate_proposal_against_contract(draft, inputs)
+    if draft_problem is not None:
+        _planner_log_note(
+            repo_root, f"refused [draft_invalid]: {draft_problem}",
+        )
+        print(
+            f"[planner] refused [draft_invalid]: {draft_problem}",
+            file=sys.stderr,
+        )
+        return 2
+
+    text = serialize_proposal(draft)
+    struct_problem = validate_proposal_structure(text)
+    if struct_problem is not None:
+        _planner_log_note(
+            repo_root, f"refused [serialization]: {struct_problem}",
+        )
+        print(
+            f"[planner] refused [serialization]: {struct_problem}",
+            file=sys.stderr,
+        )
+        return 2
+
+    # Final guard: the serialized proposal must NOT carry the approval
+    # token. Self-approval is forbidden by the Phase 4A contract.
+    if APPROVAL_TOKEN in text:
+        _planner_log_note(
+            repo_root,
+            f"refused [self_approval]: serialized proposal contained "
+            f"{APPROVAL_TOKEN!r}",
+        )
+        print(
+            f"[planner] refused [self_approval]: serialized proposal contained "
+            f"{APPROVAL_TOKEN!r}",
+            file=sys.stderr,
+        )
+        return 2
+
+    path = write_proposal(repo_root, text)
+    _planner_log_note(
+        repo_root,
+        f"proposal written [{PLANNER_VERSION}]: {draft.label}",
+    )
+    print(f"[planner] proposal written: {path}")
+    return 0
+
+
 # ----- cli -----
 
 def cmd_check_state(_args: argparse.Namespace) -> int:
@@ -1177,6 +2086,11 @@ def cmd_run(_args: argparse.Namespace) -> int:
     return run_normal_cycle(repo_root)
 
 
+def cmd_plan(_args: argparse.Namespace) -> int:
+    repo_root = find_repo_root()
+    return run_planner(repo_root)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent_loop",
@@ -1203,6 +2117,15 @@ def build_parser() -> argparse.ArgumentParser:
             "automated fix cycles until a terminal state"
         ),
     )
+    sub.add_parser(
+        "plan",
+        help=(
+            "Phase 4B planner (proposal generation only): read planner "
+            "inputs, enforce the Phase 4A refusal rules, and write one "
+            "structurally valid .agent-loop/proposed-phase.md without "
+            "activating it. Refusal exits 2 and logs to .agent-loop/planner.log."
+        ),
+    )
     return parser
 
 
@@ -1210,6 +2133,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "check-state": cmd_check_state,
     "validate-artifacts": cmd_validate_artifacts,
     "run": cmd_run,
+    "plan": cmd_plan,
 }
 
 
