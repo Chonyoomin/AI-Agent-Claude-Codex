@@ -1377,6 +1377,43 @@ def _read_text_or_empty(path: Path) -> str:
         return ""
 
 
+class _ActivationInputError(Exception):
+    """Raised by `_read_text_strict` when an activation-required input is
+    missing or unreadable. Carries the contract-vocabulary refusal code
+    so the caller can route to the appropriate `activation refused [...]`
+    log line without re-classifying the failure.
+    """
+
+    def __init__(self, code: str, path: Path, reason: str) -> None:
+        super().__init__(f"{code}: {path}: {reason}")
+        self.code = code
+        self.path = path
+        self.reason = reason
+
+
+def _read_text_strict(
+    path: Path, *, missing_code: str, unreadable_code: str,
+) -> str:
+    """Read `path` and return its text, or raise `_ActivationInputError`
+    on any failure. Used by the activator for inputs the Phase 4A
+    contract requires it to preserve verbatim (TASK.md sections,
+    phase-plan.md historical bodies, ROADMAP.md parent-phase lookup):
+    a silent best-effort fallback to "" would fabricate replacement
+    state instead of preserving real content, so the activator must
+    fail closed when these inputs cannot be read.
+    """
+    if not path.exists():
+        raise _ActivationInputError(
+            missing_code, path, f"{path} does not exist",
+        )
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _ActivationInputError(
+            unreadable_code, path, f"could not read {path}: {exc}",
+        ) from exc
+
+
 _PHASE_LABEL_RE = re.compile(r"^## (Phase\s+\S+\s+-\s+[^\n]+)", re.MULTILINE)
 
 
@@ -2751,9 +2788,6 @@ def run_activation(repo_root: Path) -> int:
         print(f"[activate] refused [label_unparseable]: {msg}", file=sys.stderr)
         return 2
 
-    roadmap_text = _read_text_or_empty(roadmap_path)
-    parent_phase_label = _parent_phase_label_from_roadmap(roadmap_text, parent_prefix)
-
     if not state_path.exists():
         msg = (
             f"{state_path} does not exist; activate requires loop-state.json "
@@ -2777,7 +2811,42 @@ def run_activation(repo_root: Path) -> int:
         )
         return 2
 
-    current_task_md = _read_text_or_empty(task_path)
+    # Strict reads for the three activation-required inputs whose contents
+    # the activator must preserve (TASK.md's `## Human Objective` /
+    # `## Project Intent`, the entirety of phase-plan.md history, and the
+    # ROADMAP.md parent-phase lookup body). Missing or unreadable inputs
+    # are fail-closed: the activator MUST NOT synthesize replacement
+    # content from an empty string, because doing so would silently
+    # fabricate human-owned / historical state. The three reads happen
+    # BEFORE any activation write so a refusal here leaves no
+    # activation-owned file partially written.
+    try:
+        current_task_md = _read_text_strict(
+            task_path,
+            missing_code="task_md_missing",
+            unreadable_code="task_md_unreadable",
+        )
+        roadmap_text = _read_text_strict(
+            roadmap_path,
+            missing_code="roadmap_missing",
+            unreadable_code="roadmap_unreadable",
+        )
+        current_phase_plan = _read_text_strict(
+            phase_plan_path,
+            missing_code="phase_plan_missing",
+            unreadable_code="phase_plan_unreadable",
+        )
+    except _ActivationInputError as err:
+        _planner_log_note(
+            repo_root, f"activation refused [{err.code}]: {err.reason}",
+        )
+        print(
+            f"[activate] refused [{err.code}]: {err.reason}",
+            file=sys.stderr,
+        )
+        return 2
+
+    parent_phase_label = _parent_phase_label_from_roadmap(roadmap_text, parent_prefix)
     new_task_md = _rewrite_task_md(
         current_task_md, parent_phase_label, approval.label, sections,
     )
@@ -2787,7 +2856,6 @@ def run_activation(repo_root: Path) -> int:
     )
     new_current_phase = _rewrite_current_phase_md(approval.label, parent_phase_label)
 
-    current_phase_plan = _read_text_or_empty(phase_plan_path)
     new_phase_plan = _append_phase_plan_section(
         current_phase_plan, approval.label, parent_phase_label, sections,
     )

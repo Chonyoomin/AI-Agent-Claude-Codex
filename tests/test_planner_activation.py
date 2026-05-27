@@ -379,6 +379,143 @@ class StructuralRefusalTests(_ActivationTestCase):
         self.assertActivationRefused("proposal_malformed")
 
 
+# --- required-input fail-closed refusal paths ---
+
+class RequiredInputRefusalTests(_ActivationTestCase):
+    """The activator must refuse instead of fabricating activation state
+    when TASK.md, .agent-loop/phase-plan.md, or ROADMAP.md is missing
+    or unreadable. Each refusal must exit 2, log a `note:`-style
+    activation-refusal line to .agent-loop/planner.log, and leave no
+    activation-owned file modified.
+
+    Cross-platform note on unreadable simulation: making a regular file
+    "unreadable" reliably on every supported platform is awkward (chmod
+    000 is a POSIX-only convention; Windows ACL manipulation depends on
+    the file system and the running user). The tests here cover the
+    missing-file paths on every platform and one cross-platform
+    OS-error simulation (replacing the file with a directory of the
+    same name) so the unreadable code path is exercised without a
+    permission API call.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo.with_proposal(_proposal_with_approval(VALID_APPROVAL_BODY))
+
+    def _snapshot_activation_owned(self) -> dict:
+        """Snapshot the on-disk bytes of every activation-owned file
+        (plus planner.log, which gains a refusal entry but no
+        activation rewrite). Tolerates paths that are not regular files
+        (e.g. directories from the unreadable-simulation trick) by
+        recording `None` for those entries so the helper does not raise
+        during the unreadable-file refusal tests."""
+        snap: dict = {}
+        for rel in agent_loop.ACTIVATOR_ALLOWED_WRITE_FILES:
+            p = self.repo.root / rel
+            if p.is_file():
+                snap[rel] = p.read_bytes()
+            else:
+                snap[rel] = None
+        return snap
+
+    def _assert_activation_owned_unchanged_except_log(
+        self, before: dict, after: dict, *, ignore: tuple = (),
+    ) -> None:
+        ignore_set = set(ignore) | {agent_loop.PLANNER_LOG_PATH_REL}
+        for rel in agent_loop.ACTIVATOR_ALLOWED_WRITE_FILES:
+            if rel in ignore_set:
+                # planner.log legitimately gains the refusal note; other
+                # ignored entries are the file the test deliberately
+                # mutated to simulate unreadability (the activator did
+                # not touch it; the test did).
+                continue
+            self.assertEqual(
+                before.get(rel), after.get(rel),
+                f"activation-owned file {rel} was modified on a refusal path",
+            )
+
+    # --- missing-file refusals ---
+
+    def test_refuses_when_task_md_missing(self) -> None:
+        (self.repo.root / "TASK.md").unlink()
+        before = self._snapshot_activation_owned()
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertActivationRefused("task_md_missing")
+        self._assert_activation_owned_unchanged_except_log(
+            before, self._snapshot_activation_owned(),
+        )
+
+    def test_refuses_when_phase_plan_md_missing(self) -> None:
+        (self.repo.root / ".agent-loop" / "phase-plan.md").unlink()
+        before = self._snapshot_activation_owned()
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertActivationRefused("phase_plan_missing")
+        self._assert_activation_owned_unchanged_except_log(
+            before, self._snapshot_activation_owned(),
+        )
+
+    def test_refuses_when_roadmap_md_missing(self) -> None:
+        (self.repo.root / "ROADMAP.md").unlink()
+        before = self._snapshot_activation_owned()
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertActivationRefused("roadmap_missing")
+        self._assert_activation_owned_unchanged_except_log(
+            before, self._snapshot_activation_owned(),
+        )
+
+    # --- unreadable simulation (cross-platform via "file replaced by a
+    # directory of the same name", which causes `Path.read_text` to
+    # raise an OSError subclass on every platform we target -
+    # `IsADirectoryError` on POSIX, `PermissionError` on Windows; both
+    # are caught by `_read_text_strict`'s `except OSError` block).
+
+    def _swap_file_for_dir(self, path: Path) -> None:
+        """Replace `path` (a regular file) with a directory of the same
+        name. Registers an addCleanup that restores the original file
+        bytes so the TemporaryDirectory teardown does not trip on
+        Windows trying to delete a dir whose name conflicts with the
+        original file's content snapshot."""
+        original_bytes = path.read_bytes()
+        path.unlink()
+        path.mkdir()
+        def restore() -> None:
+            if path.is_dir():
+                path.rmdir()
+            if not path.exists():
+                path.write_bytes(original_bytes)
+        self.addCleanup(restore)
+
+    def _run_unreadable_case(
+        self, target_rel: str, expected_code: str,
+    ) -> None:
+        before = self._snapshot_activation_owned()
+        self._swap_file_for_dir(self.repo.root / target_rel)
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertActivationRefused(expected_code)
+        after = self._snapshot_activation_owned()
+        # The activation-owned file we mutated will read None in the
+        # after-snapshot because it is now a directory; ignore it in the
+        # comparison (the test mutated it, not the activator).
+        self._assert_activation_owned_unchanged_except_log(
+            before, after, ignore=(target_rel,),
+        )
+
+    def test_refuses_when_task_md_unreadable(self) -> None:
+        self._run_unreadable_case("TASK.md", "task_md_unreadable")
+
+    def test_refuses_when_phase_plan_md_unreadable(self) -> None:
+        self._run_unreadable_case(
+            ".agent-loop/phase-plan.md", "phase_plan_unreadable",
+        )
+
+    def test_refuses_when_roadmap_md_unreadable(self) -> None:
+        self._run_unreadable_case("ROADMAP.md", "roadmap_unreadable")
+
+
 # --- activation success path ---
 
 class ActivationSuccessTests(_ActivationTestCase):
