@@ -20,47 +20,50 @@ Phase 4 - Phase Planning Automation
 
 ## Active Sub-Phase
 
-Phase 4B - Planner Initial Slice (Proposal Generation)
+Phase 4C - Planner Activation Writes
 
 ## Phase Status
 
-Phase 4A (Planning Contract) is closed and approved. Phase 4B implements the first working slice of the automatic planner against the Phase 4A contract: read the current project state, enforce the Phase 4A refusal rules, and generate one valid `.agent-loop/proposed-phase.md` without activating it. The planner may also append decision notes to `.agent-loop/planner.log`. Activation writes (modifying `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`, `.agent-loop/loop-state.json`) are explicitly deferred to a later 4x sub-phase.
+Phase 4B (Planner Initial Slice) is closed and approved for human review. Phase 4C implements the activation step the Phase 4A Planning Contract authorizes: consume an already-generated `.agent-loop/proposed-phase.md` whose `## Approval` section carries the literal `APPROVED_FOR_ACTIVATION` token AND references the proposal's `## Label`, then perform only the activation writes the Phase 4A contract permits (`TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md` append-only, `.agent-loop/loop-state.json` reset per the contract). Planner-orchestrator auto-integration and the optional planner adapter remain deferred.
 
 ## Active Task
 
-Implement the planner's proposal-generation step inside `scripts/agent_loop.py` (or a small adjacent planner module if that keeps ownership boundaries clearer). The planner must: load the planner inputs listed in the Phase 4A contract; apply every refusal and halt condition defined in the contract; generate a `.agent-loop/proposed-phase.md` whose structure matches the contract's required sections in order; enforce the bounded-scope rules on its own generated proposal; optionally append proposal- or refusal-outcome notes to `.agent-loop/planner.log`; and refuse to write any activation file in this sub-phase. Add focused tests for the refusal paths and one valid proposal-generation path. Update `README.md` so the Current Status and usage notes describe the Phase 4B planner slice.
+Implement a separate `activate` CLI path in `scripts/agent_loop.py` (NOT folded into `plan`) that: parses `.agent-loop/proposed-phase.md`; verifies a human-authored `## Approval` section exists, contains the literal `APPROVED_FOR_ACTIVATION` token on its own line within that section, and references the proposal's `## Label` text; refuses on a missing approval section, a malformed/mis-cased/decorated token, a label mismatch, an unreadable proposal, an unreadable loop-state.json, or any malformed required proposal section; on success performs ONLY the Phase 4A activation writes (rewriting `TASK.md`'s `## Active Phase` / `## Active Sub-Phase` / `## Phase Status` / `## Active Task` / `## Phase Outcome Required Now` / `## Next-Phase Gate` / `## Out Of Scope For Current Phase` while preserving `## Human Objective` and `## Project Intent` verbatim; rewriting `.agent-loop/current-task.md` and `.agent-loop/current-phase.md`; appending one new sub-phase section to `.agent-loop/phase-plan.md` and updating its `## Active Phase` line; resetting `.agent-loop/loop-state.json` to `status = awaiting_claude_implementation`, `cycle_count = 0`, `last_verdict = null`, `last_verdict_phase = null` with `phase` / `sub_phase` / `task` set from the approved proposal and `max_cycles` / `contract_version` / `claude_version` / `codex_version` / `orchestrator_version` preserved); records the approval source (file path, mtime, literal approval line) into `.agent-loop/planner.log` as a `note:`-style line; and exits 0 on success, 2 on any refusal. Add focused tests for the activation success path and every refusal condition. Update `README.md`.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 4 / 4B as active
-- `.agent-loop/phase-plan.md` marks Phase 4A complete and contains a Phase 4B section with the same `### Status` / `### Objective` / `### Definition of done` / `### Exclusions` shape as prior sub-phase sections
-- `scripts/agent_loop.py` (or a small new planner file) implements: planner input loading, refusal/halt checks, proposal generation, optional `planner.log` notes, and a CLI subcommand to invoke the planner
-- `tests/` contains focused tests covering at least the major refusal paths and one valid proposal-generation path
-- `README.md` reflects the Phase 4B active status and documents how to invoke the planner
-- the planner never writes any file in the Phase 4A "Files the planner must never write" list
-- activation writes are NOT implemented in this sub-phase
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 4 / 4C as active
+- `.agent-loop/phase-plan.md` marks Phase 4B complete and contains a Phase 4C section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` exposes a new `activate` CLI subcommand whose exit code is 0 on a successful activation and 2 on any refusal; activation is NOT folded into the existing `plan` subcommand
+- the activation parser refuses every Phase 4A-required refusal path: missing `## Approval` section, missing-or-malformed `APPROVED_FOR_ACTIVATION` token (wrong case, extra words on the line, leading/trailing characters), label-mismatch against `## Label`, missing/unreadable `proposed-phase.md`, missing/malformed `loop-state.json`, and empty required-proposal-section bodies
+- on success, the activation path writes ONLY the files the Phase 4A contract authorizes on activation: `TASK.md` (preserving `## Human Objective` and `## Project Intent` verbatim), `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md` (`## Active Phase` line + APPEND new sub-phase section), `.agent-loop/loop-state.json` (reset per contract), and a `note:`-style line in `.agent-loop/planner.log` recording the approval source
+- the existing planner-only write boundary (proposal generation step) remains unchanged outside the activation path
+- `tests/test_planner_activation.py` exists and covers the activation success path plus every refusal condition above
+- `README.md` documents the new `activate` subcommand and operator flow
+- no planner-orchestrator auto-integration in this sub-phase
 - no changes to `AGENTS.md`, `CLAUDE.md`, `scripts/run_checks.sh`, the Phase 2A Evidence Collection Contract, the Phase 3A Orchestrator Contract body, or the Phase 4A Planning Contract body
 
 ## Next-Phase Gate
 
-Do not start the next 4x sub-phase (planner activation writes, planner-orchestrator integration, optional planner adapter, etc.) until:
+Do not start the next 4x sub-phase (planner-orchestrator integration, optional planner adapter, etc.) until:
 
-- this Phase 4B slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 4C slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- planner activation writes (modifying `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`, `.agent-loop/loop-state.json` based on an approved proposal; deferred to a later 4x sub-phase)
+- planner-orchestrator auto-integration (deferred to Phase 4D)
+- optional planner adapter (deferred to Phase 4E or later)
 - approval mode implementation (Phase 5)
 - editor integration (Phase 7)
 - MCP support (future)
-- recursive invocation of the locally installed `claude` CLI (would spawn a nested Claude Code session inside the current one - unsafe and outside the operational verification scope)
+- recursive invocation of the locally installed `claude` CLI
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - any change to the Phase 2A Evidence Collection Contract
 - any change to the Phase 3A Orchestrator Contract body
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
 - any change to `AGENTS.md` or `CLAUDE.md`
-- adding any real test/lint/typecheck/build suite to the repository (the new `tests/` directory is for the planner's own validators, not a project-wide CI suite)
+- adding any project-wide CI suite to the repository (the new test file is for the activator's own validators)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

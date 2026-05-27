@@ -2267,6 +2267,561 @@ def run_planner(repo_root: Path) -> int:
     return 0
 
 
+# ----- Phase 4C activation (consume approved proposal -> activation writes) -----
+#
+# This block implements the activation step the Phase 4A Planning Contract
+# (`.agent-loop/phase-plan.md` -> "## Phase 4A - Planning Contract") permits
+# only AFTER an explicit human approval signal. It is a separate CLI path
+# (`python scripts/agent_loop.py activate`); it is NOT folded into `plan`,
+# and Phase 4D planner-orchestrator auto-integration remains out of scope.
+#
+# Inputs the activator reads (read-only outside its allowed-writes set):
+#   - .agent-loop/proposed-phase.md (the planner-authored proposal)
+#   - .agent-loop/loop-state.json (so the activation's loop-state rewrite
+#     preserves the orchestrator-owned runtime fields per the Phase 3A
+#     contract)
+#   - TASK.md (so `## Human Objective` and `## Project Intent` can be
+#     preserved verbatim)
+#   - .agent-loop/phase-plan.md (so the new section is appended and the
+#     `## Active Phase` line is updated in place)
+#   - ROADMAP.md (used to resolve the parent phase's human-readable name,
+#     e.g. `Phase 4 - Phase Planning Automation`, from the sub-phase
+#     prefix in the proposal's `## Label`)
+#
+# Approval requirements (exactly):
+#   - the proposal must carry a `## Approval` section whose body contains
+#     the literal `APPROVED_FOR_ACTIVATION` token on its own line within
+#     that section (whole-file substring matching is explicitly NOT used:
+#     a stray token mention in unrelated prose cannot trigger activation)
+#   - the same section body must reference the proposal's `## Label`, so
+#     a stale approval against a different label (e.g. an earlier draft
+#     that was overwritten) is refused
+#
+# Allowed activation writes (Phase 4A):
+#   - TASK.md (rewrite the active-phase sections; preserve
+#     `## Human Objective` and `## Project Intent` verbatim)
+#   - .agent-loop/current-task.md and .agent-loop/current-phase.md
+#   - .agent-loop/phase-plan.md (update `## Active Phase` and APPEND a
+#     new sub-phase section; the activator also flips the previously-
+#     active sub-phase's `### Status` opening line from `Active. ...` to
+#     `Complete. Closed by activation of ...` as a transition-marking
+#     edit so the phase-plan is internally consistent - the substantive
+#     historical body content is not modified)
+#   - .agent-loop/loop-state.json (reset `cycle_count = 0`,
+#     `status = awaiting_claude_implementation`, `last_verdict = null`,
+#     `last_verdict_phase = null`; set `phase` / `sub_phase` / `task`
+#     from the approved proposal; preserve `max_cycles` /
+#     `contract_version` / `claude_version` / `codex_version` /
+#     `orchestrator_version` per the Phase 3A write-ownership rules)
+#   - .agent-loop/planner.log (single `note:`-style line recording the
+#     approval source: file path, mtime, literal approval line)
+#
+# The activator never opens any other path for write. The planner's
+# `plan` write boundary (only `.agent-loop/proposed-phase.md` and
+# `.agent-loop/planner.log`) is unchanged outside this explicit
+# activation path.
+
+ACTIVATOR_VERSION = "phase-4c-v0"
+
+ACTIVATOR_ALLOWED_WRITE_FILES = frozenset({
+    "TASK.md",
+    ".agent-loop/current-task.md",
+    ".agent-loop/current-phase.md",
+    ".agent-loop/phase-plan.md",
+    ".agent-loop/loop-state.json",
+    PLANNER_LOG_PATH_REL,
+})
+
+
+@dataclass
+class ApprovalSource:
+    label: str
+    approval_line: str
+    file_path: Path
+    file_mtime: float
+
+
+@dataclass
+class ActivationRefusal:
+    code: str
+    reason: str
+
+
+def _extract_section_body(text: str, header: str) -> str:
+    """Return the body text between `header` and the next top-level `## `
+    header (or end of file). Returns empty string when header is absent
+    or the body is whitespace-only.
+
+    The header MUST appear at the start of a line (or as the first
+    character of the file). This anchors `## Approval` matches to a
+    real section header so that a documentary mention of `## Approval`
+    inside an Objective body cannot be mistaken for the human-authored
+    approval section.
+    """
+    pattern = re.compile(
+        rf"(?:^|\n){re.escape(header)}(?=\s|$)", re.MULTILINE,
+    )
+    m = pattern.search(text)
+    if m is None:
+        return ""
+    start = m.end()
+    rest = text[start:]
+    # Next top-level `## ` header on a fresh line ends the section.
+    m2 = re.search(r"\n## ", rest)
+    if m2 is not None:
+        rest = rest[: m2.start()]
+    return rest.strip()
+
+
+def parse_proposal_sections(text: str) -> dict:
+    """Return a dict of section header -> body for every required section
+    in PROPOSAL_REQUIRED_SECTIONS. Bodies are stripped.
+    """
+    return {header: _extract_section_body(text, header) for header in PROPOSAL_REQUIRED_SECTIONS}
+
+
+def check_approval(proposal_text: str, proposal_path: Path):
+    """Return ApprovalSource on a valid approval signal, or
+    ActivationRefusal on any failure. The check enforces three exact
+    requirements per the Phase 4A contract:
+
+      1. a `## Approval` section header is present
+      2. the section body contains the literal `APPROVED_FOR_ACTIVATION`
+         token on its own line (no extra words, no alternate
+         capitalization, no leading/trailing characters)
+      3. the section body references the proposal's `## Label` text
+         verbatim (so a stale approval against a different label is
+         rejected)
+    """
+    label_body = _extract_section_body(proposal_text, "## Label")
+    label_lines = [ln.strip() for ln in label_body.splitlines() if ln.strip()]
+    if not label_lines:
+        return ActivationRefusal(
+            "no_label",
+            "proposal has no `## Label` body content; cannot verify approval",
+        )
+    label = label_lines[0]
+
+    # Use a start-of-line anchored search so a documentary mention of
+    # `## Approval` inside the Objective body cannot satisfy this check.
+    # The human approval section must be an actual top-level `## ` header.
+    approval_header_present = re.search(
+        r"(?:^|\n)## Approval(?=\s|$)", proposal_text,
+    ) is not None
+    if not approval_header_present:
+        return ActivationRefusal(
+            "no_approval_section",
+            f"proposal at {proposal_path} has no `## Approval` section header; "
+            f"a human must append `## Approval` with the literal "
+            f"`{APPROVAL_TOKEN}` token on its own line before activation",
+        )
+    approval_body = _extract_section_body(proposal_text, "## Approval")
+    if not approval_body:
+        return ActivationRefusal(
+            "no_approval_section",
+            f"proposal at {proposal_path} has an empty `## Approval` body; "
+            f"the section must contain the literal `{APPROVAL_TOKEN}` token "
+            f"on its own line",
+        )
+
+    found_line: Optional[str] = None
+    for line in approval_body.splitlines():
+        # Exact-line match: `line.strip() == APPROVAL_TOKEN` rejects any
+        # capitalization variant ("approved_for_activation"), any extra
+        # word on the line ("APPROVED_FOR_ACTIVATION yes"), and any
+        # leading/trailing characters beyond whitespace.
+        if line.strip() == APPROVAL_TOKEN:
+            found_line = line.strip()
+            break
+    if found_line is None:
+        return ActivationRefusal(
+            "malformed_token",
+            f"`## Approval` section does not contain the literal token "
+            f"`{APPROVAL_TOKEN}` on its own line; alternate capitalization, "
+            f"extra words on the same line, or surrounding characters are "
+            f"refused",
+        )
+
+    if label not in approval_body:
+        return ActivationRefusal(
+            "label_mismatch",
+            f"`## Approval` body does not reference the proposal's `## Label` "
+            f"({label!r}); the approval may be stale or applied to a different "
+            f"proposal draft",
+        )
+
+    return ApprovalSource(
+        label=label,
+        approval_line=found_line,
+        file_path=proposal_path,
+        file_mtime=proposal_path.stat().st_mtime,
+    )
+
+
+def _parse_label_parts(label: str):
+    """Given a label like 'Phase 4C - Planner Activation Writes', return
+    (parent_prefix='Phase 4', sub_prefix='Phase 4C'). Returns (None, None)
+    when the label does not follow the convention.
+    """
+    m = _SUBPHASE_TOKEN_RE.search(label)
+    if m is None:
+        return None, None
+    number = m.group(1)
+    letter = m.group(2).upper()
+    return f"Phase {number}", f"Phase {number}{letter}"
+
+
+def _parent_phase_label_from_roadmap(roadmap_text: str, parent_prefix: str) -> str:
+    """Find `## Phase N - <name>` in ROADMAP.md and return
+    `Phase N - <name>` so the activator can set TASK.md's `## Active
+    Phase` body correctly. Falls back to the bare prefix when ROADMAP
+    has no matching heading (e.g. brand-new top-level phase).
+    """
+    pattern = re.compile(
+        rf"^## ({re.escape(parent_prefix)}\s+-\s+[^\n]+)", re.MULTILINE,
+    )
+    m = pattern.search(roadmap_text)
+    if m is not None:
+        return m.group(1).strip()
+    return parent_prefix
+
+
+def _split_md_sections(text: str):
+    """Return (preamble, [(header_line, body_text), ...]).
+
+    Sections are split at any line beginning with `## `. The preamble is
+    everything before the first such line; each section's body includes
+    the trailing newlines up to the next `## ` line. Used so the
+    activator can rewrite SPECIFIC `## ...` sections in TASK.md while
+    leaving non-rewritable sections (`## Human Objective`, `## Project
+    Intent`) and the preamble (`# TASK.md\n\n`) exactly as authored.
+    """
+    lines = text.splitlines(keepends=True)
+    preamble_parts: list = []
+    sections: list = []
+    current_header: Optional[str] = None
+    current_body: list = []
+    for line in lines:
+        if line.startswith("## "):
+            if current_header is not None:
+                sections.append((current_header, "".join(current_body)))
+            current_header = line.rstrip("\n")
+            current_body = []
+        else:
+            if current_header is None:
+                preamble_parts.append(line)
+            else:
+                current_body.append(line)
+    if current_header is not None:
+        sections.append((current_header, "".join(current_body)))
+    return "".join(preamble_parts), sections
+
+
+def _rewrite_task_md(
+    current_text: str, parent_phase_label: str, new_sub_phase: str,
+    proposal_sections: dict,
+) -> str:
+    """Rewrite TASK.md's active-phase sections from the activated proposal
+    while preserving `## Human Objective` and `## Project Intent`
+    verbatim. Sections that do not exist in the current TASK.md are
+    appended in the contract's specified order so a fresh-start
+    repository still gets a well-formed file.
+    """
+    preamble, sections = _split_md_sections(current_text)
+    objective = proposal_sections["## Objective"].strip()
+    dod_bullets = proposal_sections["## Definition of done"].strip()
+    excl_bullets = proposal_sections["## Exclusions"].strip()
+    overrides = {
+        "## Active Phase":
+            f"\n{parent_phase_label}\n\n",
+        "## Active Sub-Phase":
+            f"\n{new_sub_phase}\n\n",
+        "## Phase Status":
+            (
+                f"\n{new_sub_phase} active. Activated by "
+                f"`python scripts/agent_loop.py activate` after a valid Phase 4A "
+                f"approval signal on `.agent-loop/proposed-phase.md`. The active "
+                f"proposal's `## Objective`, `## Definition of done`, and "
+                f"`## Exclusions` drive the sections below.\n\n"
+            ),
+        "## Active Task":
+            f"\n{objective}\n\n",
+        "## Phase Outcome Required Now":
+            f"\n{dod_bullets}\n\n",
+        "## Next-Phase Gate":
+            (
+                "\nDo not start the next sub-phase until:\n\n"
+                f"- this {new_sub_phase} slice receives `APPROVED_FOR_HUMAN_REVIEW`\n"
+                "- the human explicitly approves moving to the next sub-phase\n"
+                "- Codex updates `TASK.md`, `.agent-loop/current-task.md`, "
+                "and `.agent-loop/current-phase.md` for the next sub-phase\n\n"
+            ),
+        "## Out Of Scope For Current Phase":
+            f"\n{excl_bullets}\n",
+    }
+    # Preserve original section order; rewrite only the overridable ones.
+    new_sections: list = []
+    seen: set = set()
+    for header, body in sections:
+        if header in overrides:
+            new_sections.append((header, overrides[header]))
+        else:
+            new_sections.append((header, body))
+        seen.add(header)
+    # Append any override sections that the current file lacked.
+    for header, body in overrides.items():
+        if header not in seen:
+            new_sections.append((header, body))
+    out = preamble
+    for header, body in new_sections:
+        out += header + "\n" + body
+    return out
+
+
+def _rewrite_current_task_md(
+    new_sub_phase: str, parent_phase_label: str, proposal_sections: dict,
+) -> str:
+    objective = proposal_sections["## Objective"].strip()
+    return (
+        "# Current Task\n\n"
+        "## Phase\n"
+        f"{parent_phase_label}\n\n"
+        "## Sub-Phase\n"
+        f"{new_sub_phase}\n\n"
+        "## Status\n"
+        f"{new_sub_phase} active. Activated via `python scripts/agent_loop.py activate` "
+        f"with a valid Phase 4A approval signal on `.agent-loop/proposed-phase.md`.\n\n"
+        "## Task\n"
+        f"{objective}\n"
+    )
+
+
+def _rewrite_current_phase_md(new_sub_phase: str, parent_phase_label: str) -> str:
+    return (
+        "# Current Phase\n\n"
+        f"{parent_phase_label} (sub-phase: {new_sub_phase})\n"
+    )
+
+
+def _close_prior_active_status(
+    text: str, new_sub_phase: str,
+) -> str:
+    """Flip the previously-active sub-phase's `### Status` opening line
+    from `Active. ...` to `Complete. Closed by activation of ...`. This
+    is a minimal, one-line transition-marking edit; the substantive
+    body content (`### Objective`, `### Definition of done`,
+    `### Exclusions`, etc.) of the previously-active sub-phase is left
+    intact, so the historical record of WHAT each phase delivered is not
+    rewritten. Without this edit phase-plan.md would carry two
+    sub-phases simultaneously marked Active, which would be internally
+    inconsistent.
+    """
+    pattern = re.compile(
+        r"(## Phase\s+\S+\s+-\s+[^\n]+\n+### Status\n+)(Active\.[^\n]*)",
+        re.MULTILINE,
+    )
+    new_first_line = (
+        f"Complete. Closed by activation of {new_sub_phase}."
+    )
+    return pattern.sub(rf"\1{new_first_line}", text, count=1)
+
+
+def _append_phase_plan_section(
+    current_text: str, new_sub_phase: str, parent_phase_label: str,
+    proposal_sections: dict,
+) -> str:
+    """Update `## Active Phase` line, close the previously-active
+    sub-phase's `### Status` opening line, and APPEND a new sub-phase
+    section that mirrors the activated proposal. Historical sub-phase
+    BODIES (Objective / Definition of done / Exclusions) are never
+    rewritten.
+    """
+    # 1. Update `## Active Phase` line (single replacement).
+    text = re.sub(
+        r"^(## Active Phase)\s*\n+([^\n]+)",
+        lambda _m: f"{_m.group(1)}\n\n{parent_phase_label} (sub-phase: {new_sub_phase})",
+        current_text, count=1, flags=re.MULTILINE,
+    )
+    # 2. Close the previously-active sub-phase's `### Status` opening line.
+    text = _close_prior_active_status(text, new_sub_phase)
+    # 3. APPEND a new sub-phase section that mirrors the activated proposal.
+    appendage = (
+        f"\n## {new_sub_phase}\n\n"
+        f"### Status\n\n"
+        f"Active. Activated by `python scripts/agent_loop.py activate` after a "
+        f"valid Phase 4A approval signal on `.agent-loop/proposed-phase.md`.\n\n"
+        f"### Objective\n\n"
+        f"{proposal_sections['## Objective'].strip()}\n\n"
+        f"### Definition of done\n\n"
+        f"{proposal_sections['## Definition of done'].strip()}\n\n"
+        f"### Exclusions\n\n"
+        f"{proposal_sections['## Exclusions'].strip()}\n"
+    )
+    if not text.endswith("\n"):
+        text += "\n"
+    text += appendage
+    return text
+
+
+def _write_activated_loop_state(
+    state_path: Path, current: dict, new_phase: str, new_sub_phase: str, new_task: str,
+) -> dict:
+    """Activation-time loop-state.json write. Bypasses the orchestrator's
+    `ORCHESTRATOR_WRITABLE_FIELDS` restriction because the Phase 4A
+    contract explicitly authorizes the activator to set `phase` /
+    `sub_phase` / `task` and reset `cycle_count` / `last_verdict` /
+    `last_verdict_phase` on activation. Fields not named here are
+    preserved verbatim, satisfying the Phase 3A "preserve `max_cycles` /
+    `contract_version` / `claude_version` / `codex_version` /
+    `orchestrator_version`" rule.
+    """
+    merged = dict(current)
+    merged.update({
+        "phase": new_phase,
+        "sub_phase": new_sub_phase,
+        "task": new_task,
+        "status": "awaiting_claude_implementation",
+        "cycle_count": 0,
+        "last_verdict": None,
+        "last_verdict_phase": None,
+    })
+    state_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
+    return merged
+
+
+def run_activation(repo_root: Path) -> int:
+    """End-to-end activation cycle: load -> approve-check -> write -> log.
+
+    Returns 0 on a successful activation, 2 on any refusal. Refusals
+    append a `note:`-style line to `.agent-loop/planner.log` and leave
+    every other file untouched.
+    """
+    al = repo_root / ".agent-loop"
+    proposal_path = al / "proposed-phase.md"
+    state_path = al / "loop-state.json"
+    task_path = repo_root / "TASK.md"
+    roadmap_path = repo_root / "ROADMAP.md"
+    phase_plan_path = al / "phase-plan.md"
+    current_task_path = al / "current-task.md"
+    current_phase_path = al / "current-phase.md"
+
+    if not proposal_path.exists():
+        msg = (
+            f"{PROPOSAL_PATH_REL} does not exist; activate requires an approved "
+            f"proposal generated by `python scripts/agent_loop.py plan`"
+        )
+        _planner_log_note(repo_root, f"activation refused [no_proposal]: {msg}")
+        print(f"[activate] refused [no_proposal]: {msg}", file=sys.stderr)
+        return 2
+
+    proposal_text = proposal_path.read_text(encoding="utf-8")
+    approval = check_approval(proposal_text, proposal_path)
+    if isinstance(approval, ActivationRefusal):
+        _planner_log_note(
+            repo_root, f"activation refused [{approval.code}]: {approval.reason}",
+        )
+        print(
+            f"[activate] refused [{approval.code}]: {approval.reason}",
+            file=sys.stderr,
+        )
+        return 2
+
+    sections = parse_proposal_sections(proposal_text)
+    for header in PROPOSAL_REQUIRED_SECTIONS:
+        if not sections.get(header, "").strip():
+            msg = f"required section {header!r} body is empty in {PROPOSAL_PATH_REL}"
+            _planner_log_note(
+                repo_root, f"activation refused [proposal_malformed]: {msg}",
+            )
+            print(
+                f"[activate] refused [proposal_malformed]: {msg}",
+                file=sys.stderr,
+            )
+            return 2
+
+    parent_prefix, _sub_prefix = _parse_label_parts(approval.label)
+    if parent_prefix is None:
+        msg = (
+            f"label {approval.label!r} does not follow the "
+            f"`Phase NX - description` convention; cannot resolve parent phase"
+        )
+        _planner_log_note(
+            repo_root, f"activation refused [label_unparseable]: {msg}",
+        )
+        print(f"[activate] refused [label_unparseable]: {msg}", file=sys.stderr)
+        return 2
+
+    roadmap_text = _read_text_or_empty(roadmap_path)
+    parent_phase_label = _parent_phase_label_from_roadmap(roadmap_text, parent_prefix)
+
+    if not state_path.exists():
+        msg = (
+            f"{state_path} does not exist; activate requires loop-state.json "
+            f"to preserve orchestrator-owned runtime fields"
+        )
+        _planner_log_note(
+            repo_root, f"activation refused [no_loop_state]: {msg}",
+        )
+        print(f"[activate] refused [no_loop_state]: {msg}", file=sys.stderr)
+        return 2
+    try:
+        current_loop_state = json.loads(state_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        msg = f"loop-state.json malformed: {exc}"
+        _planner_log_note(
+            repo_root, f"activation refused [loop_state_malformed]: {msg}",
+        )
+        print(
+            f"[activate] refused [loop_state_malformed]: {msg}",
+            file=sys.stderr,
+        )
+        return 2
+
+    current_task_md = _read_text_or_empty(task_path)
+    new_task_md = _rewrite_task_md(
+        current_task_md, parent_phase_label, approval.label, sections,
+    )
+
+    new_current_task = _rewrite_current_task_md(
+        approval.label, parent_phase_label, sections,
+    )
+    new_current_phase = _rewrite_current_phase_md(approval.label, parent_phase_label)
+
+    current_phase_plan = _read_text_or_empty(phase_plan_path)
+    new_phase_plan = _append_phase_plan_section(
+        current_phase_plan, approval.label, parent_phase_label, sections,
+    )
+
+    # Apply all activation writes.
+    task_path.write_text(new_task_md, encoding="utf-8")
+    current_task_path.parent.mkdir(parents=True, exist_ok=True)
+    current_task_path.write_text(new_current_task, encoding="utf-8")
+    current_phase_path.write_text(new_current_phase, encoding="utf-8")
+    phase_plan_path.write_text(new_phase_plan, encoding="utf-8")
+    _write_activated_loop_state(
+        state_path, current_loop_state,
+        new_phase=parent_phase_label,
+        new_sub_phase=approval.label,
+        new_task=sections["## Objective"].strip(),
+    )
+
+    # Record the approval source per the Phase 4A contract: "the planner
+    # must record the approval source (file path, mtime, and the literal
+    # approval line) into .agent-loop/planner.log so the activation
+    # chain is auditable."
+    _planner_log_note(
+        repo_root,
+        (
+            f"activated [{ACTIVATOR_VERSION}]: label={approval.label!r} "
+            f"approval_source={approval.file_path} "
+            f"approval_mtime={approval.file_mtime} "
+            f"approval_line={approval.approval_line!r}"
+        ),
+    )
+    print(f"[activate] activated: {approval.label}")
+    return 0
+
+
 # ----- cli -----
 
 def cmd_check_state(_args: argparse.Namespace) -> int:
@@ -2364,6 +2919,11 @@ def cmd_plan(_args: argparse.Namespace) -> int:
     return run_planner(repo_root)
 
 
+def cmd_activate(_args: argparse.Namespace) -> int:
+    repo_root = find_repo_root()
+    return run_activation(repo_root)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent_loop",
@@ -2399,6 +2959,20 @@ def build_parser() -> argparse.ArgumentParser:
             "activating it. Refusal exits 2 and logs to .agent-loop/planner.log."
         ),
     )
+    sub.add_parser(
+        "activate",
+        help=(
+            "Phase 4C activation (consume approved proposal): parse "
+            ".agent-loop/proposed-phase.md, verify the literal "
+            "APPROVED_FOR_ACTIVATION token on its own line inside a "
+            "human-authored ## Approval section whose body references the "
+            "proposal's ## Label, then perform only the Phase 4A "
+            "activation writes (TASK.md, .agent-loop/current-task.md, "
+            ".agent-loop/current-phase.md, .agent-loop/phase-plan.md "
+            "append-only, .agent-loop/loop-state.json reset) and log the "
+            "approval source to .agent-loop/planner.log. Refusal exits 2."
+        ),
+    )
     return parser
 
 
@@ -2407,6 +2981,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "validate-artifacts": cmd_validate_artifacts,
     "run": cmd_run,
     "plan": cmd_plan,
+    "activate": cmd_activate,
 }
 
 
