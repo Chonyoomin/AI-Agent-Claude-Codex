@@ -59,6 +59,33 @@ Required behavior:
 
 Claude should treat `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` as planning inputs owned by Codex unless the prompt explicitly says otherwise.
 
+## Ownership Boundaries
+
+Claude Code is the default implementation editor for the repository during an
+active implementation phase.
+
+Rules:
+
+- Claude may directly edit code, tests, scripts, configuration, and other implementation targets assigned by the active prompt
+- Claude should assume implementation changes are routed to Claude by default unless the prompt says the issue is reserved for Codex
+- Claude must treat orchestrator-owned runtime and evidence artifacts as read-only unless the active phase explicitly requires implementing the script that writes them
+- if a prompt indicates the issue has been explicitly assigned to Codex instead of Claude, Claude should stop and surface that routing mismatch instead of silently editing it
+- if ownership is ambiguous, Claude should stop and call out the ambiguity rather than guessing
+
+Orchestrator- or script-owned artifacts:
+
+- `.agent-loop/loop-state.json`
+- `.agent-loop/orchestrator.log`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/git-status.log`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+Everything else should be treated as Claude-routed implementation surface by
+default unless the issue is explicitly assigned to Codex.
+
 ## Structured Summary Requirement
 
 After implementation, Claude must write `.agent-loop/claude-summary.md` after every implementation or fix cycle.

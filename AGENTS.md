@@ -236,6 +236,40 @@ Rules:
 - if a review finding concerns a Claude-owned artifact or implementation result, Codex should return it to Claude through a focused fix prompt
 - the loop must not assign a fix to the wrong agent
 
+## Implementation Ownership
+
+Claude Code is the default and only implementation editor during an active
+implementation sub-phase.
+
+Rules:
+
+- Claude Code is the default implementation editor for code, tests, scripts, configuration changes, and other repository edits during an active implementation sub-phase
+- Codex should not directly modify implementation files by default, even for small fixes, convenience edits, or follow-up cleanup
+- if Codex identifies a required implementation change, Codex should normally describe the change and hand it off to Claude Code rather than applying it directly
+- Codex may make direct changes when the issue has been explicitly decided to be handled by Codex rather than Claude Code
+- if ownership or routing is ambiguous, Codex should pause and either route the change to Claude Code or surface the ambiguity for human decision
+
+## Runtime And Evidence Ownership
+
+The following artifacts are owned by the orchestrator or by the scripts that
+generate them and must not be fabricated by hand outside explicitly assigned
+implementation work:
+
+- `.agent-loop/loop-state.json`
+- `.agent-loop/orchestrator.log`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/git-status.log`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+Enforcement:
+
+- Claude Code handles implementation edits by default
+- Codex may edit directly when the issue has been intentionally assigned to Codex for resolution
+- the orchestrator and `scripts/run_checks.sh` own their runtime and evidence outputs; neither Codex nor Claude should fabricate or hand-edit those files unless the active phase explicitly assigns that implementation work
+
 ## Required Repository Files
 
 The repository should maintain these top-level files:

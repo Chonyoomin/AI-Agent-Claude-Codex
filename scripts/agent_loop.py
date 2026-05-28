@@ -753,6 +753,24 @@ def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[P
     return 2
 
 
+def _invoke_post_approval_planner(repo_root: Path, log_path: Optional[Path]) -> int:
+    """Invoke the standalone planner after a terminal approval.
+
+    Phase 4D integrates the planner only into the post-approval handoff.
+    Planner refusal is logged but does not change the already-persisted
+    terminal orchestrator outcome.
+    """
+    rc = run_planner(repo_root)
+    _log_note(
+        log_path,
+        (
+            "note: post-approval planner invoked after "
+            f"APPROVED_FOR_HUMAN_REVIEW; planner_exit_code={rc}"
+        ),
+    )
+    return rc
+
+
 def run_normal_cycle(repo_root: Path) -> int:
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
@@ -928,6 +946,7 @@ def _handle_verdict_loop(
                 "last_verdict": verdict,
                 "last_verdict_phase": last_verdict_phase,
             })
+            _invoke_post_approval_planner(repo_root, log_path)
             print(
                 f"[orchestrator] verdict={verdict}; phase complete, "
                 f"awaiting human approval to start the next phase."

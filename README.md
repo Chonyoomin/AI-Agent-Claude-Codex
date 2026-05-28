@@ -81,6 +81,13 @@ Loop artifacts:
 - no phase advancement without human approval
 - no final commit without human approval
 
+## Ownership Rules
+
+- Claude Code is the default implementation editor for code, tests, scripts, configuration, and other non-state repository files during an active phase
+- Codex should normally route implementation changes to Claude Code and edit directly only when the issue has been intentionally assigned to Codex
+- `.agent-loop/loop-state.json`, `.agent-loop/orchestrator.log`, and the evidence files are owned by the orchestrator or the scripts that generate them; they must not be fabricated by hand outside explicitly assigned implementation work
+- if ownership is ambiguous, the change should be routed to Claude Code or escalated for human clarification rather than guessed
+
 ## Running The Loop Manually (Phase 1)
 
 While the orchestrator is not yet built, the loop runs by hand against the artifact formats defined in `AGENTS.md`. One full manual cycle:
