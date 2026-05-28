@@ -711,6 +711,188 @@ class ActivationWriteBoundaryTests(_ActivationTestCase):
         return snapshot
 
 
+# --- atomic-or-rollback activation-write tests ---
+
+class ActivationAtomicWriteTests(_ActivationTestCase):
+    """The Phase 4A contract forbids the activator leaving the repo in a
+    partially-activated state. These tests inject an `OSError` partway
+    through the activation-owned write set and verify:
+
+      - the activator returns exit code 2
+      - every activation-owned file is restored to its EXACT pre-attempt
+        bytes (including files that did not exist before the attempt -
+        those must be removed)
+      - the planner.log contains the activation-failed `note:` line
+      - the planner.log does NOT contain the `activated [...]` success
+        note for this attempted activation
+      - no temp file (the `.tmp-activate` artifact used by the atomic
+        per-file write) is left behind after rollback
+
+    The failure is injected by monkeypatching the
+    `_apply_activation_writes_atomically` helper's underlying call to
+    `Path.replace`. Replacing the third planned write's `replace` call
+    with one that raises `OSError` exercises the mid-set failure case
+    deterministically and cross-platform - no filesystem-permission
+    trick required.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.repo.with_proposal(_proposal_with_approval(VALID_APPROVAL_BODY))
+
+    def _snapshot_activation_owned(self) -> dict:
+        snap: dict = {}
+        for rel in agent_loop.ACTIVATOR_ALLOWED_WRITE_FILES:
+            p = self.repo.root / rel
+            snap[rel] = p.read_bytes() if p.is_file() else None
+        return snap
+
+    def _planner_log_text(self) -> str:
+        p = self.repo.root / agent_loop.PLANNER_LOG_PATH_REL
+        return p.read_text(encoding="utf-8") if p.is_file() else ""
+
+    def _stray_tmp_files(self) -> list:
+        """Return any leftover `.tmp-activate` files anywhere under repo."""
+        leftovers: list = []
+        for dirpath, _dirs, files in os.walk(self.repo.root):
+            for name in files:
+                if name.endswith(agent_loop._ACTIVATION_TMP_SUFFIX):
+                    leftovers.append(str(Path(dirpath) / name))
+        return leftovers
+
+    def test_mid_set_write_failure_rolls_back_and_refuses(self) -> None:
+        before = self._snapshot_activation_owned()
+        before_log = self._planner_log_text()
+
+        # Inject a failure on the 3rd `Path.replace` call. The activator
+        # makes exactly one `replace` call per planned write (the temp
+        # file is renamed over the target). The 3rd planned write is
+        # `.agent-loop/current-phase.md`, so by the time the failure
+        # fires `TASK.md` and `.agent-loop/current-task.md` have already
+        # been replaced - giving the rollback path real work to undo.
+        from pathlib import Path as _Path
+        real_replace = _Path.replace
+        call_count = {"n": 0}
+        injected: dict = {}
+
+        def fake_replace(self, target):
+            call_count["n"] += 1
+            if call_count["n"] == 3:
+                injected["target"] = target
+                raise OSError("simulated mid-set activation-write failure")
+            return real_replace(self, target)
+
+        import unittest.mock as _mock
+        with _mock.patch.object(_Path, "replace", fake_replace):
+            rc = agent_loop.run_activation(self.repo.root)
+
+        # 1. Exit code 2 on the failed activation.
+        self.assertEqual(rc, 2)
+
+        # 2. planner.log carries the failure `note:` line, NOT the
+        #    `activated [...]` success note.
+        log_after = self._planner_log_text()
+        new_log_lines = log_after[len(before_log):]
+        self.assertIn(" note: ", new_log_lines)
+        self.assertIn("activation refused [activation_write_failed]", new_log_lines)
+        self.assertNotIn(
+            f"activated [{agent_loop.ACTIVATOR_VERSION}]", new_log_lines,
+            "success `activated [...]` note must NOT be appended on rollback",
+        )
+
+        # 3. Every activation-owned file is byte-identical to its
+        #    pre-attempt state. The `.tmp-activate` temp file from the
+        #    failed write is NOT included in this check because the
+        #    helper cleans it up before raising.
+        after = self._snapshot_activation_owned()
+        for rel in agent_loop.ACTIVATOR_ALLOWED_WRITE_FILES:
+            if rel == agent_loop.PLANNER_LOG_PATH_REL:
+                continue
+            self.assertEqual(
+                before.get(rel), after.get(rel),
+                f"activation-owned file {rel} not restored after rollback",
+            )
+
+        # 4. No `.tmp-activate` temp files left behind anywhere in the repo.
+        self.assertEqual(
+            self._stray_tmp_files(), [],
+            "rollback must clean up any partial `.tmp-activate` files",
+        )
+
+    def test_first_write_failure_leaves_no_files_modified(self) -> None:
+        """If the very first activation write fails, the rollback list
+        is empty; the test verifies the activator still refuses cleanly
+        with no side effects and no temp files left behind."""
+        before = self._snapshot_activation_owned()
+        before_log = self._planner_log_text()
+
+        from pathlib import Path as _Path
+        real_replace = _Path.replace
+        call_count = {"n": 0}
+
+        def fake_replace(self, target):
+            call_count["n"] += 1
+            if call_count["n"] == 1:
+                raise OSError("simulated first-write activation failure")
+            return real_replace(self, target)
+
+        import unittest.mock as _mock
+        with _mock.patch.object(_Path, "replace", fake_replace):
+            rc = agent_loop.run_activation(self.repo.root)
+
+        self.assertEqual(rc, 2)
+        log_after = self._planner_log_text()
+        new_log_lines = log_after[len(before_log):]
+        self.assertIn("activation refused [activation_write_failed]", new_log_lines)
+        self.assertNotIn(
+            f"activated [{agent_loop.ACTIVATOR_VERSION}]", new_log_lines,
+        )
+        after = self._snapshot_activation_owned()
+        for rel in agent_loop.ACTIVATOR_ALLOWED_WRITE_FILES:
+            if rel == agent_loop.PLANNER_LOG_PATH_REL:
+                continue
+            self.assertEqual(before.get(rel), after.get(rel))
+        self.assertEqual(self._stray_tmp_files(), [])
+
+    def test_last_write_failure_rolls_back_all_earlier_writes(self) -> None:
+        """If the last planned write (the loop-state.json replace) fails,
+        all four earlier writes must be rolled back. Exercises the full
+        rollback chain."""
+        before = self._snapshot_activation_owned()
+        before_log = self._planner_log_text()
+
+        from pathlib import Path as _Path
+        real_replace = _Path.replace
+        call_count = {"n": 0}
+
+        def fake_replace(self, target):
+            call_count["n"] += 1
+            if call_count["n"] == 5:
+                raise OSError("simulated last-write activation failure")
+            return real_replace(self, target)
+
+        import unittest.mock as _mock
+        with _mock.patch.object(_Path, "replace", fake_replace):
+            rc = agent_loop.run_activation(self.repo.root)
+
+        self.assertEqual(rc, 2)
+        log_after = self._planner_log_text()
+        new_log_lines = log_after[len(before_log):]
+        self.assertIn("activation refused [activation_write_failed]", new_log_lines)
+        self.assertNotIn(
+            f"activated [{agent_loop.ACTIVATOR_VERSION}]", new_log_lines,
+        )
+        after = self._snapshot_activation_owned()
+        for rel in agent_loop.ACTIVATOR_ALLOWED_WRITE_FILES:
+            if rel == agent_loop.PLANNER_LOG_PATH_REL:
+                continue
+            self.assertEqual(
+                before.get(rel), after.get(rel),
+                f"activation-owned file {rel} not restored after last-write rollback",
+            )
+        self.assertEqual(self._stray_tmp_files(), [])
+
+
 # --- parser-only unit tests ---
 
 class ApprovalParserUnitTests(unittest.TestCase):
