@@ -1377,6 +1377,43 @@ def _read_text_or_empty(path: Path) -> str:
         return ""
 
 
+class _ActivationInputError(Exception):
+    """Raised by `_read_text_strict` when an activation-required input is
+    missing or unreadable. Carries the contract-vocabulary refusal code
+    so the caller can route to the appropriate `activation refused [...]`
+    log line without re-classifying the failure.
+    """
+
+    def __init__(self, code: str, path: Path, reason: str) -> None:
+        super().__init__(f"{code}: {path}: {reason}")
+        self.code = code
+        self.path = path
+        self.reason = reason
+
+
+def _read_text_strict(
+    path: Path, *, missing_code: str, unreadable_code: str,
+) -> str:
+    """Read `path` and return its text, or raise `_ActivationInputError`
+    on any failure. Used by the activator for inputs the Phase 4A
+    contract requires it to preserve verbatim (TASK.md sections,
+    phase-plan.md historical bodies, ROADMAP.md parent-phase lookup):
+    a silent best-effort fallback to "" would fabricate replacement
+    state instead of preserving real content, so the activator must
+    fail closed when these inputs cannot be read.
+    """
+    if not path.exists():
+        raise _ActivationInputError(
+            missing_code, path, f"{path} does not exist",
+        )
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise _ActivationInputError(
+            unreadable_code, path, f"could not read {path}: {exc}",
+        ) from exc
+
+
 _PHASE_LABEL_RE = re.compile(r"^## (Phase\s+\S+\s+-\s+[^\n]+)", re.MULTILINE)
 
 
@@ -2663,12 +2700,15 @@ def _append_phase_plan_section(
     return text
 
 
-def _write_activated_loop_state(
-    state_path: Path, current: dict, new_phase: str, new_sub_phase: str, new_task: str,
+def _compute_activated_loop_state(
+    current: dict, new_phase: str, new_sub_phase: str, new_task: str,
 ) -> dict:
-    """Activation-time loop-state.json write. Bypasses the orchestrator's
-    `ORCHESTRATOR_WRITABLE_FIELDS` restriction because the Phase 4A
-    contract explicitly authorizes the activator to set `phase` /
+    """Pure: compute the post-activation loop-state.json dict from the
+    pre-activation state and the activated proposal. Separated from the
+    write step so the atomic-or-rollback write helper can stage the
+    serialized bytes alongside the other activation-owned writes.
+
+    The Phase 4A contract authorizes the activator to set `phase` /
     `sub_phase` / `task` and reset `cycle_count` / `last_verdict` /
     `last_verdict_phase` on activation. Fields not named here are
     preserved verbatim, satisfying the Phase 3A "preserve `max_cycles` /
@@ -2685,8 +2725,93 @@ def _write_activated_loop_state(
         "last_verdict": None,
         "last_verdict_phase": None,
     })
-    state_path.write_text(json.dumps(merged, indent=2) + "\n", encoding="utf-8")
     return merged
+
+
+def _serialize_loop_state_bytes(state: dict) -> bytes:
+    return (json.dumps(state, indent=2) + "\n").encode("utf-8")
+
+
+class _ActivationWriteError(Exception):
+    """Raised by `_apply_activation_writes_atomically` when an
+    activation-owned write fails. The caller routes to the
+    `activation_write_failed` refusal code. By the time this exception
+    is raised, the helper has already restored every activation-owned
+    file to its exact pre-attempt bytes (or removed any files it had
+    newly created), so the repository is guaranteed to be either fully
+    activated or fully restored - never partially activated.
+    """
+
+    def __init__(self, failed_path: Path, reason: str) -> None:
+        super().__init__(f"{failed_path}: {reason}")
+        self.failed_path = failed_path
+        self.reason = reason
+
+
+_ACTIVATION_TMP_SUFFIX = ".tmp-activate"
+
+
+def _apply_activation_writes_atomically(
+    planned: list,
+) -> None:
+    """Apply each `(Path, bytes)` write in `planned` with all-or-nothing
+    semantics across the group.
+
+    Approach: snapshot pre-existing bytes for every planned-write path,
+    then write each file via a same-directory temp file + `Path.replace`
+    (atomic per-file on every supported platform). If any write raises
+    `OSError`, roll back EVERY previously-applied write by either
+    restoring the snapshotted bytes (for files that existed pre-attempt)
+    or removing the file (for files that did not exist pre-attempt),
+    then raise `_ActivationWriteError` so the caller can route the
+    failure to the `activation_write_failed` refusal code.
+
+    Stray temp files from the failed write are cleaned up best-effort
+    before the exception is raised. Rollback errors are swallowed
+    (best-effort) so a secondary failure during rollback cannot mask
+    the primary write failure that triggered the rollback.
+    """
+    snapshots: list = []
+    for path, _content in planned:
+        original = path.read_bytes() if path.is_file() else None
+        snapshots.append((path, original))
+    written: list = []
+    try:
+        for path, content in planned:
+            tmp_path = path.with_name(path.name + _ACTIVATION_TMP_SUFFIX)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path.write_bytes(content)
+            tmp_path.replace(path)
+            written.append(path)
+    except OSError as exc:
+        failed_path = path  # The loop variable at the point of failure.
+        # Clean up the failed write's temp file if it landed.
+        try:
+            tmp_path = failed_path.with_name(
+                failed_path.name + _ACTIVATION_TMP_SUFFIX,
+            )
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+        # Roll back every previously-applied write to its exact
+        # pre-attempt bytes (or remove it if it did not exist pre-attempt).
+        for done_path in written:
+            original = next(
+                (orig for snap_path, orig in snapshots if snap_path == done_path),
+                None,
+            )
+            try:
+                if original is None:
+                    if done_path.exists():
+                        done_path.unlink()
+                else:
+                    done_path.write_bytes(original)
+            except OSError:
+                # Rollback is best-effort: a secondary OS error during
+                # rollback must not mask the primary write failure.
+                pass
+        raise _ActivationWriteError(failed_path, str(exc)) from exc
 
 
 def run_activation(repo_root: Path) -> int:
@@ -2751,9 +2876,6 @@ def run_activation(repo_root: Path) -> int:
         print(f"[activate] refused [label_unparseable]: {msg}", file=sys.stderr)
         return 2
 
-    roadmap_text = _read_text_or_empty(roadmap_path)
-    parent_phase_label = _parent_phase_label_from_roadmap(roadmap_text, parent_prefix)
-
     if not state_path.exists():
         msg = (
             f"{state_path} does not exist; activate requires loop-state.json "
@@ -2777,7 +2899,42 @@ def run_activation(repo_root: Path) -> int:
         )
         return 2
 
-    current_task_md = _read_text_or_empty(task_path)
+    # Strict reads for the three activation-required inputs whose contents
+    # the activator must preserve (TASK.md's `## Human Objective` /
+    # `## Project Intent`, the entirety of phase-plan.md history, and the
+    # ROADMAP.md parent-phase lookup body). Missing or unreadable inputs
+    # are fail-closed: the activator MUST NOT synthesize replacement
+    # content from an empty string, because doing so would silently
+    # fabricate human-owned / historical state. The three reads happen
+    # BEFORE any activation write so a refusal here leaves no
+    # activation-owned file partially written.
+    try:
+        current_task_md = _read_text_strict(
+            task_path,
+            missing_code="task_md_missing",
+            unreadable_code="task_md_unreadable",
+        )
+        roadmap_text = _read_text_strict(
+            roadmap_path,
+            missing_code="roadmap_missing",
+            unreadable_code="roadmap_unreadable",
+        )
+        current_phase_plan = _read_text_strict(
+            phase_plan_path,
+            missing_code="phase_plan_missing",
+            unreadable_code="phase_plan_unreadable",
+        )
+    except _ActivationInputError as err:
+        _planner_log_note(
+            repo_root, f"activation refused [{err.code}]: {err.reason}",
+        )
+        print(
+            f"[activate] refused [{err.code}]: {err.reason}",
+            file=sys.stderr,
+        )
+        return 2
+
+    parent_phase_label = _parent_phase_label_from_roadmap(roadmap_text, parent_prefix)
     new_task_md = _rewrite_task_md(
         current_task_md, parent_phase_label, approval.label, sections,
     )
@@ -2787,28 +2944,54 @@ def run_activation(repo_root: Path) -> int:
     )
     new_current_phase = _rewrite_current_phase_md(approval.label, parent_phase_label)
 
-    current_phase_plan = _read_text_or_empty(phase_plan_path)
     new_phase_plan = _append_phase_plan_section(
         current_phase_plan, approval.label, parent_phase_label, sections,
     )
 
-    # Apply all activation writes.
-    task_path.write_text(new_task_md, encoding="utf-8")
-    current_task_path.parent.mkdir(parents=True, exist_ok=True)
-    current_task_path.write_text(new_current_task, encoding="utf-8")
-    current_phase_path.write_text(new_current_phase, encoding="utf-8")
-    phase_plan_path.write_text(new_phase_plan, encoding="utf-8")
-    _write_activated_loop_state(
-        state_path, current_loop_state,
+    # Stage every activation-owned write up front, then apply them
+    # atomically as a group. The Phase 4A contract forbids leaving the
+    # repository in a partially-activated state, so individual sequential
+    # writes (which could fail mid-set after one or more files had
+    # already been mutated) are unacceptable. The helper below uses
+    # temp-file + Path.replace for each individual write AND restores
+    # every earlier write on any failure, so the activation set as a
+    # whole is fail-closed.
+    new_loop_state = _compute_activated_loop_state(
+        current_loop_state,
         new_phase=parent_phase_label,
         new_sub_phase=approval.label,
         new_task=sections["## Objective"].strip(),
     )
+    planned_writes = [
+        (task_path, new_task_md.encode("utf-8")),
+        (current_task_path, new_current_task.encode("utf-8")),
+        (current_phase_path, new_current_phase.encode("utf-8")),
+        (phase_plan_path, new_phase_plan.encode("utf-8")),
+        (state_path, _serialize_loop_state_bytes(new_loop_state)),
+    ]
+    try:
+        _apply_activation_writes_atomically(planned_writes)
+    except _ActivationWriteError as err:
+        msg = (
+            f"activation-owned write failed on {err.failed_path}; all earlier "
+            f"activation-owned files have been restored to their exact "
+            f"pre-activation bytes. Underlying error: {err.reason}"
+        )
+        _planner_log_note(
+            repo_root, f"activation refused [activation_write_failed]: {msg}",
+        )
+        print(
+            f"[activate] refused [activation_write_failed]: {msg}",
+            file=sys.stderr,
+        )
+        return 2
 
     # Record the approval source per the Phase 4A contract: "the planner
     # must record the approval source (file path, mtime, and the literal
     # approval line) into .agent-loop/planner.log so the activation
-    # chain is auditable."
+    # chain is auditable." The success note is only ever appended when
+    # the full activation-owned write set has been committed; on any
+    # _ActivationWriteError the function has already returned 2 above.
     _planner_log_note(
         repo_root,
         (
