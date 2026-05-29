@@ -77,6 +77,8 @@ The orchestrator should:
 - save logs
 - pass review context to Codex
 - enforce cycle-safety thresholds and require human review when the same issue repeats without meaningful progress
+- treat token exhaustion or context-window exhaustion as an interrupted run state rather than silent success
+- preserve enough checkpoint state to resume Claude Code or Codex work in a later continuation attempt
 - pause between phases until the human starts the next phase
 - stop safely when human approval is required
 
@@ -334,6 +336,13 @@ Build:
   - `.agent-loop/memory/summaries/`
 - selective memory retrieval rules for prompt construction
 - memory distillation rules at approved phase boundaries and after repeated failure patterns
+- a checkpoint-resume contract for interrupted Claude Code and Codex runs
+- structured checkpoint artifacts for continuation state, such as:
+  - `.agent-loop/checkpoints/claude/`
+  - `.agent-loop/checkpoints/codex/`
+- token-exhaustion handling rules that classify token or context exhaustion as resumable interruption rather than successful completion
+- continuation-chaining rules so a long task can be resumed across multiple bounded turns after token reset without losing phase or review context
+- bounded resume-prompt construction rules that pull only the relevant task state, evidence, durable memory, and prior checkpoint summary into the next continuation
 - optional context-file support for:
   - API docs
   - design system docs
@@ -351,12 +360,19 @@ Design rules:
 - memory retrieval must be selective and relevance-based rather than loading the entire memory store into every prompt
 - human-reviewed policy changes and repeated operational failures should become durable memory entries
 - missing optional context files or missing memory notes must not break the loop
+- token exhaustion must be treated as an interrupted run state that requires either automatic continuation from a valid checkpoint or an explicit halt, never silent success
+- automatic continuation after token reset must preserve the same active phase, sub-phase, safety limits, and human-gating rules
+- continuation chaining must be bounded, auditable, and restartable from repo artifacts rather than depending on a single chat window
+- checkpoint summaries should be distilled, minimal, and sufficient to resume work without replaying full transcripts
+- a failed or missing checkpoint must not corrupt canonical loop state; the system should fall back to a safe halted or manual-resume path
 
 Success:
 
 - important decisions and recurring failure patterns survive compaction without depending on the current chat window
 - the system can retrieve relevant durable memory to support longer autonomous product-building runs
 - memory does not become a competing source of truth for active task or loop state
+- Claude Code and Codex runs can resume automatically after token-reset interruptions using persisted checkpoints and continuation prompts
+- long implementation or review sessions can be split across multiple continuation hops without losing the active task context
 - optional context files can be loaded into prompts
 - missing optional files do not break the loop
 - MCP remains future support, not MVP dependency
