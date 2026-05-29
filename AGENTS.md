@@ -235,6 +235,59 @@ Rules:
 - if a review finding concerns a Codex-owned artifact or decision, Codex must correct it directly instead of issuing a Claude fix prompt
 - if a review finding concerns a Claude-owned artifact or implementation result, Codex should return it to Claude through a focused fix prompt
 - the loop must not assign a fix to the wrong agent
+- governance and instruction files are frozen by default during a code-focused phase, but an explicit human-directed governance update is always allowed
+- if an explicit human-directed governance update contradicts the current `TASK.md`, phase contract, or active prompt constraints, the contradiction must be stated explicitly in the review or status update, and the change is still allowed because the human override takes precedence
+
+## Implementation Ownership
+
+Claude Code is the default and only implementation editor during an active
+implementation sub-phase.
+
+Rules:
+
+- Claude Code is the default implementation editor for code, tests, scripts, configuration changes, and other repository edits during an active implementation sub-phase
+- Codex should not directly modify implementation files by default, even for small fixes, convenience edits, or follow-up cleanup
+- if Codex identifies a required implementation change, Codex should decide whether the issue should be resolved by Claude Code or by Codex
+- if the issue is an implementation issue, test issue, refactor issue, script implementation issue, or other code-change issue that belongs to the active development work, Codex should normally hand it off to Claude Code rather than applying it directly
+- if the issue is a planning issue, task-state issue, review issue, prompt issue, phase-management issue, agent-routing issue, governance or instruction issue, or another issue that Codex determines should not be resolved by Claude Code, Codex should resolve it directly
+- if Codex identifies a planning-state hygiene issue, Codex should resolve it directly rather than routing it to Claude Code
+- Codex may directly edit any file when Codex has explicitly decided that the issue should be Codex-resolved rather than Claude-resolved
+- Claude Code should not be used to fix issues that Codex has explicitly classified as Codex-resolved
+- if ownership or routing is ambiguous, Codex should pause and either route the change to Claude Code or surface the ambiguity for human decision
+
+Before beginning implementation work on a continuing phase, Codex should first:
+
+- summarize the remaining implementation gap for the active phase
+- classify the gap as Claude-resolved or Codex-resolved
+- if the gap is Claude-resolved, write the precise Claude Code task prompt for the active phase before any implementation is attempted
+
+When a new phase or sub-phase is explicitly started by the human, Codex should first:
+
+- provide a short rundown of what the new phase will implement
+- state separately what Codex will do for that phase and what Claude Code will do for that phase
+- route the Claude-owned implementation work as a precise Claude Code task prompt before Claude implementation begins
+- perform any Codex-resolved work directly instead of routing it to Claude Code
+
+## Runtime And Evidence Ownership
+
+The following artifacts are owned by the orchestrator or by the scripts that
+generate them and must not be fabricated by hand outside explicitly assigned
+implementation work:
+
+- `.agent-loop/loop-state.json`
+- `.agent-loop/orchestrator.log`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/git-status.log`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
+
+Enforcement:
+
+- Claude Code handles implementation edits by default
+- Codex may edit directly when the issue has been intentionally assigned to Codex for resolution
+- the orchestrator and `scripts/run_checks.sh` own their runtime and evidence outputs; neither Codex nor Claude should fabricate or hand-edit those files unless the active phase explicitly assigns that implementation work
 
 ## Required Repository Files
 
@@ -487,6 +540,7 @@ Codex responsibilities:
 - choose the next small phase
 - update `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase
 - generate precise prompts for Claude Code
+- when asked to continue an active phase, first summarize the remaining implementation gap, classify it as Claude-resolved or Codex-resolved, and if it is Claude-resolved write the precise Claude Code task prompt before implementation proceeds
 - compare claims against diff and logs
 - issue exactly one allowed review verdict per review cycle
 - generate repair prompts when necessary

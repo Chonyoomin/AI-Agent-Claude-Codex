@@ -20,42 +20,41 @@ Phase 4 - Phase Planning Automation
 
 ## Active Sub-Phase
 
-Phase 4C - Planner Activation Writes
+Phase 4E - Optional Planner Adapter
 
 ## Phase Status
 
-Phase 4B (Planner Initial Slice) is closed and approved for human review. Phase 4C implements the activation step the Phase 4A Planning Contract authorizes: consume an already-generated `.agent-loop/proposed-phase.md` whose `## Approval` section carries the literal `APPROVED_FOR_ACTIVATION` token AND references the proposal's `## Label`, then perform only the activation writes the Phase 4A contract permits (`TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md` append-only, `.agent-loop/loop-state.json` reset per the contract). Planner-orchestrator auto-integration and the optional planner adapter remain deferred.
+Phase 4D (Planner-Orchestrator Integration) is closed and approved for human review. Phase 4E is now active and introduces an optional planner-adapter seam so planner execution is no longer hard-wired to direct in-process calls. The default path must preserve today's local behavior, while making planner invocation routable through a dedicated adapter boundary for both the `plan` command path and the post-approval planner refresh path. Activation remains a separate human-approved step.
 
 ## Active Task
 
-Implement a separate `activate` CLI path in `scripts/agent_loop.py` (NOT folded into `plan`) that: parses `.agent-loop/proposed-phase.md`; verifies a human-authored `## Approval` section exists, contains the literal `APPROVED_FOR_ACTIVATION` token on its own line within that section, and references the proposal's `## Label` text; refuses on a missing approval section, a malformed/mis-cased/decorated token, a label mismatch, an unreadable proposal, an unreadable loop-state.json, or any malformed required proposal section; on success performs ONLY the Phase 4A activation writes (rewriting `TASK.md`'s `## Active Phase` / `## Active Sub-Phase` / `## Phase Status` / `## Active Task` / `## Phase Outcome Required Now` / `## Next-Phase Gate` / `## Out Of Scope For Current Phase` while preserving `## Human Objective` and `## Project Intent` verbatim; rewriting `.agent-loop/current-task.md` and `.agent-loop/current-phase.md`; appending one new sub-phase section to `.agent-loop/phase-plan.md` and updating its `## Active Phase` line; resetting `.agent-loop/loop-state.json` to `status = awaiting_claude_implementation`, `cycle_count = 0`, `last_verdict = null`, `last_verdict_phase = null` with `phase` / `sub_phase` / `task` set from the approved proposal and `max_cycles` / `contract_version` / `claude_version` / `codex_version` / `orchestrator_version` preserved); records the approval source (file path, mtime, literal approval line) into `.agent-loop/planner.log` as a `note:`-style line; and exits 0 on success, 2 on any refusal. Add focused tests for the activation success path and every refusal condition. Update `README.md`.
+Introduce an optional planner adapter so planner execution goes through a dedicated adapter boundary instead of direct hard-wired calls, while preserving the current planner behavior by default. Route both the `plan` command path and the post-approval planner refresh path through that seam, keep the planner's write boundary unchanged, add focused tests for the adapterized behavior, and update `README.md`.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 4 / 4C as active
-- `.agent-loop/phase-plan.md` marks Phase 4B complete and contains a Phase 4C section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` exposes a new `activate` CLI subcommand whose exit code is 0 on a successful activation and 2 on any refusal; activation is NOT folded into the existing `plan` subcommand
-- the activation parser refuses every Phase 4A-required refusal path: missing `## Approval` section, missing-or-malformed `APPROVED_FOR_ACTIVATION` token (wrong case, extra words on the line, leading/trailing characters), label-mismatch against `## Label`, missing/unreadable `proposed-phase.md`, missing/malformed `loop-state.json`, and empty required-proposal-section bodies
-- on success, the activation path writes ONLY the files the Phase 4A contract authorizes on activation: `TASK.md` (preserving `## Human Objective` and `## Project Intent` verbatim), `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md` (`## Active Phase` line + APPEND new sub-phase section), `.agent-loop/loop-state.json` (reset per contract), and a `note:`-style line in `.agent-loop/planner.log` recording the approval source
-- the existing planner-only write boundary (proposal generation step) remains unchanged outside the activation path
-- `tests/test_planner_activation.py` exists and covers the activation success path plus every refusal condition above
-- `README.md` documents the new `activate` subcommand and operator flow
-- no planner-orchestrator auto-integration in this sub-phase
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` identify Phase 4 / 4E as active
+- `.agent-loop/phase-plan.md` marks Phase 4D complete and contains a Phase 4E section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` routes planner invocation through a dedicated planner-adapter seam rather than direct hard-wired calls
+- the default planner adapter preserves today's local behavior for both the `plan` CLI path and the post-approval planner refresh path
+- the planner's existing write boundary remains unchanged under adapterization: only `.agent-loop/proposed-phase.md` and `.agent-loop/planner.log` may be written by planner execution, and activation remains separate from planning
+- planner refusals and planner exceptions remain surfaced with the same fail-closed behavior already required by Phases 4B through 4D
+- `tests/` contains focused coverage for the adapterized `plan` path, the adapterized post-approval planner path, and proof that the adapter seam does not widen planner or activation writes
+- `README.md` reflects the Phase 4E active status and documents the optional planner-adapter behavior
 - no changes to `AGENTS.md`, `CLAUDE.md`, `scripts/run_checks.sh`, the Phase 2A Evidence Collection Contract, the Phase 3A Orchestrator Contract body, or the Phase 4A Planning Contract body
 
 ## Next-Phase Gate
 
-Do not start the next 4x sub-phase (planner-orchestrator integration, optional planner adapter, etc.) until:
+Do not start the next 4x sub-phase after Phase 4E until:
 
-- this Phase 4C slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 4E slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- planner-orchestrator auto-integration (deferred to Phase 4D)
-- optional planner adapter (deferred to Phase 4E or later)
+- planner-driven activation from inside the orchestrator (planning may refresh `.agent-loop/proposed-phase.md`, but approval + activation remain a separate human step)
 - approval mode implementation (Phase 5)
+- durable memory, token-reset continuation, checkpoint-resume logic, and continuation chaining (Phase 6)
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
@@ -65,5 +64,5 @@ Do not start the next 4x sub-phase (planner-orchestrator integration, optional p
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
 - any change to `AGENTS.md` or `CLAUDE.md`
-- adding any project-wide CI suite to the repository (the new test file is for the activator's own validators)
+- adding any project-wide CI suite to the repository beyond focused planner-adapter coverage
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
