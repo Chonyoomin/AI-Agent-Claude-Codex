@@ -753,14 +753,44 @@ def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[P
     return 2
 
 
+POST_APPROVAL_PLANNER_EXCEPTION_CODE = -1
+
+
 def _invoke_post_approval_planner(repo_root: Path, log_path: Optional[Path]) -> int:
     """Invoke the standalone planner after a terminal approval.
 
     Phase 4D integrates the planner only into the post-approval handoff.
-    Planner refusal is logged but does not change the already-persisted
-    terminal orchestrator outcome.
+    The invocation is fully contained so it can never change the
+    already-persisted terminal orchestrator outcome:
+
+      - a normal planner return code (0 on success, 2 on refusal) is
+        logged as a `note:` line to .agent-loop/orchestrator.log; the
+        orchestrator still returns 0 after the terminal approval
+      - any unexpected exception from planner code is caught and logged
+        as a `note:` line; it is NOT re-raised, so an internal planner
+        bug cannot crash or halt the already-approved cycle. The
+        sentinel `POST_APPROVAL_PLANNER_EXCEPTION_CODE` is returned so a
+        caller (and tests) can distinguish "planner raised" from a
+        normal exit code.
+
+    The broad `except Exception` is deliberate: this is a fail-closed
+    containment boundary at an integration seam, and the whole point is
+    to absorb ANY planner-internal failure. `KeyboardInterrupt` /
+    `SystemExit` derive from `BaseException`, not `Exception`, so the
+    orchestrator's explicit-human-stop halt path is preserved.
     """
-    rc = run_planner(repo_root)
+    try:
+        rc = run_planner(repo_root)
+    except Exception as exc:  # noqa: BLE001 - deliberate containment boundary
+        _log_note(
+            log_path,
+            (
+                "note: post-approval planner raised an unexpected exception "
+                "after APPROVED_FOR_HUMAN_REVIEW; the already-approved cycle "
+                f"is unaffected. exception={type(exc).__name__}: {exc}"
+            ),
+        )
+        return POST_APPROVAL_PLANNER_EXCEPTION_CODE
     _log_note(
         log_path,
         (

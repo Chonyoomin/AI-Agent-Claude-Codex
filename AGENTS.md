@@ -254,6 +254,12 @@ Rules:
 - Claude Code should not be used to fix issues that Codex has explicitly classified as Codex-resolved
 - if ownership or routing is ambiguous, Codex should pause and either route the change to Claude Code or surface the ambiguity for human decision
 
+Before beginning implementation work on a continuing phase, Codex should first:
+
+- summarize the remaining implementation gap for the active phase
+- classify the gap as Claude-resolved or Codex-resolved
+- if the gap is Claude-resolved, write the precise Claude Code task prompt for the active phase before any implementation is attempted
+
 ## Runtime And Evidence Ownership
 
 The following artifacts are owned by the orchestrator or by the scripts that
@@ -526,6 +532,7 @@ Codex responsibilities:
 - choose the next small phase
 - update `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase
 - generate precise prompts for Claude Code
+- when asked to continue an active phase, first summarize the remaining implementation gap, classify it as Claude-resolved or Codex-resolved, and if it is Claude-resolved write the precise Claude Code task prompt before implementation proceeds
 - compare claims against diff and logs
 - issue exactly one allowed review verdict per review cycle
 - generate repair prompts when necessary
