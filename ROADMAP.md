@@ -71,6 +71,7 @@ The orchestrator should:
 
 - read and write `.agent-loop/` files
 - pass prompts to Claude Code
+- detect an explicit Claude completion signal before handing the cycle back to Codex for review
 - capture git status
 - capture git diffs
 - run validation commands
@@ -116,6 +117,7 @@ project/
     current-task.md
     current-phase.md
     claude-prompt.md
+    claude-done.json
     claude-summary.md
     git-diff.patch
     git-status.log
@@ -329,11 +331,28 @@ Add a durable memory system that preserves important project knowledge across co
 Build:
 
 - a memory contract that defines what counts as durable memory versus canonical task / state artifacts
+- a Claude completion-signal contract for `.agent-loop/claude-done.json`, so the loop has an explicit machine-readable handoff from Claude back to Codex
 - structured in-repo memory storage such as:
   - `.agent-loop/memory/decisions/`
   - `.agent-loop/memory/failures/`
   - `.agent-loop/memory/preferences/`
   - `.agent-loop/memory/summaries/`
+- handoff-state rules that define when Codex should:
+  - issue a new implementation prompt
+  - issue a fix prompt
+  - wait for Claude work
+  - begin review after Claude completion
+- a structured `claude-done.json` artifact including fields such as:
+  - signal version
+  - phase
+  - sub-phase
+  - task
+  - cycle number
+  - mode (`implementation` or `fix`)
+  - source prompt path (`.agent-loop/claude-prompt.md` or `.agent-loop/fix-prompt.md`)
+  - summary path
+  - completion status such as `ready_for_codex_review`
+  - timestamp
 - selective memory retrieval rules for prompt construction
 - memory distillation rules at approved phase boundaries and after repeated failure patterns
 - a checkpoint-resume contract for interrupted Claude Code and Codex runs
@@ -357,6 +376,10 @@ Design rules:
 
 - memory stores distilled durable knowledge, not raw transcript dumps
 - canonical project state remains the repo artifacts such as `TASK.md`, `.agent-loop/phase-plan.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json`
+- `claude-done.json` is a routing / handoff signal, not proof that the work is correct; Codex must still verify `.agent-loop/claude-summary.md`, diff, and validation evidence before approving anything
+- the presence of `claude-done.json` should tell Codex or the orchestrator that Claude believes the current prompt or fix prompt is complete and ready for review
+- the handoff signal should distinguish implementation completion from fix-cycle completion so Codex knows whether to review against `.agent-loop/claude-prompt.md` or `.agent-loop/fix-prompt.md`
+- a new Claude implementation prompt or fix prompt should clear or supersede the prior `claude-done.json` so stale completion signals cannot trigger the wrong review cycle
 - memory retrieval must be selective and relevance-based rather than loading the entire memory store into every prompt
 - human-reviewed policy changes and repeated operational failures should become durable memory entries
 - missing optional context files or missing memory notes must not break the loop
@@ -371,6 +394,8 @@ Success:
 - important decisions and recurring failure patterns survive compaction without depending on the current chat window
 - the system can retrieve relevant durable memory to support longer autonomous product-building runs
 - memory does not become a competing source of truth for active task or loop state
+- Codex and the orchestrator can tell, from `claude-done.json`, when Claude has finished an implementation or fix cycle and when review should begin
+- the loop has an explicit machine-readable handoff for deciding when to send prompts, when to wait, and when to review
 - Claude Code and Codex runs can resume automatically after token-reset interruptions using persisted checkpoints and continuation prompts
 - long implementation or review sessions can be split across multiple continuation hops without losing the active task context
 - optional context files can be loaded into prompts

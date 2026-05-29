@@ -2368,19 +2368,141 @@ def run_planner(repo_root: Path) -> int:
 # Phase 4E routed planner execution through a dedicated adapter boundary
 # instead of hard-wiring the `plan` CLI path and the post-approval refresh
 # to a direct `run_planner` call. Phase 4F makes that boundary selectable:
-# `make_planner_adapter()` now picks between the in-process local adapter
-# (the default) and exactly one alternate, out-of-process subprocess
-# adapter, chosen by the `AGENT_LOOP_PLANNER_CMD` env var. This stays a
-# narrow dispatch seam, not a behavior change for the default path: with
-# no (or blank) configuration the local adapter runs `run_planner`
-# unchanged, so the planner's write boundary (`.agent-loop/proposed-phase.md`
-# and `.agent-loop/planner.log` only), refusal semantics, and
-# exception/return-code contract are identical to Phases 4B-4E. The seam
-# never activates a proposal and never itself writes any file; selecting
-# an adapter does not widen the planner or activation write surface. The
-# factory is monkeypatchable at the module level for tests.
+# `make_planner_adapter()` picks between the in-process local adapter (the
+# default) and exactly one alternate, out-of-process subprocess adapter,
+# chosen by the `AGENT_LOOP_PLANNER_CMD` env var. This stays a narrow
+# dispatch seam, not a behavior change for the default path: with no (or
+# invalid) configuration the local adapter runs `run_planner` unchanged,
+# so the planner's write boundary (`.agent-loop/proposed-phase.md` and
+# `.agent-loop/planner.log` only), refusal semantics, and
+# exception/return-code contract are identical to Phases 4B-4E.
+#
+# Phase 4F fix: the alternate (subprocess) adapter cannot be trusted to
+# honor the planner write boundary on its own, so the adapter ENFORCES it.
+# It snapshots the repository before running the configured command and,
+# afterwards, detects any change observed outside the allowed planner set.
+# If the command left ANY out-of-bound write (creating, modifying, or
+# deleting any file other than the two allowed planner files - in
+# particular any activation-owned file), the adapter rolls the repository
+# back to the snapshot (reverting even the allowed writes) and fails
+# closed with a refusal exit code. The seam itself never activates a
+# proposal. The factory is monkeypatchable at the module level for tests.
 
-PLANNER_ADAPTER_VERSION = "phase-4f-v0"
+PLANNER_ADAPTER_VERSION = "phase-4f-v1"
+
+# The only files planner execution may leave behind, per the Phase 4A
+# planner write boundary. Anything else changed by the alternate adapter's
+# command is an out-of-bound write and triggers a fail-closed rollback.
+PLANNER_ADAPTER_ALLOWED_WRITES = frozenset({
+    PROPOSAL_PATH_REL,
+    PLANNER_LOG_PATH_REL,
+})
+
+# Volatile / VCS directories excluded from the snapshot+enforcement scope:
+# they are regenerable and not part of the planner contract surface, so
+# treating (e.g.) a regenerated __pycache__ as a boundary violation would
+# be a false positive. Activation-owned files and ordinary repo files are
+# all in scope.
+_PLANNER_ADAPTER_SCOPE_SKIP_DIRS = frozenset({
+    ".git",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".venv",
+    "venv",
+    "node_modules",
+})
+
+
+def _planner_adapter_in_scope(rel_parts: tuple) -> bool:
+    return not any(part in _PLANNER_ADAPTER_SCOPE_SKIP_DIRS for part in rel_parts)
+
+
+def _snapshot_repo_files(repo_root: Path) -> dict:
+    """Map in-scope repo file -> raw bytes, for boundary enforcement.
+
+    Used by the alternate planner adapter to detect and roll back any
+    out-of-bound write left by a configured command. Volatile/VCS dirs are
+    skipped (see `_PLANNER_ADAPTER_SCOPE_SKIP_DIRS`).
+    """
+    snapshot: dict = {}
+    for path in repo_root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(repo_root)
+        if not _planner_adapter_in_scope(rel.parts):
+            continue
+        snapshot[rel.as_posix()] = path.read_bytes()
+    return snapshot
+
+
+def _detect_out_of_bound_writes(repo_root: Path, snapshot: dict) -> set:
+    """Return the set of in-scope, non-allowed files the command created,
+    modified, or deleted relative to `snapshot`."""
+    changed: set = set()
+    current: dict = {}
+    for path in repo_root.rglob("*"):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(repo_root)
+        if not _planner_adapter_in_scope(rel.parts):
+            continue
+        current[rel.as_posix()] = path.read_bytes()
+    for rel, data in current.items():
+        if rel in PLANNER_ADAPTER_ALLOWED_WRITES:
+            continue
+        if rel not in snapshot or snapshot[rel] != data:
+            changed.add(rel)  # created or modified
+    for rel in snapshot:
+        if rel in PLANNER_ADAPTER_ALLOWED_WRITES:
+            continue
+        if rel not in current:
+            changed.add(rel)  # deleted
+    return changed
+
+
+def _restore_repo_files(repo_root: Path, snapshot: dict) -> None:
+    """Restore the in-scope repo tree to `snapshot` (full fail-closed
+    rollback): delete files the command created and rewrite/recreate any
+    file whose content diverged from the snapshot, including the allowed
+    planner files so a violating run leaves no trace."""
+    for path in list(repo_root.rglob("*")):
+        if not path.is_file():
+            continue
+        rel = path.relative_to(repo_root)
+        if not _planner_adapter_in_scope(rel.parts):
+            continue
+        if rel.as_posix() not in snapshot:
+            try:
+                path.unlink()
+            except OSError:
+                pass
+    for rel, data in snapshot.items():
+        target = repo_root / rel
+        if not target.exists() or target.read_bytes() != data:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(data)
+
+
+def _planner_command_is_valid(command: Optional[str]) -> bool:
+    """True when `AGENT_LOOP_PLANNER_CMD` is statically usable as a command.
+
+    Invalid configuration (-> local fallback) means: unset, empty,
+    whitespace-only, or a string that does not parse into at least one
+    token (e.g. an unbalanced quote). A parseable command that fails when
+    executed is NOT invalid configuration - that is a runtime failure
+    surfaced through the command's exit code (or the fail-closed boundary
+    refusal), because whether a command "works" cannot be known without
+    running it (and running it to then fall back would risk side effects).
+    """
+    if not command or not command.strip():
+        return False
+    try:
+        tokens = shlex.split(command, posix=True)
+    except ValueError:
+        return False
+    return bool(tokens)
 
 
 class LocalPlannerAdapter:
@@ -2403,19 +2525,31 @@ class LocalPlannerAdapter:
 
 class SubprocessPlannerAdapter:
     """Alternate planner adapter (Phase 4F): delegate the planner cycle to a
-    configured external command (`AGENT_LOOP_PLANNER_CMD`).
+    configured external command (`AGENT_LOOP_PLANNER_CMD`), with the planner
+    write boundary ENFORCED by the adapter.
 
     The command runs through the platform shell with the repository root as
-    cwd. It is expected to drive a planner that honors the unchanged planner
-    write boundary (writing only `.agent-loop/proposed-phase.md` and
-    `.agent-loop/planner.log`) and the same exit-code convention as
-    `run_planner` (0 = a valid proposal was written, 2 = refusal). The
-    adapter returns the command's exit code unchanged and is a pure
-    delegation: it never writes any file itself, never activates a proposal,
-    and so cannot widen the planner or activation write surface. A missing
-    shell raises `FileNotFoundError`, which is mapped to exit 127 so callers
-    treat it as a failed planner run rather than crashing; the post-approval
-    hook additionally contains any other exception.
+    cwd. It is expected to drive a planner that writes only the two allowed
+    planner files (`.agent-loop/proposed-phase.md`, `.agent-loop/planner.log`)
+    and uses the same exit-code convention as `run_planner` (0 = a valid
+    proposal was written, 2 = refusal).
+
+    Because an arbitrary command cannot be trusted to honor that boundary,
+    the adapter does not blindly return its exit code. It snapshots the
+    in-scope repository before running, and afterwards checks for any change
+    observed outside the allowed planner set. If the command created,
+    modified, or deleted ANY other file - in particular any activation-owned
+    file (`TASK.md`, `.agent-loop/current-task.md`,
+    `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`,
+    `.agent-loop/loop-state.json`) - the adapter rolls the repository back to
+    the snapshot (reverting even the allowed writes) and fails closed with a
+    refusal exit code (2), logging a `note:` line to `.agent-loop/planner.log`.
+    Only when the command stayed within the boundary is its exit code passed
+    through and the allowed writes kept.
+
+    The adapter never activates a proposal. A missing shell raises
+    `FileNotFoundError`, mapped to exit 127 (nothing ran, so nothing to roll
+    back); the post-approval hook additionally contains any other exception.
     """
 
     name = "subprocess"
@@ -2424,6 +2558,7 @@ class SubprocessPlannerAdapter:
         self.command = command
 
     def run(self, repo_root: Path) -> int:
+        snapshot = _snapshot_repo_files(repo_root)
         try:
             proc = subprocess.run(
                 self.command,
@@ -2437,7 +2572,25 @@ class SubprocessPlannerAdapter:
         except FileNotFoundError:
             # POSIX-style "command not found" so callers treat this as a
             # failed planner run; mirrors the Phase 3D subprocess adapters.
+            # Nothing executed, so there is nothing to roll back.
             return 127
+        violations = _detect_out_of_bound_writes(repo_root, snapshot)
+        if violations:
+            _restore_repo_files(repo_root, snapshot)
+            _planner_log_note(
+                repo_root,
+                (
+                    "refused [planner_write_boundary]: alternate adapter "
+                    "command attempted out-of-bound writes; rolled back. "
+                    f"offending_paths={sorted(violations)}"
+                ),
+            )
+            print(
+                "[planner] refused [planner_write_boundary]: alternate "
+                f"adapter wrote outside the planner boundary: {sorted(violations)}",
+                file=sys.stderr,
+            )
+            return 2
         return proc.returncode
 
 
@@ -2449,18 +2602,25 @@ def make_planner_adapter():
     its `run` method instead of calling `run_planner` directly, so all
     planner dispatch flows through one adapter boundary.
 
-    Selection (Phase 4F) is by the `AGENT_LOOP_PLANNER_CMD` env var:
-    when it holds a non-blank command the alternate `SubprocessPlannerAdapter`
-    is used; when it is unset, empty, or whitespace-only (no or invalid
-    configuration) the factory falls back to the default in-process
-    `LocalPlannerAdapter`, which preserves current behavior. Selecting an
-    adapter does not widen the planner write boundary and never
-    auto-activates. The core paths call this factory rather than
-    instantiating an adapter directly so monkey-patching the adapter (or
-    this factory) at the module level works for tests.
+    Selection (Phase 4F) is by the `AGENT_LOOP_PLANNER_CMD` env var: when it
+    holds a statically-valid command the alternate `SubprocessPlannerAdapter`
+    is used; otherwise the factory falls back to the default in-process
+    `LocalPlannerAdapter`, which preserves current behavior. "Statically
+    invalid configuration" (-> local fallback) means unset, empty,
+    whitespace-only, or a string that does not parse into at least one token
+    (see `_planner_command_is_valid`). A parseable command that then fails at
+    runtime is NOT a fallback case: it is surfaced through the command's exit
+    code, or - if it breaches the write boundary - through the adapter's
+    fail-closed rollback refusal. True "is this command going to work"
+    fallback is intentionally not attempted, because it cannot be decided
+    without executing the command (and executing then falling back would risk
+    side effects). Selecting an adapter does not widen the planner write
+    boundary and never auto-activates. The core paths call this factory
+    rather than instantiating an adapter directly so monkey-patching the
+    adapter (or this factory) at the module level works for tests.
     """
     command = os.environ.get(ENV_PLANNER_CMD)
-    if command and command.strip():
+    if _planner_command_is_valid(command):
         return SubprocessPlannerAdapter(command)
     return LocalPlannerAdapter()
 
