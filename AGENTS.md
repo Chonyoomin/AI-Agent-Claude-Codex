@@ -235,6 +235,8 @@ Rules:
 - if a review finding concerns a Codex-owned artifact or decision, Codex must correct it directly instead of issuing a Claude fix prompt
 - if a review finding concerns a Claude-owned artifact or implementation result, Codex should return it to Claude through a focused fix prompt
 - the loop must not assign a fix to the wrong agent
+- governance and instruction files are frozen by default during a code-focused phase, but an explicit human-directed governance update is always allowed
+- if an explicit human-directed governance update contradicts the current `TASK.md`, phase contract, or active prompt constraints, the contradiction must be stated explicitly in the review or status update, and the change is still allowed because the human override takes precedence
 
 ## Implementation Ownership
 

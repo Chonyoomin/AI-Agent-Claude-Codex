@@ -73,6 +73,7 @@ Rules:
 - if a requested change appears to be a planning issue, review issue, prompt issue, governance or instruction issue, task-state issue, phase-management issue, or agent-routing issue that Codex should resolve instead, Claude should stop and surface that routing mismatch instead of silently editing it
 - if Codex has explicitly decided that an issue is Codex-resolved, Claude should not take ownership of it unless a later prompt reassigns it
 - if ownership is ambiguous, Claude should stop and call out the ambiguity rather than guessing
+- if the human explicitly directs a governance or instruction update that contradicts the current `TASK.md`, phase contract, or active prompt constraints, Claude should state that contradiction clearly and then follow the human-directed update
 
 Orchestrator- or script-owned artifacts:
 
