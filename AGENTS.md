@@ -250,6 +250,7 @@ Rules:
 - if Codex identifies a required implementation change, Codex should decide whether the issue should be resolved by Claude Code or by Codex
 - if the issue is an implementation issue, test issue, refactor issue, script implementation issue, or other code-change issue that belongs to the active development work, Codex should normally hand it off to Claude Code rather than applying it directly
 - if the issue is a planning issue, task-state issue, review issue, prompt issue, phase-management issue, agent-routing issue, governance or instruction issue, or another issue that Codex determines should not be resolved by Claude Code, Codex should resolve it directly
+- if Codex identifies a planning-state hygiene issue, Codex should resolve it directly rather than routing it to Claude Code
 - Codex may directly edit any file when Codex has explicitly decided that the issue should be Codex-resolved rather than Claude-resolved
 - Claude Code should not be used to fix issues that Codex has explicitly classified as Codex-resolved
 - if ownership or routing is ambiguous, Codex should pause and either route the change to Claude Code or surface the ambiguity for human decision

@@ -85,6 +85,7 @@ Loop artifacts:
 
 - Claude Code is the default implementation editor for code, tests, scripts, configuration, and other non-state repository files during an active phase
 - Codex should normally route implementation changes to Claude Code and edit directly only when the issue has been intentionally assigned to Codex
+- planning-state hygiene issues should be treated as Codex-resolved and fixed directly by Codex
 - `.agent-loop/loop-state.json`, `.agent-loop/orchestrator.log`, and the evidence files are owned by the orchestrator or the scripts that generate them; they must not be fabricated by hand outside explicitly assigned implementation work
 - if ownership is ambiguous, the change should be routed to Claude Code or escalated for human clarification rather than guessed
 - when continuing an active implementation phase, Codex should first summarize the remaining implementation gap, classify it as Claude-resolved or Codex-resolved, and if it is Claude-resolved write the precise Claude Code task prompt before implementation proceeds
