@@ -89,6 +89,7 @@ Loop artifacts:
 - `.agent-loop/loop-state.json`, `.agent-loop/orchestrator.log`, and the evidence files are owned by the orchestrator or the scripts that generate them; they must not be fabricated by hand outside explicitly assigned implementation work
 - if ownership is ambiguous, the change should be routed to Claude Code or escalated for human clarification rather than guessed
 - when continuing an active implementation phase, Codex should first summarize the remaining implementation gap, classify it as Claude-resolved or Codex-resolved, and if it is Claude-resolved write the precise Claude Code task prompt before implementation proceeds
+- when the human starts a new phase or sub-phase, Codex should first provide a rundown of what will be implemented, split the work into Codex-resolved and Claude-resolved responsibilities, send the Claude-resolved portion as a precise Claude Code task prompt, and then perform only the Codex-resolved portion directly
 
 ## Running The Loop Manually (Phase 1)
 

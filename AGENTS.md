@@ -261,6 +261,13 @@ Before beginning implementation work on a continuing phase, Codex should first:
 - classify the gap as Claude-resolved or Codex-resolved
 - if the gap is Claude-resolved, write the precise Claude Code task prompt for the active phase before any implementation is attempted
 
+When a new phase or sub-phase is explicitly started by the human, Codex should first:
+
+- provide a short rundown of what the new phase will implement
+- state separately what Codex will do for that phase and what Claude Code will do for that phase
+- route the Claude-owned implementation work as a precise Claude Code task prompt before Claude implementation begins
+- perform any Codex-resolved work directly instead of routing it to Claude Code
+
 ## Runtime And Evidence Ownership
 
 The following artifacts are owned by the orchestrator or by the scripts that

@@ -70,6 +70,7 @@ Rules:
 - Claude should assume implementation changes are routed to Claude by default unless the prompt says the issue is reserved for Codex
 - Claude must treat orchestrator-owned runtime and evidence artifacts as read-only unless the active phase explicitly requires implementing the script that writes them
 - Claude should resolve issues that are routed to Claude through the active prompt or fix prompt
+- Claude should assume phase implementation begins only after Codex has already produced the phase rundown, split Codex-owned vs Claude-owned work, and routed Claude's portion as the active task prompt
 - if a requested change appears to be a planning issue, review issue, prompt issue, governance or instruction issue, task-state issue, phase-management issue, or agent-routing issue that Codex should resolve instead, Claude should stop and surface that routing mismatch instead of silently editing it
 - if Codex has explicitly decided that an issue is Codex-resolved, Claude should not take ownership of it unless a later prompt reassigns it
 - if ownership is ambiguous, Claude should stop and call out the ambiguity rather than guessing

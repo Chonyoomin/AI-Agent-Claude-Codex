@@ -24,7 +24,7 @@ Phase 4D - Planner-Orchestrator Integration
 
 ## Phase Status
 
-Phase 4C (Planner Activation Writes) is closed and approved for human review. Phase 4D integrates the Phase 4B/4C planner flow into the orchestrator's post-approval path: after a terminal `APPROVED_FOR_HUMAN_REVIEW` verdict is persisted, the orchestrator refreshes `.agent-loop/proposed-phase.md` by invoking the standalone planner, logs the outcome once, and leaves activation as a separate human-approved step. The optional planner adapter remains deferred.
+Phase 4C (Planner Activation Writes) is closed and approved for human review. Phase 4D implementation is complete and awaiting human approval to move to the next 4x sub-phase. It integrates the Phase 4B/4C planner flow into the orchestrator's post-approval path: after a terminal `APPROVED_FOR_HUMAN_REVIEW` verdict is persisted, the orchestrator refreshes `.agent-loop/proposed-phase.md` by invoking the standalone planner, logs the outcome once, and leaves activation as a separate human-approved step. The optional planner adapter remains deferred.
 
 ## Active Task
 
