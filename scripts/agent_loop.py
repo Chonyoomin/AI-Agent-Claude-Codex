@@ -760,8 +760,12 @@ def _invoke_post_approval_planner(repo_root: Path, log_path: Optional[Path]) -> 
     """Invoke the standalone planner after a terminal approval.
 
     Phase 4D integrates the planner only into the post-approval handoff.
-    The invocation is fully contained so it can never change the
-    already-persisted terminal orchestrator outcome:
+    Phase 4E routes that invocation through the planner-adapter seam
+    (`make_planner_adapter().run`) instead of calling `run_planner`
+    directly; the default adapter preserves today's behavior, so the
+    containment guarantees below are unchanged. The invocation is fully
+    contained so it can never change the already-persisted terminal
+    orchestrator outcome:
 
       - a normal planner return code (0 on success, 2 on refusal) is
         logged as a `note:` line to .agent-loop/orchestrator.log; the
@@ -780,7 +784,7 @@ def _invoke_post_approval_planner(repo_root: Path, log_path: Optional[Path]) -> 
     orchestrator's explicit-human-stop halt path is preserved.
     """
     try:
-        rc = run_planner(repo_root)
+        rc = make_planner_adapter().run(repo_root)
     except Exception as exc:  # noqa: BLE001 - deliberate containment boundary
         _log_note(
             log_path,
@@ -2353,6 +2357,58 @@ def run_planner(repo_root: Path) -> int:
     return 0
 
 
+# ----- Phase 4E planner-adapter seam -----
+#
+# Phase 4E routes planner execution through a dedicated adapter boundary
+# instead of hard-wiring the `plan` CLI path and the post-approval refresh
+# to a direct `run_planner` call. This is a narrow dispatch seam, not a
+# behavior change: the only shipped adapter is the in-process default,
+# which runs `run_planner` unchanged, so the planner's write boundary
+# (`.agent-loop/proposed-phase.md` and `.agent-loop/planner.log` only),
+# refusal semantics, and exception/return-code contract are identical to
+# Phases 4B-4D. The seam exists so a later slice can supply an alternate
+# planner adapter (e.g. out-of-process execution) without touching the
+# call sites, and so the boundary stays monkeypatchable in tests. The
+# adapter never activates a proposal.
+
+PLANNER_ADAPTER_VERSION = "phase-4e-v0"
+
+
+class LocalPlannerAdapter:
+    """Default planner adapter: in-process `run_planner`.
+
+    Preserves today's local behavior exactly - same refusal handling,
+    same exception/return-code contract, and the same write boundary
+    (`.agent-loop/proposed-phase.md` and `.agent-loop/planner.log` only).
+    `run` is a thin pass-through; it does not widen writes or activate.
+    `run_planner` is resolved as a module global at call time, so tests
+    that monkeypatch `agent_loop.run_planner` still take effect through
+    the adapter.
+    """
+
+    name = "local"
+
+    def run(self, repo_root: Path) -> int:
+        return run_planner(repo_root)
+
+
+def make_planner_adapter():
+    """Factory: the Phase 4E planner-execution seam.
+
+    Both the `plan` CLI path (`cmd_plan`) and the post-approval planner
+    refresh (`_invoke_post_approval_planner`) call this factory and then
+    its `run` method instead of calling `run_planner` directly, so all
+    planner dispatch flows through one adapter boundary. Today the only
+    adapter is the in-process `LocalPlannerAdapter` (the default), which
+    preserves current behavior. Selecting an alternate adapter is
+    deferred; introducing the seam does not widen the planner write
+    boundary and never auto-activates. The core paths call this factory
+    rather than instantiating the adapter directly so monkey-patching the
+    adapter (or this factory) at the module level works for tests.
+    """
+    return LocalPlannerAdapter()
+
+
 # ----- Phase 4C activation (consume approved proposal -> activation writes) -----
 #
 # This block implements the activation step the Phase 4A Planning Contract
@@ -3148,7 +3204,7 @@ def cmd_run(_args: argparse.Namespace) -> int:
 
 def cmd_plan(_args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
-    return run_planner(repo_root)
+    return make_planner_adapter().run(repo_root)
 
 
 def cmd_activate(_args: argparse.Namespace) -> int:

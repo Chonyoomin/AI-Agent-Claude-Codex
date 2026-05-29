@@ -20,49 +20,49 @@ Phase 4 - Phase Planning Automation
 
 ## Active Sub-Phase
 
-Phase 4D - Planner-Orchestrator Integration
+Phase 4E - Optional Planner Adapter
 
 ## Phase Status
 
-Phase 4C (Planner Activation Writes) is closed and approved for human review. Phase 4D implementation is complete and awaiting human approval to move to the next 4x sub-phase. It integrates the Phase 4B/4C planner flow into the orchestrator's post-approval path: after a terminal `APPROVED_FOR_HUMAN_REVIEW` verdict is persisted, the orchestrator refreshes `.agent-loop/proposed-phase.md` by invoking the standalone planner, logs the outcome once, and leaves activation as a separate human-approved step. The optional planner adapter remains deferred.
+Phase 4D (Planner-Orchestrator Integration) is closed and approved for human review. Phase 4E is now active and introduces an optional planner-adapter seam so planner execution is no longer hard-wired to direct in-process calls. The default path must preserve today's local behavior, while making planner invocation routable through a dedicated adapter boundary for both the `plan` command path and the post-approval planner refresh path. Activation remains a separate human-approved step.
 
 ## Active Task
 
-Integrate the standalone planner into the orchestrator's post-approval handoff without auto-activating proposals. After `run_normal_cycle` or the fix-cycle path persists a terminal `APPROVED_FOR_HUMAN_REVIEW` verdict, the orchestrator should invoke the existing planner once, surface planner refusals without converting the overall cycle into a halt, refresh `.agent-loop/proposed-phase.md` only through the planner's existing write boundary, and log the planner invocation result exactly once. Add focused tests for the successful integration path, a planner-refusal path, and a proof that the integration never performs activation writes. Update `README.md`.
+Introduce an optional planner adapter so planner execution goes through a dedicated adapter boundary instead of direct hard-wired calls, while preserving the current planner behavior by default. Route both the `plan` command path and the post-approval planner refresh path through that seam, keep the planner's write boundary unchanged, add focused tests for the adapterized behavior, and update `README.md`.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 4 / 4D as active
-- `.agent-loop/phase-plan.md` marks Phase 4C complete and contains a Phase 4D section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` invokes the existing standalone planner after a terminal `APPROVED_FOR_HUMAN_REVIEW` verdict is persisted, from both the normal-cycle and fix-cycle paths where applicable
-- the integration writes at most one planner-invocation note to `.agent-loop/orchestrator.log` per eligible terminal approval and does not convert a planner refusal into an orchestrator halt
-- the planner's existing write boundary remains unchanged under integration: only `.agent-loop/proposed-phase.md` and `.agent-loop/planner.log` may be written by the planner call, and activation remains separate from planning
-- no activation write is performed by the integration path; `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`, and `.agent-loop/loop-state.json` are not rewritten by the orchestrator's planner hook
-- `tests/` contains focused coverage for one successful integration call, one planner-refusal path surfaced without halting the orchestrator, and one proof that the integration never performs activation writes
-- `README.md` reflects the Phase 4D active status and documents the post-approval planner refresh behavior
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/phase-plan.md` identify Phase 4 / 4E as active
+- `.agent-loop/phase-plan.md` marks Phase 4D complete and contains a Phase 4E section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` routes planner invocation through a dedicated planner-adapter seam rather than direct hard-wired calls
+- the default planner adapter preserves today's local behavior for both the `plan` CLI path and the post-approval planner refresh path
+- the planner's existing write boundary remains unchanged under adapterization: only `.agent-loop/proposed-phase.md` and `.agent-loop/planner.log` may be written by planner execution, and activation remains separate from planning
+- planner refusals and planner exceptions remain surfaced with the same fail-closed behavior already required by Phases 4B through 4D
+- `tests/` contains focused coverage for the adapterized `plan` path, the adapterized post-approval planner path, and proof that the adapter seam does not widen planner or activation writes
+- `README.md` reflects the Phase 4E active status and documents the optional planner-adapter behavior
 - no changes to `AGENTS.md`, `CLAUDE.md`, `scripts/run_checks.sh`, the Phase 2A Evidence Collection Contract, the Phase 3A Orchestrator Contract body, or the Phase 4A Planning Contract body
 
 ## Next-Phase Gate
 
-Do not start the next 4x sub-phase (optional planner adapter, etc.) until:
+Do not start the next 4x sub-phase after Phase 4E until:
 
-- this Phase 4D slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 4E slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- optional planner adapter (deferred to Phase 4E or later)
+- planner-driven activation from inside the orchestrator (planning may refresh `.agent-loop/proposed-phase.md`, but approval + activation remain a separate human step)
 - approval mode implementation (Phase 5)
+- durable memory, token-reset continuation, checkpoint-resume logic, and continuation chaining (Phase 6)
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
-- planner-driven activation from inside the orchestrator (planning may refresh `.agent-loop/proposed-phase.md`, but approval + activation remain a separate human step)
 - any change to the Phase 2A Evidence Collection Contract
 - any change to the Phase 3A Orchestrator Contract body
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
 - any change to `AGENTS.md` or `CLAUDE.md`
-- adding any project-wide CI suite to the repository (the new test file is for the activator's own validators)
+- adding any project-wide CI suite to the repository beyond focused planner-adapter coverage
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
