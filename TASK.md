@@ -20,39 +20,40 @@ Phase 5 - Approval Modes
 
 ## Active Sub-Phase
 
-Phase 5A - Approval Modes Contract
+Phase 5B - Review Mode Initial Slice
 
 ## Phase Status
 
-Phase 4F (Alternate Planner Adapter Selection) is closed and approved for human review. Phase 5A is now active as a Codex-owned contract-definition slice for approval modes. This sub-phase should define, before implementation, the contract for `strict`, `review`, and `autonomous` approval behavior: trigger points, required pauses, allowed automatic continuations, artifact/state implications, and failure / escalation rules. No approval-mode implementation is active yet.
+Phase 5A (Approval Modes Contract) is closed and approved for human review. Phase 5B is now active as the first implementation slice for Phase 5. This sub-phase should implement the `review` approval mode as the explicit default runtime behavior, add the first machine-readable Claude completion handoff signal, and keep `strict` and `autonomous` deferred. The goal is to make the current baseline loop behavior explicit in runtime state and artifacts without broadening autonomy yet.
 
 ## Active Task
 
-Define the Approval Modes Contract in `.agent-loop/phase-plan.md` before any Phase 5 implementation work begins. Specify the behavior of `strict`, `review`, and `autonomous` modes, including which steps require human approval, when Codex may send implementation or fix prompts, when Claude completion should hand control back to Codex for review, how the loop should pause or continue, and how the orchestrator should represent mode-related runtime state without weakening existing safety rules.
+Implement the initial Approval Modes runtime slice in `scripts/agent_loop.py` by adding explicit `review`-mode behavior and the first `.agent-loop/claude-done.json` handoff artifact. This slice should add `approval_mode` / `awaiting_human_for` runtime-state support, default new Phase 5+ runtime state to `review`, have Claude completion produce a machine-readable `ready_for_codex_review` signal tied to the current prompt or fix prompt, and preserve today's effective loop behavior for prompt issuance, review timing, evidence capture, verdict handling, and phase gating.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5A as active
-- `.agent-loop/phase-plan.md` marks Phase 4 complete history and contains a `## Phase 5A - Approval Modes Contract` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the new Phase 5A section defines the contract for `strict`, `review`, and `autonomous` approval modes before any code implementing them is written
-- the contract specifies when Codex may send implementation prompts, when Codex may send fix prompts, when Claude completion should hand the loop back for review, and when the loop must wait for human approval
-- the contract specifies how approval-mode state interacts with existing loop-state / review / fix-cycle behavior without weakening current safety guarantees
-- the contract names refusal / halt / escalation cases for invalid or unsafe mode-driven continuations
-- `README.md` reflects that Phase 5A is the active contract-definition slice and that approval modes are not implemented yet
-- no changes to `scripts/agent_loop.py`, `scripts/run_checks.sh`, the Phase 2A Evidence Collection Contract, the Phase 3A Orchestrator Contract body, or the Phase 4A Planning Contract body
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5B as active
+- `.agent-loop/phase-plan.md` marks Phase 5A complete history and contains a `## Phase 5B - Review Mode Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` adds explicit `approval_mode` / `awaiting_human_for` runtime-state handling for the `review` mode path without changing the existing baseline safety behavior
+- new or reset Phase 5+ runtime state defaults `approval_mode` to `review` and keeps `awaiting_human_for = null` when no human gate is active
+- Claude completion produces `.agent-loop/claude-done.json` with the contract-required baseline fields and `status = ready_for_codex_review`, and stale completion signals are cleared / replaced on new prompt issuance
+- the orchestrator uses the completion signal as a routing artifact only; Codex review still depends on `.agent-loop/claude-summary.md`, diff, and validation evidence
+- `review` mode preserves the existing prompt, evidence-capture, review, fix-cycle, and phase-gating behavior rather than broadening autonomy
+- focused tests cover the new runtime-state defaults, the `claude-done.json` handoff behavior, stale-signal protection, and non-regression of the current review-mode loop
+- `README.md` reflects that Phase 5B is active and that only the `review` mode initial slice is implemented
 
 ## Next-Phase Gate
 
-Do not start the next 5x implementation sub-phase until:
+Do not start the next 5x sub-phase after Phase 5B until:
 
-- this Phase 5A slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 5B slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- approval mode implementation code in `scripts/agent_loop.py` or any other runtime script
-- changing current planner, activator, adapter, or evidence-collection behavior beyond documenting how future approval modes must interact with them
+- implementation of `strict` mode or `autonomous` mode runtime behavior
+- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow `review`-mode runtime-state and Claude-completion handoff work
 - durable memory, token-reset continuation, checkpoint-resume logic, and continuation chaining (Phase 6)
 - editor integration (Phase 7)
 - MCP support (future)
@@ -63,5 +64,5 @@ Do not start the next 5x implementation sub-phase until:
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
 - any change to `AGENTS.md` or `CLAUDE.md`
-- adding any project-wide CI suite to the repository beyond focused planner-adapter coverage
+- adding any project-wide CI suite to the repository beyond focused approval-mode coverage
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
