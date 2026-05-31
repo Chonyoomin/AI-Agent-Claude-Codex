@@ -550,6 +550,23 @@ def validate_loop_state(data: dict) -> None:
             "halted_input_missing",
             "loop-state.json contract_version must be a string when present",
         )
+    # Phase 5B fail-closed: a present but non-allowed `approval_mode` is a
+    # contract violation, not a runtime curiosity. Missing or empty is fine
+    # here (the cycle's runtime block will backfill to the Phase 5A default
+    # `"review"`), but a nonempty value MUST be one of the three allowed
+    # modes. This is the single source of truth - both `run_normal_cycle`
+    # and any future call site rely on it. Refused via
+    # `halted_input_missing` to match the existing structural-validation
+    # halt vocabulary.
+    approval_mode = data.get("approval_mode")
+    if approval_mode not in (None, "") and approval_mode not in ALLOWED_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"loop-state.json approval_mode must be one of "
+                f"{sorted(ALLOWED_APPROVAL_MODES)}; got {approval_mode!r}"
+            ),
+        )
 
 
 def check_contract_version(data: dict) -> None:
@@ -1016,20 +1033,6 @@ def run_normal_cycle(repo_root: Path) -> int:
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
 
-    # 7a. Phase 5B: write the machine-readable Claude completion handoff
-    #     signal (`.agent-loop/claude-done.json`) for this implementation
-    #     cycle. This is a routing/timing artifact only - evidence
-    #     capture and Codex review still drive the verdict.
-    write_claude_done(
-        repo_root,
-        phase=data.get("phase"),
-        sub_phase=data.get("sub_phase"),
-        task=data.get("task"),
-        cycle_count=data["cycle_count"],
-        mode=CLAUDE_DONE_MODE_IMPLEMENTATION,
-        source_prompt_path=".agent-loop/claude-prompt.md",
-    )
-
     # 8. Hand off to evidence capture.
     data = save_loop_state(state_path, data, {"status": "evidence_capture"})
     try:
@@ -1040,6 +1043,26 @@ def run_normal_cycle(repo_root: Path) -> int:
         validate_evidence_files(repo_root)
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
+
+    # 8a. Phase 5B: now that the summary AND evidence have both validated,
+    #     the cycle is genuinely review-ready. Write the machine-readable
+    #     Claude completion handoff signal (`.agent-loop/claude-done.json`).
+    #     Writing here (instead of earlier, between summary validation and
+    #     evidence capture) means the signal is never left advertising
+    #     `ready_for_codex_review` for a cycle that halted on evidence -
+    #     any halt path above this point exits before the signal is
+    #     written, and `clear_claude_done` at the start of every cycle
+    #     drops the prior cycle's signal regardless. The signal is still
+    #     routing/timing only - the Codex verdict still drives correctness.
+    write_claude_done(
+        repo_root,
+        phase=data.get("phase"),
+        sub_phase=data.get("sub_phase"),
+        task=data.get("task"),
+        cycle_count=data["cycle_count"],
+        mode=CLAUDE_DONE_MODE_IMPLEMENTATION,
+        source_prompt_path=".agent-loop/claude-prompt.md",
+    )
 
     # 9. Wait on Codex review (subprocess when configured, manual-handoff
     #    fallback otherwise).
@@ -1244,19 +1267,6 @@ def _run_fix_cycle(
     except HaltError as halt:
         raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
 
-    # 3a. Phase 5B: write the fix-completion handoff signal. Routing /
-    #     timing only; evidence capture + Codex review still drive the
-    #     next verdict.
-    write_claude_done(
-        repo_root,
-        phase=data.get("phase"),
-        sub_phase=data.get("sub_phase"),
-        task=data.get("task"),
-        cycle_count=data["cycle_count"],
-        mode=CLAUDE_DONE_MODE_FIX,
-        source_prompt_path=".agent-loop/fix-prompt.md",
-    )
-
     # 4. Evidence capture.
     data = save_loop_state(state_path, data, {"status": "evidence_capture"})
     try:
@@ -1267,6 +1277,24 @@ def _run_fix_cycle(
         validate_evidence_files(repo_root)
     except HaltError as halt:
         raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
+
+    # 4a. Phase 5B: now that the fix-cycle summary AND evidence have both
+    #     validated, the cycle is genuinely review-ready. Write the
+    #     fix-completion handoff signal. Same rationale as the normal
+    #     cycle's 8a: writing here means an evidence halt above this
+    #     point exits before the signal is written, so the repo never
+    #     advertises `ready_for_codex_review` for a fix cycle that
+    #     halted on evidence. Routing/timing only - the Codex verdict
+    #     still drives the next outcome.
+    write_claude_done(
+        repo_root,
+        phase=data.get("phase"),
+        sub_phase=data.get("sub_phase"),
+        task=data.get("task"),
+        cycle_count=data["cycle_count"],
+        mode=CLAUDE_DONE_MODE_FIX,
+        source_prompt_path=".agent-loop/fix-prompt.md",
+    )
 
     # 5. Wait for the fix-cycle Codex review (subprocess when configured,
     #    manual-handoff fallback otherwise).

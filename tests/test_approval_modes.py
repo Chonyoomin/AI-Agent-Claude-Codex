@@ -389,5 +389,221 @@ class ReviewModeBaselineNotRegressedTests(_ApprovalModesTestCase):
         self.assertEqual(after["last_verdict"], "FAILED_REQUIRES_HUMAN")
 
 
+# ----- Phase 5B fix coverage -----
+#
+# These tests pin the two contract gaps surfaced in fix-prompt.md:
+#   (1) `approval_mode` is fail-closed validated against ALLOWED_APPROVAL_MODES;
+#   (2) `.agent-loop/claude-done.json` is written only after the summary AND
+#       evidence have both validated, so a halt above that point cannot leave
+#       a stale `ready_for_codex_review` signal behind.
+
+class _CycleHarness(_ApprovalModesTestCase):
+    """Helper to drive `run_normal_cycle` against the synthetic `_Repo`
+    with the Claude/Codex adapters and evidence helpers stubbed. This lets
+    the test exercise the orchestrator's claude-done.json timing without
+    spawning real subprocesses or requiring real evidence files."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        # Mark the loop ready to start and give the cycle some headroom.
+        data = self._state()
+        data["status"] = "awaiting_claude_implementation"
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        # Pre-create the prompt the orchestrator will require.
+        (self.repo.root / ".agent-loop" / "claude-prompt.md").write_text(
+            "# Claude Code Task\n\n## Phase\nP\n\n## Objective\no\n\n"
+            "## Context\nc\n\n## Required work\n- x\n\n"
+            "## Constraints\n- y\n\n## Required output\n- z\n",
+            encoding="utf-8",
+        )
+
+    def _make_summary_writer(self, *, model_id: str = "stub-claude"):
+        """Build a Claude-adapter `.invoke(prompt, summary)` stub that
+        writes a minimally valid claude-summary.md and returns a success
+        ExecutionResult; mtimes advance because the file is rewritten."""
+        repo_root = self.repo.root
+
+        def _invoke(prompt_path, summary_path):
+            data = self._state()
+            phase = data["phase"]
+            sub_phase = data.get("sub_phase") or ""
+            summary_text = (
+                "# Claude Implementation Summary\n\n"
+                f"## Phase\n{phase} (sub-phase: {sub_phase})\n\n"
+                "## Task\nt\n\n"
+                "## Files changed\n- f: change\n\n"
+                "## What was implemented\n- x\n\n"
+                "## What was not implemented\n- y\n\n"
+                "## Tests added or changed\n- None\n\n"
+                "## Validation run\n- Not run\n\n"
+                "## Assumptions\n- None\n\n"
+                "## Risk areas\n- None identified\n"
+            )
+            summary_path.write_text(summary_text, encoding="utf-8")
+            return agent_loop.ExecutionResult(
+                exit_code=0, model_id=model_id, duration_seconds=0.0,
+            )
+
+        return _invoke
+
+
+class InvalidApprovalModeHaltsTests(_ApprovalModesTestCase):
+
+    def test_validate_loop_state_rejects_invalid_nonempty_mode(self) -> None:
+        data = self._state()
+        data["approval_mode"] = "bogus"
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.validate_loop_state(data)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("approval_mode", cm.exception.reason)
+        self.assertIn("bogus", cm.exception.reason)
+
+    def test_validate_loop_state_allows_missing_mode_for_backfill(self) -> None:
+        data = self._state()
+        data.pop("approval_mode", None)
+        agent_loop.validate_loop_state(data)  # must not raise
+
+    def test_validate_loop_state_allows_empty_mode_for_backfill(self) -> None:
+        data = self._state()
+        data["approval_mode"] = ""
+        agent_loop.validate_loop_state(data)  # must not raise
+
+    def test_validate_loop_state_accepts_all_three_allowed_modes(self) -> None:
+        for mode in ("review", "strict", "autonomous"):
+            data = self._state()
+            data["approval_mode"] = mode
+            try:
+                agent_loop.validate_loop_state(data)
+            except agent_loop.HaltError as exc:
+                self.fail(f"valid approval_mode {mode!r} was rejected: {exc.reason}")
+
+    def test_run_normal_cycle_halts_on_invalid_mode(self) -> None:
+        data = self._state()
+        data["approval_mode"] = "bogus"
+        data["status"] = "awaiting_claude_implementation"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        # The cycle should halt at the structural-validate step before it
+        # touches any adapter, so no adapter stubs are needed.
+        rc = agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(rc, 2, "invalid approval_mode must halt with exit 2")
+        after = self._state()
+        # The halt path persists the halt status and never advances past
+        # validate_loop_state, so the invalid mode is still present on disk
+        # for human inspection (the orchestrator does not silently rewrite
+        # an invalid value to a valid one).
+        self.assertTrue(after["status"].startswith("halted_"))
+        self.assertEqual(after["approval_mode"], "bogus")
+
+
+class ClaudeDoneOnlyWhenReviewReadyTests(_CycleHarness):
+
+    def test_done_signal_not_written_when_evidence_capture_halts(self) -> None:
+        # Simulate `invoke_run_checks` raising the contract halt for a
+        # missing evidence file - the same halt vocabulary the real
+        # evidence helpers use.
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks",
+            side_effect=agent_loop.HaltError(
+                "halted_evidence_missing", "synthetic evidence-capture failure",
+            ),
+        ):
+            rc = agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(rc, 2, "an evidence-capture halt exits 2")
+        self.assertFalse(
+            self.done_path.exists(),
+            "claude-done.json must not advertise ready_for_codex_review when "
+            "the cycle halted before review readiness was reached",
+        )
+        after = self._state()
+        self.assertEqual(after["status"], "halted_evidence_missing")
+
+    def test_done_signal_not_written_when_evidence_validation_halts(
+        self,
+    ) -> None:
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files",
+            side_effect=agent_loop.HaltError(
+                "halted_evidence_malformed", "synthetic evidence-validate failure",
+            ),
+        ):
+            rc = agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertFalse(
+            self.done_path.exists(),
+            "claude-done.json must not be left after an evidence-validation halt",
+        )
+
+    def test_stale_done_signal_is_cleared_on_evidence_halt(self) -> None:
+        # The cycle-start clear must drop any prior cycle's claude-done.json
+        # even if THIS cycle then halts on evidence and never writes a new
+        # one. That is the only way the contract guarantee ("the repo is
+        # never left advertising ready_for_codex_review for a halted cycle")
+        # holds when a prior cycle's signal is present at cycle start.
+        agent_loop.write_claude_done(
+            self.repo.root,
+            phase="prev", sub_phase="prev", task="prev", cycle_count=42,
+            mode=agent_loop.CLAUDE_DONE_MODE_IMPLEMENTATION,
+            source_prompt_path=".agent-loop/claude-prompt.md",
+        )
+        self.assertTrue(self.done_path.exists())
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks",
+            side_effect=agent_loop.HaltError(
+                "halted_evidence_missing", "synthetic",
+            ),
+        ):
+            rc = agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertFalse(
+            self.done_path.exists(),
+            "stale prior-cycle claude-done.json must be cleared at cycle start "
+            "regardless of how this cycle ends",
+        )
+
+    def test_success_path_still_writes_done_signal_after_evidence(self) -> None:
+        # Drive the cycle through evidence validation success and into the
+        # Codex-review step. Stub the Codex adapter so it does not block,
+        # but make it return a failure so the cycle halts after the
+        # claude-done.json write (the test only needs to observe the write).
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=lambda _p: agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )),
+        ):
+            agent_loop.run_normal_cycle(self.repo.root)
+        self.assertTrue(
+            self.done_path.exists(),
+            "the success path through evidence must produce claude-done.json",
+        )
+        payload = _read_json(self.done_path)
+        self.assertEqual(payload["status"], "ready_for_codex_review")
+        self.assertEqual(payload["mode"], "implementation")
+        self.assertEqual(payload["source_prompt_path"], ".agent-loop/claude-prompt.md")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
