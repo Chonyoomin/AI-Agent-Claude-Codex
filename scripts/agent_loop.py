@@ -153,6 +153,14 @@ ORCHESTRATOR_WRITABLE_FIELDS = frozenset({
     "claude_version",
     "codex_version",
     "orchestrator_version",
+    # Phase 5B (Approval Modes - review-mode initial slice): the
+    # `approval_mode` selector and the `awaiting_human_for` gate name are
+    # orchestrator-owned runtime fields. Allowed values for `approval_mode`
+    # in this slice are the three Phase 5A modes (`strict`, `review`,
+    # `autonomous`); only the `review` path is implemented here, and the
+    # default-on-init/activation is `review`.
+    "approval_mode",
+    "awaiting_human_for",
 })
 
 CODEX_OR_HUMAN_OWNED_FIELDS = frozenset({
@@ -162,6 +170,22 @@ CODEX_OR_HUMAN_OWNED_FIELDS = frozenset({
     "max_cycles",
     "contract_version",
 })
+
+# Phase 5B approval-mode runtime constants.
+APPROVAL_MODE_REVIEW = "review"
+APPROVAL_MODE_STRICT = "strict"
+APPROVAL_MODE_AUTONOMOUS = "autonomous"
+ALLOWED_APPROVAL_MODES = frozenset({
+    APPROVAL_MODE_REVIEW, APPROVAL_MODE_STRICT, APPROVAL_MODE_AUTONOMOUS,
+})
+DEFAULT_APPROVAL_MODE = APPROVAL_MODE_REVIEW
+
+# Named human gates the `review` path may set on `awaiting_human_for`.
+# The Phase 5A contract lists `pre_claude_prompt`, `pre_fix_prompt`,
+# `phase_complete_awaiting_human_approval`, and `halt_resolution`. The
+# `review` path only ever sets the phase-complete gate (the strict-mode
+# pre-prompt gates are deferred); everything else leaves it `null`.
+AWAITING_HUMAN_FOR_PHASE_COMPLETE = "phase_complete_awaiting_human_approval"
 
 # Per the contract's "Normal cycle" preconditions, a normal cycle may only
 # start from a ready-to-start status. The orchestrator refuses to begin
@@ -737,6 +761,88 @@ def _log_note(log_path: Optional[Path], message: str) -> None:
         pass
 
 
+# ----- Phase 5B claude-done.json handoff artifact -----
+#
+# The Phase 5A contract requires a machine-readable Claude completion
+# signal at `.agent-loop/claude-done.json`. It is a routing/timing
+# artifact only - never a substitute for `.agent-loop/claude-summary.md`,
+# git diff, or validation evidence in review. A new prompt or fix-prompt
+# issuance must clear the prior file so a stale completion signal cannot
+# drive the wrong review cycle.
+
+CLAUDE_DONE_PATH_REL = ".agent-loop/claude-done.json"
+CLAUDE_DONE_SIGNAL_VERSION = "phase-5a-v1"
+CLAUDE_DONE_STATUS_READY = "ready_for_codex_review"
+CLAUDE_DONE_MODE_IMPLEMENTATION = "implementation"
+CLAUDE_DONE_MODE_FIX = "fix"
+
+
+def _claude_done_path(repo_root: Path) -> Path:
+    return repo_root / CLAUDE_DONE_PATH_REL
+
+
+def clear_claude_done(repo_root: Path) -> None:
+    """Remove any prior `.agent-loop/claude-done.json` so a new prompt or
+    fix-prompt cycle cannot inherit a stale completion signal.
+
+    Best-effort: a missing file is the desired post-state, and an OSError
+    on removal is swallowed because the orchestrator's structural review
+    still depends on `claude-summary.md`, git diff, and validation
+    evidence - the done signal is routing/timing only.
+    """
+    path = _claude_done_path(repo_root)
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError:
+        pass
+
+
+def write_claude_done(
+    repo_root: Path,
+    *,
+    phase: Optional[str],
+    sub_phase: Optional[str],
+    task: Optional[str],
+    cycle_count: int,
+    mode: str,
+    source_prompt_path: str,
+) -> Path:
+    """Write the Phase 5B Claude completion handoff artifact.
+
+    Carries exactly the minimum-field set the Phase 5A contract requires:
+    `signal_version`, `phase`, `sub_phase`, `task`, `cycle_count`,
+    `mode` (`implementation` or `fix`), `source_prompt_path`, and
+    `status` (`ready_for_codex_review`). The orchestrator writes this
+    after Claude returns a fresh summary and before evidence capture, so
+    Codex/orchestrator routing can see "Claude believes this prompt is
+    done" without having to parse `claude-summary.md`. It is NOT
+    correctness evidence; Codex review still depends on the summary,
+    diff, and validation outputs.
+    """
+    if mode not in (CLAUDE_DONE_MODE_IMPLEMENTATION, CLAUDE_DONE_MODE_FIX):
+        raise ValueError(
+            f"claude-done.json mode must be one of "
+            f"{{{CLAUDE_DONE_MODE_IMPLEMENTATION!r}, {CLAUDE_DONE_MODE_FIX!r}}}; "
+            f"got {mode!r}"
+        )
+    payload = {
+        "signal_version": CLAUDE_DONE_SIGNAL_VERSION,
+        "phase": phase,
+        "sub_phase": sub_phase,
+        "task": task,
+        "cycle_count": cycle_count,
+        "mode": mode,
+        "source_prompt_path": source_prompt_path,
+        "status": CLAUDE_DONE_STATUS_READY,
+    }
+    path = _claude_done_path(repo_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+    return path
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -822,10 +928,25 @@ def run_normal_cycle(repo_root: Path) -> int:
         # We may have an invalid `data` here, so pass {} to avoid clobbering.
         return _halt(state_path, {} if "data" not in dir() else data, halt, log_path)
 
-    # 2. Record this orchestrator's version (allowed write).
-    data = save_loop_state(
-        state_path, data, {"orchestrator_version": ORCHESTRATOR_VERSION},
-    )
+    # 2. Record this orchestrator's version (allowed write). Phase 5B:
+    #    also default `approval_mode` to "review" and ensure
+    #    `awaiting_human_for` is null at cycle start when those Phase 5A
+    #    fields are not yet present on the loaded state. This keeps
+    #    pre-Phase-5 state files working while satisfying the contract's
+    #    "newly initialized Phase 5+ runtime state defaults to review"
+    #    rule on the first cycle after upgrade.
+    runtime_updates: dict = {"orchestrator_version": ORCHESTRATOR_VERSION}
+    if data.get("approval_mode") in (None, ""):
+        runtime_updates["approval_mode"] = DEFAULT_APPROVAL_MODE
+    if "awaiting_human_for" not in data:
+        runtime_updates["awaiting_human_for"] = None
+    data = save_loop_state(state_path, data, runtime_updates)
+
+    # 2a. Phase 5B: a new normal cycle starts with a fresh prompt
+    #     issuance, so any prior `.agent-loop/claude-done.json` is stale
+    #     and must be cleared before review can begin again. This is
+    #     best-effort (the file may not exist).
+    clear_claude_done(repo_root)
 
     # 3. Validate the active prompt exists and is non-empty.
     try:
@@ -894,6 +1015,20 @@ def run_normal_cycle(repo_root: Path) -> int:
         validate_claude_summary(summary_path, data["phase"], data.get("sub_phase"))
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
+
+    # 7a. Phase 5B: write the machine-readable Claude completion handoff
+    #     signal (`.agent-loop/claude-done.json`) for this implementation
+    #     cycle. This is a routing/timing artifact only - evidence
+    #     capture and Codex review still drive the verdict.
+    write_claude_done(
+        repo_root,
+        phase=data.get("phase"),
+        sub_phase=data.get("sub_phase"),
+        task=data.get("task"),
+        cycle_count=data["cycle_count"],
+        mode=CLAUDE_DONE_MODE_IMPLEMENTATION,
+        source_prompt_path=".agent-loop/claude-prompt.md",
+    )
 
     # 8. Hand off to evidence capture.
     data = save_loop_state(state_path, data, {"status": "evidence_capture"})
@@ -975,10 +1110,15 @@ def _handle_verdict_loop(
     while True:
         last_verdict_phase = data.get("sub_phase") or data.get("phase")
         if verdict == "APPROVED_FOR_HUMAN_REVIEW":
+            # Phase 5B: in `review` mode the phase-complete gate is the
+            # one named human gate this slice surfaces. Record it on
+            # `awaiting_human_for` so the runtime state matches the
+            # Phase 5A vocabulary.
             save_loop_state(state_path, data, {
                 "status": "phase_complete_awaiting_human_approval",
                 "last_verdict": verdict,
                 "last_verdict_phase": last_verdict_phase,
+                "awaiting_human_for": AWAITING_HUMAN_FOR_PHASE_COMPLETE,
             })
             _invoke_post_approval_planner(repo_root, log_path)
             print(
@@ -987,10 +1127,15 @@ def _handle_verdict_loop(
             )
             return 0
         if verdict == "FAILED_REQUIRES_HUMAN":
+            # Phase 5B: a hard halt is not one of the named Phase 5A
+            # human gates; leave `awaiting_human_for` null so the gate
+            # vocabulary stays clean. The halt status itself carries the
+            # human-intervention signal.
             save_loop_state(state_path, data, {
                 "status": "halted_failed_requires_human",
                 "last_verdict": verdict,
                 "last_verdict_phase": last_verdict_phase,
+                "awaiting_human_for": None,
             })
             print(
                 f"[orchestrator] verdict={verdict}; halted, human "
@@ -1000,9 +1145,13 @@ def _handle_verdict_loop(
             return 2
         # NEEDS_FIXES from here on. Record the verdict regardless of
         # whether we go on to run a fix cycle or halt on the threshold.
+        # Phase 5B: NEEDS_FIXES in `review` mode auto-issues a fix
+        # prompt within threshold; no human gate is active, so
+        # `awaiting_human_for` stays null.
         data = save_loop_state(state_path, data, {
             "last_verdict": verdict,
             "last_verdict_phase": last_verdict_phase,
+            "awaiting_human_for": None,
         })
         # Threshold-policy enforcement: do not auto-continue past the
         # threshold. The contract's "materially changed / narrowed"
@@ -1027,6 +1176,11 @@ def _handle_verdict_loop(
             validate_fix_prompt(fix_prompt_path)
         except HaltError as halt:
             return _halt(state_path, data, halt, log_path)
+        # Phase 5B: a new fix-prompt issuance supersedes any prior
+        # `.agent-loop/claude-done.json` from the implementation cycle
+        # (or an earlier fix cycle), so clear the stale signal before
+        # Claude is re-invoked.
+        clear_claude_done(repo_root)
         # Run one fix cycle. On success, get a new verdict and loop.
         try:
             verdict, data = _run_fix_cycle(state_path, data, repo_root, log_path)
@@ -1089,6 +1243,19 @@ def _run_fix_cycle(
         validate_claude_summary(summary_path, data["phase"], data.get("sub_phase"))
     except HaltError as halt:
         raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
+
+    # 3a. Phase 5B: write the fix-completion handoff signal. Routing /
+    #     timing only; evidence capture + Codex review still drive the
+    #     next verdict.
+    write_claude_done(
+        repo_root,
+        phase=data.get("phase"),
+        sub_phase=data.get("sub_phase"),
+        task=data.get("task"),
+        cycle_count=data["cycle_count"],
+        mode=CLAUDE_DONE_MODE_FIX,
+        source_prompt_path=".agent-loop/fix-prompt.md",
+    )
 
     # 4. Evidence capture.
     data = save_loop_state(state_path, data, {"status": "evidence_capture"})
@@ -2819,6 +2986,15 @@ def _compute_activated_loop_state(
     preserved verbatim, satisfying the Phase 3A "preserve `max_cycles` /
     `contract_version` / `claude_version` / `codex_version` /
     `orchestrator_version`" rule.
+
+    Phase 5B (review-mode initial slice): newly activated runtime state
+    also gets `approval_mode = "review"` (the Phase 5A-required default)
+    and `awaiting_human_for = null` whenever those fields are not yet
+    present, so a freshly activated phase starts in the baseline review
+    mode with no pending human gate. A pre-existing `approval_mode` is
+    preserved verbatim (so a human-or-Codex-selected mode survives
+    activation); `awaiting_human_for` is always reset to null because
+    activation itself clears the prior phase's gate.
     """
     merged = dict(current)
     merged.update({
@@ -2830,6 +3006,9 @@ def _compute_activated_loop_state(
         "last_verdict": None,
         "last_verdict_phase": None,
     })
+    if "approval_mode" not in merged or merged.get("approval_mode") in (None, ""):
+        merged["approval_mode"] = DEFAULT_APPROVAL_MODE
+    merged["awaiting_human_for"] = None
     return merged
 
 
