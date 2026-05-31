@@ -20,40 +20,39 @@ Phase 5 - Approval Modes
 
 ## Active Sub-Phase
 
-Phase 5B - Review Mode Initial Slice
+Phase 5C - Strict Mode Pauses
 
 ## Phase Status
 
-Phase 5A (Approval Modes Contract) is closed and approved for human review. Phase 5B is now active as the first implementation slice for Phase 5. This sub-phase should implement the `review` approval mode as the explicit default runtime behavior, add the first machine-readable Claude completion handoff signal, and keep `strict` and `autonomous` deferred. The goal is to make the current baseline loop behavior explicit in runtime state and artifacts without broadening autonomy yet.
+Phase 5B (Review Mode Initial Slice) is closed and approved for human review. Phase 5C is now active as the second implementation slice for Phase 5. This sub-phase should implement the `strict` runtime pause behavior defined in the Phase 5A contract while preserving the shipped `review`-mode baseline and keeping `autonomous` deferred. The goal is to make strict human checkpoints enforceable in runtime state and control flow without broadening autonomy.
 
 ## Active Task
 
-Implement the initial Approval Modes runtime slice in `scripts/agent_loop.py` by adding explicit `review`-mode behavior and the first `.agent-loop/claude-done.json` handoff artifact. This slice should add `approval_mode` / `awaiting_human_for` runtime-state support, default new Phase 5+ runtime state to `review`, have Claude completion produce a machine-readable `ready_for_codex_review` signal tied to the current prompt or fix prompt, and preserve today's effective loop behavior for prompt issuance, review timing, evidence capture, verdict handling, and phase gating.
+Implement the `strict` approval-mode pause behavior in `scripts/agent_loop.py`. This slice should add the strict-mode human gates before new implementation prompt dispatch, before fix-prompt dispatch, and after Claude completion but before Codex review begins; use the Phase 5A `awaiting_human_for` vocabulary to represent those gates; and preserve the shipped `review`-mode behavior and the existing evidence, verdict, and phase-gating flow.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5B as active
-- `.agent-loop/phase-plan.md` marks Phase 5A complete history and contains a `## Phase 5B - Review Mode Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` adds explicit `approval_mode` / `awaiting_human_for` runtime-state handling for the `review` mode path without changing the existing baseline safety behavior
-- new or reset Phase 5+ runtime state defaults `approval_mode` to `review` and keeps `awaiting_human_for = null` when no human gate is active
-- Claude completion produces `.agent-loop/claude-done.json` with the contract-required baseline fields and `status = ready_for_codex_review`, and stale completion signals are cleared / replaced on new prompt issuance
-- the orchestrator uses the completion signal as a routing artifact only; Codex review still depends on `.agent-loop/claude-summary.md`, diff, and validation evidence
-- `review` mode preserves the existing prompt, evidence-capture, review, fix-cycle, and phase-gating behavior rather than broadening autonomy
-- focused tests cover the new runtime-state defaults, the `claude-done.json` handoff behavior, stale-signal protection, and non-regression of the current review-mode loop
-- `README.md` reflects that Phase 5B is active and that only the `review` mode initial slice is implemented
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5C as active
+- `.agent-loop/phase-plan.md` marks Phase 5B complete history and contains a `## Phase 5C - Strict Mode Pauses` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` implements the `strict`-mode human pauses before implementation prompt dispatch, before fix-prompt dispatch, and after Claude completion but before Codex review begins
+- `awaiting_human_for` uses the Phase 5A gate vocabulary for the implemented strict-mode path, including `pre_claude_prompt`, `pre_fix_prompt`, and `halt_resolution` where applicable
+- the shipped `review`-mode behavior from Phase 5B remains unchanged in effect
+- `.agent-loop/claude-done.json` continues to be a routing/timing artifact only and integrates correctly with the strict pre-review human gate
+- focused tests cover strict-mode pause entry, strict-mode resume behavior after human approval, correct `awaiting_human_for` transitions, and non-regression of the shipped `review` path
+- `README.md` reflects that Phase 5C is active and that `strict` is implemented while `autonomous` remains deferred
 
 ## Next-Phase Gate
 
-Do not start the next 5x sub-phase after Phase 5B until:
+Do not start the next 5x sub-phase after Phase 5C until:
 
-- this Phase 5B slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 5C slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- implementation of `strict` mode or `autonomous` mode runtime behavior
-- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow `review`-mode runtime-state and Claude-completion handoff work
+- implementation of `autonomous` mode runtime behavior
+- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow strict-mode pause logic and its interaction with the shipped review-mode runtime state
 - durable memory, token-reset continuation, checkpoint-resume logic, and continuation chaining (Phase 6)
 - editor integration (Phase 7)
 - MCP support (future)
