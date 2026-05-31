@@ -180,12 +180,34 @@ ALLOWED_APPROVAL_MODES = frozenset({
 })
 DEFAULT_APPROVAL_MODE = APPROVAL_MODE_REVIEW
 
-# Named human gates the `review` path may set on `awaiting_human_for`.
-# The Phase 5A contract lists `pre_claude_prompt`, `pre_fix_prompt`,
+# Named human gates `awaiting_human_for` may carry. Phase 5A's contract
+# lists `pre_claude_prompt`, `pre_fix_prompt`,
 # `phase_complete_awaiting_human_approval`, and `halt_resolution`. The
-# `review` path only ever sets the phase-complete gate (the strict-mode
-# pre-prompt gates are deferred); everything else leaves it `null`.
+# `review` path only ever sets the phase-complete gate; the three
+# strict-mode gates (added in Phase 5C) extend the named set with one
+# more contract gate name for the post-Claude / pre-Codex-review pause.
 AWAITING_HUMAN_FOR_PHASE_COMPLETE = "phase_complete_awaiting_human_approval"
+AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT = "pre_claude_prompt"
+AWAITING_HUMAN_FOR_PRE_FIX_PROMPT = "pre_fix_prompt"
+AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW = "pre_codex_review"
+
+# Phase 5C strict-mode halt statuses. Each strict gate uses a distinct
+# `halted_awaiting_human_*` status so the `resume` subcommand can route
+# to the correct continuation; the corresponding `awaiting_human_for`
+# carries the Phase 5A contract gate-name vocabulary. The pre-codex
+# gate has two halt-status flavors because the same gate site appears
+# in both the normal cycle and the fix cycle, and resume must dispatch
+# to the correct cycle's continuation.
+HALTED_PRE_CLAUDE_PROMPT = "halted_awaiting_human_pre_claude_prompt"
+HALTED_PRE_FIX_PROMPT = "halted_awaiting_human_pre_fix_prompt"
+HALTED_PRE_CODEX_REVIEW_NORMAL = "halted_awaiting_human_pre_codex_review_normal"
+HALTED_PRE_CODEX_REVIEW_FIX = "halted_awaiting_human_pre_codex_review_fix"
+STRICT_GATE_HALT_STATUSES = frozenset({
+    HALTED_PRE_CLAUDE_PROMPT,
+    HALTED_PRE_FIX_PROMPT,
+    HALTED_PRE_CODEX_REVIEW_NORMAL,
+    HALTED_PRE_CODEX_REVIEW_FIX,
+})
 
 # Per the contract's "Normal cycle" preconditions, a normal cycle may only
 # start from a ready-to-start status. The orchestrator refuses to begin
@@ -873,6 +895,54 @@ def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[P
             file=sys.stderr,
         )
     _log_note(log_path, f"HALT {halt.status}: {halt.reason}")
+    return 2
+
+
+def _fire_strict_gate(
+    state_path: Path,
+    current: dict,
+    *,
+    halt_status: str,
+    awaiting_human_for: str,
+    reason: str,
+    log_path: Optional[Path],
+) -> int:
+    """Persist a Phase 5C strict-mode human gate and exit cleanly with code 2.
+
+    Records the gate in BOTH `status` (a contract `halted_awaiting_human_*`
+    value the resume command keys off of) and `awaiting_human_for` (the
+    Phase 5A contract gate-name vocabulary), in a single atomic
+    save_loop_state call so the gate cannot be observed half-set. The
+    orchestrator process exits; the human resumes via the `resume`
+    subcommand once they have approved the paused step.
+
+    This is structurally a halt, but it is NOT a `HaltError` because the
+    intent is "wait for a human," not "fail." Using a distinct helper
+    keeps `_halt`'s "this is a structural failure" semantics intact and
+    makes strict-mode pauses visibly different in the log.
+    """
+    print(
+        f"[orchestrator] STRICT GATE {halt_status} ({awaiting_human_for}): "
+        f"{reason}",
+        file=sys.stderr,
+    )
+    try:
+        save_loop_state(
+            state_path, current,
+            {"status": halt_status, "awaiting_human_for": awaiting_human_for},
+        )
+    except Exception as exc:
+        print(
+            f"[orchestrator] additionally failed to persist strict gate: {exc}",
+            file=sys.stderr,
+        )
+    _log_note(
+        log_path,
+        (
+            f"strict gate {halt_status} awaiting_human_for={awaiting_human_for}: "
+            f"{reason}"
+        ),
+    )
     return 2
 
 

@@ -500,6 +500,23 @@ Track future non-MVP features.
 
 Possible additions:
 
+- central-controller / external-workspace mode where this agent system
+  targets another folder or repository instead of only operating inside
+  its own repo
+- target-folder / target-repository selection so a user can point the
+  agent at a different project workspace and have it work there
+- project bootstrap / attach flow for external targets, including
+  initializing the required `.agent-loop` artifacts in the target
+  workspace when appropriate
+- UI-driven project selection and run control for external targets
+- `n8n` or similar workflow-engine integration as an outer trigger layer
+  that can accept a PRD/task, choose a target folder, and launch the
+  controller against that workspace
+- separation between controller-owned files and target-project-owned
+  files so the reusable agent framework can orchestrate many projects
+  without embedding itself into every repo
+- PRD / task intake for external-target runs so a user can hand the
+  controller an idea or spec and direct it at a chosen workspace
 - desktop UI
 - progress dashboard
 - run history
