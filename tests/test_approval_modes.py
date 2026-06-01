@@ -605,5 +605,453 @@ class ClaudeDoneOnlyWhenReviewReadyTests(_CycleHarness):
         self.assertEqual(payload["source_prompt_path"], ".agent-loop/claude-prompt.md")
 
 
+# ----- Phase 5C strict-mode coverage -----
+#
+# These tests pin the three strict-mode pauses defined in Phase 5A and
+# implemented in Phase 5C, plus the `resume` continuation:
+#   - pre_claude_prompt before a new implementation prompt dispatches
+#   - pre_fix_prompt before a new fix prompt dispatches
+#   - pre_codex_review after Claude completion + evidence validation but
+#     before Codex review begins (one variant for the normal cycle, one
+#     for the fix cycle)
+# A `_handle_verdict_loop` review must already have happened to reach the
+# pre_fix_prompt gate, so the fix-prompt tests drive `_handle_verdict_loop`
+# directly with a synthetic NEEDS_FIXES verdict.
+
+class _StrictCycleHarness(_CycleHarness):
+    """Same setup as _CycleHarness but flips approval_mode to `strict`
+    and pre-writes a valid fix-prompt for the fix-gate tests."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        data = self._state()
+        data["approval_mode"] = agent_loop.APPROVAL_MODE_STRICT
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        # Pre-create a minimally valid fix-prompt for the gate-on-fix tests.
+        (self.repo.root / ".agent-loop" / "fix-prompt.md").write_text(
+            "# Claude Code Fix Task\n\n## Objective\no\n\n"
+            "## Context\nc\n\n## Required fixes\n- x\n\n"
+            "## Constraints\n- y\n\n## Required output\n- z\n",
+            encoding="utf-8",
+        )
+
+
+class StrictGatePreClaudePromptTests(_StrictCycleHarness):
+
+    def test_strict_gate_fires_before_any_claude_invocation(self) -> None:
+        invoked = {"called": False}
+        adapter = mock.Mock()
+        def _invoke(*_):
+            invoked["called"] = True
+            raise AssertionError(
+                "Claude adapter must not be invoked when the strict "
+                "pre_claude_prompt gate fires"
+            )
+        adapter.invoke = _invoke
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter", return_value=adapter,
+        ):
+            rc = agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(rc, 2, "the strict gate exits cleanly with code 2")
+        self.assertFalse(invoked["called"])
+        after = self._state()
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+        )
+        # The cycle counter was NOT incremented yet (the gate fires before
+        # the threshold/increment block).
+        self.assertEqual(after["cycle_count"], 0)
+
+
+class StrictGatePreCodexReviewNormalTests(_StrictCycleHarness):
+
+    def test_strict_gate_fires_after_evidence_before_codex_review(self) -> None:
+        codex_called = {"called": False}
+
+        def _wait(_path):
+            codex_called["called"] = True
+            raise AssertionError(
+                "Codex adapter must not be invoked when the strict "
+                "pre_codex_review gate fires"
+            )
+
+        # The pre_claude_prompt gate fires first under strict mode. To
+        # observe the second strict gate (pre_codex_review) we drive the
+        # continuation entry point directly, which is the same entry the
+        # `resume` subcommand uses after the human approves the first
+        # gate.
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=_wait),
+        ):
+            rc = agent_loop._run_normal_cycle_from_increment(
+                self.repo.root, self._state(), self.log_path,
+            )
+        self.assertEqual(rc, 2)
+        self.assertFalse(codex_called["called"])
+        after = self._state()
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+        )
+        # claude-done.json was already written (review-ready) and the
+        # cycle counter was incremented.
+        self.assertTrue(self.done_path.exists())
+        self.assertEqual(after["cycle_count"], 1)
+
+
+class StrictGatePreFixPromptTests(_StrictCycleHarness):
+
+    def _drive_verdict(self, verdict: str) -> int:
+        with mock.patch.object(
+            agent_loop, "_invoke_post_approval_planner", return_value=0,
+        ):
+            return agent_loop._handle_verdict_loop(
+                self.state_path, self._state(), verdict,
+                self.repo.root, self.log_path,
+            )
+
+    def test_strict_gate_fires_before_fix_cycle_invokes_claude(self) -> None:
+        # Seed a state where the verdict loop would normally proceed to a
+        # fix cycle (cycle_count below max_cycles).
+        data = self._state()
+        data["cycle_count"] = 1
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+
+        invoked = {"called": False}
+
+        def _invoke(*_):
+            invoked["called"] = True
+            raise AssertionError(
+                "fix-cycle Claude adapter must not be invoked when the "
+                "strict pre_fix_prompt gate fires"
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=_invoke),
+        ):
+            rc = self._drive_verdict("NEEDS_FIXES")
+        self.assertEqual(rc, 2)
+        self.assertFalse(invoked["called"])
+        after = self._state()
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_FIX_PROMPT)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_FIX_PROMPT,
+        )
+        # NEEDS_FIXES was recorded before the gate fired.
+        self.assertEqual(after["last_verdict"], "NEEDS_FIXES")
+
+
+class StrictGatePreCodexReviewFixTests(_StrictCycleHarness):
+
+    def test_strict_gate_fires_after_fix_evidence_before_codex_review(
+        self,
+    ) -> None:
+        # Set up state mid-fix-cycle (Claude fix already implemented,
+        # evidence already validated). Drive _run_fix_cycle directly via
+        # the verdict-loop path so the strict gate fires at step 4b.
+        data = self._state()
+        data["cycle_count"] = 1
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        codex_called = {"called": False}
+
+        def _wait(_path):
+            codex_called["called"] = True
+            raise AssertionError(
+                "Codex adapter must not be invoked when the strict "
+                "pre_codex_review gate fires in the fix cycle"
+            )
+
+        # The pre_fix_prompt gate would fire first; bypass it by patching
+        # `_fire_strict_gate` to return None on its FIRST call (the fix-prompt
+        # gate), so the fix cycle actually starts and we observe the
+        # SECOND gate fire at the pre-codex-review point. The simplest way
+        # is to flip the loaded state's approval_mode for the
+        # pre_fix_prompt gate only; we instead skip the first gate by
+        # directly invoking the fix-cycle helpers.
+        try:
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=mock.Mock(invoke=self._make_summary_writer()),
+            ), mock.patch.object(
+                agent_loop, "invoke_run_checks", return_value=0,
+            ), mock.patch.object(
+                agent_loop, "validate_evidence_files", return_value=None,
+            ), mock.patch.object(
+                agent_loop, "make_codex_adapter",
+                return_value=mock.Mock(wait_for_review=_wait),
+            ):
+                agent_loop._run_fix_cycle(
+                    self.state_path, self._state(), self.repo.root, self.log_path,
+                )
+            self.fail("_run_fix_cycle must raise _FixCycleHalt when the strict gate fires")
+        except agent_loop._FixCycleHalt as halted:
+            self.assertEqual(halted.exit_code, 2)
+        self.assertFalse(codex_called["called"])
+        after = self._state()
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_FIX)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+        )
+        # The fix cycle did its own increment and wrote the fix-mode done
+        # signal before the gate fired.
+        self.assertTrue(self.done_path.exists())
+        self.assertEqual(_read_json(self.done_path)["mode"], "fix")
+        self.assertEqual(after["cycle_count"], 2)
+
+
+class StrictResumeDispatchTests(_StrictCycleHarness):
+
+    def test_resume_refuses_when_status_is_not_a_strict_gate(self) -> None:
+        # awaiting_claude_implementation is the canonical ready state -
+        # resume is only valid after a strict gate halted the cycle.
+        data = self._state()
+        data["status"] = "awaiting_claude_implementation"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        rc = agent_loop.run_strict_resume(self.repo.root)
+        self.assertEqual(rc, 2)
+        after = self._state()
+        # The refusal persists its own halt status and does NOT clear
+        # awaiting_human_for (because none was set in the first place).
+        self.assertTrue(after["status"].startswith("halted_"))
+
+    def test_resume_after_pre_claude_prompt_dispatches_to_increment(
+        self,
+    ) -> None:
+        # Fire the gate first.
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter", return_value=mock.Mock(),
+        ):
+            agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(self._state()["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
+
+        # Now resume. We swap approval_mode to review for the resume so
+        # the post-evidence gate does NOT also fire and we can observe
+        # the full path through to (in this test) a Codex failure halt.
+        data = self._state()
+        data["approval_mode"] = "review"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=lambda _p: agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )),
+        ):
+            agent_loop.run_strict_resume(self.repo.root)
+        after = self._state()
+        # The continuation did the cycle_count increment + the full
+        # claude+evidence+done flow, then halted on the (intentionally
+        # failing) Codex adapter.
+        self.assertEqual(after["cycle_count"], 1)
+        self.assertTrue(self.done_path.exists())
+        # awaiting_human_for was cleared by the resume and not re-set.
+        self.assertIsNone(after["awaiting_human_for"])
+
+    def test_resume_after_pre_codex_review_normal_skips_back_to_review(
+        self,
+    ) -> None:
+        # Fire the post-evidence gate first.
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter", return_value=mock.Mock(),
+        ):
+            # The pre_claude_prompt gate fires first; bypass by stepping
+            # directly into the post-increment continuation against the
+            # initial state.
+            agent_loop._run_normal_cycle_from_increment(
+                self.repo.root, self._state(), self.log_path,
+            )
+        self.assertEqual(
+            self._state()["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL,
+        )
+        # The Claude side of the cycle has already happened (increment +
+        # summary + evidence + claude-done.json).
+        self.assertTrue(self.done_path.exists())
+        claude_done_mtime = self.done_path.stat().st_mtime
+
+        # Now resume. Patch Codex to return a Codex failure to halt
+        # cleanly after the review attempt. Crucially, the Claude
+        # adapter MUST NOT be re-invoked.
+        claude_invocations = {"count": 0}
+
+        def _no_call(*_):
+            claude_invocations["count"] += 1
+            raise AssertionError(
+                "Claude adapter must not be re-invoked on resume after "
+                "the pre_codex_review gate; only the Codex review step runs"
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=_no_call),
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=lambda _p: agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )),
+        ):
+            agent_loop.run_strict_resume(self.repo.root)
+        self.assertEqual(claude_invocations["count"], 0)
+        after = self._state()
+        self.assertIsNone(after["awaiting_human_for"])
+        # cycle_count was not bumped again on resume.
+        self.assertEqual(after["cycle_count"], 1)
+        # claude-done.json bytes are unchanged (the cycle did not
+        # re-write the signal on resume).
+        self.assertEqual(self.done_path.stat().st_mtime, claude_done_mtime)
+
+
+class StrictResumeFixPathTests(_StrictCycleHarness):
+
+    def test_resume_after_pre_fix_prompt_runs_one_fix_cycle(self) -> None:
+        # Seed the verdict-loop frame and fire the pre_fix_prompt gate.
+        data = self._state()
+        data["cycle_count"] = 1
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        with mock.patch.object(
+            agent_loop, "_invoke_post_approval_planner", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "make_claude_adapter", return_value=mock.Mock(),
+        ):
+            agent_loop._handle_verdict_loop(
+                self.state_path, self._state(), "NEEDS_FIXES",
+                self.repo.root, self.log_path,
+            )
+        self.assertEqual(self._state()["status"], agent_loop.HALTED_PRE_FIX_PROMPT)
+
+        # Resume. Flip mode to review so the second strict gate (pre_codex_review)
+        # does NOT also fire mid-fix-cycle, and stub the adapters so the
+        # fix cycle runs end-to-end and a Codex failure halts cleanly.
+        data = self._state()
+        data["approval_mode"] = "review"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=lambda _p: agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )),
+        ):
+            agent_loop.run_strict_resume(self.repo.root)
+        after = self._state()
+        # The fix cycle incremented cycle_count from 1 -> 2 and wrote a
+        # fix-mode claude-done.json before the Codex failure halted.
+        self.assertEqual(after["cycle_count"], 2)
+        self.assertEqual(_read_json(self.done_path)["mode"], "fix")
+        self.assertIsNone(after["awaiting_human_for"])
+
+
+class ReviewModeStrictBehaviorNotRegressedTests(_CycleHarness):
+    """The shipped review-mode baseline must not fire any strict gate."""
+
+    def test_review_mode_does_not_fire_pre_claude_prompt_gate(self) -> None:
+        # Review mode (the default for _CycleHarness) must NOT halt at
+        # the strict pre-claude gate; it proceeds through to claude
+        # invocation. We stub Claude to ensure it IS called (the gate
+        # would prevent that).
+        called = {"n": 0}
+
+        def _invoke(*_, **__):
+            called["n"] += 1
+            return agent_loop.ExecutionResult(
+                exit_code=0, model_id="stub", duration_seconds=0.0,
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=_invoke),
+        ):
+            # The summary will be invalid (empty), so the cycle will halt
+            # later - that is fine. We only need to prove the strict gate
+            # did NOT fire.
+            agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(
+            called["n"], 1,
+            "review mode must not fire the pre_claude_prompt strict gate",
+        )
+        after = self._state()
+        self.assertNotEqual(after["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
+
+    def test_review_mode_does_not_fire_pre_codex_review_gate(self) -> None:
+        codex_called = {"n": 0}
+
+        def _wait(_path):
+            codex_called["n"] += 1
+            return agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=_wait),
+        ):
+            agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(
+            codex_called["n"], 1,
+            "review mode must not fire the pre_codex_review strict gate",
+        )
+        after = self._state()
+        self.assertNotEqual(
+            after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL,
+        )
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

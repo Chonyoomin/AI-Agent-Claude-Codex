@@ -500,6 +500,24 @@ Track future non-MVP features.
 
 Possible additions:
 
+- durable RAG-backed project knowledge retrieval layered on top of the
+  Phase 6 memory/checkpoint system so the agent can pull only the most
+  relevant architecture docs, past decisions, standards, PRD sections,
+  and prior failure/fix patterns into a given run
+- repo-local or external knowledge indexing pipelines for PRDs, design
+  docs, architecture notes, internal standards, and historical build
+  artifacts
+- MCP server integration so the agent can use live tools and external
+  system connectors while planning, implementing, and reviewing
+- narrowly scoped MCP tools for things like schema inspection, related
+  repo search, internal API discovery, design-system lookup, issue/task
+  retrieval, deployment metadata, or other project-specific operations
+- explicit policy boundaries for MCP/RAG usage so retrieval and tool use
+  enhance the loop without bypassing evidence review, phase safety, or
+  prompt/review ownership
+- combined RAG + MCP operation for future PRD-to-product runs, where
+  retrieved knowledge informs planning and live tools provide real
+  system context during implementation
 - central-controller / external-workspace mode where this agent system
   targets another folder or repository instead of only operating inside
   its own repo

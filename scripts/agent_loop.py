@@ -1002,8 +1002,6 @@ def run_normal_cycle(repo_root: Path) -> int:
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
     prompt_path = al / "claude-prompt.md"
-    summary_path = al / "claude-summary.md"
-    review_path = al / "codex-review.md"
     log_path = al / "orchestrator.log"
 
     # 1. Load + structurally validate loop-state.json before doing anything.
@@ -1058,6 +1056,49 @@ def run_normal_cycle(repo_root: Path) -> int:
             ),
             log_path,
         )
+
+    # 3b. Phase 5C strict-mode gate: under `strict`, the loop must pause
+    #     for explicit human approval BEFORE dispatching a new
+    #     implementation prompt. `review` (the default) skips this gate;
+    #     `autonomous` runtime branching is still deferred. The gate
+    #     persists the named `awaiting_human_for = "pre_claude_prompt"`
+    #     plus a contract `halted_awaiting_human_*` status and exits
+    #     cleanly (code 2); the human resumes via the `resume`
+    #     subcommand, which dispatches to `_run_normal_cycle_from_increment`
+    #     (so the threshold check and cycle_count increment happen on
+    #     resume, exactly once).
+    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+        return _fire_strict_gate(
+            state_path, data,
+            halt_status=HALTED_PRE_CLAUDE_PROMPT,
+            awaiting_human_for=AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+            reason=(
+                "strict mode: explicit human approval required before "
+                "dispatching a new implementation prompt to Claude"
+            ),
+            log_path=log_path,
+        )
+
+    return _run_normal_cycle_from_increment(repo_root, data, log_path)
+
+
+def _run_normal_cycle_from_increment(
+    repo_root: Path, data: dict, log_path: Path,
+) -> int:
+    """Continuation: threshold check, cycle_count increment, Claude
+    invocation, summary validation, evidence capture, claude-done.json
+    write, then the Codex-review step. Reached either from
+    `run_normal_cycle` (the human is not in strict mode, or strict mode
+    was satisfied at the entry-point pre_claude_prompt gate) or from the
+    `resume` subcommand after the human approves the pre_claude_prompt
+    gate. Factored so resume does not re-fire the same gate it just
+    cleared, and so the threshold/increment writes happen exactly once
+    per cycle regardless of which entry path was taken.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    prompt_path = al / "claude-prompt.md"
+    summary_path = al / "claude-summary.md"
 
     # 4. Check the cycle counter before incrementing.
     if data["cycle_count"] + 1 > data["max_cycles"]:
@@ -1133,6 +1174,46 @@ def run_normal_cycle(repo_root: Path) -> int:
         mode=CLAUDE_DONE_MODE_IMPLEMENTATION,
         source_prompt_path=".agent-loop/claude-prompt.md",
     )
+
+    # 8b. Phase 5C strict-mode gate: under `strict`, the loop must pause
+    #     for explicit human approval AFTER Claude completion + evidence
+    #     validation but BEFORE Codex review begins. The previous gates
+    #     and writes have already happened (cycle counted, summary
+    #     validated, evidence captured, claude-done.json marks
+    #     review-ready) so the only thing left is whether Codex review
+    #     proceeds now or after the human approves it. Resume dispatches
+    #     to `_run_normal_cycle_codex_review_step` so review proceeds
+    #     exactly once.
+    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+        return _fire_strict_gate(
+            state_path, data,
+            halt_status=HALTED_PRE_CODEX_REVIEW_NORMAL,
+            awaiting_human_for=AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+            reason=(
+                "strict mode: explicit human approval required after Claude "
+                "completion / evidence validation and before Codex review begins"
+            ),
+            log_path=log_path,
+        )
+
+    return _run_normal_cycle_codex_review_step(repo_root, data, log_path)
+
+
+def _run_normal_cycle_codex_review_step(
+    repo_root: Path, data: dict, log_path: Path,
+) -> int:
+    """Continuation: Codex review through verdict handling for the normal
+    cycle. Reached either from `_run_normal_cycle_from_increment` (the
+    human is not in strict mode, or strict mode was satisfied at the
+    pre_codex_review gate) or from the `resume` subcommand after the
+    human approves the pre_codex_review gate. Codex review (and its
+    side-effects on `claude_version` / `codex_version`) happens exactly
+    once regardless of entry path because the gate site is BEFORE this
+    function and resume only enters here, not at the gate.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    review_path = al / "codex-review.md"
 
     # 9. Wait on Codex review (subprocess when configured, manual-handoff
     #    fallback otherwise).
@@ -1274,6 +1355,22 @@ def _handle_verdict_loop(
         # (or an earlier fix cycle), so clear the stale signal before
         # Claude is re-invoked.
         clear_claude_done(repo_root)
+        # Phase 5C strict-mode gate: under `strict`, the loop must pause
+        # for explicit human approval BEFORE dispatching a new fix
+        # prompt. The fix-prompt is already authored and validated on
+        # disk; only its dispatch to Claude waits. Resume dispatches to
+        # `_run_fix_cycle` so the fix cycle proceeds exactly once.
+        if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+            return _fire_strict_gate(
+                state_path, data,
+                halt_status=HALTED_PRE_FIX_PROMPT,
+                awaiting_human_for=AWAITING_HUMAN_FOR_PRE_FIX_PROMPT,
+                reason=(
+                    "strict mode: explicit human approval required before "
+                    "dispatching a new fix prompt to Claude"
+                ),
+                log_path=log_path,
+            )
         # Run one fix cycle. On success, get a new verdict and loop.
         try:
             verdict, data = _run_fix_cycle(state_path, data, repo_root, log_path)
@@ -1365,6 +1462,50 @@ def _run_fix_cycle(
         mode=CLAUDE_DONE_MODE_FIX,
         source_prompt_path=".agent-loop/fix-prompt.md",
     )
+
+    # 4b. Phase 5C strict-mode gate: under `strict`, the loop must pause
+    #     for explicit human approval AFTER fix-cycle Claude completion
+    #     + evidence validation but BEFORE Codex fix-cycle review begins.
+    #     The fix-cycle context (a fresh cycle_count was already
+    #     incremented in step 1, summary validated in step 3, evidence
+    #     captured in step 4) is fully on disk; the only thing left is
+    #     whether review proceeds now or after the human approves it.
+    #     Resume dispatches to `_run_fix_cycle_codex_review_step`, which
+    #     synchronously runs review + verdict-handling for this cycle.
+    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+        _fire_strict_gate(
+            state_path, data,
+            halt_status=HALTED_PRE_CODEX_REVIEW_FIX,
+            awaiting_human_for=AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+            reason=(
+                "strict mode: explicit human approval required after fix-cycle "
+                "Claude completion / evidence validation and before Codex "
+                "fix-cycle review begins"
+            ),
+            log_path=log_path,
+        )
+        # Carry the gate exit up through the verdict-loop frame the same
+        # way other fix-cycle halts do.
+        raise _FixCycleHalt(2)
+
+    return _run_fix_cycle_codex_review_step(state_path, data, repo_root, log_path)
+
+
+def _run_fix_cycle_codex_review_step(
+    state_path: Path,
+    data: dict,
+    repo_root: Path,
+    log_path: Path,
+) -> tuple[str, dict]:
+    """Continuation: Codex review through verdict-parse for the fix
+    cycle. Reached either from `_run_fix_cycle` directly (no strict
+    gate) or from the `resume` subcommand after the human approves the
+    pre_codex_review gate. Returns `(verdict, updated_data)` so the
+    calling `_handle_verdict_loop` frame can continue from the same
+    point it would have continued without the strict gate.
+    """
+    al = repo_root / ".agent-loop"
+    review_path = al / "codex-review.md"
 
     # 5. Wait for the fix-cycle Codex review (subprocess when configured,
     #    manual-handoff fallback otherwise).
@@ -3489,6 +3630,106 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def run_strict_resume(repo_root: Path) -> int:
+    """Resume a cycle that was paused at a Phase 5C strict-mode gate.
+
+    Refuses unless `status` is one of the four `halted_awaiting_human_*`
+    strict-gate values. On success: clears `awaiting_human_for`, restores
+    a ready-to-continue status, logs a `note:` line, and dispatches to
+    the continuation point matched by the persisted gate halt-status so
+    no earlier work is re-done and the next gate (if the same cycle has
+    one) still fires. A bogus status, a non-strict cycle, or a missing
+    Phase 5C halt-status is refused with the same `halted_input_missing`
+    vocabulary the rest of the orchestrator uses.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+
+    try:
+        data = load_loop_state(state_path)
+        validate_loop_state(data)
+        check_contract_version(data)
+    except HaltError as halt:
+        return _halt(state_path, {} if "data" not in dir() else data, halt, log_path)
+
+    status = data.get("status")
+    if status not in STRICT_GATE_HALT_STATUSES:
+        return _halt(
+            state_path, data,
+            HaltError(
+                "halted_input_missing",
+                (
+                    f"resume requires loop-state.json status to be one of "
+                    f"{sorted(STRICT_GATE_HALT_STATUSES)}; got {status!r}. "
+                    f"resume is only valid after a Phase 5C strict-mode gate "
+                    f"halted the cycle."
+                ),
+            ),
+            log_path,
+        )
+
+    _log_note(
+        log_path,
+        (
+            f"strict resume: {status} -> human approved; continuing. "
+            f"awaiting_human_for cleared, prior value="
+            f"{data.get('awaiting_human_for')!r}"
+        ),
+    )
+
+    if status == HALTED_PRE_CLAUDE_PROMPT:
+        data = save_loop_state(state_path, data, {
+            "status": "awaiting_claude_implementation",
+            "awaiting_human_for": None,
+        })
+        return _run_normal_cycle_from_increment(repo_root, data, log_path)
+
+    if status == HALTED_PRE_CODEX_REVIEW_NORMAL:
+        # Continuation immediately sets `awaiting_codex_review`; the
+        # intermediate status only needs to be non-halt so the resume
+        # write is meaningful in the log. Use the same "evidence done,
+        # about to review" value the pre-gate write left visible.
+        data = save_loop_state(state_path, data, {
+            "status": "evidence_capture",
+            "awaiting_human_for": None,
+        })
+        return _run_normal_cycle_codex_review_step(repo_root, data, log_path)
+
+    if status == HALTED_PRE_FIX_PROMPT:
+        data = save_loop_state(state_path, data, {
+            # The post-NEEDS_FIXES state in `_handle_verdict_loop` left
+            # `last_verdict = NEEDS_FIXES` and `status = halted_*`;
+            # _run_fix_cycle expects to do its own increment + status
+            # write, so any non-halt status here is fine.
+            "status": "awaiting_claude_implementation",
+            "awaiting_human_for": None,
+        })
+        try:
+            verdict, data = _run_fix_cycle(state_path, data, repo_root, log_path)
+        except _FixCycleHalt as halted:
+            return halted.exit_code
+        return _handle_verdict_loop(state_path, data, verdict, repo_root, log_path)
+
+    # HALTED_PRE_CODEX_REVIEW_FIX
+    data = save_loop_state(state_path, data, {
+        "status": "evidence_capture",
+        "awaiting_human_for": None,
+    })
+    try:
+        verdict, data = _run_fix_cycle_codex_review_step(
+            state_path, data, repo_root, log_path,
+        )
+    except _FixCycleHalt as halted:
+        return halted.exit_code
+    return _handle_verdict_loop(state_path, data, verdict, repo_root, log_path)
+
+
+def cmd_resume(_args: argparse.Namespace) -> int:
+    repo_root = find_repo_root()
+    return run_strict_resume(repo_root)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent_loop",
@@ -3538,6 +3779,18 @@ def build_parser() -> argparse.ArgumentParser:
             "approval source to .agent-loop/planner.log. Refusal exits 2."
         ),
     )
+    sub.add_parser(
+        "resume",
+        help=(
+            "Phase 5C strict-mode resume: continue a cycle paused at a "
+            "strict-mode human gate (pre_claude_prompt, pre_fix_prompt, "
+            "or pre_codex_review). Refuses unless loop-state.json status "
+            "is one of the halted_awaiting_human_* strict-gate values; "
+            "on success clears awaiting_human_for and dispatches to the "
+            "continuation matched by the persisted gate, so no earlier "
+            "work is re-done and the next gate (if any) still fires."
+        ),
+    )
     return parser
 
 
@@ -3547,6 +3800,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "run": cmd_run,
     "plan": cmd_plan,
     "activate": cmd_activate,
+    "resume": cmd_resume,
 }
 
 
