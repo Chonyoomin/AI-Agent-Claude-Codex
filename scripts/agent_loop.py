@@ -98,6 +98,13 @@ ALLOWED_VERDICTS = (
     "FAILED_REQUIRES_HUMAN",
 )
 
+ISSUE_OWNER_CODEX = "Codex"
+ISSUE_OWNER_CLAUDE = "Claude"
+ALLOWED_ISSUE_OWNERS = frozenset({ISSUE_OWNER_CODEX, ISSUE_OWNER_CLAUDE})
+
+CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS = "sync_phase5_runtime_defaults"
+SUPPORTED_CODEX_ACTIONS = frozenset({CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS})
+
 EVIDENCE_FILES = (
     ".agent-loop/git-status.log",
     ".agent-loop/git-diff.patch",
@@ -140,6 +147,18 @@ FIX_PROMPT_HEADERS = (
     "## Constraints",
     "## Required output",
 )
+
+CODEX_OWNED_REVIEW_PATHS = frozenset({
+    "TASK.md",
+    ".agent-loop/current-task.md",
+    ".agent-loop/current-phase.md",
+    ".agent-loop/phase-plan.md",
+    ".agent-loop/claude-prompt.md",
+    ".agent-loop/codex-review.md",
+    ".agent-loop/fix-prompt.md",
+    "AGENTS.md",
+    "CLAUDE.md",
+})
 
 REQUIRED_STATE_KEYS = (
     "phase", "sub_phase", "task", "status", "cycle_count", "max_cycles",
@@ -236,6 +255,26 @@ class ExecutionResult:
     exit_code: int
     model_id: Optional[str]
     duration_seconds: float
+
+
+@dataclass(frozen=True)
+class ReviewIssue:
+    title: str
+    severity: str
+    category: str
+    files: tuple[str, ...]
+    problem: str
+    evidence: str
+    required_fix: str
+    owner: str
+    codex_action: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class ParsedCodexReview:
+    verdict: str
+    issues: tuple[ReviewIssue, ...]
+    fix_prompt_for_claude: str
 
 
 # ----- adapters (manual-handoff stubs for this slice) -----
@@ -663,6 +702,75 @@ def _section_body(text: str, header: str) -> str:
     return rest.strip()
 
 
+def _labeled_multiline_body(block: str, label: str, required: bool = True) -> str:
+    pattern = rf"(?ms)^{re.escape(label)}:\s*\n(.*?)(?=^\w[\w ]*:\s*$|\Z)"
+    match = re.search(pattern, block)
+    if match is None:
+        if required:
+            raise HaltError(
+                "halted_review_parse_failed",
+                f"codex-review issue block missing required label {label!r}",
+            )
+        return ""
+    return match.group(1).strip()
+
+
+def _single_line_field(block: str, label: str, *, required: bool = True) -> str:
+    match = re.search(rf"(?m)^{re.escape(label)}:\s*(.+?)\s*$", block)
+    if match is None:
+        if required:
+            raise HaltError(
+                "halted_review_parse_failed",
+                f"codex-review issue block missing required field {label!r}",
+            )
+        return ""
+    return match.group(1).strip()
+
+
+def _split_issue_files(raw: str) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    parts = [part.strip() for part in raw.split(",")]
+    return tuple(part for part in parts if part)
+
+
+def _infer_issue_owner(files: tuple[str, ...]) -> str:
+    if files and all(path in CODEX_OWNED_REVIEW_PATHS for path in files):
+        return ISSUE_OWNER_CODEX
+    return ISSUE_OWNER_CLAUDE
+
+
+def _parse_review_issue_block(title: str, block: str) -> ReviewIssue:
+    severity = _single_line_field(block, "Severity")
+    category = _single_line_field(block, "Category")
+    files = _split_issue_files(_single_line_field(block, "File(s)"))
+    owner = _single_line_field(block, "Owner", required=False) or _infer_issue_owner(files)
+    if owner not in ALLOWED_ISSUE_OWNERS:
+        raise HaltError(
+            "halted_review_parse_failed",
+            f"codex-review issue owner must be one of {sorted(ALLOWED_ISSUE_OWNERS)}; "
+            f"got {owner!r}",
+        )
+    codex_action = _single_line_field(block, "Codex action", required=False) or None
+    if codex_action is not None and codex_action not in SUPPORTED_CODEX_ACTIONS:
+        raise HaltError(
+            "halted_review_parse_failed",
+            f"codex-review issue Codex action must be one of "
+            f"{sorted(SUPPORTED_CODEX_ACTIONS)}; got {codex_action!r}",
+        )
+    return ReviewIssue(
+        title=title.strip(),
+        severity=severity,
+        category=category,
+        files=files,
+        problem=_labeled_multiline_body(block, "Problem"),
+        evidence=_labeled_multiline_body(block, "Evidence"),
+        required_fix=_labeled_multiline_body(block, "Required fix"),
+        owner=owner,
+        codex_action=codex_action,
+    )
+
+
 def validate_claude_prompt_present(prompt_path: Path) -> None:
     if not prompt_path.exists() or not prompt_path.read_text(encoding="utf-8").strip():
         raise HaltError(
@@ -695,7 +803,7 @@ def validate_claude_summary(
         )
 
 
-def validate_codex_review_and_parse_verdict(review_path: Path) -> str:
+def parse_codex_review(review_path: Path) -> ParsedCodexReview:
     text = _validate_header_order(
         review_path, CODEX_REVIEW_HEADERS, "halted_review_malformed",
     )
@@ -713,7 +821,36 @@ def validate_codex_review_and_parse_verdict(review_path: Path) -> str:
             f"{review_path.name} ## Verdict body must contain exactly one "
             f"allowed verdict token; found {matches!r} in {verdict_body!r}",
         )
-    return matches[0]
+    issues_body = _section_body(text, "## Issues found")
+    if not issues_body:
+        raise HaltError(
+            "halted_review_parse_failed",
+            f"{review_path.name} ## Issues found body is empty",
+        )
+    issues: list[ReviewIssue] = []
+    if issues_body != "None":
+        issue_matches = list(re.finditer(r"(?m)^###\s+(Issue[^\n]*)\s*$", issues_body))
+        if not issue_matches:
+            raise HaltError(
+                "halted_review_parse_failed",
+                f"{review_path.name} ## Issues found must contain `None` or one or more "
+                f"`### Issue ...` blocks",
+            )
+        for idx, match in enumerate(issue_matches):
+            title = match.group(1)
+            start = match.end()
+            end = issue_matches[idx + 1].start() if idx + 1 < len(issue_matches) else len(issues_body)
+            block = issues_body[start:end].strip()
+            issues.append(_parse_review_issue_block(title, block))
+    return ParsedCodexReview(
+        verdict=matches[0],
+        issues=tuple(issues),
+        fix_prompt_for_claude=_section_body(text, "## Fix prompt for Claude"),
+    )
+
+
+def validate_codex_review_and_parse_verdict(review_path: Path) -> str:
+    return parse_codex_review(review_path).verdict
 
 
 def validate_fix_prompt(fix_prompt_path: Path) -> None:
@@ -724,6 +861,136 @@ def validate_fix_prompt(fix_prompt_path: Path) -> None:
         )
     _validate_header_order(
         fix_prompt_path, FIX_PROMPT_HEADERS, "halted_fix_prompt_malformed",
+    )
+
+
+def _render_fix_prompt(
+    review: ParsedCodexReview,
+    claude_owned_issues: Iterable[ReviewIssue],
+) -> str:
+    required_fixes = [
+        f"- {issue.required_fix.replace(chr(10), ' ').strip()}"
+        for issue in claude_owned_issues
+    ]
+    context_lines = [
+        "The previous implementation was reviewed by Codex and received the verdict "
+        "`NEEDS_FIXES`.",
+        "",
+        "Read:",
+        "- `CLAUDE.md`",
+        "- `.agent-loop/claude-prompt.md`",
+        "- `.agent-loop/codex-review.md`",
+        "- `.agent-loop/git-diff.patch`",
+        "- `.agent-loop/test-output.log`",
+        "- `.agent-loop/lint-output.log`",
+        "- `.agent-loop/typecheck-output.log`",
+        "- `.agent-loop/build-output.log`",
+    ]
+    if review.fix_prompt_for_claude:
+        context_lines.extend([
+            "",
+            "Additional Codex guidance from the review:",
+            review.fix_prompt_for_claude,
+        ])
+    return "\n".join([
+        "# Claude Code Fix Task",
+        "",
+        "## Objective",
+        "Fix only the Claude-owned issues found in `.agent-loop/codex-review.md`.",
+        "",
+        "## Context",
+        *context_lines,
+        "",
+        "## Required fixes",
+        *required_fixes,
+        "",
+        "## Constraints",
+        "- Fix only the listed issues.",
+        "- Do not redesign unrelated code.",
+        "- Do not expand the product scope.",
+        "- Do not modify `AGENTS.md`.",
+        "- Do not modify `CLAUDE.md`.",
+        "- Do not delete files unless explicitly required and approved.",
+        "- Preserve the original task objective.",
+        "- Update tests if behavior changes.",
+        "- Prefer minimal, targeted changes.",
+        "",
+        "## Required output",
+        "After applying fixes, update `.agent-loop/claude-summary.md` using the "
+        "required Claude Implementation Summary format.",
+        "",
+    ])
+
+
+def _sync_phase5_runtime_defaults(repo_root: Path) -> bool:
+    state_path = repo_root / ".agent-loop" / "loop-state.json"
+    data = load_loop_state(state_path)
+    changed = False
+    updates: dict[str, object] = {}
+    phase = str(data.get("phase") or "")
+    sub_phase = str(data.get("sub_phase") or "")
+    if "Phase 5" not in phase and "Phase 5" not in sub_phase:
+        return False
+    if data.get("approval_mode") in (None, ""):
+        updates["approval_mode"] = DEFAULT_APPROVAL_MODE
+        changed = True
+    if "awaiting_human_for" not in data:
+        updates["awaiting_human_for"] = None
+        changed = True
+    if changed:
+        save_loop_state(state_path, data, updates)
+    return changed
+
+
+def _prepare_needs_fixes_follow_up(
+    repo_root: Path,
+    review: ParsedCodexReview,
+    log_path: Optional[Path],
+) -> dict:
+    codex_owned = [issue for issue in review.issues if issue.owner == ISSUE_OWNER_CODEX]
+    claude_owned = [issue for issue in review.issues if issue.owner == ISSUE_OWNER_CLAUDE]
+
+    unsupported_codex_issues = [
+        issue for issue in codex_owned if issue.codex_action not in SUPPORTED_CODEX_ACTIONS
+    ]
+    if unsupported_codex_issues:
+        raise HaltError(
+            "halted_input_missing",
+            "codex-review.md contains Codex-owned issues without a supported "
+            "automatic Codex action; resolve them directly before re-running the loop. "
+            f"Unsupported issues: {[issue.title for issue in unsupported_codex_issues]}",
+        )
+
+    for issue in codex_owned:
+        if issue.codex_action == CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS:
+            changed = _sync_phase5_runtime_defaults(repo_root)
+            _log_note(
+                log_path,
+                (
+                    f"note: applied Codex-owned review action {issue.codex_action} "
+                    f"for {issue.title}; changed={changed}"
+                ),
+            )
+
+    fix_prompt_path = repo_root / ".agent-loop" / "fix-prompt.md"
+    if claude_owned:
+        fix_prompt_path.write_text(
+            _render_fix_prompt(review, claude_owned),
+            encoding="utf-8",
+        )
+        _log_note(
+            log_path,
+            (
+                "note: synchronized .agent-loop/fix-prompt.md from Claude-owned "
+                f"review issues: {[issue.title for issue in claude_owned]}"
+            ),
+        )
+        return load_loop_state(repo_root / ".agent-loop" / "loop-state.json")
+    raise HaltError(
+        "halted_input_missing",
+        "codex-review.md returned NEEDS_FIXES but no Claude-owned issues remain after "
+        "Codex-owned auto-fixes; Codex must produce a fresh review instead of "
+        "sending an empty Claude fix cycle.",
     )
 
 
@@ -1245,14 +1512,16 @@ def _run_normal_cycle_codex_review_step(
 
     # 10. Validate review structure + parse exactly one verdict.
     try:
-        verdict = validate_codex_review_and_parse_verdict(review_path)
+        review = parse_codex_review(review_path)
     except HaltError as halt:
         return _halt(state_path, data, halt, log_path)
 
     # 11. Hand off to the verdict-handling loop (Phase 3C). The loop
     #     either reaches a terminal state and returns, or drives one or
     #     more fix cycles before reaching a terminal state.
-    return _handle_verdict_loop(state_path, data, verdict, repo_root, log_path)
+    return _handle_verdict_loop(
+        state_path, data, review.verdict, repo_root, log_path, review=review,
+    )
 
 
 def _handle_verdict_loop(
@@ -1261,6 +1530,7 @@ def _handle_verdict_loop(
     verdict: str,
     repo_root: Path,
     log_path: Path,
+    review: Optional[ParsedCodexReview] = None,
 ) -> int:
     """Drive verdict handling, including any consecutive fix cycles.
 
@@ -1327,6 +1597,11 @@ def _handle_verdict_loop(
             "last_verdict_phase": last_verdict_phase,
             "awaiting_human_for": None,
         })
+        if review is not None:
+            try:
+                data = _prepare_needs_fixes_follow_up(repo_root, review, log_path)
+            except HaltError as halt:
+                return _halt(state_path, data, halt, log_path)
         # Threshold-policy enforcement: do not auto-continue past the
         # threshold. The contract's "materially changed / narrowed"
         # judgment is NOT made automatically here; raising max_cycles or
@@ -1373,7 +1648,7 @@ def _handle_verdict_loop(
             )
         # Run one fix cycle. On success, get a new verdict and loop.
         try:
-            verdict, data = _run_fix_cycle(state_path, data, repo_root, log_path)
+            verdict, data, review = _run_fix_cycle(state_path, data, repo_root, log_path)
         except _FixCycleHalt as halted:
             return halted.exit_code
 
@@ -1391,10 +1666,10 @@ def _run_fix_cycle(
     data: dict,
     repo_root: Path,
     log_path: Path,
-) -> tuple[str, dict]:
+) -> tuple[str, dict, ParsedCodexReview]:
     """Execute one fix cycle per the contract's `#### Fix cycle` steps.
 
-    Returns `(new_verdict, updated_data)` on success. On any halt path
+    Returns `(new_verdict, updated_data, parsed_review)` on success. On any halt path
     raises `_FixCycleHalt(exit_code)`, which the caller surfaces. The
     function increments `cycle_count` exactly once (at the start of the
     Claude fix invocation) so the threshold check in
@@ -1496,7 +1771,7 @@ def _run_fix_cycle_codex_review_step(
     data: dict,
     repo_root: Path,
     log_path: Path,
-) -> tuple[str, dict]:
+) -> tuple[str, dict, ParsedCodexReview]:
     """Continuation: Codex review through verdict-parse for the fix
     cycle. Reached either from `_run_fix_cycle` directly (no strict
     gate) or from the `resume` subcommand after the human approves the
@@ -1538,11 +1813,11 @@ def _run_fix_cycle_codex_review_step(
 
     # 6. Validate review + parse exactly one verdict.
     try:
-        verdict = validate_codex_review_and_parse_verdict(review_path)
+        review = parse_codex_review(review_path)
     except HaltError as halt:
         raise _FixCycleHalt(_halt(state_path, data, halt, log_path))
 
-    return verdict, data
+    return review.verdict, data, review
 
 
 # ----- Phase 4B planner (proposal generation only) -----
@@ -3706,10 +3981,12 @@ def run_strict_resume(repo_root: Path) -> int:
             "awaiting_human_for": None,
         })
         try:
-            verdict, data = _run_fix_cycle(state_path, data, repo_root, log_path)
+            verdict, data, review = _run_fix_cycle(state_path, data, repo_root, log_path)
         except _FixCycleHalt as halted:
             return halted.exit_code
-        return _handle_verdict_loop(state_path, data, verdict, repo_root, log_path)
+        return _handle_verdict_loop(
+            state_path, data, verdict, repo_root, log_path, review=review,
+        )
 
     # HALTED_PRE_CODEX_REVIEW_FIX
     data = save_loop_state(state_path, data, {
@@ -3717,12 +3994,14 @@ def run_strict_resume(repo_root: Path) -> int:
         "awaiting_human_for": None,
     })
     try:
-        verdict, data = _run_fix_cycle_codex_review_step(
+        verdict, data, review = _run_fix_cycle_codex_review_step(
             state_path, data, repo_root, log_path,
         )
     except _FixCycleHalt as halted:
         return halted.exit_code
-    return _handle_verdict_loop(state_path, data, verdict, repo_root, log_path)
+    return _handle_verdict_loop(
+        state_path, data, verdict, repo_root, log_path, review=review,
+    )
 
 
 def cmd_resume(_args: argparse.Namespace) -> int:

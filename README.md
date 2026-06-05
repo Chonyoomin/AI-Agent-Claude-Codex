@@ -36,7 +36,7 @@ This section describes the intended end-to-end workflow once the orchestrator (P
    - `APPROVED_FOR_HUMAN_REVIEW`
    - `NEEDS_FIXES`
    - `FAILED_REQUIRES_HUMAN`
-7. If fixes are required, Codex writes `.agent-loop/fix-prompt.md`.
+7. If fixes are required, Codex classifies review findings by ownership: supported Codex-owned follow-up is handled directly, and Claude-owned fixes are synchronized into `.agent-loop/fix-prompt.md`.
 8. Claude applies targeted fixes within the same phase.
 9. The loop repeats until the phase is approved, escalated, or reaches max cycles.
 10. When a phase is approved, the system stops until the human starts the next phase.
@@ -105,7 +105,7 @@ While the orchestrator is not yet built, the loop runs by hand against the artif
    - test, lint, typecheck, and build output to `.agent-loop/test-output.log`, `.agent-loop/lint-output.log`, `.agent-loop/typecheck-output.log`, `.agent-loop/build-output.log` (or record "Not run" explicitly).
 6. A human pastes the prompt, summary, diff, and logs into Codex.
 7. Codex writes `.agent-loop/codex-review.md` with exactly one verdict: `APPROVED_FOR_HUMAN_REVIEW`, `NEEDS_FIXES`, or `FAILED_REQUIRES_HUMAN`.
-8. If the verdict is `NEEDS_FIXES`, Codex writes `.agent-loop/fix-prompt.md` and the cycle repeats from step 3 within `max_cycles`.
+8. If the verdict is `NEEDS_FIXES`, Codex-owned follow-up is applied first where supported, `.agent-loop/fix-prompt.md` is regenerated from the Claude-owned review issues, and the cycle repeats from step 3 within `max_cycles`.
 9. The cycle stops for human approval before any commit, and again before the next phase begins.
 
 `.agent-loop/loop-state.json` records the active phase, task, cycle count, max cycles, and last verdict by hand.

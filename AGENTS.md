@@ -163,6 +163,8 @@ Passed | Failed | Not run | Inconclusive
 Severity: Low | Medium | High | Critical
 Category: Bug | Test Failure | Scope Drift | Architecture Violation | Instruction Violation | Summary Mismatch | Other
 File(s): [file paths]
+Owner: Claude | Codex [optional when file ownership already makes it obvious]
+Codex action: [optional machine-readable Codex-owned auto-fix action when supported]
 Problem:
 [clear explanation of the issue]
 
@@ -184,6 +186,8 @@ Rules:
 - return exactly one allowed verdict
 - base the review on objective evidence, not Claude's claims alone
 - reference evidence for every issue
+- mark Codex-owned issues explicitly when ownership is not obvious from the file list
+- only use `Codex action:` for supported machine-readable Codex-owned follow-up actions
 - omit `## Fix prompt for Claude` unless the verdict is `NEEDS_FIXES`
 - omit `## Human attention required` unless the verdict is `FAILED_REQUIRES_HUMAN`
 - if no issues are found, keep `## Issues found` and write `None`
@@ -450,6 +454,7 @@ Rules:
 - only use this format for repair cycles after a `NEEDS_FIXES` verdict
 - required fixes must map directly to issues listed in `.agent-loop/codex-review.md`
 - do not add new product work to the fix prompt
+- when the orchestrator is handling a `NEEDS_FIXES` verdict, it may regenerate `.agent-loop/fix-prompt.md` automatically from the Claude-owned review issues so the handoff stays synchronized with the latest review
 - preserve the original task objective and scope boundaries
 - keep the fix prompt specific, minimal, and executable
 
