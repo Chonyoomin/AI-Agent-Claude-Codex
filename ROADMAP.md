@@ -315,6 +315,14 @@ Mode behavior:
 - `review`: Codex creates prompts, Claude implements, Codex reviews, Claude fixes, human approves before commit
 - `autonomous`: loop runs automatically within safety limits, but still never auto-commits or auto-pushes
 
+Future expansion of mode selection:
+
+- the system should eventually support a separate fully autonomous
+  PRD-to-product mode in addition to the human-governed modes above
+- that future mode must be selectable by the user the same way other
+  approval modes are selected; it is an additional mode, not a
+  replacement for `strict`, `review`, or bounded `autonomous`
+
 Success:
 
 - user can choose approval mode
@@ -422,12 +430,111 @@ Success:
 - MVP scope is separated from future roadmap items
 - README stays aligned with real project behavior
 
-## Phase 9 - Future Product Features
+## Phase 9 - Fully Autonomous PRD-To-Product Mode
+
+Add a future selectable mode that can take a PRD, product brief, or raw
+idea and drive the system from planning through implementation and
+fix/review loops to a substantially complete product without stepwise
+human intervention.
+
+This is a separate mode, not a replacement for the human-governed
+approval modes from Phase 5. The user should still be able to select
+between:
+
+- `strict`
+- `review`
+- bounded `autonomous`
+- fully autonomous PRD-to-product mode
+
+Build:
+
+- a PRD/idea intake contract that accepts either structured product
+  requirements or looser idea-driven inputs
+- automatic decomposition of the PRD/idea into internal phases, tasks,
+  and acceptance criteria
+- orchestrator-driven Codex/Claude handoff without manual prompt
+  transfer
+- automatic review/fix continuation across multiple internal cycles
+- completion heuristics for determining when the product is
+  "done enough" to present for final human inspection
+- strong checkpoint/resume behavior for long autonomous runs
+- token-reset continuation and continuation chaining for long product
+  builds
+- explicit autonomy-boundary policy for installs, tests, browser work,
+  tool usage, and external calls
+- a final human review/polish gate after the autonomous build completes
+
+Design rules:
+
+- fully autonomous PRD-to-product mode must remain auditable from repo
+  artifacts
+- the mode must preserve durable checkpoints and resumability rather
+  than relying on one long uninterrupted session
+- the mode may skip intermediate human approvals during the build, but
+  it must still preserve a final human acceptance/polish point
+- the mode must not silently claim success without objective completion
+  signals such as updated artifacts, passing validations where required,
+  and explicit completion reporting
+- the mode should still support bounded or policy-controlled variants so
+  the user can choose how much autonomy is allowed for a given run
+- this mode is intended for "hand off a PRD or idea and build the
+  product" workflows, with the human returning afterward for fine edits,
+  polish, and final judgment
+
+Success:
+
+- a user can select fully autonomous PRD-to-product mode as a distinct
+  run mode
+- the system can take a PRD or idea and carry the build through
+  planning, implementation, review, and fix cycles without stepwise
+  human handoff
+- long autonomous runs can survive token exhaustion, interruptions, and
+  continuation boundaries
+- the final output is a substantially complete product ready for human
+  inspection, fine edits, and final acceptance rather than a partially
+  completed intermediate state
+
+## Phase 10 - Future Product Features
 
 Track future non-MVP features.
 
 Possible additions:
 
+- durable RAG-backed project knowledge retrieval layered on top of the
+  Phase 6 memory/checkpoint system so the agent can pull only the most
+  relevant architecture docs, past decisions, standards, PRD sections,
+  and prior failure/fix patterns into a given run
+- repo-local or external knowledge indexing pipelines for PRDs, design
+  docs, architecture notes, internal standards, and historical build
+  artifacts
+- MCP server integration so the agent can use live tools and external
+  system connectors while planning, implementing, and reviewing
+- narrowly scoped MCP tools for things like schema inspection, related
+  repo search, internal API discovery, design-system lookup, issue/task
+  retrieval, deployment metadata, or other project-specific operations
+- explicit policy boundaries for MCP/RAG usage so retrieval and tool use
+  enhance the loop without bypassing evidence review, phase safety, or
+  prompt/review ownership
+- combined RAG + MCP operation for future PRD-to-product runs, where
+  retrieved knowledge informs planning and live tools provide real
+  system context during implementation
+- central-controller / external-workspace mode where this agent system
+  targets another folder or repository instead of only operating inside
+  its own repo
+- target-folder / target-repository selection so a user can point the
+  agent at a different project workspace and have it work there
+- project bootstrap / attach flow for external targets, including
+  initializing the required `.agent-loop` artifacts in the target
+  workspace when appropriate
+- UI-driven project selection and run control for external targets
+- `n8n` or similar workflow-engine integration as an outer trigger layer
+  that can accept a PRD/task, choose a target folder, and launch the
+  controller against that workspace
+- separation between controller-owned files and target-project-owned
+  files so the reusable agent framework can orchestrate many projects
+  without embedding itself into every repo
+- PRD / task intake for external-target runs so a user can hand the
+  controller an idea or spec and direct it at a chosen workspace
 - desktop UI
 - progress dashboard
 - run history
