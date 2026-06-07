@@ -848,14 +848,14 @@ class StrictResumeDispatchTests(_StrictCycleHarness):
             agent_loop.run_normal_cycle(self.repo.root)
         self.assertEqual(self._state()["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
 
-        # Now resume. We swap approval_mode to review for the resume so
-        # the post-evidence gate does NOT also fire and we can observe
-        # the full path through to (in this test) a Codex failure halt.
-        data = self._state()
-        data["approval_mode"] = "review"
-        self.state_path.write_text(
-            json.dumps(data, indent=2) + "\n", encoding="utf-8",
-        )
+        # Now resume under the SAME strict mode (the Phase 5C fix requires
+        # the paused mode to be preserved through resume; mutating to
+        # `review` mid-cycle to bypass the next gate is refused). The
+        # continuation runs the cycle_count increment + claude + evidence
+        # + claude-done.json write, then fires the second strict gate
+        # (`pre_codex_review_normal`) - which is exactly what proves the
+        # resume correctly dispatched into the continuation AND that the
+        # later gate still fires after a mid-cycle resume.
         with mock.patch.object(
             agent_loop, "make_claude_adapter",
             return_value=mock.Mock(invoke=self._make_summary_writer()),
@@ -872,12 +872,15 @@ class StrictResumeDispatchTests(_StrictCycleHarness):
             agent_loop.run_strict_resume(self.repo.root)
         after = self._state()
         # The continuation did the cycle_count increment + the full
-        # claude+evidence+done flow, then halted on the (intentionally
-        # failing) Codex adapter.
+        # claude+evidence+done flow, then hit the next strict gate.
         self.assertEqual(after["cycle_count"], 1)
         self.assertTrue(self.done_path.exists())
-        # awaiting_human_for was cleared by the resume and not re-set.
-        self.assertIsNone(after["awaiting_human_for"])
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL)
+        # The second gate set awaiting_human_for to its own gate name.
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+        )
 
     def test_resume_after_pre_codex_review_normal_skips_back_to_review(
         self,
@@ -939,6 +942,81 @@ class StrictResumeDispatchTests(_StrictCycleHarness):
         self.assertEqual(self.done_path.stat().st_mtime, claude_done_mtime)
 
 
+class StrictResumeModeCoherenceTests(_StrictCycleHarness):
+    """Phase 5C contract: a strict-gate halt may only be resumed under
+    `approval_mode = "strict"`. Mutating `approval_mode` between the halt
+    and the resume - the only way a human or a test could try to bypass
+    later gates - must be refused fail-closed."""
+
+    def _fire_pre_claude_prompt_gate(self) -> None:
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter", return_value=mock.Mock(),
+        ):
+            agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(
+            self._state()["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+        )
+
+    def test_resume_refuses_when_mode_was_mutated_to_review(self) -> None:
+        self._fire_pre_claude_prompt_gate()
+        # Mutate approval_mode from `strict` to `review` while the cycle
+        # is paused at a strict gate.
+        data = self._state()
+        data["approval_mode"] = "review"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+
+        # The Claude adapter MUST NOT be invoked; the refusal happens
+        # before any continuation runs.
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=lambda *_: (_ for _ in ()).throw(
+                AssertionError("Claude adapter must not run on a refused resume"),
+            )),
+        ):
+            rc = agent_loop.run_strict_resume(self.repo.root)
+        self.assertEqual(rc, 2)
+        after = self._state()
+        # The refusal persists its own halt; awaiting_human_for is left
+        # alone (the prior gate value stays visible for the human).
+        self.assertTrue(after["status"].startswith("halted_"))
+        self.assertEqual(after["approval_mode"], "review")
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+        )
+
+    def test_resume_refuses_when_mode_was_mutated_to_autonomous(self) -> None:
+        # The contract is symmetric: any non-strict mode is refused, not
+        # just "review". `autonomous` is in the allowed vocabulary today
+        # even though its runtime path is deferred.
+        self._fire_pre_claude_prompt_gate()
+        data = self._state()
+        data["approval_mode"] = "autonomous"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        rc = agent_loop.run_strict_resume(self.repo.root)
+        self.assertEqual(rc, 2)
+        self.assertEqual(self._state()["approval_mode"], "autonomous")
+
+    def test_refusal_message_names_strict_mode_requirement(self) -> None:
+        # The auditable refusal must explicitly name strict-mode as the
+        # required mode so the human reading orchestrator.log understands
+        # why their resume was refused.
+        self._fire_pre_claude_prompt_gate()
+        data = self._state()
+        data["approval_mode"] = "review"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        agent_loop.run_strict_resume(self.repo.root)
+        log = self.log_path.read_text(encoding="utf-8")
+        self.assertIn("approval_mode", log)
+        self.assertIn("strict", log)
+
+
 class StrictResumeFixPathTests(_StrictCycleHarness):
 
     def test_resume_after_pre_fix_prompt_runs_one_fix_cycle(self) -> None:
@@ -960,15 +1038,11 @@ class StrictResumeFixPathTests(_StrictCycleHarness):
             )
         self.assertEqual(self._state()["status"], agent_loop.HALTED_PRE_FIX_PROMPT)
 
-        # Resume. Flip mode to review so the second strict gate (pre_codex_review)
-        # does NOT also fire mid-fix-cycle, and stub the adapters so the
-        # fix cycle runs end-to-end and a Codex failure halts cleanly.
-        data = self._state()
-        data["approval_mode"] = "review"
-        self.state_path.write_text(
-            json.dumps(data, indent=2) + "\n", encoding="utf-8",
-        )
-
+        # Resume under the SAME strict mode (mid-cycle mode mutation is
+        # now refused by `run_strict_resume`; the test must prove the
+        # safe path, not the bypass). The fix cycle runs increment +
+        # claude + evidence + claude-done.json (mode=fix), then fires the
+        # pre_codex_review gate's fix-flavor halt.
         with mock.patch.object(
             agent_loop, "make_claude_adapter",
             return_value=mock.Mock(invoke=self._make_summary_writer()),
@@ -985,10 +1059,15 @@ class StrictResumeFixPathTests(_StrictCycleHarness):
             agent_loop.run_strict_resume(self.repo.root)
         after = self._state()
         # The fix cycle incremented cycle_count from 1 -> 2 and wrote a
-        # fix-mode claude-done.json before the Codex failure halted.
+        # fix-mode claude-done.json before the second strict gate halted
+        # the cycle.
         self.assertEqual(after["cycle_count"], 2)
         self.assertEqual(_read_json(self.done_path)["mode"], "fix")
-        self.assertIsNone(after["awaiting_human_for"])
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_FIX)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+        )
 
 
 class ReviewModeStrictBehaviorNotRegressedTests(_CycleHarness):
