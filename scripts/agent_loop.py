@@ -3959,24 +3959,39 @@ def run_strict_resume(repo_root: Path) -> int:
     # let later gates be silently skipped, which the Phase 5A contract
     # forbids ("changing approval_mode mid-cycle ... must not silently
     # resume an already-in-flight step under different semantics").
+    #
+    # The refusal must NOT overwrite the saved strict-gate `status` or
+    # `awaiting_human_for`. Going through `_halt(...)` would clobber
+    # `status` with `halted_input_missing` and destroy the recovery
+    # point - the operator could correct `approval_mode` back to
+    # "strict" and rerun resume but the original gate's halt status
+    # would be gone, so resume would refuse again on the
+    # status-not-in-strict-gates branch. Instead we leave the saved
+    # gate state intact, log the refusal note, print to stderr, and
+    # return 2. After the operator restores `approval_mode = "strict"`,
+    # a fresh `resume` invocation sees the original gate halt status
+    # and the original `awaiting_human_for`, and continues the cycle
+    # from the correct continuation point.
     approval_mode = data.get("approval_mode")
     if approval_mode != APPROVAL_MODE_STRICT:
-        return _halt(
-            state_path, data,
-            HaltError(
-                "halted_input_missing",
-                (
-                    f"resume refused: paused at strict gate {status!r} "
-                    f"(awaiting_human_for={data.get('awaiting_human_for')!r}) "
-                    f"but approval_mode is {approval_mode!r}, not "
-                    f"{APPROVAL_MODE_STRICT!r}. A strict-mode pause may only "
-                    f"be resumed under approval_mode={APPROVAL_MODE_STRICT!r}; "
-                    f"changing approval_mode mid-cycle is a human-directed "
-                    f"control action and must not bypass later strict gates."
-                ),
-            ),
-            log_path,
+        reason = (
+            f"resume refused: paused at strict gate {status!r} "
+            f"(awaiting_human_for={data.get('awaiting_human_for')!r}) "
+            f"but approval_mode is {approval_mode!r}, not "
+            f"{APPROVAL_MODE_STRICT!r}. A strict-mode pause may only be "
+            f"resumed under approval_mode={APPROVAL_MODE_STRICT!r}; "
+            f"changing approval_mode mid-cycle is a human-directed "
+            f"control action and must not bypass later strict gates. "
+            f"The saved strict-gate state is preserved; restore "
+            f"approval_mode={APPROVAL_MODE_STRICT!r} and rerun resume to "
+            f"continue the original cycle."
         )
+        print(
+            f"[orchestrator] STRICT RESUME REFUSED: {reason}",
+            file=sys.stderr,
+        )
+        _log_note(log_path, f"strict resume refused: {reason}")
+        return 2
 
     _log_note(
         log_path,

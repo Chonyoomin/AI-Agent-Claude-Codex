@@ -978,9 +978,11 @@ class StrictResumeModeCoherenceTests(_StrictCycleHarness):
             rc = agent_loop.run_strict_resume(self.repo.root)
         self.assertEqual(rc, 2)
         after = self._state()
-        # The refusal persists its own halt; awaiting_human_for is left
-        # alone (the prior gate value stays visible for the human).
-        self.assertTrue(after["status"].startswith("halted_"))
+        # The refusal preserves the original strict-gate halt status
+        # AND the original `awaiting_human_for` exactly; it does NOT
+        # overwrite them with a generic halt (which would destroy the
+        # recovery point and prevent a later restore-and-resume).
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
         self.assertEqual(after["approval_mode"], "review")
         self.assertEqual(
             after["awaiting_human_for"],
@@ -990,7 +992,8 @@ class StrictResumeModeCoherenceTests(_StrictCycleHarness):
     def test_resume_refuses_when_mode_was_mutated_to_autonomous(self) -> None:
         # The contract is symmetric: any non-strict mode is refused, not
         # just "review". `autonomous` is in the allowed vocabulary today
-        # even though its runtime path is deferred.
+        # even though its runtime path is deferred. Saved gate state is
+        # preserved on this refusal too.
         self._fire_pre_claude_prompt_gate()
         data = self._state()
         data["approval_mode"] = "autonomous"
@@ -999,7 +1002,13 @@ class StrictResumeModeCoherenceTests(_StrictCycleHarness):
         )
         rc = agent_loop.run_strict_resume(self.repo.root)
         self.assertEqual(rc, 2)
-        self.assertEqual(self._state()["approval_mode"], "autonomous")
+        after = self._state()
+        self.assertEqual(after["approval_mode"], "autonomous")
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+        )
 
     def test_refusal_message_names_strict_mode_requirement(self) -> None:
         # The auditable refusal must explicitly name strict-mode as the
@@ -1015,6 +1024,67 @@ class StrictResumeModeCoherenceTests(_StrictCycleHarness):
         log = self.log_path.read_text(encoding="utf-8")
         self.assertIn("approval_mode", log)
         self.assertIn("strict", log)
+
+    def test_restoring_strict_mode_after_refusal_allows_successful_resume(
+        self,
+    ) -> None:
+        # Recovery path: a human (or test) accidentally mutates
+        # approval_mode away from strict; resume refuses; the human
+        # corrects approval_mode back to strict; resume now succeeds and
+        # continues the ORIGINAL paused cycle from its saved gate. No
+        # hand-editing of the saved status is required.
+        self._fire_pre_claude_prompt_gate()
+        # First: bad resume after a mode mutation. Saved gate must be
+        # preserved.
+        data = self._state()
+        data["approval_mode"] = "review"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        rc1 = agent_loop.run_strict_resume(self.repo.root)
+        self.assertEqual(rc1, 2)
+        self.assertEqual(
+            self._state()["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+        )
+        self.assertEqual(
+            self._state()["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+        )
+
+        # Second: human restores approval_mode = "strict". Resume now
+        # succeeds and dispatches to the post-pre_claude_prompt
+        # continuation, which runs claude+evidence+done and then fires
+        # the next strict gate (pre_codex_review_normal). Reaching the
+        # next gate is proof that the saved continuation point was used
+        # and that no manual status restore was needed.
+        data = self._state()
+        data["approval_mode"] = "strict"
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=lambda _p: agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )),
+        ):
+            rc2 = agent_loop.run_strict_resume(self.repo.root)
+        self.assertEqual(rc2, 2)  # halted at the next gate
+        after = self._state()
+        self.assertEqual(after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+        )
+        self.assertEqual(after["cycle_count"], 1)
+        self.assertTrue(self.done_path.exists())
 
 
 class StrictResumeFixPathTests(_StrictCycleHarness):

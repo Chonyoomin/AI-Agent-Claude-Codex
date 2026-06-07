@@ -541,6 +541,13 @@ Possible additions:
 - review summaries
 - diff visualization
 - approval buttons
+- controlled concurrent-agent operation where Codex may continue Codex-owned work
+  (for example task-state, prompt, review, or governance-artifact updates)
+  while Claude Code is in flight on Claude-owned implementation work
+- explicit concurrency rules for that mode, including file-ownership
+  boundaries, safe-overlap policies, checkpoint/recovery behavior,
+  stale-artifact detection, and refusal behavior when Codex-side updates
+  would invalidate Claude's active prompt or implementation context
 - multi-model support
 - MCP tool execution
 - API tool execution
