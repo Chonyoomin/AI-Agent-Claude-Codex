@@ -175,9 +175,10 @@ ORCHESTRATOR_WRITABLE_FIELDS = frozenset({
     # Phase 5B (Approval Modes - review-mode initial slice): the
     # `approval_mode` selector and the `awaiting_human_for` gate name are
     # orchestrator-owned runtime fields. Allowed values for `approval_mode`
-    # in this slice are the three Phase 5A modes (`strict`, `review`,
-    # `autonomous`); only the `review` path is implemented here, and the
-    # default-on-init/activation is `review`.
+    # are the three Phase 5A modes (`strict`, `review`, `autonomous`).
+    # `review` (Phase 5B), `strict` (Phase 5C), and the narrow
+    # `autonomous` continuation path (Phase 5D) are all implemented; the
+    # default-on-init/activation is still `review`.
     "approval_mode",
     "awaiting_human_for",
 })
@@ -1213,6 +1214,30 @@ def _fire_strict_gate(
     return 2
 
 
+def _log_autonomous_bypass(
+    log_path: Optional[Path], *, gate: str, where: str,
+) -> None:
+    """Phase 5D auditable bypass note.
+
+    The narrow `autonomous` runtime path takes the same code paths as
+    `review` at the four strict-gate sites (no human pause), but the
+    contract requires the mode behavior to be "auditable from repo
+    artifacts and runtime state; do not hide mode behavior only in
+    transient control flow." This helper makes the bypass observable in
+    `.agent-loop/orchestrator.log` so a reader can reconstruct exactly
+    which gates were skipped because the cycle was in autonomous mode.
+    The line is informational only; the orchestrator never writes a
+    `halted_*` status here and never sets `awaiting_human_for`.
+    """
+    _log_note(
+        log_path,
+        (
+            f"autonomous mode: bypassing {gate} gate at {where}; "
+            f"continuing without human pause"
+        ),
+    )
+
+
 POST_APPROVAL_PLANNER_EXCEPTION_CODE = -1
 
 
@@ -1326,15 +1351,18 @@ def run_normal_cycle(repo_root: Path) -> int:
 
     # 3b. Phase 5C strict-mode gate: under `strict`, the loop must pause
     #     for explicit human approval BEFORE dispatching a new
-    #     implementation prompt. `review` (the default) skips this gate;
-    #     `autonomous` runtime branching is still deferred. The gate
-    #     persists the named `awaiting_human_for = "pre_claude_prompt"`
-    #     plus a contract `halted_awaiting_human_*` status and exits
-    #     cleanly (code 2); the human resumes via the `resume`
-    #     subcommand, which dispatches to `_run_normal_cycle_from_increment`
-    #     (so the threshold check and cycle_count increment happen on
-    #     resume, exactly once).
-    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+    #     implementation prompt. `review` (the default) skips this gate.
+    #     Phase 5D: `autonomous` also skips the gate but logs an
+    #     auditable bypass note so the mode is observable from
+    #     orchestrator.log rather than hidden in transient control flow.
+    #     The gate persists the named `awaiting_human_for =
+    #     "pre_claude_prompt"` plus a contract `halted_awaiting_human_*`
+    #     status and exits cleanly (code 2); the human resumes via the
+    #     `resume` subcommand, which dispatches to
+    #     `_run_normal_cycle_from_increment` (so the threshold check and
+    #     cycle_count increment happen on resume, exactly once).
+    approval_mode = data.get("approval_mode")
+    if approval_mode == APPROVAL_MODE_STRICT:
         return _fire_strict_gate(
             state_path, data,
             halt_status=HALTED_PRE_CLAUDE_PROMPT,
@@ -1344,6 +1372,12 @@ def run_normal_cycle(repo_root: Path) -> int:
                 "dispatching a new implementation prompt to Claude"
             ),
             log_path=log_path,
+        )
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        _log_autonomous_bypass(
+            log_path,
+            gate=AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+            where="run_normal_cycle entry",
         )
 
     return _run_normal_cycle_from_increment(repo_root, data, log_path)
@@ -1450,8 +1484,10 @@ def _run_normal_cycle_from_increment(
     #     review-ready) so the only thing left is whether Codex review
     #     proceeds now or after the human approves it. Resume dispatches
     #     to `_run_normal_cycle_codex_review_step` so review proceeds
-    #     exactly once.
-    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+    #     exactly once. Phase 5D: `autonomous` skips the gate and logs an
+    #     auditable bypass note.
+    approval_mode = data.get("approval_mode")
+    if approval_mode == APPROVAL_MODE_STRICT:
         return _fire_strict_gate(
             state_path, data,
             halt_status=HALTED_PRE_CODEX_REVIEW_NORMAL,
@@ -1461,6 +1497,12 @@ def _run_normal_cycle_from_increment(
                 "completion / evidence validation and before Codex review begins"
             ),
             log_path=log_path,
+        )
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        _log_autonomous_bypass(
+            log_path,
+            gate=AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+            where="_run_normal_cycle_from_increment post-evidence",
         )
 
     return _run_normal_cycle_codex_review_step(repo_root, data, log_path)
@@ -1557,7 +1599,23 @@ def _handle_verdict_loop(
             # Phase 5B: in `review` mode the phase-complete gate is the
             # one named human gate this slice surfaces. Record it on
             # `awaiting_human_for` so the runtime state matches the
-            # Phase 5A vocabulary.
+            # Phase 5A vocabulary. Phase 5D: `autonomous` mode also
+            # halts here - the Phase 5D contract preserves the rule
+            # "human approval must still be required before phase
+            # progression and any future Git action," so autonomy does
+            # not bypass the phase-complete gate. The mode is recorded
+            # in loop-state.json (approval_mode) and the bypass-vs-halt
+            # boundary is logged on autonomous cycles so the audit trail
+            # makes clear autonomy stopped here intentionally.
+            if data.get("approval_mode") == APPROVAL_MODE_AUTONOMOUS:
+                _log_note(
+                    log_path,
+                    (
+                        "autonomous mode: phase_complete_awaiting_human_approval "
+                        "halt is preserved; human approval is still required "
+                        "before phase progression"
+                    ),
+                )
             save_loop_state(state_path, data, {
                 "status": "phase_complete_awaiting_human_approval",
                 "last_verdict": verdict,
@@ -1635,7 +1693,13 @@ def _handle_verdict_loop(
         # prompt. The fix-prompt is already authored and validated on
         # disk; only its dispatch to Claude waits. Resume dispatches to
         # `_run_fix_cycle` so the fix cycle proceeds exactly once.
-        if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+        # Phase 5D: `autonomous` skips the gate and continues into the
+        # bounded fix cycle, logging an auditable bypass note. The
+        # `cycle_count`/`max_cycles` threshold check above this block
+        # still gates the continuation, so autonomy cannot drive past
+        # the existing escalation rule.
+        approval_mode = data.get("approval_mode")
+        if approval_mode == APPROVAL_MODE_STRICT:
             return _fire_strict_gate(
                 state_path, data,
                 halt_status=HALTED_PRE_FIX_PROMPT,
@@ -1645,6 +1709,12 @@ def _handle_verdict_loop(
                     "dispatching a new fix prompt to Claude"
                 ),
                 log_path=log_path,
+            )
+        if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+            _log_autonomous_bypass(
+                log_path,
+                gate=AWAITING_HUMAN_FOR_PRE_FIX_PROMPT,
+                where="_handle_verdict_loop pre-fix-cycle",
             )
         # Run one fix cycle. On success, get a new verdict and loop.
         try:
@@ -1747,7 +1817,10 @@ def _run_fix_cycle(
     #     whether review proceeds now or after the human approves it.
     #     Resume dispatches to `_run_fix_cycle_codex_review_step`, which
     #     synchronously runs review + verdict-handling for this cycle.
-    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+    #     Phase 5D: `autonomous` skips the gate and logs an auditable
+    #     bypass note before continuing into Codex fix-cycle review.
+    approval_mode = data.get("approval_mode")
+    if approval_mode == APPROVAL_MODE_STRICT:
         _fire_strict_gate(
             state_path, data,
             halt_status=HALTED_PRE_CODEX_REVIEW_FIX,
@@ -1762,6 +1835,12 @@ def _run_fix_cycle(
         # Carry the gate exit up through the verdict-loop frame the same
         # way other fix-cycle halts do.
         raise _FixCycleHalt(2)
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        _log_autonomous_bypass(
+            log_path,
+            gate=AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+            where="_run_fix_cycle post-evidence",
+        )
 
     return _run_fix_cycle_codex_review_step(state_path, data, repo_root, log_path)
 
