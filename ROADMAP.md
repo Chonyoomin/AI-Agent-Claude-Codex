@@ -303,6 +303,14 @@ Success:
 
 Add configurable approval behavior.
 
+Phase 5 is delivered in sub-phases:
+
+- Phase 5A - Approval Modes Contract
+- Phase 5B - Review Mode Initial Slice
+- Phase 5C - Strict Mode Pauses
+- Phase 5D - Autonomous Mode Initial Slice
+- Phase 5E - Post-Review Artifact Reconciliation
+
 Build:
 
 - `strict` mode
@@ -329,6 +337,8 @@ Success:
 - default mode is `review`
 - strict mode pauses before major steps
 - autonomous mode respects all safety limits
+- post-review artifact reconciliation keeps Codex-owned status/review/fix
+  artifacts coherent without routing those fixes through Claude Code
 
 ## Phase 6 - Durable Memory and Optional Context Layer
 
