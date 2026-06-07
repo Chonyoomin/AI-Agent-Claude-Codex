@@ -3908,14 +3908,23 @@ def cmd_activate(_args: argparse.Namespace) -> int:
 def run_strict_resume(repo_root: Path) -> int:
     """Resume a cycle that was paused at a Phase 5C strict-mode gate.
 
-    Refuses unless `status` is one of the four `halted_awaiting_human_*`
-    strict-gate values. On success: clears `awaiting_human_for`, restores
-    a ready-to-continue status, logs a `note:` line, and dispatches to
-    the continuation point matched by the persisted gate halt-status so
-    no earlier work is re-done and the next gate (if the same cycle has
-    one) still fires. A bogus status, a non-strict cycle, or a missing
-    Phase 5C halt-status is refused with the same `halted_input_missing`
-    vocabulary the rest of the orchestrator uses.
+    Refuses unless BOTH (a) `status` is one of the four
+    `halted_awaiting_human_*` strict-gate values AND (b) `approval_mode`
+    is still `"strict"`. Condition (b) prevents a paused strict cycle
+    from being silently resumed under different mode semantics (e.g. a
+    human or test mutating `approval_mode` from `"strict"` to `"review"`
+    after the cycle halted at the pre_claude_prompt gate, to skip the
+    later pre_codex_review gate). Per the Phase 5A contract, changing
+    `approval_mode` mid-cycle is a human-directed control action; the
+    safe resume contract is "the mode that fired the gate is the mode
+    that resumes the gate." A mid-cycle mode change is refused fail
+    closed and the explicit `halted_input_missing` refusal stays on
+    disk for human inspection.
+
+    On success: clears `awaiting_human_for`, restores a ready-to-continue
+    status, logs a `note:` line, and dispatches to the continuation
+    point matched by the persisted gate halt-status so no earlier work
+    is re-done and the next gate (if the same cycle has one) still fires.
     """
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
@@ -3943,6 +3952,46 @@ def run_strict_resume(repo_root: Path) -> int:
             ),
             log_path,
         )
+
+    # Mode-coherence: a strict-gate halt may only be resumed under the
+    # same mode that fired the gate. Mutating `approval_mode` from
+    # "strict" to anything else between the halt and the resume would
+    # let later gates be silently skipped, which the Phase 5A contract
+    # forbids ("changing approval_mode mid-cycle ... must not silently
+    # resume an already-in-flight step under different semantics").
+    #
+    # The refusal must NOT overwrite the saved strict-gate `status` or
+    # `awaiting_human_for`. Going through `_halt(...)` would clobber
+    # `status` with `halted_input_missing` and destroy the recovery
+    # point - the operator could correct `approval_mode` back to
+    # "strict" and rerun resume but the original gate's halt status
+    # would be gone, so resume would refuse again on the
+    # status-not-in-strict-gates branch. Instead we leave the saved
+    # gate state intact, log the refusal note, print to stderr, and
+    # return 2. After the operator restores `approval_mode = "strict"`,
+    # a fresh `resume` invocation sees the original gate halt status
+    # and the original `awaiting_human_for`, and continues the cycle
+    # from the correct continuation point.
+    approval_mode = data.get("approval_mode")
+    if approval_mode != APPROVAL_MODE_STRICT:
+        reason = (
+            f"resume refused: paused at strict gate {status!r} "
+            f"(awaiting_human_for={data.get('awaiting_human_for')!r}) "
+            f"but approval_mode is {approval_mode!r}, not "
+            f"{APPROVAL_MODE_STRICT!r}. A strict-mode pause may only be "
+            f"resumed under approval_mode={APPROVAL_MODE_STRICT!r}; "
+            f"changing approval_mode mid-cycle is a human-directed "
+            f"control action and must not bypass later strict gates. "
+            f"The saved strict-gate state is preserved; restore "
+            f"approval_mode={APPROVAL_MODE_STRICT!r} and rerun resume to "
+            f"continue the original cycle."
+        )
+        print(
+            f"[orchestrator] STRICT RESUME REFUSED: {reason}",
+            file=sys.stderr,
+        )
+        _log_note(log_path, f"strict resume refused: {reason}")
+        return 2
 
     _log_note(
         log_path,
