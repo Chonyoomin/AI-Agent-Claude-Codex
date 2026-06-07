@@ -310,6 +310,10 @@ Phase 5 is delivered in sub-phases:
 - Phase 5C - Strict Mode Pauses
 - Phase 5D - Autonomous Mode Initial Slice
 - Phase 5E - Post-Review Artifact Reconciliation
+- future follow-on after 5E: automatic phase-start Claude prompt
+  bootstrap, where Codex synthesizes `.agent-loop/claude-prompt.md`
+  directly from the newly activated phase/task artifacts while refusing
+  if the phase definition is incomplete or internally inconsistent
 
 Build:
 
