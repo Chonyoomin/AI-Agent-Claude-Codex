@@ -500,6 +500,36 @@ Track future non-MVP features.
 
 Possible additions:
 
+- structured durable memory on top of the Phase 6 memory/checkpoint
+  system, with machine-owned decision, failure, preference, and summary
+  artifacts that remain distinct from canonical task/loop-state files
+- stronger checkpoint/resume behavior for interrupted Claude and Codex
+  runs, including token-exhaustion recovery, bounded continuation
+  chaining, and selective restore from the active prompt/fix-prompt plus
+  the latest objective evidence
+- explicit autonomy policy for autonomous or semi-autonomous project
+  creation, including rules for installs, migrations, browser use,
+  secrets, destructive commands, escalation triggers, and when the loop
+  must stop instead of guessing
+- MCP server integration so the agent can use live tools and external
+  system connectors while planning, implementing, and reviewing
+- narrowly scoped MCP tools for things like filesystem/project
+  inspection, schema inspection, related repo search, internal API
+  discovery, design-system lookup, issue/task retrieval, deployment
+  metadata, or other project-specific operations
+- controlled browser/app inspection and testing tools for local
+  applications so the loop can verify UI flows and runtime behavior as
+  part of autonomous project work
+- project-intake and decomposition support that can turn a PRD, brief, or
+  rough idea into acceptance criteria, risks, dependencies, and bounded
+  internal implementation phases
+- automated artifact synthesis from evidence, such as Codex review
+  drafting, fix-prompt drafting, phase proposal drafting, and compact
+  risk/change summaries that remain auditable against the underlying
+  artifacts
+- verification-focused skills for autonomous project work, such as test
+  generation, bug triage, regression review, and interruption-recovery
+  workflows
 - durable RAG-backed project knowledge retrieval layered on top of the
   Phase 6 memory/checkpoint system so the agent can pull only the most
   relevant architecture docs, past decisions, standards, PRD sections,
@@ -535,12 +565,6 @@ Possible additions:
   without embedding itself into every repo
 - PRD / task intake for external-target runs so a user can hand the
   controller an idea or spec and direct it at a chosen workspace
-- desktop UI
-- progress dashboard
-- run history
-- review summaries
-- diff visualization
-- approval buttons
 - controlled concurrent-agent operation where Codex may continue Codex-owned work
   (for example task-state, prompt, review, or governance-artifact updates)
   while Claude Code is in flight on Claude-owned implementation work
@@ -554,6 +578,16 @@ Possible additions:
 - custom policy packs
 - project templates
 - configurable agent roles
+- Obsidian or similar human-facing knowledge-vault integration as an
+  optional mirror/export surface for durable memory, decision logs, and
+  architecture notes, while keeping machine-owned memory in stricter repo
+  artifacts rather than making a notes app the primary source of truth
+- desktop UI
+- progress dashboard
+- run history
+- review summaries
+- diff visualization
+- approval buttons
 - more granular autonomy controls
 - cost and token usage tracking
 - failure analytics
