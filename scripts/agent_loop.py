@@ -3305,7 +3305,7 @@ def make_planner_adapter():
 #     a stale approval against a different label (e.g. an earlier draft
 #     that was overwritten) is refused
 #
-# Allowed activation writes (Phase 4A):
+# Allowed activation writes (Phase 4A + Phase 5F follow-up):
 #   - TASK.md (rewrite the active-phase sections; preserve
 #     `## Human Objective` and `## Project Intent` verbatim)
 #   - .agent-loop/current-task.md and .agent-loop/current-phase.md
@@ -3323,6 +3323,10 @@ def make_planner_adapter():
 #     `orchestrator_version` per the Phase 3A write-ownership rules)
 #   - .agent-loop/planner.log (single `note:`-style line recording the
 #     approval source: file path, mtime, literal approval line)
+#   - .agent-loop/claude-prompt.md (Phase 5F phase-start prompt bootstrap
+#     artifact synthesized immediately after a successful activation)
+#   - .agent-loop/orchestrator.log (single `prompt bootstrap:` audit
+#     note emitted by the Phase 5F follow-up)
 #
 # The activator never opens any other path for write. The planner's
 # `plan` write boundary (only `.agent-loop/proposed-phase.md` and
@@ -3337,6 +3341,8 @@ ACTIVATOR_ALLOWED_WRITE_FILES = frozenset({
     ".agent-loop/current-phase.md",
     ".agent-loop/phase-plan.md",
     ".agent-loop/loop-state.json",
+    ".agent-loop/claude-prompt.md",
+    ".agent-loop/orchestrator.log",
     PLANNER_LOG_PATH_REL,
 })
 
@@ -3812,6 +3818,7 @@ def run_activation(repo_root: Path) -> int:
     phase_plan_path = al / "phase-plan.md"
     current_task_path = al / "current-task.md"
     current_phase_path = al / "current-phase.md"
+    prompt_path = al / "claude-prompt.md"
 
     if not proposal_path.exists():
         msg = (
@@ -3945,12 +3952,33 @@ def run_activation(repo_root: Path) -> int:
         new_sub_phase=approval.label,
         new_task=sections["## Objective"].strip(),
     )
+
+    # Phase 5F: synthesize the phase-start Claude prompt from the SAME
+    # canonical fields that the activation writes are about to commit,
+    # then include the prompt write in the same atomic-or-rollback
+    # transaction as the other activation-owned files. This keeps the
+    # activator fail-closed: if any planned write fails (including the
+    # prompt write itself), every previously-applied write is rolled
+    # back, so the repository is either fully activated WITH the prompt
+    # or fully unmodified - never partially activated. The earlier
+    # proposal-section validation (`for header in
+    # PROPOSAL_REQUIRED_SECTIONS: ... empty body refusal`) already
+    # guarantees the render inputs below are non-empty.
+    new_claude_prompt = _render_phase_start_claude_prompt(
+        sub_phase=approval.label,
+        objective=sections["## Objective"].strip(),
+        context=sections["## Objective"].strip(),
+        required_work=sections["## Definition of done"].strip(),
+        exclusions=sections["## Exclusions"].strip(),
+    )
+
     planned_writes = [
         (task_path, new_task_md.encode("utf-8")),
         (current_task_path, new_current_task.encode("utf-8")),
         (current_phase_path, new_current_phase.encode("utf-8")),
         (phase_plan_path, new_phase_plan.encode("utf-8")),
         (state_path, _serialize_loop_state_bytes(new_loop_state)),
+        (prompt_path, new_claude_prompt.encode("utf-8")),
     ]
     try:
         _apply_activation_writes_atomically(planned_writes)
@@ -3968,6 +3996,19 @@ def run_activation(repo_root: Path) -> int:
             file=sys.stderr,
         )
         return 2
+
+    # Phase 5F: log the prompt synthesis as a `note:` line so the
+    # auto-bootstrap is auditable from .agent-loop/orchestrator.log the
+    # same way the standalone `bootstrap-prompt` subcommand is. The
+    # actual prompt bytes are already on disk via the atomic write above.
+    _log_note(
+        al / "orchestrator.log",
+        (
+            f"prompt bootstrap: wrote .agent-loop/claude-prompt.md for "
+            f"sub_phase={approval.label!r} as part of the atomic activation "
+            f"write set"
+        ),
+    )
 
     # Record the approval source per the Phase 4A contract: "the planner
     # must record the approval source (file path, mtime, and the literal
@@ -4243,6 +4284,357 @@ def cmd_resume(_args: argparse.Namespace) -> int:
     return run_strict_resume(repo_root)
 
 
+# Phase 5F automatic phase-start Claude prompt bootstrap.
+
+# H2 sections the bootstrap requires in TASK.md.
+PROMPT_BOOTSTRAP_REQUIRED_TASK_SECTIONS = (
+    "## Active Phase",
+    "## Active Sub-Phase",
+    "## Active Task",
+    "## Phase Outcome Required Now",
+    "## Out Of Scope For Current Phase",
+)
+
+# H2 sections the bootstrap requires in .agent-loop/current-task.md.
+PROMPT_BOOTSTRAP_REQUIRED_CURRENT_TASK_SECTIONS = (
+    "## Phase",
+    "## Sub-Phase",
+    "## Task",
+)
+
+# H3 subsections the bootstrap requires inside the active sub-phase block
+# of .agent-loop/phase-plan.md.
+PROMPT_BOOTSTRAP_PHASE_PLAN_REQUIRED_SUBSECTIONS = (
+    "### Status",
+    "### Objective",
+    "### Definition of done",
+    "### Exclusions",
+)
+
+# Bootstrap only fires from the post-activation status (the contract's
+# canonical "ready for Claude implementation" state). Any other status
+# means a cycle is mid-flight, halted, or post-verdict; the bootstrap
+# refuses rather than overwrite a prompt that is in use.
+PROMPT_BOOTSTRAP_ALLOWED_STATUSES = frozenset({
+    "awaiting_claude_implementation",
+})
+
+
+def _split_h2_sections(text: str) -> dict:
+    """Split markdown into `## Header` -> body (stripped). H2 line itself is
+    not included in the body; bodies extend until the next H2 or EOF."""
+    sections: dict = {}
+    pattern = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
+    matches = list(pattern.finditer(text))
+    for i, m in enumerate(matches):
+        header = f"## {m.group(1).strip()}"
+        start = m.end()
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+        sections[header] = text[start:end].strip()
+    return sections
+
+
+def _extract_h3_subsections(text: str, h2_header: str) -> dict:
+    """Return dict of `### Header` -> body (stripped) within the scope of
+    a single named H2. Returns empty dict if the H2 is not present."""
+    h2_pat = re.compile(r"^## (.+?)\s*$", re.MULTILINE)
+    matches = list(h2_pat.finditer(text))
+    target_start = None
+    target_end = len(text)
+    for i, m in enumerate(matches):
+        if f"## {m.group(1).strip()}" == h2_header:
+            target_start = m.end()
+            target_end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            break
+    if target_start is None:
+        return {}
+    scope = text[target_start:target_end]
+    h3_pat = re.compile(r"^### (.+?)\s*$", re.MULTILINE)
+    h3_matches = list(h3_pat.finditer(scope))
+    out: dict = {}
+    for i, m in enumerate(h3_matches):
+        header = f"### {m.group(1).strip()}"
+        start = m.end()
+        end = h3_matches[i + 1].start() if i + 1 < len(h3_matches) else len(scope)
+        out[header] = scope[start:end].strip()
+    return out
+
+
+def _render_phase_start_claude_prompt(
+    *,
+    sub_phase: str,
+    objective: str,
+    context: str,
+    required_work: str,
+    exclusions: str,
+) -> str:
+    """Pure: render the bootstrapped claude-prompt.md body from canonical
+    inputs. The rendered prompt is deliberately minimal (no
+    `## Files likely involved` or `## Validation expected` sections,
+    which are not derivable from the canonical artifacts); Codex may
+    extend the prompt with those sections before dispatching to Claude
+    if the sub-phase needs them."""
+    return "\n".join([
+        "# Claude Code Task",
+        "",
+        "## Phase",
+        sub_phase,
+        "",
+        "## Objective",
+        objective,
+        "",
+        "## Context",
+        context,
+        "",
+        "## Required work",
+        required_work,
+        "",
+        "## Constraints",
+        "- Follow `CLAUDE.md`.",
+        "- Stay within the current task scope.",
+        "- Do not modify `AGENTS.md`.",
+        "- Do not modify `CLAUDE.md`.",
+        "- Do not rewrite unrelated files.",
+        "- Do not delete files unless explicitly instructed.",
+        "- Prefer small, testable, reversible changes.",
+        "- Add or update tests when behavior changes.",
+        "",
+        "Out of scope for this phase (from `TASK.md` and `phase-plan.md`):",
+        exclusions,
+        "",
+        "## Required output",
+        (
+            "After implementation, write `.agent-loop/claude-summary.md` "
+            "using the required Claude Implementation Summary format."
+        ),
+        "",
+    ])
+
+
+def bootstrap_claude_prompt(repo_root: Path) -> int:
+    """Phase 5F: synthesize .agent-loop/claude-prompt.md from canonical
+    active phase/task artifacts.
+
+    Reads TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md,
+    .agent-loop/phase-plan.md, and .agent-loop/loop-state.json; validates
+    each source is present, non-empty, and that the active phase/sub_phase
+    is consistent across all four; refuses with halted_input_missing on
+    any mismatch, missing source, missing required section, or status
+    that is not the post-activation `awaiting_claude_implementation`.
+
+    On success: writes .agent-loop/claude-prompt.md and logs a
+    `prompt bootstrap:` note to .agent-loop/orchestrator.log. The prompt
+    is derived deterministically: ## Phase from loop-state.sub_phase,
+    ## Objective from TASK.md ## Active Task, ## Context from
+    phase-plan ### Objective for the active sub-phase, ## Required work
+    from phase-plan ### Definition of done, ## Constraints includes
+    phase-plan ### Exclusions verbatim. The bootstrap never auto-runs
+    a cycle, never auto-activates a proposal, and never writes any
+    artifact other than .agent-loop/claude-prompt.md (and the audit
+    note in .agent-loop/orchestrator.log).
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    task_path = repo_root / "TASK.md"
+    current_task_path = al / "current-task.md"
+    current_phase_path = al / "current-phase.md"
+    phase_plan_path = al / "phase-plan.md"
+    prompt_path = al / "claude-prompt.md"
+    log_path = al / "orchestrator.log"
+
+    try:
+        data = load_loop_state(state_path)
+        validate_loop_state(data)
+        check_contract_version(data)
+    except HaltError as halt:
+        return _halt(
+            state_path, {} if "data" not in dir() else data, halt, log_path,
+        )
+
+    state_phase = str(data.get("phase") or "")
+    state_sub_phase = str(data.get("sub_phase") or "")
+    state_task = str(data.get("task") or "")
+    state_status = str(data.get("status") or "")
+
+    if state_status not in PROMPT_BOOTSTRAP_ALLOWED_STATUSES:
+        return _halt(state_path, data, HaltError(
+            "halted_input_missing",
+            (
+                f"phase-start prompt bootstrap requires loop-state.json status "
+                f"in {sorted(PROMPT_BOOTSTRAP_ALLOWED_STATUSES)}; got "
+                f"{state_status!r}. Bootstrap is only valid immediately after a "
+                f"fresh activation; an in-flight, halted, or post-verdict "
+                f"cycle's prompt must not be silently overwritten."
+            ),
+        ), log_path)
+
+    for p in (task_path, current_task_path, current_phase_path, phase_plan_path):
+        if not p.exists() or not p.read_text(encoding="utf-8").strip():
+            rel = p.relative_to(repo_root).as_posix()
+            return _halt(state_path, data, HaltError(
+                "halted_input_missing",
+                (
+                    f"phase-start prompt bootstrap requires {rel!r} to "
+                    f"exist and be non-empty"
+                ),
+            ), log_path)
+
+    task_text = task_path.read_text(encoding="utf-8")
+    task_sections = _split_h2_sections(task_text)
+    for header in PROMPT_BOOTSTRAP_REQUIRED_TASK_SECTIONS:
+        if not task_sections.get(header, "").strip():
+            return _halt(state_path, data, HaltError(
+                "halted_input_missing",
+                (
+                    f"phase-start prompt bootstrap requires TASK.md section "
+                    f"{header!r} to exist and be non-empty"
+                ),
+            ), log_path)
+
+    ct_text = current_task_path.read_text(encoding="utf-8")
+    ct_sections = _split_h2_sections(ct_text)
+    for header in PROMPT_BOOTSTRAP_REQUIRED_CURRENT_TASK_SECTIONS:
+        if not ct_sections.get(header, "").strip():
+            return _halt(state_path, data, HaltError(
+                "halted_input_missing",
+                (
+                    f"phase-start prompt bootstrap requires "
+                    f".agent-loop/current-task.md section {header!r} to "
+                    f"exist and be non-empty"
+                ),
+            ), log_path)
+
+    cp_text = current_phase_path.read_text(encoding="utf-8").strip()
+    if not cp_text:
+        return _halt(state_path, data, HaltError(
+            "halted_input_missing",
+            "phase-start prompt bootstrap requires .agent-loop/current-phase.md "
+            "to be non-empty",
+        ), log_path)
+
+    task_active_phase = task_sections["## Active Phase"].strip()
+    task_active_sub_phase = task_sections["## Active Sub-Phase"].strip()
+    task_active_task = task_sections["## Active Task"].strip()
+    task_exclusions = task_sections["## Out Of Scope For Current Phase"].strip()
+    ct_phase = ct_sections["## Phase"].strip()
+    ct_sub_phase = ct_sections["## Sub-Phase"].strip()
+    ct_task = ct_sections["## Task"].strip()
+
+    mismatches: list = []
+    if state_phase != task_active_phase:
+        mismatches.append(
+            f"loop-state.json phase={state_phase!r} vs TASK.md "
+            f"## Active Phase={task_active_phase!r}"
+        )
+    if state_phase != ct_phase:
+        mismatches.append(
+            f"loop-state.json phase={state_phase!r} vs current-task.md "
+            f"## Phase={ct_phase!r}"
+        )
+    if state_sub_phase != task_active_sub_phase:
+        mismatches.append(
+            f"loop-state.json sub_phase={state_sub_phase!r} vs TASK.md "
+            f"## Active Sub-Phase={task_active_sub_phase!r}"
+        )
+    if state_sub_phase != ct_sub_phase:
+        mismatches.append(
+            f"loop-state.json sub_phase={state_sub_phase!r} vs current-task.md "
+            f"## Sub-Phase={ct_sub_phase!r}"
+        )
+    if state_task != task_active_task:
+        mismatches.append(
+            "loop-state.json task does not match TASK.md ## Active Task body"
+        )
+    if state_task != ct_task:
+        mismatches.append(
+            "loop-state.json task does not match current-task.md ## Task body"
+        )
+    if state_phase not in cp_text or state_sub_phase not in cp_text:
+        mismatches.append(
+            f"current-phase.md body {cp_text!r} does not name both "
+            f"{state_phase!r} and {state_sub_phase!r}"
+        )
+    if mismatches:
+        return _halt(state_path, data, HaltError(
+            "halted_input_missing",
+            (
+                f"phase-start prompt bootstrap refused: active phase/task "
+                f"artifacts disagree. Mismatches: {mismatches}. Resolve the "
+                f"source disagreements before re-running."
+            ),
+        ), log_path)
+
+    pp_text = phase_plan_path.read_text(encoding="utf-8")
+    sub_phase_h2 = f"## {state_sub_phase}"
+    if sub_phase_h2 not in pp_text:
+        return _halt(state_path, data, HaltError(
+            "halted_input_missing",
+            (
+                f"phase-start prompt bootstrap requires phase-plan.md to "
+                f"contain a {sub_phase_h2!r} section for the active sub-phase"
+            ),
+        ), log_path)
+    pp_subs = _extract_h3_subsections(pp_text, sub_phase_h2)
+    for sub in PROMPT_BOOTSTRAP_PHASE_PLAN_REQUIRED_SUBSECTIONS:
+        if not pp_subs.get(sub, "").strip():
+            return _halt(state_path, data, HaltError(
+                "halted_input_missing",
+                (
+                    f"phase-start prompt bootstrap requires phase-plan.md "
+                    f"section {sub_phase_h2!r} to contain a non-empty "
+                    f"{sub!r} body"
+                ),
+            ), log_path)
+
+    pp_status = pp_subs["### Status"].strip()
+    if not pp_status.lower().startswith("active"):
+        return _halt(state_path, data, HaltError(
+            "halted_input_missing",
+            (
+                f"phase-start prompt bootstrap requires phase-plan.md "
+                f"section {sub_phase_h2!r} ### Status to begin with 'Active'; "
+                f"got first line {pp_status.splitlines()[0]!r}"
+            ),
+        ), log_path)
+
+    pp_objective = pp_subs["### Objective"].strip()
+    pp_dod = pp_subs["### Definition of done"].strip()
+    pp_exclusions = pp_subs["### Exclusions"].strip()
+
+    # TASK.md's `## Out Of Scope For Current Phase` and phase-plan.md's
+    # `### Exclusions` are both authoritative sources for "out of scope".
+    # The bootstrap prefers the phase-plan ### Exclusions because that is
+    # the per-sub-phase canonical source; TASK.md's wider set is included
+    # only when phase-plan does not list it.
+    exclusions_body = pp_exclusions if pp_exclusions else task_exclusions
+
+    prompt_body = _render_phase_start_claude_prompt(
+        sub_phase=state_sub_phase,
+        objective=task_active_task,
+        context=pp_objective,
+        required_work=pp_dod,
+        exclusions=exclusions_body,
+    )
+
+    prompt_path.write_text(prompt_body, encoding="utf-8")
+    rel_prompt = prompt_path.relative_to(repo_root).as_posix()
+    _log_note(log_path, (
+        f"prompt bootstrap: wrote {rel_prompt} for sub_phase="
+        f"{state_sub_phase!r} from canonical TASK.md / current-task.md / "
+        f"current-phase.md / phase-plan.md / loop-state.json"
+    ))
+    print(
+        f"[orchestrator] bootstrap-prompt: wrote {rel_prompt} for "
+        f"sub_phase={state_sub_phase!r}"
+    )
+    return 0
+
+
+def cmd_bootstrap_prompt(_args: argparse.Namespace) -> int:
+    repo_root = find_repo_root()
+    return bootstrap_claude_prompt(repo_root)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="agent_loop",
@@ -4304,6 +4696,22 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    sub.add_parser(
+        "bootstrap-prompt",
+        help=(
+            "Phase 5F phase-start prompt bootstrap: synthesize "
+            ".agent-loop/claude-prompt.md from the canonical active "
+            "phase/task artifacts (TASK.md, .agent-loop/current-task.md, "
+            ".agent-loop/current-phase.md, .agent-loop/phase-plan.md, "
+            ".agent-loop/loop-state.json). Refuses with halted_input_missing "
+            "when any source is missing, when active phase / sub_phase / "
+            "task disagrees across the four sources, when phase-plan.md "
+            "lacks an Active sub-phase section with the required "
+            "subsections, or when loop-state.json status is not "
+            "awaiting_claude_implementation. Never replaces the Phase 5E "
+            "fix-prompt path."
+        ),
+    )
     return parser
 
 
@@ -4314,6 +4722,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "plan": cmd_plan,
     "activate": cmd_activate,
     "resume": cmd_resume,
+    "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
 

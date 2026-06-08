@@ -20,40 +20,40 @@ Phase 5 - Approval Modes
 
 ## Active Sub-Phase
 
-Phase 5E - Post-Review Artifact Reconciliation
+Phase 5F - Automatic Phase-Start Claude Prompt Bootstrap
 
 ## Phase Status
 
-Phase 5D (Autonomous Mode Initial Slice) is closed and approved for human review. Phase 5E is now active as the fourth implementation slice for Phase 5. This sub-phase should implement post-review artifact reconciliation so Codex-owned artifact issues are corrected automatically after review, Claude-owned issues are synchronized into `.agent-loop/fix-prompt.md`, and the markdown/state artifact set remains coherent before the loop proceeds. The goal is to reduce recurring drift between review output, fix prompts, phase-state artifacts, and public status documentation without weakening ownership boundaries or allowing silent edits to Claude-owned implementation files.
+Phase 5E (Post-Review Artifact Reconciliation) is closed and approved for human review. Phase 5F is now active as the next implementation slice for Phase 5. This sub-phase should implement automatic phase-start Claude prompt bootstrap so Codex can synthesize `.agent-loop/claude-prompt.md` directly from the newly activated phase/task artifacts while refusing if the phase definition is incomplete, inconsistent, or not safe to hand off. The goal is to remove the remaining manual prompt-bootstrap step between phase activation and Claude implementation without weakening the existing review, ownership, or safety boundaries.
 
 ## Active Task
 
-Implement post-review artifact reconciliation in `scripts/agent_loop.py`. This slice should classify review findings into Codex-owned vs Claude-owned follow-up, automatically correct supported Codex-owned markdown/state/prompt/review artifact issues, regenerate `.agent-loop/fix-prompt.md` from Claude-owned findings, and refuse/stop when reconciliation would require ambiguous routing or would touch Claude-owned implementation work.
+Implement automatic phase-start Claude prompt bootstrap in `scripts/agent_loop.py`. This slice should synthesize `.agent-loop/claude-prompt.md` from the active phase/task artifacts at the start of a newly activated sub-phase, validate that the required source artifacts are complete and mutually consistent, refuse/stop on incomplete or contradictory phase definitions, and preserve the existing Claude fix-prompt path from Phase 5E unchanged.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5E as active
-- `.agent-loop/phase-plan.md` marks Phase 5D complete history and contains a `## Phase 5E - Post-Review Artifact Reconciliation` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` implements post-review artifact reconciliation for `NEEDS_FIXES` and other review outcomes where Codex-owned artifacts need direct correction
-- supported Codex-owned follow-up may automatically update coherent markdown/state/prompt/review artifacts without touching Claude-owned implementation files
-- Claude-owned findings are synchronized into `.agent-loop/fix-prompt.md` in the required format, derived directly from the current Codex review findings
-- reconciliation refuses/halts when ownership is ambiguous, when a requested Codex-owned action is unsupported, or when the requested correction would overwrite Claude-owned implementation work
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5F as active
+- `.agent-loop/phase-plan.md` marks Phase 5E complete history and contains a `## Phase 5F - Automatic Phase-Start Claude Prompt Bootstrap` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` can synthesize `.agent-loop/claude-prompt.md` from the active phase/task artifacts for a newly activated phase-start handoff
+- automatic prompt bootstrap validates that the required source artifacts are present, ordered, non-empty where required, and mutually consistent before writing a Claude implementation prompt
+- prompt bootstrap refuses/halts instead of guessing when the phase definition is incomplete, contradictory, or would produce an unsafe / stale implementation handoff
+- the shipped post-review reconciliation behavior from Phase 5E remains intact, including Claude-owned `.agent-loop/fix-prompt.md` generation on `NEEDS_FIXES`
 - the shipped `review`, `strict`, and `autonomous` runtime behavior from Phases 5B, 5C, and 5D remain unchanged in effect
-- focused tests cover mixed-owner review findings, supported Codex-owned artifact auto-fixes, generated Claude fix prompts, refusal on unsupported/ambiguous reconciliation, and non-regression of the shipped approval-mode paths
-- `README.md` reflects that Phase 5E is active and that post-review artifact reconciliation is now the implementation focus
+- focused tests cover successful phase-start prompt generation, refusal on incomplete/inconsistent source artifacts, preservation of the existing fix-prompt path, and non-regression of the shipped approval-mode paths
+- `README.md` reflects that Phase 5F is active and that automatic phase-start Claude prompt bootstrap is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 5x sub-phase after Phase 5E until:
+Do not start the next 5x sub-phase after Phase 5F until:
 
-- this Phase 5E slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 5F slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow post-review reconciliation logic and its interaction with the shipped approval-mode runtime state
+- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow phase-start prompt-bootstrap logic and its interaction with the shipped approval-mode runtime state
 - durable memory, token-reset continuation, checkpoint-resume logic, and continuation chaining (Phase 6)
 - editor integration (Phase 7)
 - MCP support (future)
