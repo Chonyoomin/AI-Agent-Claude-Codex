@@ -3818,6 +3818,7 @@ def run_activation(repo_root: Path) -> int:
     phase_plan_path = al / "phase-plan.md"
     current_task_path = al / "current-task.md"
     current_phase_path = al / "current-phase.md"
+    prompt_path = al / "claude-prompt.md"
 
     if not proposal_path.exists():
         msg = (
@@ -3951,12 +3952,33 @@ def run_activation(repo_root: Path) -> int:
         new_sub_phase=approval.label,
         new_task=sections["## Objective"].strip(),
     )
+
+    # Phase 5F: synthesize the phase-start Claude prompt from the SAME
+    # canonical fields that the activation writes are about to commit,
+    # then include the prompt write in the same atomic-or-rollback
+    # transaction as the other activation-owned files. This keeps the
+    # activator fail-closed: if any planned write fails (including the
+    # prompt write itself), every previously-applied write is rolled
+    # back, so the repository is either fully activated WITH the prompt
+    # or fully unmodified - never partially activated. The earlier
+    # proposal-section validation (`for header in
+    # PROPOSAL_REQUIRED_SECTIONS: ... empty body refusal`) already
+    # guarantees the render inputs below are non-empty.
+    new_claude_prompt = _render_phase_start_claude_prompt(
+        sub_phase=approval.label,
+        objective=sections["## Objective"].strip(),
+        context=sections["## Objective"].strip(),
+        required_work=sections["## Definition of done"].strip(),
+        exclusions=sections["## Exclusions"].strip(),
+    )
+
     planned_writes = [
         (task_path, new_task_md.encode("utf-8")),
         (current_task_path, new_current_task.encode("utf-8")),
         (current_phase_path, new_current_phase.encode("utf-8")),
         (phase_plan_path, new_phase_plan.encode("utf-8")),
         (state_path, _serialize_loop_state_bytes(new_loop_state)),
+        (prompt_path, new_claude_prompt.encode("utf-8")),
     ]
     try:
         _apply_activation_writes_atomically(planned_writes)
@@ -3975,29 +3997,18 @@ def run_activation(repo_root: Path) -> int:
         )
         return 2
 
-    # Phase 5F: after activation commits the canonical phase/task
-    # artifacts and resets loop-state to `awaiting_claude_implementation`,
-    # synthesize the implementation handoff prompt automatically from
-    # those canonical sources. This is intentionally sequenced AFTER the
-    # activation write set has succeeded so the bootstrap reads the same
-    # repo state a human would inspect after activation. A bootstrap
-    # refusal does not roll back the already-committed activation; it
-    # halts the newly activated phase instead of leaving a silently
-    # missing prompt.
-    bootstrap_rc = bootstrap_claude_prompt(repo_root)
-    if bootstrap_rc != 0:
-        msg = (
-            "phase-start Claude prompt bootstrap failed after activation; "
-            "see .agent-loop/orchestrator.log for the halt reason"
-        )
-        _planner_log_note(
-            repo_root, f"activation refused [prompt_bootstrap_failed]: {msg}",
-        )
-        print(
-            f"[activate] refused [prompt_bootstrap_failed]: {msg}",
-            file=sys.stderr,
-        )
-        return bootstrap_rc
+    # Phase 5F: log the prompt synthesis as a `note:` line so the
+    # auto-bootstrap is auditable from .agent-loop/orchestrator.log the
+    # same way the standalone `bootstrap-prompt` subcommand is. The
+    # actual prompt bytes are already on disk via the atomic write above.
+    _log_note(
+        al / "orchestrator.log",
+        (
+            f"prompt bootstrap: wrote .agent-loop/claude-prompt.md for "
+            f"sub_phase={approval.label!r} as part of the atomic activation "
+            f"write set"
+        ),
+    )
 
     # Record the approval source per the Phase 4A contract: "the planner
     # must record the approval source (file path, mtime, and the literal
