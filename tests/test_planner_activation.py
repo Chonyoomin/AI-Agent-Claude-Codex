@@ -663,6 +663,66 @@ class ActivationSuccessTests(_ActivationTestCase):
         self.assertIn("approval_mtime=", log)
         self.assertIn(f"approval_line='{agent_loop.APPROVAL_TOKEN}'", log)
 
+    def test_activation_auto_bootstraps_claude_prompt(self) -> None:
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 0)
+        prompt = self._read(".agent-loop/claude-prompt.md")
+        self.assertIn("# Claude Code Task", prompt)
+        self.assertIn("## Phase", prompt)
+        self.assertIn("Phase 4D - Planner-Orchestrator Integration", prompt)
+        self.assertIn("## Objective", prompt)
+        self.assertIn("Add the planner-orchestrator integration", prompt)
+        self.assertIn("## Required work", prompt)
+        self.assertIn(
+            "- scripts/agent_loop.py wires the planner into the orchestrator's "
+            "post-approval path",
+            prompt,
+        )
+        self.assertIn("## Constraints", prompt)
+        self.assertIn("- no Git automation", prompt)
+        orchestrator_log = self._read(".agent-loop/orchestrator.log")
+        self.assertIn("prompt bootstrap:", orchestrator_log)
+
+    def test_activation_returns_bootstrap_exit_code_on_bootstrap_refusal(
+        self,
+    ) -> None:
+        # Phase 5F: the activation-success path is sequenced as
+        # (activation writes) -> (bootstrap). If bootstrap refuses, the
+        # activation writes have already committed but the activate
+        # subcommand must surface the bootstrap failure rather than
+        # silently return 0 (which would let an operator believe the
+        # prompt is ready when it is not). Patch bootstrap to a refusal
+        # to pin this contract independent of any bootstrap-internal
+        # behavior.
+        import unittest.mock as mock
+        with mock.patch.object(
+            agent_loop, "bootstrap_claude_prompt", return_value=2,
+        ) as mocked:
+            rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 2)
+        mocked.assert_called_once_with(self.repo.root)
+        # Activation writes happened before bootstrap (the loop-state
+        # has been advanced to the newly activated sub-phase), proving
+        # the bootstrap call sits AFTER the activation write set.
+        state = self._read_loop_state()
+        self.assertEqual(
+            state["sub_phase"], "Phase 4D - Planner-Orchestrator Integration",
+        )
+        # The refusal is recorded in planner.log with the dedicated
+        # prompt_bootstrap_failed code so the audit trail names the
+        # post-activation step that failed.
+        planner_log = self._read(agent_loop.PLANNER_LOG_PATH_REL)
+        self.assertIn(
+            "activation refused [prompt_bootstrap_failed]", planner_log,
+        )
+        # The activation-source `activated [...]` note is NOT appended
+        # on a bootstrap refusal (it sits AFTER the bootstrap call in
+        # run_activation), so the planner.log never advertises a fully
+        # successful activation when bootstrap halted the cycle.
+        self.assertNotIn(
+            f"activated [{agent_loop.ACTIVATOR_VERSION}]", planner_log,
+        )
+
 
 # --- write boundary ---
 
