@@ -20,39 +20,40 @@ Phase 5 - Approval Modes
 
 ## Active Sub-Phase
 
-Phase 5C - Strict Mode Pauses
+Phase 5E - Post-Review Artifact Reconciliation
 
 ## Phase Status
 
-Phase 5B (Review Mode Initial Slice) is closed and approved for human review. Phase 5C is now active as the second implementation slice for Phase 5. This sub-phase should implement the `strict` runtime pause behavior defined in the Phase 5A contract while preserving the shipped `review`-mode baseline and keeping `autonomous` deferred. The goal is to make strict human checkpoints enforceable in runtime state and control flow without broadening autonomy.
+Phase 5D (Autonomous Mode Initial Slice) is closed and approved for human review. Phase 5E is now active as the fourth implementation slice for Phase 5. This sub-phase should implement post-review artifact reconciliation so Codex-owned artifact issues are corrected automatically after review, Claude-owned issues are synchronized into `.agent-loop/fix-prompt.md`, and the markdown/state artifact set remains coherent before the loop proceeds. The goal is to reduce recurring drift between review output, fix prompts, phase-state artifacts, and public status documentation without weakening ownership boundaries or allowing silent edits to Claude-owned implementation files.
 
 ## Active Task
 
-Implement the `strict` approval-mode pause behavior in `scripts/agent_loop.py`. This slice should add the strict-mode human gates before new implementation prompt dispatch, before fix-prompt dispatch, and after Claude completion but before Codex review begins; use the Phase 5A `awaiting_human_for` vocabulary to represent those gates; and preserve the shipped `review`-mode behavior and the existing evidence, verdict, and phase-gating flow.
+Implement post-review artifact reconciliation in `scripts/agent_loop.py`. This slice should classify review findings into Codex-owned vs Claude-owned follow-up, automatically correct supported Codex-owned markdown/state/prompt/review artifact issues, regenerate `.agent-loop/fix-prompt.md` from Claude-owned findings, and refuse/stop when reconciliation would require ambiguous routing or would touch Claude-owned implementation work.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5C as active
-- `.agent-loop/phase-plan.md` marks Phase 5B complete history and contains a `## Phase 5C - Strict Mode Pauses` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` implements the `strict`-mode human pauses before implementation prompt dispatch, before fix-prompt dispatch, and after Claude completion but before Codex review begins
-- `awaiting_human_for` uses the Phase 5A gate vocabulary for the implemented strict-mode path, including `pre_claude_prompt`, `pre_fix_prompt`, and `halt_resolution` where applicable
-- the shipped `review`-mode behavior from Phase 5B remains unchanged in effect
-- `.agent-loop/claude-done.json` continues to be a routing/timing artifact only and integrates correctly with the strict pre-review human gate
-- focused tests cover strict-mode pause entry, strict-mode resume behavior after human approval, correct `awaiting_human_for` transitions, and non-regression of the shipped `review` path
-- `README.md` reflects that Phase 5C is active and that `strict` is implemented while `autonomous` remains deferred
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 5 / 5E as active
+- `.agent-loop/phase-plan.md` marks Phase 5D complete history and contains a `## Phase 5E - Post-Review Artifact Reconciliation` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` implements post-review artifact reconciliation for `NEEDS_FIXES` and other review outcomes where Codex-owned artifacts need direct correction
+- supported Codex-owned follow-up may automatically update coherent markdown/state/prompt/review artifacts without touching Claude-owned implementation files
+- Claude-owned findings are synchronized into `.agent-loop/fix-prompt.md` in the required format, derived directly from the current Codex review findings
+- reconciliation refuses/halts when ownership is ambiguous, when a requested Codex-owned action is unsupported, or when the requested correction would overwrite Claude-owned implementation work
+- the shipped `review`, `strict`, and `autonomous` runtime behavior from Phases 5B, 5C, and 5D remain unchanged in effect
+- focused tests cover mixed-owner review findings, supported Codex-owned artifact auto-fixes, generated Claude fix prompts, refusal on unsupported/ambiguous reconciliation, and non-regression of the shipped approval-mode paths
+- `README.md` reflects that Phase 5E is active and that post-review artifact reconciliation is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 5x sub-phase after Phase 5C until:
+Do not start the next 5x sub-phase after Phase 5E until:
 
-- this Phase 5C slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 5E slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- implementation of `autonomous` mode runtime behavior
-- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow strict-mode pause logic and its interaction with the shipped review-mode runtime state
+- any broader autonomy model than the current Phase 5D runtime behavior
+- changing current planner, activator, adapter, or evidence-collection behavior beyond the narrow post-review reconciliation logic and its interaction with the shipped approval-mode runtime state
 - durable memory, token-reset continuation, checkpoint-resume logic, and continuation chaining (Phase 6)
 - editor integration (Phase 7)
 - MCP support (future)

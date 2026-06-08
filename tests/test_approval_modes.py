@@ -1202,5 +1202,397 @@ class ReviewModeStrictBehaviorNotRegressedTests(_CycleHarness):
         )
 
 
+# ----- Phase 5D autonomous-mode initial slice -----
+#
+# These tests pin the narrow `autonomous` runtime path:
+#   - none of the four Phase 5C strict gates fire in autonomous mode
+#     (pre_claude_prompt, pre_codex_review_normal, pre_fix_prompt,
+#     pre_codex_review_fix); each gate-bypass is logged to
+#     .agent-loop/orchestrator.log so the mode is auditable
+#   - the autonomous continuation still halts on every existing hard
+#     stop: FAILED_REQUIRES_HUMAN, max_cycles on NEEDS_FIXES, malformed
+#     evidence, and (by contract) phase_complete_awaiting_human_approval
+#     on APPROVED_FOR_HUMAN_REVIEW (autonomy never auto-progresses to
+#     the next phase)
+#   - NEEDS_FIXES within threshold auto-continues into one fix cycle,
+#     same as review mode, without firing pre_fix_prompt
+
+class _AutonomousCycleHarness(_CycleHarness):
+    """Same setup as _CycleHarness but flips approval_mode to
+    `autonomous` and pre-writes a valid fix-prompt for the fix-gate
+    tests."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        data = self._state()
+        data["approval_mode"] = agent_loop.APPROVAL_MODE_AUTONOMOUS
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        (self.repo.root / ".agent-loop" / "fix-prompt.md").write_text(
+            "# Claude Code Fix Task\n\n## Objective\no\n\n"
+            "## Context\nc\n\n## Required fixes\n- x\n\n"
+            "## Constraints\n- y\n\n## Required output\n- z\n",
+            encoding="utf-8",
+        )
+
+    def _log_text(self) -> str:
+        if not self.log_path.exists():
+            return ""
+        return self.log_path.read_text(encoding="utf-8")
+
+
+class AutonomousModeContinuationTests(_AutonomousCycleHarness):
+    """Each of the four Phase 5C strict gates must be bypassed in
+    autonomous mode, and each bypass must produce an auditable note in
+    .agent-loop/orchestrator.log."""
+
+    def test_autonomous_does_not_fire_pre_claude_prompt_gate(self) -> None:
+        # Autonomous must NOT halt at pre_claude_prompt: the Claude
+        # adapter must be invoked exactly once. The cycle may halt later
+        # (the stubbed Claude adapter returns no model_id), but we only
+        # care that the gate did not fire.
+        called = {"n": 0}
+
+        def _invoke(*_, **__):
+            called["n"] += 1
+            return agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=_invoke),
+        ):
+            agent_loop.run_normal_cycle(self.repo.root)
+
+        self.assertEqual(
+            called["n"], 1,
+            "autonomous mode must not fire the pre_claude_prompt strict gate",
+        )
+        after = self._state()
+        self.assertNotEqual(after["status"], agent_loop.HALTED_PRE_CLAUDE_PROMPT)
+        log = self._log_text()
+        self.assertIn("autonomous mode: bypassing pre_claude_prompt", log)
+        self.assertIn("run_normal_cycle entry", log)
+
+    def test_autonomous_does_not_fire_pre_codex_review_normal_gate(
+        self,
+    ) -> None:
+        codex_called = {"n": 0}
+
+        def _wait(_path):
+            codex_called["n"] += 1
+            return agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=_wait),
+        ):
+            agent_loop.run_normal_cycle(self.repo.root)
+
+        self.assertEqual(
+            codex_called["n"], 1,
+            "autonomous mode must reach Codex review without firing the "
+            "pre_codex_review strict gate",
+        )
+        after = self._state()
+        self.assertNotEqual(
+            after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL,
+        )
+        self.assertTrue(
+            self.done_path.exists(),
+            "the autonomous cycle still writes claude-done.json after "
+            "evidence validation",
+        )
+        log = self._log_text()
+        self.assertIn("autonomous mode: bypassing pre_codex_review", log)
+        self.assertIn("_run_normal_cycle_from_increment", log)
+
+    def test_autonomous_does_not_fire_pre_fix_prompt_gate(self) -> None:
+        # Seed a NEEDS_FIXES verdict path with headroom below max_cycles.
+        data = self._state()
+        data["cycle_count"] = 1
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+
+        invoked = {"n": 0}
+
+        def _invoke(*_, **__):
+            invoked["n"] += 1
+            # Return no model_id so the fix-cycle halts here; we only
+            # need to prove the fix-cycle Claude adapter was reached
+            # (i.e. the pre_fix_prompt gate did NOT fire).
+            return agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=_invoke),
+        ):
+            agent_loop._handle_verdict_loop(
+                self.state_path, self._state(), "NEEDS_FIXES",
+                self.repo.root, self.log_path,
+            )
+
+        self.assertEqual(
+            invoked["n"], 1,
+            "autonomous mode must dispatch the fix-cycle Claude adapter "
+            "without firing the pre_fix_prompt strict gate",
+        )
+        after = self._state()
+        self.assertNotEqual(after["status"], agent_loop.HALTED_PRE_FIX_PROMPT)
+        log = self._log_text()
+        self.assertIn("autonomous mode: bypassing pre_fix_prompt", log)
+
+    def test_autonomous_does_not_fire_pre_codex_review_fix_gate(self) -> None:
+        # Drive _run_fix_cycle directly so the in-fix-cycle gate is the
+        # observable one; stub a Codex adapter that records it was reached.
+        data = self._state()
+        data["cycle_count"] = 1
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        codex_called = {"n": 0}
+
+        def _wait(_path):
+            codex_called["n"] += 1
+            return agent_loop.ExecutionResult(
+                exit_code=1, model_id=None, duration_seconds=0.0,
+            )
+
+        try:
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=mock.Mock(invoke=self._make_summary_writer()),
+            ), mock.patch.object(
+                agent_loop, "invoke_run_checks", return_value=0,
+            ), mock.patch.object(
+                agent_loop, "validate_evidence_files", return_value=None,
+            ), mock.patch.object(
+                agent_loop, "make_codex_adapter",
+                return_value=mock.Mock(wait_for_review=_wait),
+            ):
+                agent_loop._run_fix_cycle(
+                    self.state_path, self._state(), self.repo.root, self.log_path,
+                )
+        except agent_loop._FixCycleHalt:
+            # The fix cycle halts on the codex no-review path; that is
+            # after the gate site, which is what we want to prove.
+            pass
+
+        self.assertEqual(
+            codex_called["n"], 1,
+            "autonomous mode must reach Codex fix-cycle review without "
+            "firing the pre_codex_review_fix strict gate",
+        )
+        after = self._state()
+        self.assertNotEqual(
+            after["status"], agent_loop.HALTED_PRE_CODEX_REVIEW_FIX,
+        )
+        log = self._log_text()
+        self.assertIn("autonomous mode: bypassing pre_codex_review", log)
+        self.assertIn("_run_fix_cycle post-evidence", log)
+
+
+class AutonomousModeHardStopsTests(_AutonomousCycleHarness):
+    """Every existing hard stop must still fire in autonomous mode."""
+
+    def _drive_verdict(self, verdict: str) -> int:
+        with mock.patch.object(
+            agent_loop, "_invoke_post_approval_planner", return_value=0,
+        ):
+            return agent_loop._handle_verdict_loop(
+                self.state_path, self._state(), verdict,
+                self.repo.root, self.log_path,
+            )
+
+    def test_autonomous_still_halts_on_failed_verdict(self) -> None:
+        rc = self._drive_verdict("FAILED_REQUIRES_HUMAN")
+        self.assertEqual(rc, 2)
+        after = self._state()
+        self.assertEqual(after["status"], "halted_failed_requires_human")
+        self.assertEqual(after["last_verdict"], "FAILED_REQUIRES_HUMAN")
+        self.assertIsNone(after["awaiting_human_for"])
+
+    def test_autonomous_still_halts_on_max_cycles(self) -> None:
+        data = self._state()
+        data["cycle_count"] = data["max_cycles"]
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+        rc = self._drive_verdict("NEEDS_FIXES")
+        self.assertEqual(rc, 2)
+        after = self._state()
+        self.assertEqual(after["status"], "halted_max_cycles_reached")
+        self.assertEqual(after["last_verdict"], "NEEDS_FIXES")
+
+    def test_autonomous_still_halts_on_evidence_missing(self) -> None:
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=self._make_summary_writer()),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks",
+            side_effect=agent_loop.HaltError(
+                "halted_evidence_missing", "synthetic",
+            ),
+        ):
+            rc = agent_loop.run_normal_cycle(self.repo.root)
+        self.assertEqual(rc, 2)
+        after = self._state()
+        self.assertEqual(after["status"], "halted_evidence_missing")
+        self.assertFalse(
+            self.done_path.exists(),
+            "the autonomous cycle must not leave claude-done.json on a "
+            "halted evidence path",
+        )
+
+    def test_autonomous_still_halts_at_phase_complete_on_approved(
+        self,
+    ) -> None:
+        # Phase 5D contract: human approval is still required before
+        # phase progression. Autonomy does NOT bypass the
+        # phase_complete_awaiting_human_approval halt.
+        rc = self._drive_verdict("APPROVED_FOR_HUMAN_REVIEW")
+        self.assertEqual(rc, 0)
+        after = self._state()
+        self.assertEqual(
+            after["status"], "phase_complete_awaiting_human_approval",
+        )
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_PHASE_COMPLETE,
+        )
+        self.assertEqual(after["last_verdict"], "APPROVED_FOR_HUMAN_REVIEW")
+        # An audit-trail note records that autonomy stopped here on
+        # purpose (vs silently treating phase-complete as a continuation
+        # opportunity).
+        self.assertIn(
+            "autonomous mode: phase_complete_awaiting_human_approval",
+            self._log_text(),
+        )
+
+
+class AutonomousModeFixCycleContinuationTests(_AutonomousCycleHarness):
+    """NEEDS_FIXES within threshold auto-runs a fix cycle, same as
+    review mode. The pre_fix_prompt gate-bypass is already covered in
+    AutonomousModeContinuationTests; this test pins that the fix-cycle
+    Claude adapter and the fix-cycle Codex adapter BOTH execute exactly
+    once and the loop terminates on the subsequent APPROVED verdict
+    without re-firing any gate."""
+
+    def test_autonomous_runs_one_fix_cycle_then_terminates_on_approved(
+        self,
+    ) -> None:
+        data = self._state()
+        data["cycle_count"] = 1
+        data["max_cycles"] = 3
+        self.state_path.write_text(
+            json.dumps(data, indent=2) + "\n", encoding="utf-8",
+        )
+
+        claude_calls = {"n": 0}
+        codex_calls = {"n": 0}
+
+        def _claude_invoke(prompt_path, summary_path):
+            claude_calls["n"] += 1
+            return self._make_summary_writer()(prompt_path, summary_path)
+
+        def _codex_wait(review_path):
+            codex_calls["n"] += 1
+            # The actual review parse is patched separately below; just
+            # signal success here.
+            review_path.write_text("stub", encoding="utf-8")
+            return agent_loop.ExecutionResult(
+                exit_code=0, model_id="stub-codex", duration_seconds=0.0,
+            )
+
+        approved_review = agent_loop.ParsedCodexReview(
+            verdict="APPROVED_FOR_HUMAN_REVIEW",
+            issues=(),
+            fix_prompt_for_claude="",
+        )
+
+        with mock.patch.object(
+            agent_loop, "make_claude_adapter",
+            return_value=mock.Mock(invoke=_claude_invoke),
+        ), mock.patch.object(
+            agent_loop, "invoke_run_checks", return_value=0,
+        ), mock.patch.object(
+            agent_loop, "validate_evidence_files", return_value=None,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter",
+            return_value=mock.Mock(wait_for_review=_codex_wait),
+        ), mock.patch.object(
+            agent_loop, "parse_codex_review", return_value=approved_review,
+        ), mock.patch.object(
+            agent_loop, "_invoke_post_approval_planner", return_value=0,
+        ):
+            rc = agent_loop._handle_verdict_loop(
+                self.state_path, self._state(), "NEEDS_FIXES",
+                self.repo.root, self.log_path,
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            claude_calls["n"], 1,
+            "exactly one fix-cycle Claude invocation is expected",
+        )
+        self.assertEqual(
+            codex_calls["n"], 1,
+            "exactly one fix-cycle Codex review is expected",
+        )
+        after = self._state()
+        # The fix cycle bumped cycle_count; the terminal APPROVED branch
+        # then persisted phase_complete_awaiting_human_approval.
+        self.assertEqual(after["cycle_count"], 2)
+        self.assertEqual(
+            after["status"], "phase_complete_awaiting_human_approval",
+        )
+        self.assertEqual(after["last_verdict"], "APPROVED_FOR_HUMAN_REVIEW")
+        # claude-done.json carries the fix-cycle completion (the last
+        # write in the cycle).
+        self.assertTrue(self.done_path.exists())
+        self.assertEqual(_read_json(self.done_path)["mode"], "fix")
+
+
+class AutonomousModeBaselineNotRegressedTests(_ApprovalModesTestCase):
+    """`autonomous` is a recognized approval_mode; activation does not
+    silently overwrite an explicit autonomous selection, and
+    validate_loop_state accepts it (these were Phase 5A-level rules that
+    Phase 5D builds on; the regression coverage here pins them
+    alongside the new runtime path)."""
+
+    def test_activation_preserves_explicit_autonomous_selection(self) -> None:
+        before = self._state()
+        before["approval_mode"] = agent_loop.APPROVAL_MODE_AUTONOMOUS
+        merged = agent_loop._compute_activated_loop_state(
+            before, "p", "sp", "t",
+        )
+        self.assertEqual(merged["approval_mode"], "autonomous")
+        self.assertIsNone(merged["awaiting_human_for"])
+
+    def test_validate_loop_state_accepts_autonomous(self) -> None:
+        data = self._state()
+        data["approval_mode"] = agent_loop.APPROVAL_MODE_AUTONOMOUS
+        try:
+            agent_loop.validate_loop_state(data)
+        except agent_loop.HaltError as exc:
+            self.fail(f"autonomous must pass validate_loop_state: {exc.reason}")
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

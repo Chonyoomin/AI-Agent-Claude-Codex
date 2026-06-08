@@ -105,6 +105,20 @@ ALLOWED_ISSUE_OWNERS = frozenset({ISSUE_OWNER_CODEX, ISSUE_OWNER_CLAUDE})
 CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS = "sync_phase5_runtime_defaults"
 SUPPORTED_CODEX_ACTIONS = frozenset({CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS})
 
+# Phase 5E post-review reconciliation: each supported Codex auto-fix
+# action declares the exact set of repo paths it may legitimately touch.
+# A review issue routed to Codex with a supported codex_action must list
+# only files inside its action's allow-list; any file outside that list
+# is refused at reconciliation time as "Codex auto-fix attempting to
+# write Claude-owned implementation work." The allow-list approach keeps
+# the refusal deterministic per-action without depending on a global
+# Codex-vs-Claude path partition.
+CODEX_ACTION_ALLOWED_FILES: dict = {
+    CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS: frozenset({
+        ".agent-loop/loop-state.json",
+    }),
+}
+
 EVIDENCE_FILES = (
     ".agent-loop/git-status.log",
     ".agent-loop/git-diff.patch",
@@ -175,9 +189,10 @@ ORCHESTRATOR_WRITABLE_FIELDS = frozenset({
     # Phase 5B (Approval Modes - review-mode initial slice): the
     # `approval_mode` selector and the `awaiting_human_for` gate name are
     # orchestrator-owned runtime fields. Allowed values for `approval_mode`
-    # in this slice are the three Phase 5A modes (`strict`, `review`,
-    # `autonomous`); only the `review` path is implemented here, and the
-    # default-on-init/activation is `review`.
+    # are the three Phase 5A modes (`strict`, `review`, `autonomous`).
+    # `review` (Phase 5B), `strict` (Phase 5C), and the narrow
+    # `autonomous` continuation path (Phase 5D) are all implemented; the
+    # default-on-init/activation is still `review`.
     "approval_mode",
     "awaiting_human_for",
 })
@@ -734,8 +749,26 @@ def _split_issue_files(raw: str) -> tuple[str, ...]:
     return tuple(part for part in parts if part)
 
 
-def _infer_issue_owner(files: tuple[str, ...]) -> str:
-    if files and all(path in CODEX_OWNED_REVIEW_PATHS for path in files):
+def _infer_issue_owner(files: tuple[str, ...]) -> Optional[str]:
+    """Phase 5E ambiguity-aware fallback inference.
+
+    Returns `ISSUE_OWNER_CODEX` when every listed path is a Codex-owned
+    review path, `ISSUE_OWNER_CLAUDE` when every listed path is outside
+    that set (i.e. an implementation path Claude is responsible for),
+    and `None` when the signal is ambiguous - either no files were
+    listed at all, or the file list mixes Codex-owned planning paths
+    with Claude-owned implementation paths. Phase 5E refuses ambiguous
+    inference at parse time rather than silently defaulting to Claude,
+    which preserves the contract's "Refuse or halt when ownership is
+    ambiguous" rule.
+    """
+    if not files:
+        return None
+    codex_paths = [p for p in files if p in CODEX_OWNED_REVIEW_PATHS]
+    non_codex_paths = [p for p in files if p not in CODEX_OWNED_REVIEW_PATHS]
+    if codex_paths and non_codex_paths:
+        return None
+    if codex_paths:
         return ISSUE_OWNER_CODEX
     return ISSUE_OWNER_CLAUDE
 
@@ -744,7 +777,31 @@ def _parse_review_issue_block(title: str, block: str) -> ReviewIssue:
     severity = _single_line_field(block, "Severity")
     category = _single_line_field(block, "Category")
     files = _split_issue_files(_single_line_field(block, "File(s)"))
-    owner = _single_line_field(block, "Owner", required=False) or _infer_issue_owner(files)
+    explicit_owner = _single_line_field(block, "Owner", required=False)
+    if explicit_owner:
+        owner = explicit_owner
+    else:
+        inferred = _infer_issue_owner(files)
+        if inferred is None:
+            # Phase 5E: refuse ambiguous ownership at parse time. The
+            # review must either set an explicit `Owner:` field or list
+            # files whose Codex-vs-Claude partition is unambiguous.
+            # Silently defaulting to Claude (the pre-Phase-5E behavior)
+            # would route Codex-owned planning fixes through Claude and
+            # the reverse, which the Phase 5E contract forbids.
+            raise HaltError(
+                "halted_review_parse_failed",
+                (
+                    f"codex-review issue {title.strip()!r} has no explicit "
+                    f"Owner: field and the File(s) list {list(files)!r} "
+                    f"provides an ambiguous ownership signal (either empty "
+                    f"or mixing Codex-owned planning paths with Claude-owned "
+                    f"implementation paths). Add an explicit `Owner: Codex` "
+                    f"or `Owner: Claude` line to the issue block, or revise "
+                    f"the File(s) list so the partition is unambiguous."
+                ),
+            )
+        owner = inferred
     if owner not in ALLOWED_ISSUE_OWNERS:
         raise HaltError(
             "halted_review_parse_failed",
@@ -950,6 +1007,19 @@ def _prepare_needs_fixes_follow_up(
     codex_owned = [issue for issue in review.issues if issue.owner == ISSUE_OWNER_CODEX]
     claude_owned = [issue for issue in review.issues if issue.owner == ISSUE_OWNER_CLAUDE]
 
+    # Phase 5E: surface the post-review classification in
+    # .agent-loop/orchestrator.log up front so a reader can reconstruct
+    # which side of the ownership boundary every issue landed on, even
+    # if a downstream refusal halts the cycle before any side-effect.
+    _log_note(
+        log_path,
+        (
+            f"review reconciliation: codex_owned_issues={len(codex_owned)} "
+            f"(actions={sorted({issue.codex_action for issue in codex_owned if issue.codex_action})}) "
+            f"claude_owned_issues={len(claude_owned)}"
+        ),
+    )
+
     unsupported_codex_issues = [
         issue for issue in codex_owned if issue.codex_action not in SUPPORTED_CODEX_ACTIONS
     ]
@@ -960,6 +1030,31 @@ def _prepare_needs_fixes_follow_up(
             "automatic Codex action; resolve them directly before re-running the loop. "
             f"Unsupported issues: {[issue.title for issue in unsupported_codex_issues]}",
         )
+
+    # Phase 5E: each supported Codex action has a tight per-action
+    # allow-list of paths it may legitimately touch. A Codex-owned issue
+    # whose File(s) list extends outside that allow-list is refused
+    # before any side-effect, even when the action itself is supported.
+    # This is the contract guarantee that a Codex auto-fix cannot
+    # overwrite Claude-owned implementation work just because the issue
+    # was labeled `Owner: Codex`.
+    for issue in codex_owned:
+        allowed = CODEX_ACTION_ALLOWED_FILES.get(issue.codex_action, frozenset())
+        out_of_scope = sorted(p for p in issue.files if p not in allowed)
+        if out_of_scope:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"Codex-owned review issue {issue.title!r} declares "
+                    f"codex_action={issue.codex_action!r} but its File(s) "
+                    f"list includes paths outside that action's allowed "
+                    f"scope: {out_of_scope}. Codex auto-fixes must not "
+                    f"touch Claude-owned implementation work; the only "
+                    f"paths {issue.codex_action!r} may repair are "
+                    f"{sorted(allowed)}. Resolve manually before "
+                    f"re-running the loop."
+                ),
+            )
 
     for issue in codex_owned:
         if issue.codex_action == CODEX_ACTION_SYNC_PHASE5_RUNTIME_DEFAULTS:
@@ -1213,6 +1308,30 @@ def _fire_strict_gate(
     return 2
 
 
+def _log_autonomous_bypass(
+    log_path: Optional[Path], *, gate: str, where: str,
+) -> None:
+    """Phase 5D auditable bypass note.
+
+    The narrow `autonomous` runtime path takes the same code paths as
+    `review` at the four strict-gate sites (no human pause), but the
+    contract requires the mode behavior to be "auditable from repo
+    artifacts and runtime state; do not hide mode behavior only in
+    transient control flow." This helper makes the bypass observable in
+    `.agent-loop/orchestrator.log` so a reader can reconstruct exactly
+    which gates were skipped because the cycle was in autonomous mode.
+    The line is informational only; the orchestrator never writes a
+    `halted_*` status here and never sets `awaiting_human_for`.
+    """
+    _log_note(
+        log_path,
+        (
+            f"autonomous mode: bypassing {gate} gate at {where}; "
+            f"continuing without human pause"
+        ),
+    )
+
+
 POST_APPROVAL_PLANNER_EXCEPTION_CODE = -1
 
 
@@ -1326,15 +1445,18 @@ def run_normal_cycle(repo_root: Path) -> int:
 
     # 3b. Phase 5C strict-mode gate: under `strict`, the loop must pause
     #     for explicit human approval BEFORE dispatching a new
-    #     implementation prompt. `review` (the default) skips this gate;
-    #     `autonomous` runtime branching is still deferred. The gate
-    #     persists the named `awaiting_human_for = "pre_claude_prompt"`
-    #     plus a contract `halted_awaiting_human_*` status and exits
-    #     cleanly (code 2); the human resumes via the `resume`
-    #     subcommand, which dispatches to `_run_normal_cycle_from_increment`
-    #     (so the threshold check and cycle_count increment happen on
-    #     resume, exactly once).
-    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+    #     implementation prompt. `review` (the default) skips this gate.
+    #     Phase 5D: `autonomous` also skips the gate but logs an
+    #     auditable bypass note so the mode is observable from
+    #     orchestrator.log rather than hidden in transient control flow.
+    #     The gate persists the named `awaiting_human_for =
+    #     "pre_claude_prompt"` plus a contract `halted_awaiting_human_*`
+    #     status and exits cleanly (code 2); the human resumes via the
+    #     `resume` subcommand, which dispatches to
+    #     `_run_normal_cycle_from_increment` (so the threshold check and
+    #     cycle_count increment happen on resume, exactly once).
+    approval_mode = data.get("approval_mode")
+    if approval_mode == APPROVAL_MODE_STRICT:
         return _fire_strict_gate(
             state_path, data,
             halt_status=HALTED_PRE_CLAUDE_PROMPT,
@@ -1344,6 +1466,12 @@ def run_normal_cycle(repo_root: Path) -> int:
                 "dispatching a new implementation prompt to Claude"
             ),
             log_path=log_path,
+        )
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        _log_autonomous_bypass(
+            log_path,
+            gate=AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
+            where="run_normal_cycle entry",
         )
 
     return _run_normal_cycle_from_increment(repo_root, data, log_path)
@@ -1450,8 +1578,10 @@ def _run_normal_cycle_from_increment(
     #     review-ready) so the only thing left is whether Codex review
     #     proceeds now or after the human approves it. Resume dispatches
     #     to `_run_normal_cycle_codex_review_step` so review proceeds
-    #     exactly once.
-    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+    #     exactly once. Phase 5D: `autonomous` skips the gate and logs an
+    #     auditable bypass note.
+    approval_mode = data.get("approval_mode")
+    if approval_mode == APPROVAL_MODE_STRICT:
         return _fire_strict_gate(
             state_path, data,
             halt_status=HALTED_PRE_CODEX_REVIEW_NORMAL,
@@ -1461,6 +1591,12 @@ def _run_normal_cycle_from_increment(
                 "completion / evidence validation and before Codex review begins"
             ),
             log_path=log_path,
+        )
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        _log_autonomous_bypass(
+            log_path,
+            gate=AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+            where="_run_normal_cycle_from_increment post-evidence",
         )
 
     return _run_normal_cycle_codex_review_step(repo_root, data, log_path)
@@ -1557,7 +1693,23 @@ def _handle_verdict_loop(
             # Phase 5B: in `review` mode the phase-complete gate is the
             # one named human gate this slice surfaces. Record it on
             # `awaiting_human_for` so the runtime state matches the
-            # Phase 5A vocabulary.
+            # Phase 5A vocabulary. Phase 5D: `autonomous` mode also
+            # halts here - the Phase 5D contract preserves the rule
+            # "human approval must still be required before phase
+            # progression and any future Git action," so autonomy does
+            # not bypass the phase-complete gate. The mode is recorded
+            # in loop-state.json (approval_mode) and the bypass-vs-halt
+            # boundary is logged on autonomous cycles so the audit trail
+            # makes clear autonomy stopped here intentionally.
+            if data.get("approval_mode") == APPROVAL_MODE_AUTONOMOUS:
+                _log_note(
+                    log_path,
+                    (
+                        "autonomous mode: phase_complete_awaiting_human_approval "
+                        "halt is preserved; human approval is still required "
+                        "before phase progression"
+                    ),
+                )
             save_loop_state(state_path, data, {
                 "status": "phase_complete_awaiting_human_approval",
                 "last_verdict": verdict,
@@ -1601,6 +1753,18 @@ def _handle_verdict_loop(
             try:
                 data = _prepare_needs_fixes_follow_up(repo_root, review, log_path)
             except HaltError as halt:
+                # Phase 5E: a Codex-owned auto-fix inside the
+                # reconciliation step may have already written to
+                # loop-state.json (e.g. sync_phase5_runtime_defaults).
+                # The caller's local `data` does not see those writes,
+                # so passing it to `_halt` would clobber the on-disk
+                # auto-fix when `_halt` overwrites status. Reload from
+                # disk so the persisted halt preserves any side-effect
+                # writes the reconciliation made before refusing.
+                try:
+                    data = load_loop_state(state_path)
+                except HaltError:
+                    pass
                 return _halt(state_path, data, halt, log_path)
         # Threshold-policy enforcement: do not auto-continue past the
         # threshold. The contract's "materially changed / narrowed"
@@ -1635,7 +1799,13 @@ def _handle_verdict_loop(
         # prompt. The fix-prompt is already authored and validated on
         # disk; only its dispatch to Claude waits. Resume dispatches to
         # `_run_fix_cycle` so the fix cycle proceeds exactly once.
-        if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+        # Phase 5D: `autonomous` skips the gate and continues into the
+        # bounded fix cycle, logging an auditable bypass note. The
+        # `cycle_count`/`max_cycles` threshold check above this block
+        # still gates the continuation, so autonomy cannot drive past
+        # the existing escalation rule.
+        approval_mode = data.get("approval_mode")
+        if approval_mode == APPROVAL_MODE_STRICT:
             return _fire_strict_gate(
                 state_path, data,
                 halt_status=HALTED_PRE_FIX_PROMPT,
@@ -1645,6 +1815,12 @@ def _handle_verdict_loop(
                     "dispatching a new fix prompt to Claude"
                 ),
                 log_path=log_path,
+            )
+        if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+            _log_autonomous_bypass(
+                log_path,
+                gate=AWAITING_HUMAN_FOR_PRE_FIX_PROMPT,
+                where="_handle_verdict_loop pre-fix-cycle",
             )
         # Run one fix cycle. On success, get a new verdict and loop.
         try:
@@ -1747,7 +1923,10 @@ def _run_fix_cycle(
     #     whether review proceeds now or after the human approves it.
     #     Resume dispatches to `_run_fix_cycle_codex_review_step`, which
     #     synchronously runs review + verdict-handling for this cycle.
-    if data.get("approval_mode") == APPROVAL_MODE_STRICT:
+    #     Phase 5D: `autonomous` skips the gate and logs an auditable
+    #     bypass note before continuing into Codex fix-cycle review.
+    approval_mode = data.get("approval_mode")
+    if approval_mode == APPROVAL_MODE_STRICT:
         _fire_strict_gate(
             state_path, data,
             halt_status=HALTED_PRE_CODEX_REVIEW_FIX,
@@ -1762,6 +1941,12 @@ def _run_fix_cycle(
         # Carry the gate exit up through the verdict-loop frame the same
         # way other fix-cycle halts do.
         raise _FixCycleHalt(2)
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        _log_autonomous_bypass(
+            log_path,
+            gate=AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW,
+            where="_run_fix_cycle post-evidence",
+        )
 
     return _run_fix_cycle_codex_review_step(state_path, data, repo_root, log_path)
 
