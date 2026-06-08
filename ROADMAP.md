@@ -365,6 +365,14 @@ Build:
 - token-exhaustion handling rules that classify token or context exhaustion as resumable interruption rather than successful completion
 - continuation-chaining rules so a long task can be resumed across multiple bounded turns after token reset without losing phase or review context
 - bounded resume-prompt construction rules that pull only the relevant task state, evidence, durable memory, and prior checkpoint summary into the next continuation
+- an agent-runtime adapter boundary so future framework-backed execution
+  can be evaluated without replacing the canonical repo-artifact contract
+- an optional experimental LangGraph-backed runtime path that mirrors the
+  existing state machine, halt conditions, and artifact writes while the
+  current local orchestrator remains the default behavior
+- optional LangChain-based support only for prompt construction, memory
+  retrieval, and tool abstraction layers rather than as the primary
+  top-level orchestrator
 - optional context-file support for:
   - API docs
   - design system docs
@@ -380,6 +388,13 @@ Design rules:
 - memory stores distilled durable knowledge, not raw transcript dumps
 - canonical project state remains the repo artifacts such as `TASK.md`, `.agent-loop/phase-plan.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json`
 - memory retrieval must be selective and relevance-based rather than loading the entire memory store into every prompt
+- any framework evaluation must preserve the repo-owned workflow contract
+  first; framework code is an implementation seam, not a replacement for
+  human gates, review ownership, or artifact truth
+- LangGraph is the strongest candidate for explicit state-machine and
+  checkpoint/resume experimentation; LangChain should remain a supporting
+  library for retrieval/prompt/tool layers instead of controlling the
+  loop directly
 - human-reviewed policy changes and repeated operational failures should become durable memory entries
 - missing optional context files or missing memory notes must not break the loop
 - token exhaustion must be treated as an interrupted run state that requires either automatic continuation from a valid checkpoint or an explicit halt, never silent success
@@ -395,6 +410,9 @@ Success:
 - memory does not become a competing source of truth for active task or loop state
 - Claude Code and Codex runs can resume automatically after token-reset interruptions using persisted checkpoints and continuation prompts
 - long implementation or review sessions can be split across multiple continuation hops without losing the active task context
+- the project can evaluate a framework-backed runtime path without losing
+  the current artifact contract, safety model, or default local
+  orchestrator behavior
 - optional context files can be loaded into prompts
 - missing optional files do not break the loop
 - MCP remains future support, not MVP dependency
@@ -562,6 +580,11 @@ Possible additions:
 - combined RAG + MCP operation for future PRD-to-product runs, where
   retrieved knowledge informs planning and live tools provide real
   system context during implementation
+- later evaluation of multi-agent frameworks such as CrewAI, only after
+  durable memory, checkpoint/resume, and adapter boundaries are stable,
+  for cases where explicit delegated roles like planner, implementer,
+  reviewer, or artifact reconciler add value beyond the current
+  Codex/Claude ownership model
 - central-controller / external-workspace mode where this agent system
   targets another folder or repository instead of only operating inside
   its own repo
