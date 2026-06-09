@@ -1479,6 +1479,23 @@ def read_memory_entry(path: Path) -> dict:
                     f"metadata field {field!r}"
                 ),
             )
+    if not payload["phase"] or not payload["sub_phase"] or not payload["source_artifact_path"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory entry {path} has empty required metadata; "
+                f"phase={payload['phase']!r} sub_phase={payload['sub_phase']!r} "
+                f"source_artifact_path={payload['source_artifact_path']!r}"
+            ),
+        )
+    if not isinstance(payload["cycle_count"], int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory entry {path} has non-int cycle_count "
+                f"{payload['cycle_count']!r}"
+            ),
+        )
     if payload["category"] not in MEMORY_CATEGORIES:
         raise HaltError(
             "halted_input_missing",
@@ -1522,6 +1539,18 @@ def list_memory_entries(
     root = _memory_dir(repo_root)
     if not root.is_dir():
         return []
+    unknown_dirs = sorted(
+        p.name for p in root.iterdir() if p.is_dir() and p.name not in MEMORY_CATEGORIES
+    )
+    if unknown_dirs:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "durable memory directory contains unknown categories "
+                f"{unknown_dirs!r}; the Phase 6A contract pins exactly "
+                f"{sorted(MEMORY_CATEGORIES)}"
+            ),
+        )
     if category is not None:
         cat_dir = root / category
         if not cat_dir.is_dir():

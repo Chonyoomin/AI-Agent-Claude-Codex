@@ -275,6 +275,42 @@ class ReadEntrySchemaTests(_MemoryTestCase):
         self.assertEqual(cm.exception.status, "halted_input_missing")
         self.assertIn("signal_version", cm.exception.reason)
 
+    def test_read_refuses_empty_required_metadata_value(self) -> None:
+        payload = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_DECISION,
+            "phase": "",
+            "sub_phase": "sp",
+            "cycle_count": 0,
+            "source_artifact_path": "human",
+            "created_at": "2026-06-08T00:00:00Z",
+            "supersedes": None,
+            "body": "x",
+        }
+        path = self._bad_entry(payload)
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_memory_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("empty required metadata", cm.exception.reason)
+
+    def test_read_refuses_non_int_cycle_count(self) -> None:
+        payload = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_DECISION,
+            "phase": "p",
+            "sub_phase": "sp",
+            "cycle_count": "zero",
+            "source_artifact_path": "human",
+            "created_at": "2026-06-08T00:00:00Z",
+            "supersedes": None,
+            "body": "x",
+        }
+        path = self._bad_entry(payload)
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_memory_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("cycle_count", cm.exception.reason)
+
     def test_read_refuses_unknown_category_on_disk(self) -> None:
         payload = {
             "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
@@ -352,6 +388,13 @@ class ListEntriesTests(_MemoryTestCase):
         self.assertEqual(len(failures), 2)
         self.assertTrue(all(p.parent.name == "decision" for p in decisions))
         self.assertTrue(all(p.parent.name == "failure" for p in failures))
+
+    def test_refuses_unknown_category_directory_on_disk(self) -> None:
+        (self.memory_dir / "bogus").mkdir(parents=True, exist_ok=True)
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.list_memory_entries(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("unknown categories", cm.exception.reason)
 
 
 class AuditNoteTests(_MemoryTestCase):
