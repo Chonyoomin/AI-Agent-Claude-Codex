@@ -402,6 +402,59 @@ class ReadCheckpointSchemaTests(_CheckpointTestCase):
         self.assertEqual(cm.exception.status, "halted_input_missing")
         self.assertIn("continuation_budget", cm.exception.reason)
 
+    # Read-side value-shape checks that mirror the write-side guards.
+    # These cover the gap where a hand-edited or corrupted artifact could
+    # otherwise bypass the checkpoint contract on read.
+
+    def test_read_refuses_empty_task(self) -> None:
+        path = self._drop_checkpoint(self._valid_body(task=""))
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_checkpoint_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("task", cm.exception.reason)
+        self.assertIn("non-empty string", cm.exception.reason)
+
+    def test_read_refuses_non_string_task(self) -> None:
+        path = self._drop_checkpoint(self._valid_body(task=123))
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_checkpoint_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("task", cm.exception.reason)
+
+    def test_read_refuses_empty_status(self) -> None:
+        path = self._drop_checkpoint(self._valid_body(status=""))
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_checkpoint_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("status", cm.exception.reason)
+
+    def test_read_refuses_empty_approval_mode(self) -> None:
+        path = self._drop_checkpoint(self._valid_body(approval_mode=""))
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_checkpoint_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("approval_mode", cm.exception.reason)
+
+    def test_read_refuses_empty_string_awaiting_human_for(self) -> None:
+        path = self._drop_checkpoint(self._valid_body(awaiting_human_for=""))
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_checkpoint_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("awaiting_human_for", cm.exception.reason)
+
+    def test_read_refuses_non_string_awaiting_human_for(self) -> None:
+        path = self._drop_checkpoint(self._valid_body(awaiting_human_for=42))
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_checkpoint_entry(path)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("awaiting_human_for", cm.exception.reason)
+
+    def test_read_accepts_none_awaiting_human_for(self) -> None:
+        # The None case stays valid on read (mirrors write-side).
+        path = self._drop_checkpoint(self._valid_body(awaiting_human_for=None))
+        result = agent_loop.read_checkpoint_entry(path)
+        self.assertIsNone(result["awaiting_human_for"])
+
 
 class WriteBoundaryEnforcementTests(_CheckpointTestCase):
 

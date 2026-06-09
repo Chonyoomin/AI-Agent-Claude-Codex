@@ -2035,6 +2035,30 @@ def read_checkpoint_entry(path: Path) -> dict:
                 f"{CHECKPOINT_SIGNAL_VERSION!r})"
             ),
         )
+    # Per-field shape checks. These mirror the write-side guards in
+    # write_checkpoint_entry so a hand-edited or corrupted artifact
+    # cannot bypass the checkpoint contract on read.
+    for required_non_empty in ("task", "status", "approval_mode"):
+        value = body[required_non_empty]
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"checkpoint read refused: entry {path} body field "
+                    f"{required_non_empty!r} must be a non-empty string; "
+                    f"got {type(value).__name__}={value!r}"
+                ),
+            )
+    awaiting = body["awaiting_human_for"]
+    if awaiting is not None and (not isinstance(awaiting, str) or not awaiting):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} body field "
+                f"'awaiting_human_for' must be None or a non-empty string; "
+                f"got {type(awaiting).__name__}={awaiting!r}"
+            ),
+        )
     if body["active_prompt_path"] not in CHECKPOINT_ACTIVE_PROMPT_PATHS:
         raise HaltError(
             "halted_input_missing",
