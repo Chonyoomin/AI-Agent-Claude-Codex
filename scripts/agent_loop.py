@@ -1582,6 +1582,12 @@ def list_memory_entries(
 
 MEMORY_RETRIEVAL_DEFAULT_LIMIT = 8
 MEMORY_RETRIEVAL_MAX_LIMIT = 32
+# Structural marker applied to every retrieved entry. Per the Phase 6A
+# contract, returned memory is advisory-only and must not be fed back
+# into canonical workflow / state fields (verdicts, halt statuses,
+# `awaiting_human_for`). The marker lets a caller assert "is this
+# advisory?" structurally rather than relying on documentation.
+MEMORY_RETRIEVAL_ADVISORY_FIELD = "advisory_only"
 
 
 def _validate_retrieval_limit(limit: int) -> None:
@@ -1617,22 +1623,21 @@ def _is_entry_in_active_scope(
     *,
     phase: str,
     sub_phase: Optional[str],
-    task: Optional[str],
 ) -> bool:
     """An entry is in the active scope when its `phase` matches and any
-    optionally supplied `sub_phase` / `task` filter also matches.
+    optionally supplied `sub_phase` filter also matches.
 
-    Phase is required; sub_phase and task narrow the scope further when
-    the caller provides them. `task` is matched against the entry's
-    `source_artifact_path` exactly (per Phase 6A the entry records which
-    canonical artifact it was derived from; matching on that path is the
-    deterministic, auditable way to tie an entry to a task).
+    Phase is required; sub_phase narrows the scope further when the
+    caller provides it. The canonical state model assigns one active
+    task per active (phase, sub_phase) pair, so task-level scoping is
+    implicit in the (phase, sub_phase) match. A 6B entry does not carry
+    a task field of its own; the `source_artifact_path` it does carry
+    is the canonical artifact the entry was derived from, not the
+    active task string.
     """
     if payload["phase"] != phase:
         return False
     if sub_phase is not None and payload["sub_phase"] != sub_phase:
-        return False
-    if task is not None and payload["source_artifact_path"] != task:
         return False
     return True
 
@@ -1642,13 +1647,12 @@ def retrieve_memory_entries(
     *,
     phase: str,
     sub_phase: Optional[str] = None,
-    task: Optional[str] = None,
     categories: Optional[Iterable[str]] = None,
     limit: int = MEMORY_RETRIEVAL_DEFAULT_LIMIT,
     log_path: Optional[Path] = None,
 ) -> list:
     """Return a bounded, sorted list of durable memory entries relevant
-    to the active phase / sub_phase / task scope.
+    to the active phase / sub_phase scope.
 
     Phase 6C scope: pure retrieval primitive. The returned list is a
     list of validated payload dicts (newest-first by `created_at`),
@@ -1656,11 +1660,20 @@ def retrieve_memory_entries(
     missing-field, unknown-category, or unrecognized-`signal_version`
     entry on disk causes the entire retrieval call to halt fail-closed.
 
-    Per the Phase 6A contract, retrieval is advisory: callers must not
-    feed the returned entries back into canonical workflow / state
-    fields (verdicts, halt statuses, `awaiting_human_for`). The caller
-    is also responsible for marking retrieved text as advisory in any
-    future prompt construction.
+    Each returned dict carries `MEMORY_RETRIEVAL_ADVISORY_FIELD` set to
+    `True` as a structural marker. Per the Phase 6A contract, returned
+    memory is advisory-only: callers must not feed the returned entries
+    back into canonical workflow / state fields (verdicts, halt
+    statuses, `awaiting_human_for`). The structural marker lets a
+    consumer assert advisory-only status rather than relying on
+    docstrings.
+
+    Active-task scoping is implicit in the (phase, sub_phase) match
+    because the canonical state model assigns one active task per
+    active (phase, sub_phase) pair. The 6B storage schema does not
+    carry a task field of its own; this slice intentionally narrows
+    retrieval to phase / sub_phase / category filters rather than
+    inventing an entry-side task field outside the 6B schema.
 
     Args:
       repo_root: workspace root that contains `.agent-loop/memory/`.
@@ -1669,8 +1682,6 @@ def retrieve_memory_entries(
       sub_phase: optional narrowing filter against the entry's
         `sub_phase`. If omitted, all sub_phases under the active phase
         are eligible.
-      task: optional narrowing filter against the entry's
-        `source_artifact_path`. If omitted, no task filter is applied.
       categories: optional iterable that restricts results to one or
         more of the five Phase 6A categories. An out-of-vocabulary
         category in the filter is refused (the same five-category set
@@ -1682,7 +1693,8 @@ def retrieve_memory_entries(
         scope / category filter / limit / matched / returned counts.
 
     Returns:
-      A new list of payload dicts (newest-first). The list is at most
+      A new list of payload dicts (newest-first) each carrying
+      `MEMORY_RETRIEVAL_ADVISORY_FIELD = True`. The list is at most
       `limit` long. Returns an empty list when the memory directory is
       absent or when no entry matches the active scope.
     """
@@ -1723,10 +1735,15 @@ def retrieve_memory_entries(
         ):
             continue
         if not _is_entry_in_active_scope(
-            payload, phase=phase, sub_phase=sub_phase, task=task,
+            payload, phase=phase, sub_phase=sub_phase,
         ):
             continue
-        matched.append(payload)
+        # Wrap with a structural advisory marker. read_memory_entry
+        # already returns a fresh dict per call (json.loads), so the
+        # copy below is defensive and pins the boundary explicitly.
+        entry = dict(payload)
+        entry[MEMORY_RETRIEVAL_ADVISORY_FIELD] = True
+        matched.append(entry)
 
     matched.sort(key=lambda e: e.get("created_at", ""), reverse=True)
     bounded = matched[:limit]
@@ -1739,7 +1756,7 @@ def retrieve_memory_entries(
             log_path,
             (
                 f"memory retrieval: phase={phase!r} sub_phase={sub_phase!r} "
-                f"task={task!r} categories={cats_str} limit={limit} "
+                f"categories={cats_str} limit={limit} "
                 f"matched={len(matched)} returned={len(bounded)}"
             ),
         )

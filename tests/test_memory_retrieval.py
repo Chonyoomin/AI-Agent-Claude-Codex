@@ -1,10 +1,12 @@
 """Focused tests for the Phase 6C selective memory retrieval layer.
 
 Scope of this suite (Phase 6C, narrow):
-- relevant-entry filtering: an active phase / sub_phase / task scope
-  excludes entries whose metadata does not match, and a category
-  filter restricts results to one or more of the five Phase 6A
-  categories
+- relevant-entry filtering: an active phase / sub_phase scope excludes
+  entries whose metadata does not match, and a category filter
+  restricts results to one or more of the five Phase 6A categories.
+  Task-level scoping is implicit in the (phase, sub_phase) match
+  because the canonical state model assigns one active task per
+  active (phase, sub_phase) pair.
 - bounded result limits: retrieval enforces a positive limit, a
   default limit, and a hard upper bound, refusing zero / negative /
   non-int / over-bound limits fail-closed
@@ -13,6 +15,10 @@ Scope of this suite (Phase 6C, narrow):
   retrieval call to halt rather than silently dropping the entry
 - unknown-category refusal: an out-of-vocabulary category in the
   caller-supplied filter is refused at the retrieval boundary
+- advisory-only marker: every returned payload carries the structural
+  `MEMORY_RETRIEVAL_ADVISORY_FIELD` set to True so a consumer can
+  assert advisory-only status structurally rather than relying on
+  docstrings
 - canonical-precedence preservation: retrieval never writes to disk,
   never mutates any canonical workflow / state artifact, and returns
   entries marked advisory-only by contract (no side-effect on
@@ -45,7 +51,6 @@ _ACTIVE_PHASE = "Phase 6 - Durable Memory and Optional Context Layer"
 _ACTIVE_SUB_PHASE = "Phase 6C - Selective Memory Retrieval Initial Slice"
 _OTHER_SUB_PHASE = "Phase 6B - Structured Durable Memory Storage"
 _ACTIVE_TASK_PATH = ".agent-loop/current-task.md"
-_OTHER_TASK_PATH = "human"
 
 
 class _RetrievalTestCase(unittest.TestCase):
@@ -112,20 +117,6 @@ class RelevantEntryFilteringTests(_RetrievalTestCase):
         self.assertEqual(filtered[0]["body"], "active sub")
         self.assertEqual(filtered[0]["sub_phase"], _ACTIVE_SUB_PHASE)
 
-    def test_task_filter_matches_source_artifact_path_exact(self) -> None:
-        self._write_one(
-            source_artifact_path=_ACTIVE_TASK_PATH, body="from current task",
-        )
-        self._write_one(
-            source_artifact_path=_OTHER_TASK_PATH, body="from human",
-        )
-        filtered = self._retrieve(task=_ACTIVE_TASK_PATH)
-        self.assertEqual(len(filtered), 1)
-        self.assertEqual(filtered[0]["body"], "from current task")
-        self.assertEqual(
-            filtered[0]["source_artifact_path"], _ACTIVE_TASK_PATH,
-        )
-
     def test_category_filter_restricts_results(self) -> None:
         self._write_one(
             category=agent_loop.MEMORY_CATEGORY_DECISION, body="decision body",
@@ -154,35 +145,27 @@ class RelevantEntryFilteringTests(_RetrievalTestCase):
             },
         )
 
-    def test_combined_phase_sub_phase_task_and_category(self) -> None:
-        # Only one entry satisfies every dimension.
+    def test_combined_phase_sub_phase_and_category(self) -> None:
+        # Only one entry satisfies every dimension. Task-level scoping
+        # is implicit in the (phase, sub_phase) match per the 6C
+        # contract narrowing.
         self._write_one(
             category=agent_loop.MEMORY_CATEGORY_DECISION,
             sub_phase=_ACTIVE_SUB_PHASE,
-            source_artifact_path=_ACTIVE_TASK_PATH,
             body="winner",
         )
         self._write_one(
             category=agent_loop.MEMORY_CATEGORY_DECISION,
             sub_phase=_OTHER_SUB_PHASE,
-            source_artifact_path=_ACTIVE_TASK_PATH,
             body="wrong sub",
-        )
-        self._write_one(
-            category=agent_loop.MEMORY_CATEGORY_DECISION,
-            sub_phase=_ACTIVE_SUB_PHASE,
-            source_artifact_path=_OTHER_TASK_PATH,
-            body="wrong task",
         )
         self._write_one(
             category=agent_loop.MEMORY_CATEGORY_FAILURE,
             sub_phase=_ACTIVE_SUB_PHASE,
-            source_artifact_path=_ACTIVE_TASK_PATH,
             body="wrong category",
         )
         result = self._retrieve(
             sub_phase=_ACTIVE_SUB_PHASE,
-            task=_ACTIVE_TASK_PATH,
             categories=[agent_loop.MEMORY_CATEGORY_DECISION],
         )
         self.assertEqual(len(result), 1)
@@ -453,6 +436,9 @@ class AuditNoteTests(_RetrievalTestCase):
         self.assertIn("matched=2", log_text)
         self.assertIn("returned=2", log_text)
         self.assertIn(agent_loop.MEMORY_CATEGORY_DECISION, log_text)
+        # Task scoping is implicit in (phase, sub_phase); the audit note
+        # must not advertise a task= field.
+        self.assertNotIn("task=", log_text)
 
     def test_no_log_path_means_no_log_file(self) -> None:
         # An absent log_path must not create the log file as a side
@@ -460,6 +446,56 @@ class AuditNoteTests(_RetrievalTestCase):
         self._write_one(body="any")
         self._retrieve()
         self.assertFalse(self.log_path.is_file())
+
+
+class AdvisoryMarkerTests(_RetrievalTestCase):
+    """Every returned payload carries the structural advisory-only
+    marker so a consumer can assert advisory status without relying on
+    docstrings. Per the Phase 6A contract, retrieved memory must not
+    feed back into canonical workflow / state fields.
+    """
+
+    def test_returned_entry_carries_advisory_marker(self) -> None:
+        self._write_one(body="any")
+        result = self._retrieve()
+        self.assertEqual(len(result), 1)
+        entry = result[0]
+        self.assertIn(agent_loop.MEMORY_RETRIEVAL_ADVISORY_FIELD, entry)
+        self.assertIs(
+            entry[agent_loop.MEMORY_RETRIEVAL_ADVISORY_FIELD], True,
+        )
+
+    def test_advisory_marker_present_on_every_returned_entry(self) -> None:
+        for cat in (
+            agent_loop.MEMORY_CATEGORY_DECISION,
+            agent_loop.MEMORY_CATEGORY_FAILURE,
+            agent_loop.MEMORY_CATEGORY_PREFERENCE,
+            agent_loop.MEMORY_CATEGORY_SUMMARY,
+            agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+        ):
+            self._write_one(category=cat, body=f"body-{cat}")
+        result = self._retrieve(limit=agent_loop.MEMORY_RETRIEVAL_MAX_LIMIT)
+        self.assertEqual(len(result), 5)
+        for entry in result:
+            with self.subTest(category=entry["category"]):
+                self.assertIs(
+                    entry[agent_loop.MEMORY_RETRIEVAL_ADVISORY_FIELD], True,
+                )
+
+    def test_advisory_marker_is_not_written_to_disk(self) -> None:
+        # The structural marker is added by the retrieval boundary; the
+        # on-disk entry must never carry it. This pins that retrieval
+        # does not leak back into storage.
+        path = self._write_one(body="boundary check")
+        raw = agent_loop.read_memory_entry(path)
+        self.assertNotIn(
+            agent_loop.MEMORY_RETRIEVAL_ADVISORY_FIELD, raw,
+        )
+        # And retrieval should not have mutated the file as a side
+        # effect either.
+        before = path.read_bytes()
+        self._retrieve()
+        self.assertEqual(path.read_bytes(), before)
 
 
 class RequiredPhaseTests(_RetrievalTestCase):
