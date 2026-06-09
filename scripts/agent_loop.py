@@ -1571,6 +1571,533 @@ def list_memory_entries(
     return out
 
 
+# Phase 6C - Selective Memory Retrieval Initial Slice.
+#
+# This block sits directly on top of the Phase 6B storage primitives. It
+# is a pure read-side enrichment surface: it never writes to disk, never
+# touches any canonical workflow / state artifact, and never feeds
+# memory back into a verdict, halt status, or `awaiting_human_for`. Per
+# the Phase 6A contract, returned entries are advisory only and the
+# caller must treat them as such when constructing future prompts.
+
+MEMORY_RETRIEVAL_DEFAULT_LIMIT = 8
+MEMORY_RETRIEVAL_MAX_LIMIT = 32
+# Structural marker applied to every retrieved entry. Per the Phase 6A
+# contract, returned memory is advisory-only and must not be fed back
+# into canonical workflow / state fields (verdicts, halt statuses,
+# `awaiting_human_for`). The marker lets a caller assert "is this
+# advisory?" structurally rather than relying on documentation.
+MEMORY_RETRIEVAL_ADVISORY_FIELD = "advisory_only"
+
+
+def _validate_retrieval_limit(limit: int) -> None:
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory retrieval limit must be an int; got "
+                f"{type(limit).__name__}={limit!r}"
+            ),
+        )
+    if limit <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory retrieval limit must be > 0; got {limit}. "
+                f"The Phase 6A contract requires a bounded, positive result set"
+            ),
+        )
+    if limit > MEMORY_RETRIEVAL_MAX_LIMIT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory retrieval limit {limit} exceeds the "
+                f"hard upper bound {MEMORY_RETRIEVAL_MAX_LIMIT}; the "
+                f"Phase 6A contract pins retrieval as bounded by design"
+            ),
+        )
+
+
+def _is_entry_in_active_scope(
+    payload: dict,
+    *,
+    phase: str,
+    sub_phase: Optional[str],
+) -> bool:
+    """An entry is in the active scope when its `phase` matches and any
+    optionally supplied `sub_phase` filter also matches.
+
+    Phase is required; sub_phase narrows the scope further when the
+    caller provides it. The canonical state model assigns one active
+    task per active (phase, sub_phase) pair, so task-level scoping is
+    implicit in the (phase, sub_phase) match. A 6B entry does not carry
+    a task field of its own; the `source_artifact_path` it does carry
+    is the canonical artifact the entry was derived from, not the
+    active task string.
+    """
+    if payload["phase"] != phase:
+        return False
+    if sub_phase is not None and payload["sub_phase"] != sub_phase:
+        return False
+    return True
+
+
+def retrieve_memory_entries(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: Optional[str] = None,
+    categories: Optional[Iterable[str]] = None,
+    limit: int = MEMORY_RETRIEVAL_DEFAULT_LIMIT,
+    log_path: Optional[Path] = None,
+) -> list:
+    """Return a bounded, sorted list of durable memory entries relevant
+    to the active phase / sub_phase scope.
+
+    Phase 6C scope: pure retrieval primitive. The returned list is a
+    list of validated payload dicts (newest-first by `created_at`),
+    each one re-validated through `read_memory_entry` so a malformed,
+    missing-field, unknown-category, or unrecognized-`signal_version`
+    entry on disk causes the entire retrieval call to halt fail-closed.
+
+    Each returned dict carries `MEMORY_RETRIEVAL_ADVISORY_FIELD` set to
+    `True` as a structural marker. Per the Phase 6A contract, returned
+    memory is advisory-only: callers must not feed the returned entries
+    back into canonical workflow / state fields (verdicts, halt
+    statuses, `awaiting_human_for`). The structural marker lets a
+    consumer assert advisory-only status rather than relying on
+    docstrings.
+
+    Active-task scoping is implicit in the (phase, sub_phase) match
+    because the canonical state model assigns one active task per
+    active (phase, sub_phase) pair. The 6B storage schema does not
+    carry a task field of its own; this slice intentionally narrows
+    retrieval to phase / sub_phase / category filters rather than
+    inventing an entry-side task field outside the 6B schema.
+
+    Args:
+      repo_root: workspace root that contains `.agent-loop/memory/`.
+      phase: required active phase string. An entry whose `phase` does
+        not match is excluded.
+      sub_phase: optional narrowing filter against the entry's
+        `sub_phase`. If omitted, all sub_phases under the active phase
+        are eligible.
+      categories: optional iterable that restricts results to one or
+        more of the five Phase 6A categories. An out-of-vocabulary
+        category in the filter is refused (the same five-category set
+        the writer pins is the only valid input).
+      limit: hard upper bound on the returned list length. Must be a
+        positive int and must not exceed MEMORY_RETRIEVAL_MAX_LIMIT.
+      log_path: optional orchestrator-log path; when supplied a single
+        `memory retrieval:` audit note is appended describing the
+        scope / category filter / limit / matched / returned counts.
+
+    Returns:
+      A new list of payload dicts (newest-first) each carrying
+      `MEMORY_RETRIEVAL_ADVISORY_FIELD = True`. The list is at most
+      `limit` long. Returns an empty list when the memory directory is
+      absent or when no entry matches the active scope.
+    """
+    if not phase:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "durable memory retrieval requires a non-empty active phase "
+                "string"
+            ),
+        )
+    _validate_retrieval_limit(limit)
+
+    category_filter: Optional[set] = None
+    if categories is not None:
+        category_filter = set()
+        for c in categories:
+            if c not in MEMORY_CATEGORIES:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"durable memory retrieval category {c!r} is not "
+                        f"one of {sorted(MEMORY_CATEGORIES)}"
+                    ),
+                )
+            category_filter.add(c)
+
+    # list_memory_entries already refuses unknown on-disk category
+    # subdirectories and returns [] when the memory directory is absent;
+    # both of those are exactly the right Phase 6A behavior here.
+    paths = list_memory_entries(repo_root)
+    matched: list = []
+    for p in paths:
+        payload = read_memory_entry(p)
+        if (
+            category_filter is not None
+            and payload["category"] not in category_filter
+        ):
+            continue
+        if not _is_entry_in_active_scope(
+            payload, phase=phase, sub_phase=sub_phase,
+        ):
+            continue
+        # Wrap with a structural advisory marker. read_memory_entry
+        # already returns a fresh dict per call (json.loads), so the
+        # copy below is defensive and pins the boundary explicitly.
+        entry = dict(payload)
+        entry[MEMORY_RETRIEVAL_ADVISORY_FIELD] = True
+        matched.append(entry)
+
+    matched.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    bounded = matched[:limit]
+
+    if log_path is not None:
+        cats_str = (
+            sorted(category_filter) if category_filter is not None else None
+        )
+        _log_note(
+            log_path,
+            (
+                f"memory retrieval: phase={phase!r} sub_phase={sub_phase!r} "
+                f"categories={cats_str} limit={limit} "
+                f"matched={len(matched)} returned={len(bounded)}"
+            ),
+        )
+    return bounded
+
+
+# Phase 6D - Checkpoint Artifact Storage Initial Slice.
+#
+# Checkpoint artifacts capture the structured continuation state of an
+# interrupted Claude or Codex run per the Phase 6A "Checkpoint and
+# resume behavior" subsection. They are a specialization of the Phase 6B
+# memory storage layer (category="checkpoint") with additional required
+# fields encoded in the entry body.
+#
+# Scope of this slice: storage only. Writing and read-side schema
+# validation are implemented. No orchestrator runtime path consumes a
+# checkpoint on resume in this slice, and no token-exhaustion
+# continuation chaining is enabled. Those are deferred to later 6x
+# slices.
+
+CHECKPOINT_SIGNAL_VERSION = "phase-6d-v1"
+
+CHECKPOINT_ACTIVE_PROMPT_PATHS = frozenset({
+    ".agent-loop/claude-prompt.md",
+    ".agent-loop/fix-prompt.md",
+})
+
+CHECKPOINT_BASE_SUSPENSION_REASONS = frozenset({
+    "token_exhaustion",
+    "human_interrupt",
+    "process_killed",
+    "orchestrator_restart",
+})
+
+# Phase 5C strict-gate halt statuses that the Phase 6A contract names as
+# valid checkpoint suspension reasons. Adding a new strict-gate halt in
+# a later slice requires extending this set in lockstep.
+CHECKPOINT_STRICT_GATE_HALT_REASONS = frozenset({
+    "halted_awaiting_human_pre_claude_prompt",
+    "halted_awaiting_human_pre_fix_prompt",
+    "halted_awaiting_human_pre_codex_review_normal",
+    "halted_awaiting_human_pre_codex_review_fix",
+})
+
+CHECKPOINT_ALLOWED_SUSPENSION_REASONS = (
+    CHECKPOINT_BASE_SUSPENSION_REASONS | CHECKPOINT_STRICT_GATE_HALT_REASONS
+)
+
+# Checkpoint-specific required fields encoded in the memory entry body.
+# These are ADDITIONAL to the seven Phase 6A required memory metadata
+# fields enforced by write_memory_entry / read_memory_entry.
+CHECKPOINT_REQUIRED_BODY_FIELDS = (
+    "checkpoint_signal_version",
+    "task",
+    "status",
+    "approval_mode",
+    "awaiting_human_for",
+    "active_prompt_path",
+    "suspension_reason",
+    "continuation_budget",
+)
+
+
+def _validate_continuation_budget(value) -> None:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint continuation_budget must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint continuation_budget must be >= 0; got {value}. "
+                f"The Phase 6A contract requires a bounded continuation "
+                f"budget; a value of 0 means no further continuation is "
+                f"permitted without explicit human approval"
+            ),
+        )
+
+
+def write_checkpoint_entry(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: str,
+    task: str,
+    cycle_count: int,
+    status: str,
+    approval_mode: str,
+    awaiting_human_for: Optional[str],
+    active_prompt_path: str,
+    suspension_reason: str,
+    continuation_budget: int,
+    source_artifact_path: str,
+    supersedes: Optional[str] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Write one structured checkpoint artifact under
+    `.agent-loop/memory/checkpoint/`.
+
+    Per the Phase 6A contract, a checkpoint memory entry must capture
+    the cycle context being suspended, the active prompt path, the
+    reason for suspension, and a bounded continuation budget. This
+    function wraps the existing Phase 6B `write_memory_entry` primitive
+    with category=`checkpoint`; the checkpoint-specific fields are
+    encoded in the memory entry body as a JSON object.
+
+    Refuses fail-closed (`halted_input_missing`) on:
+      - empty `task` / `status` / `approval_mode`
+      - `awaiting_human_for` that is not None and not a non-empty string
+      - `active_prompt_path` not in CHECKPOINT_ACTIVE_PROMPT_PATHS
+      - `suspension_reason` not in CHECKPOINT_ALLOWED_SUSPENSION_REASONS
+      - `continuation_budget` not a non-negative int (bool refused)
+
+    The Phase 6B write-boundary scope guard is inherited via the
+    underlying `write_memory_entry` call, so a checkpoint write can
+    never mutate any canonical workflow / state artifact.
+
+    Phase 6D scope: storage primitive only. No runtime path in the
+    orchestrator consumes the checkpoint in this slice; resume-path
+    consumption and token-exhaustion continuation chaining are deferred
+    to later 6x slices.
+    """
+    if not task:
+        raise HaltError(
+            "halted_input_missing",
+            "checkpoint write refused: task is required by the Phase 6A "
+            "checkpoint contract",
+        )
+    if not status:
+        raise HaltError(
+            "halted_input_missing",
+            "checkpoint write refused: status is required by the Phase 6A "
+            "checkpoint contract",
+        )
+    if not approval_mode:
+        raise HaltError(
+            "halted_input_missing",
+            "checkpoint write refused: approval_mode is required by the "
+            "Phase 6A checkpoint contract",
+        )
+    if awaiting_human_for is not None:
+        if not isinstance(awaiting_human_for, str) or not awaiting_human_for:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"checkpoint awaiting_human_for must be None or a "
+                    f"non-empty string; got "
+                    f"{type(awaiting_human_for).__name__}="
+                    f"{awaiting_human_for!r}"
+                ),
+            )
+    if active_prompt_path not in CHECKPOINT_ACTIVE_PROMPT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint active_prompt_path {active_prompt_path!r} "
+                f"is not one of {sorted(CHECKPOINT_ACTIVE_PROMPT_PATHS)}; "
+                f"the Phase 6A contract pins these as the only valid "
+                f"active prompt paths"
+            ),
+        )
+    if suspension_reason not in CHECKPOINT_ALLOWED_SUSPENSION_REASONS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint suspension_reason {suspension_reason!r} is "
+                f"not one of {sorted(CHECKPOINT_ALLOWED_SUSPENSION_REASONS)}"
+            ),
+        )
+    _validate_continuation_budget(continuation_budget)
+
+    body_payload = {
+        "checkpoint_signal_version": CHECKPOINT_SIGNAL_VERSION,
+        "task": task,
+        "status": status,
+        "approval_mode": approval_mode,
+        "awaiting_human_for": awaiting_human_for,
+        "active_prompt_path": active_prompt_path,
+        "suspension_reason": suspension_reason,
+        "continuation_budget": continuation_budget,
+    }
+    body = json.dumps(body_payload, indent=2)
+
+    return write_memory_entry(
+        repo_root,
+        category=MEMORY_CATEGORY_CHECKPOINT,
+        phase=phase,
+        sub_phase=sub_phase,
+        cycle_count=cycle_count,
+        source_artifact_path=source_artifact_path,
+        body=body,
+        supersedes=supersedes,
+        log_path=log_path,
+    )
+
+
+def read_checkpoint_entry(path: Path) -> dict:
+    """Parse and validate a checkpoint artifact from disk.
+
+    Re-runs the Phase 6B `read_memory_entry` schema validation first
+    (so missing memory-metadata, unknown category, and unrecognized
+    memory `signal_version` are caught), then refuses fail-closed when:
+      - the entry's `category` is not `checkpoint`
+      - the entry has no `body`
+      - the body is not valid JSON
+      - the body is not a JSON object
+      - the body is missing any field in CHECKPOINT_REQUIRED_BODY_FIELDS
+      - the body's `checkpoint_signal_version` is not the current
+        recognized version (a "stale" checkpoint schema)
+      - `active_prompt_path` is not in CHECKPOINT_ACTIVE_PROMPT_PATHS
+      - `suspension_reason` is not in CHECKPOINT_ALLOWED_SUSPENSION_REASONS
+      - `continuation_budget` is not a non-negative int
+
+    Returns a flat dict combining the Phase 6B memory-level metadata
+    and the checkpoint-specific body fields. The two field sets do not
+    overlap.
+
+    Phase 6D scope: schema validation only. This function does not
+    verify staleness against the current `loop-state.json` cycle
+    context; that comparison belongs to a later resume-path slice that
+    actually consumes the checkpoint.
+    """
+    payload = read_memory_entry(path)
+    if payload["category"] != MEMORY_CATEGORY_CHECKPOINT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} declares category "
+                f"{payload['category']!r} which is not "
+                f"{MEMORY_CATEGORY_CHECKPOINT!r}"
+            ),
+        )
+    body_str = payload.get("body")
+    if not body_str:
+        raise HaltError(
+            "halted_input_missing",
+            f"checkpoint read refused: entry {path} has no body",
+        )
+    try:
+        body = json.loads(body_str)
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            f"checkpoint read refused: entry {path} body is not valid JSON: {exc}",
+        )
+    if not isinstance(body, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} body top-level "
+                f"value must be a JSON object; got {type(body).__name__}"
+            ),
+        )
+    for field in CHECKPOINT_REQUIRED_BODY_FIELDS:
+        if field not in body:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"checkpoint read refused: entry {path} body missing "
+                    f"required field {field!r}"
+                ),
+            )
+    if body["checkpoint_signal_version"] != CHECKPOINT_SIGNAL_VERSION:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} body "
+                f"checkpoint_signal_version "
+                f"{body['checkpoint_signal_version']!r} is not recognized "
+                f"by this orchestrator (expected "
+                f"{CHECKPOINT_SIGNAL_VERSION!r})"
+            ),
+        )
+    # Per-field shape checks. These mirror the write-side guards in
+    # write_checkpoint_entry so a hand-edited or corrupted artifact
+    # cannot bypass the checkpoint contract on read.
+    for required_non_empty in ("task", "status", "approval_mode"):
+        value = body[required_non_empty]
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"checkpoint read refused: entry {path} body field "
+                    f"{required_non_empty!r} must be a non-empty string; "
+                    f"got {type(value).__name__}={value!r}"
+                ),
+            )
+    awaiting = body["awaiting_human_for"]
+    if awaiting is not None and (not isinstance(awaiting, str) or not awaiting):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} body field "
+                f"'awaiting_human_for' must be None or a non-empty string; "
+                f"got {type(awaiting).__name__}={awaiting!r}"
+            ),
+        )
+    if body["active_prompt_path"] not in CHECKPOINT_ACTIVE_PROMPT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} body "
+                f"active_prompt_path {body['active_prompt_path']!r} is "
+                f"not one of {sorted(CHECKPOINT_ACTIVE_PROMPT_PATHS)}"
+            ),
+        )
+    if body["suspension_reason"] not in CHECKPOINT_ALLOWED_SUSPENSION_REASONS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"checkpoint read refused: entry {path} body "
+                f"suspension_reason {body['suspension_reason']!r} is "
+                f"not one of "
+                f"{sorted(CHECKPOINT_ALLOWED_SUSPENSION_REASONS)}"
+            ),
+        )
+    _validate_continuation_budget(body["continuation_budget"])
+
+    result = dict(payload)
+    result.update(body)
+    return result
+
+
+def list_checkpoint_entries(repo_root: Path) -> list:
+    """Return the sorted list of checkpoint artifact `Path`s under
+    `.agent-loop/memory/checkpoint/`.
+
+    Returns an empty list when the checkpoint subdirectory is absent
+    (per the Phase 6A "missing memory layer must not block a cycle"
+    rule).
+    """
+    return list_memory_entries(
+        repo_root, category=MEMORY_CATEGORY_CHECKPOINT,
+    )
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
