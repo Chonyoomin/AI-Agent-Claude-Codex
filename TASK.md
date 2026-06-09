@@ -28,7 +28,7 @@ Phase 6B (Structured Durable Memory Storage) is closed after Codex review approv
 
 ## Active Task
 
-Implement the Phase 6 selective memory retrieval foundation in code. This slice should read durable memory entries from `.agent-loop/memory/`, validate them against the Phase 6A contract and 6B storage schema, select only relevant bounded subsets for the active phase/task, and expose retrieval helpers that can enrich prompt construction without enabling checkpoint-consumption or token-exhaustion continuation behavior yet.
+Implement the Phase 6 selective memory retrieval foundation in code. This slice should read durable memory entries from `.agent-loop/memory/`, validate them against the Phase 6A contract and 6B storage schema, select only relevant bounded subsets for the active phase / sub-phase scope, and expose retrieval helpers that can enrich prompt construction without enabling checkpoint-consumption or token-exhaustion continuation behavior yet.
 
 ## Phase Outcome Required Now
 
@@ -36,7 +36,7 @@ Implement the Phase 6 selective memory retrieval foundation in code. This slice 
 - `.agent-loop/phase-plan.md` records Phase 6B as closed history and contains a `## Phase 6C - Selective Memory Retrieval Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
 - the implementation adds a selective memory retrieval surface on top of the shipped `.agent-loop/memory/` storage layer
 - retrieval validates memory entries read from disk and refuses malformed, unknown-category, or unrecognized-`signal_version` entries fail-closed
-- retrieval limits results to entries relevant to the active `phase`, `sub_phase`, or `task`, with a hard bounded result set rather than unbounded loading
+- retrieval limits results to entries relevant to the active `phase` and optional `sub_phase`, with task-level scoping implicit in the active `(phase, sub_phase)` pair, and enforces a hard bounded result set rather than unbounded loading
 - retrieved memory is explicitly advisory-only and is never allowed to override canonical task / state artifacts, verdicts, halt statuses, or `awaiting_human_for`
 - no checkpoint-consumption on resume, token-exhaustion continuation chaining, or automatic continuation behavior is enabled in this slice
 - focused tests cover relevant-entry filtering, bounded result limits, malformed-entry refusal, unknown-category refusal, and preservation of canonical-artifact precedence
