@@ -663,6 +663,57 @@ class ActivationSuccessTests(_ActivationTestCase):
         self.assertIn("approval_mtime=", log)
         self.assertIn(f"approval_line='{agent_loop.APPROVAL_TOKEN}'", log)
 
+    def test_activation_auto_bootstraps_claude_prompt(self) -> None:
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 0)
+        prompt = self._read(".agent-loop/claude-prompt.md")
+        self.assertIn("# Claude Code Task", prompt)
+        self.assertIn("## Phase", prompt)
+        self.assertIn("Phase 4D - Planner-Orchestrator Integration", prompt)
+        self.assertIn("## Objective", prompt)
+        self.assertIn("Add the planner-orchestrator integration", prompt)
+        self.assertIn("## Required work", prompt)
+        self.assertIn(
+            "- scripts/agent_loop.py wires the planner into the orchestrator's "
+            "post-approval path",
+            prompt,
+        )
+        self.assertIn("## Constraints", prompt)
+        self.assertIn("- no Git automation", prompt)
+        orchestrator_log = self._read(".agent-loop/orchestrator.log")
+        self.assertIn("prompt bootstrap:", orchestrator_log)
+
+    def test_activation_writes_prompt_inside_atomic_transaction(
+        self,
+    ) -> None:
+        # Phase 5F fail-closed contract: the bootstrapped Claude prompt
+        # is part of the SAME atomic-or-rollback write set as the other
+        # activation-owned files (TASK.md, current-task.md,
+        # current-phase.md, phase-plan.md, loop-state.json). After a
+        # successful activation the prompt file exists and its content
+        # is derived from the same canonical fields the other 5 files
+        # were derived from; if any planned write fails, the prompt is
+        # rolled back alongside the other 5 (see
+        # ActivationAtomicWriteTests for the rollback coverage).
+        prompt_path = self.repo.root / ".agent-loop" / "claude-prompt.md"
+        # Pre-existing prompt content (if any) is captured to confirm
+        # the success path always writes a fresh prompt.
+        if prompt_path.exists():
+            prompt_path.unlink()
+        rc = agent_loop.run_activation(self.repo.root)
+        self.assertEqual(rc, 0)
+        self.assertTrue(prompt_path.exists(), "prompt must exist post-success")
+        prompt = prompt_path.read_text(encoding="utf-8")
+        # Same canonical fields as test_activation_auto_bootstraps_claude_prompt
+        # but exercised against the in-transaction render path.
+        self.assertIn("# Claude Code Task", prompt)
+        self.assertIn("Phase 4D - Planner-Orchestrator Integration", prompt)
+        self.assertIn(
+            "- scripts/agent_loop.py wires the planner into the orchestrator's "
+            "post-approval path",
+            prompt,
+        )
+
 
 # --- write boundary ---
 
@@ -855,9 +906,11 @@ class ActivationAtomicWriteTests(_ActivationTestCase):
         self.assertEqual(self._stray_tmp_files(), [])
 
     def test_last_write_failure_rolls_back_all_earlier_writes(self) -> None:
-        """If the last planned write (the loop-state.json replace) fails,
-        all four earlier writes must be rolled back. Exercises the full
-        rollback chain."""
+        """If the last planned write (Phase 5F: the claude-prompt.md
+        replace) fails, all five earlier writes (TASK.md,
+        current-task.md, current-phase.md, phase-plan.md,
+        loop-state.json) must be rolled back. Exercises the full
+        rollback chain including the new Phase 5F prompt write."""
         before = self._snapshot_activation_owned()
         before_log = self._planner_log_text()
 
@@ -867,7 +920,7 @@ class ActivationAtomicWriteTests(_ActivationTestCase):
 
         def fake_replace(self, target):
             call_count["n"] += 1
-            if call_count["n"] == 5:
+            if call_count["n"] == 6:
                 raise OSError("simulated last-write activation failure")
             return real_replace(self, target)
 
