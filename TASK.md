@@ -20,40 +20,41 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6A - Durable Memory Contract
+Phase 6B - Structured Durable Memory Storage
 
 ## Phase Status
 
-Phase 5F (Automatic Phase-Start Claude Prompt Bootstrap) is closed and approved for human review. Phase 6A is now active as the first slice for durable memory and continuation support. This sub-phase should define the durable memory contract before implementation: what belongs in memory versus canonical task/state artifacts, how checkpoint/resume data is structured, how selective retrieval works, and how interruption recovery must preserve the existing safety and approval boundaries. The goal is to establish a precise contract for memory and continuation behavior before any Phase 6 runtime or storage implementation begins.
+Phase 6A (Durable Memory Contract) is closed after Codex review approval and human progression. Phase 6B is now active as the first implementation slice for Phase 6 durable memory. This sub-phase should implement the structured on-disk durable memory storage layer defined by the Phase 6A contract: category-scoped append-mostly entries with required metadata validation under `.agent-loop/memory/`, while preserving the shipped Phase 5 runtime and deferring retrieval, checkpoint-consumption, and continuation-driving behavior to later 6x slices.
 
 ## Active Task
 
-Define the Phase 6 durable memory contract in `.agent-loop/phase-plan.md`. This slice should specify canonical-vs-memory ownership, durable memory categories, checkpoint/resume rules, token-exhaustion continuation handling, selective retrieval boundaries, refusal behavior, and the allowed future write surfaces for Phase 6 implementation work.
+Implement the Phase 6 durable memory storage foundation in code. This slice should create the structured `.agent-loop/memory/` storage surface defined by the Phase 6A contract, enforce the five allowed memory categories and required metadata, preserve append-mostly semantics, and keep all writes scoped to the durable memory layer without enabling retrieval into prompts or checkpoint-driven continuation yet.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6A as active
-- `.agent-loop/phase-plan.md` marks Phase 5F complete history and contains a `## Phase 6A - Durable Memory Contract` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the Phase 6A contract specifies what counts as durable memory versus canonical task / loop-state artifacts
-- the contract defines durable memory categories and storage shape for future implementation, including decisions, failures, preferences, summaries, and checkpoint state
-- the contract defines checkpoint/resume and token-exhaustion continuation behavior without implementing it yet
-- the contract defines selective retrieval rules so memory augments prompts without becoming a competing source of truth
-- the contract preserves the shipped review, strict, autonomous, reconciliation, and phase-start prompt behavior from Phases 5B through 5F unchanged in effect
-- `README.md` reflects that Phase 6A is active and that durable memory contract definition is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6B as active
+- `.agent-loop/phase-plan.md` records Phase 6A as closed history and contains a `## Phase 6B - Structured Durable Memory Storage` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the implementation creates a structured durable memory storage layer under `.agent-loop/memory/` with support for the five Phase 6A categories: `decision`, `failure`, `preference`, `summary`, and `checkpoint`
+- durable memory writes enforce the required Phase 6A metadata fields and refuse unknown categories or malformed entries fail-closed
+- durable memory writes remain append-mostly and never modify canonical task / state artifacts
+- no prompt retrieval, checkpoint-consumption, or continuation-driving runtime behavior is enabled in this slice
+- focused tests cover valid durable memory writes, invalid category rejection, missing-metadata rejection, append-mostly behavior, and memory-layer write-boundary enforcement
+- `README.md` reflects that Phase 6B is active and that structured durable memory storage is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6A until:
+Do not start the next 6x sub-phase after Phase 6B until:
 
-- this Phase 6A slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6B slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing durable memory storage, checkpoint files, retrieval pipelines, or continuation chaining runtime behavior in code during this contract slice
-- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond contract-definition wording for future Phase 6 work
+- implementing selective memory retrieval into Claude or Codex prompts
+- implementing automatic checkpoint creation during live runs, checkpoint-consumption on resume, token-exhaustion continuation chaining, or any other continuation-driving runtime behavior
+- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow storage-layer implementation needed for future Phase 6 work
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
