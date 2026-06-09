@@ -20,42 +20,41 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6C - Selective Memory Retrieval Initial Slice
+Phase 6D - Checkpoint Artifact Storage Initial Slice
 
 ## Phase Status
 
-Phase 6B (Structured Durable Memory Storage) is closed after Codex review approval and human progression. Phase 6C is now active as the next implementation slice for Phase 6 durable memory. This sub-phase should implement selective memory retrieval on top of the Phase 6A contract and the shipped 6B storage layer: bounded, relevance-scoped memory loading for prompt construction that keeps memory advisory-only and never lets it compete with canonical task and loop-state artifacts.
+Phase 6C (Selective Memory Retrieval Initial Slice) is closed after Codex review approval and human progression. Phase 6D is now active as the next implementation slice for Phase 6 durable memory. This sub-phase should implement durable checkpoint artifact storage on top of the Phase 6A contract and the shipped 6B/6C memory layer: structured checkpoint entries and checkpoint file organization for interrupted Claude/Codex runs, while still deferring resume-path consumption, token-exhaustion continuation chaining, and any automatic continuation behavior.
 
 ## Active Task
 
-Implement the Phase 6 selective memory retrieval foundation in code. This slice should read durable memory entries from `.agent-loop/memory/`, validate them against the Phase 6A contract and 6B storage schema, select only relevant bounded subsets for the active phase / sub-phase scope, and expose retrieval helpers that can enrich prompt construction without enabling checkpoint-consumption or token-exhaustion continuation behavior yet.
+Implement the Phase 6 checkpoint artifact storage foundation in code. This slice should create structured checkpoint artifacts for interrupted Claude/Codex work, validate them against the Phase 6A checkpoint contract, keep checkpoint writes scoped to dedicated checkpoint storage, and preserve the shipped Phase 5 runtime by deferring checkpoint consumption on resume and token-exhaustion continuation behavior to later 6x slices.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6C as active
-- `.agent-loop/phase-plan.md` records Phase 6B as closed history and contains a `## Phase 6C - Selective Memory Retrieval Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the implementation adds a selective memory retrieval surface on top of the shipped `.agent-loop/memory/` storage layer
-- retrieval validates memory entries read from disk and refuses malformed, unknown-category, or unrecognized-`signal_version` entries fail-closed
-- retrieval limits results to entries relevant to the active `phase` and optional `sub_phase`, with task-level scoping implicit in the active `(phase, sub_phase)` pair, and enforces a hard bounded result set rather than unbounded loading
-- retrieved memory is explicitly advisory-only and is never allowed to override canonical task / state artifacts, verdicts, halt statuses, or `awaiting_human_for`
-- no checkpoint-consumption on resume, token-exhaustion continuation chaining, or automatic continuation behavior is enabled in this slice
-- focused tests cover relevant-entry filtering, bounded result limits, malformed-entry refusal, unknown-category refusal, and preservation of canonical-artifact precedence
-- `README.md` reflects that Phase 6C is active and that selective memory retrieval is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6D as active
+- `.agent-loop/phase-plan.md` records Phase 6C as closed history and contains a `## Phase 6D - Checkpoint Artifact Storage Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the implementation creates structured checkpoint artifact storage for interrupted Claude/Codex work under dedicated Phase 6 checkpoint paths
+- checkpoint writes enforce the required Phase 6A checkpoint metadata and refuse malformed or out-of-scope checkpoint records fail-closed
+- checkpoint artifacts remain additive and never mutate canonical task / state artifacts
+- no normal runtime path consumes checkpoint artifacts for resume or token-exhaustion continuation in this slice
+- focused tests cover valid checkpoint writes, malformed-checkpoint refusal, checkpoint write-boundary enforcement, and preservation of canonical-artifact precedence
+- `README.md` reflects that Phase 6D is active and that checkpoint artifact storage is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6C until:
+Do not start the next 6x sub-phase after Phase 6D until:
 
-- this Phase 6C slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6D slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing automatic checkpoint creation during live runs, checkpoint-consumption on resume, token-exhaustion continuation chaining, or any other continuation-driving runtime behavior
-- implementing phase-boundary memory distillation or repeated-failure memory synthesis beyond the narrow retrieval helpers needed for this slice
-- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow retrieval-layer implementation needed for future Phase 6 work
+- implementing checkpoint-consumption on resume, token-exhaustion continuation chaining, or any other continuation-driving runtime behavior
+- implementing phase-boundary memory distillation or repeated-failure memory synthesis beyond the narrow checkpoint storage helpers needed for this slice
+- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow checkpoint-storage implementation needed for future Phase 6 work
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
