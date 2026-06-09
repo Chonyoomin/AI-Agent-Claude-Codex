@@ -1571,6 +1571,181 @@ def list_memory_entries(
     return out
 
 
+# Phase 6C - Selective Memory Retrieval Initial Slice.
+#
+# This block sits directly on top of the Phase 6B storage primitives. It
+# is a pure read-side enrichment surface: it never writes to disk, never
+# touches any canonical workflow / state artifact, and never feeds
+# memory back into a verdict, halt status, or `awaiting_human_for`. Per
+# the Phase 6A contract, returned entries are advisory only and the
+# caller must treat them as such when constructing future prompts.
+
+MEMORY_RETRIEVAL_DEFAULT_LIMIT = 8
+MEMORY_RETRIEVAL_MAX_LIMIT = 32
+
+
+def _validate_retrieval_limit(limit: int) -> None:
+    if isinstance(limit, bool) or not isinstance(limit, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory retrieval limit must be an int; got "
+                f"{type(limit).__name__}={limit!r}"
+            ),
+        )
+    if limit <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory retrieval limit must be > 0; got {limit}. "
+                f"The Phase 6A contract requires a bounded, positive result set"
+            ),
+        )
+    if limit > MEMORY_RETRIEVAL_MAX_LIMIT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory retrieval limit {limit} exceeds the "
+                f"hard upper bound {MEMORY_RETRIEVAL_MAX_LIMIT}; the "
+                f"Phase 6A contract pins retrieval as bounded by design"
+            ),
+        )
+
+
+def _is_entry_in_active_scope(
+    payload: dict,
+    *,
+    phase: str,
+    sub_phase: Optional[str],
+    task: Optional[str],
+) -> bool:
+    """An entry is in the active scope when its `phase` matches and any
+    optionally supplied `sub_phase` / `task` filter also matches.
+
+    Phase is required; sub_phase and task narrow the scope further when
+    the caller provides them. `task` is matched against the entry's
+    `source_artifact_path` exactly (per Phase 6A the entry records which
+    canonical artifact it was derived from; matching on that path is the
+    deterministic, auditable way to tie an entry to a task).
+    """
+    if payload["phase"] != phase:
+        return False
+    if sub_phase is not None and payload["sub_phase"] != sub_phase:
+        return False
+    if task is not None and payload["source_artifact_path"] != task:
+        return False
+    return True
+
+
+def retrieve_memory_entries(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: Optional[str] = None,
+    task: Optional[str] = None,
+    categories: Optional[Iterable[str]] = None,
+    limit: int = MEMORY_RETRIEVAL_DEFAULT_LIMIT,
+    log_path: Optional[Path] = None,
+) -> list:
+    """Return a bounded, sorted list of durable memory entries relevant
+    to the active phase / sub_phase / task scope.
+
+    Phase 6C scope: pure retrieval primitive. The returned list is a
+    list of validated payload dicts (newest-first by `created_at`),
+    each one re-validated through `read_memory_entry` so a malformed,
+    missing-field, unknown-category, or unrecognized-`signal_version`
+    entry on disk causes the entire retrieval call to halt fail-closed.
+
+    Per the Phase 6A contract, retrieval is advisory: callers must not
+    feed the returned entries back into canonical workflow / state
+    fields (verdicts, halt statuses, `awaiting_human_for`). The caller
+    is also responsible for marking retrieved text as advisory in any
+    future prompt construction.
+
+    Args:
+      repo_root: workspace root that contains `.agent-loop/memory/`.
+      phase: required active phase string. An entry whose `phase` does
+        not match is excluded.
+      sub_phase: optional narrowing filter against the entry's
+        `sub_phase`. If omitted, all sub_phases under the active phase
+        are eligible.
+      task: optional narrowing filter against the entry's
+        `source_artifact_path`. If omitted, no task filter is applied.
+      categories: optional iterable that restricts results to one or
+        more of the five Phase 6A categories. An out-of-vocabulary
+        category in the filter is refused (the same five-category set
+        the writer pins is the only valid input).
+      limit: hard upper bound on the returned list length. Must be a
+        positive int and must not exceed MEMORY_RETRIEVAL_MAX_LIMIT.
+      log_path: optional orchestrator-log path; when supplied a single
+        `memory retrieval:` audit note is appended describing the
+        scope / category filter / limit / matched / returned counts.
+
+    Returns:
+      A new list of payload dicts (newest-first). The list is at most
+      `limit` long. Returns an empty list when the memory directory is
+      absent or when no entry matches the active scope.
+    """
+    if not phase:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "durable memory retrieval requires a non-empty active phase "
+                "string"
+            ),
+        )
+    _validate_retrieval_limit(limit)
+
+    category_filter: Optional[set] = None
+    if categories is not None:
+        category_filter = set()
+        for c in categories:
+            if c not in MEMORY_CATEGORIES:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"durable memory retrieval category {c!r} is not "
+                        f"one of {sorted(MEMORY_CATEGORIES)}"
+                    ),
+                )
+            category_filter.add(c)
+
+    # list_memory_entries already refuses unknown on-disk category
+    # subdirectories and returns [] when the memory directory is absent;
+    # both of those are exactly the right Phase 6A behavior here.
+    paths = list_memory_entries(repo_root)
+    matched: list = []
+    for p in paths:
+        payload = read_memory_entry(p)
+        if (
+            category_filter is not None
+            and payload["category"] not in category_filter
+        ):
+            continue
+        if not _is_entry_in_active_scope(
+            payload, phase=phase, sub_phase=sub_phase, task=task,
+        ):
+            continue
+        matched.append(payload)
+
+    matched.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    bounded = matched[:limit]
+
+    if log_path is not None:
+        cats_str = (
+            sorted(category_filter) if category_filter is not None else None
+        )
+        _log_note(
+            log_path,
+            (
+                f"memory retrieval: phase={phase!r} sub_phase={sub_phase!r} "
+                f"task={task!r} categories={cats_str} limit={limit} "
+                f"matched={len(matched)} returned={len(bounded)}"
+            ),
+        )
+    return bounded
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
