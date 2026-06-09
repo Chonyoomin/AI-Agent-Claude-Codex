@@ -62,6 +62,7 @@ loop with a contract-vocabulary `halted_*` status, never a silent retry.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -1242,6 +1243,303 @@ def write_claude_done(
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return path
+
+
+# Phase 6B durable memory storage. Implements the storage half of the
+# Phase 6A durable memory contract (see `.agent-loop/phase-plan.md`
+# `### Durable Memory Contract`). This slice is storage-only: no
+# retrieval into prompts, no checkpoint-consumption on resume, and no
+# automatic continuation. Writes are append-mostly: a new entry is a
+# new file; superseding a prior entry is recorded via an explicit
+# `supersedes` field, never via silent in-place mutation. Every write
+# is scoped under `.agent-loop/memory/` and refused if it would resolve
+# outside that directory.
+
+MEMORY_DIR_REL = ".agent-loop/memory"
+MEMORY_SIGNAL_VERSION = "phase-6b-v1"
+MEMORY_CATEGORY_DECISION = "decision"
+MEMORY_CATEGORY_FAILURE = "failure"
+MEMORY_CATEGORY_PREFERENCE = "preference"
+MEMORY_CATEGORY_SUMMARY = "summary"
+MEMORY_CATEGORY_CHECKPOINT = "checkpoint"
+MEMORY_CATEGORIES = frozenset({
+    MEMORY_CATEGORY_DECISION,
+    MEMORY_CATEGORY_FAILURE,
+    MEMORY_CATEGORY_PREFERENCE,
+    MEMORY_CATEGORY_SUMMARY,
+    MEMORY_CATEGORY_CHECKPOINT,
+})
+MEMORY_REQUIRED_FIELDS = (
+    "signal_version",
+    "category",
+    "phase",
+    "sub_phase",
+    "cycle_count",
+    "source_artifact_path",
+    "created_at",
+)
+
+
+def _memory_dir(repo_root: Path) -> Path:
+    return repo_root / MEMORY_DIR_REL
+
+
+def _ensure_memory_path_in_scope(path: Path, repo_root: Path) -> None:
+    """Refuse any path that resolves outside `.agent-loop/memory/`.
+
+    Phase 6A scope rule: memory writes never mutate canonical workflow
+    or state artifacts. A symlink or `..` traversal that escapes the
+    memory directory is treated as a hard refusal.
+    """
+    memory_root = _memory_dir(repo_root).resolve()
+    try:
+        resolved = path.resolve()
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            f"memory path {path} could not be resolved: {exc}",
+        )
+    try:
+        resolved.relative_to(memory_root)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"memory write refused: path {resolved} is outside the "
+                f"memory directory {memory_root}. Memory writes are scoped "
+                f"to {MEMORY_DIR_REL}/ only."
+            ),
+        )
+
+
+def _utc_iso_now() -> str:
+    return datetime.now(tz=timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _memory_entry_filename(created_at: str, body: Optional[str]) -> str:
+    """Stable, sort-friendly filename derived from `created_at` plus a
+    short hash of `body` (so two entries written in the same wall-clock
+    second do not collide).
+    """
+    payload = (body or "").encode("utf-8")
+    short = hashlib.sha256(payload).hexdigest()[:8]
+    safe_ts = created_at.replace(":", "").replace("-", "")
+    return f"{safe_ts}-{short}.json"
+
+
+def write_memory_entry(
+    repo_root: Path,
+    *,
+    category: str,
+    phase: str,
+    sub_phase: str,
+    cycle_count: int,
+    source_artifact_path: str,
+    body: Optional[str] = None,
+    supersedes: Optional[str] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Write one structured durable memory entry under
+    `.agent-loop/memory/<category>/`.
+
+    Enforces the Phase 6A contract:
+      - `category` must be one of the five allowed categories.
+      - The required metadata fields (`category`, `phase`, `sub_phase`,
+        `cycle_count`, `source_artifact_path`, `created_at`,
+        `signal_version`) are all populated; `created_at` and
+        `signal_version` are filled in by the writer.
+      - The write is append-mostly: a fresh file is created with a
+        per-entry name derived from `created_at` and the body hash;
+        the writer never overwrites an existing entry.
+      - Supersession of a prior entry is recorded via the explicit
+        `supersedes` field (a path-relative reference to the prior
+        entry). The prior entry is left untouched.
+      - All writes are scoped to `.agent-loop/memory/`. A path that
+        resolves outside that directory raises `HaltError` and no
+        file is written.
+
+    Returns the absolute `Path` of the freshly written entry.
+
+    Phase 6B scope: this function is the storage primitive only. No
+    runtime path in the orchestrator calls it automatically in this
+    slice; retrieval into prompts and checkpoint-driven continuation
+    are deferred to later 6x slices.
+    """
+    if category not in MEMORY_CATEGORIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory category {category!r} is not one of "
+                f"{sorted(MEMORY_CATEGORIES)}; the Phase 6A contract "
+                f"pins exactly these five categories"
+            ),
+        )
+    if not phase or not sub_phase or not source_artifact_path:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "durable memory write refused: phase, sub_phase, and "
+                "source_artifact_path are all required by the Phase 6A "
+                f"contract; got phase={phase!r}, sub_phase={sub_phase!r}, "
+                f"source_artifact_path={source_artifact_path!r}"
+            ),
+        )
+    if not isinstance(cycle_count, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory write refused: cycle_count must be an int; "
+                f"got {type(cycle_count).__name__}={cycle_count!r}"
+            ),
+        )
+    created_at = _utc_iso_now()
+    payload = {
+        "signal_version": MEMORY_SIGNAL_VERSION,
+        "category": category,
+        "phase": phase,
+        "sub_phase": sub_phase,
+        "cycle_count": cycle_count,
+        "source_artifact_path": source_artifact_path,
+        "created_at": created_at,
+        "supersedes": supersedes,
+        "body": body,
+    }
+    category_dir = _memory_dir(repo_root) / category
+    category_dir.mkdir(parents=True, exist_ok=True)
+    entry_path = category_dir / _memory_entry_filename(created_at, body)
+    _ensure_memory_path_in_scope(entry_path, repo_root)
+    if entry_path.exists():
+        # Append-mostly: never overwrite an existing entry. A collision
+        # at the second granularity AND the body-hash level is highly
+        # unlikely; if it happens, refuse so the caller can resolve.
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory write refused: target entry "
+                f"{entry_path} already exists; the Phase 6A contract "
+                f"forbids silent in-place mutation"
+            ),
+        )
+    entry_path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    rel = entry_path.relative_to(repo_root).as_posix()
+    _log_note(
+        log_path,
+        (
+            f"memory write: {rel} category={category!r} phase={phase!r} "
+            f"sub_phase={sub_phase!r} cycle_count={cycle_count} "
+            f"supersedes={supersedes!r}"
+        ),
+    )
+    return entry_path
+
+
+def read_memory_entry(path: Path) -> dict:
+    """Parse and validate a durable memory entry from disk.
+
+    Refuses fail-closed if the file is missing, empty, malformed JSON,
+    missing a required Phase 6A metadata field, claims an unknown
+    `category`, or carries an unrecognized `signal_version`. The
+    returned dict is the parsed payload exactly as written; callers
+    must not mutate the entry on disk via this helper.
+    """
+    if not path.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            f"durable memory entry {path} does not exist",
+        )
+    raw = path.read_text(encoding="utf-8")
+    if not raw.strip():
+        raise HaltError(
+            "halted_input_missing",
+            f"durable memory entry {path} is empty",
+        )
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            f"durable memory entry {path} is not valid JSON: {exc}",
+        )
+    if not isinstance(payload, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory entry {path} top-level value must be a "
+                f"JSON object; got {type(payload).__name__}"
+            ),
+        )
+    for field in MEMORY_REQUIRED_FIELDS:
+        if field not in payload:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"durable memory entry {path} missing required Phase 6A "
+                    f"metadata field {field!r}"
+                ),
+            )
+    if payload["category"] not in MEMORY_CATEGORIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory entry {path} declares category "
+                f"{payload['category']!r} which is not one of "
+                f"{sorted(MEMORY_CATEGORIES)}"
+            ),
+        )
+    if payload["signal_version"] != MEMORY_SIGNAL_VERSION:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"durable memory entry {path} signal_version "
+                f"{payload['signal_version']!r} is not recognized by this "
+                f"orchestrator (expected {MEMORY_SIGNAL_VERSION!r})"
+            ),
+        )
+    return payload
+
+
+def list_memory_entries(
+    repo_root: Path, *, category: Optional[str] = None,
+) -> list:
+    """Return sorted list of memory entry `Path`s under
+    `.agent-loop/memory/` (optionally restricted to one category).
+
+    Sorted by filename, which is sort-friendly because filenames begin
+    with the entry's `created_at` UTC timestamp. A missing memory
+    directory or category subdirectory returns an empty list (the
+    Phase 6A contract permits an absent memory layer).
+    """
+    if category is not None and category not in MEMORY_CATEGORIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"list_memory_entries category={category!r} is not one of "
+                f"{sorted(MEMORY_CATEGORIES)}"
+            ),
+        )
+    root = _memory_dir(repo_root)
+    if not root.is_dir():
+        return []
+    if category is not None:
+        cat_dir = root / category
+        if not cat_dir.is_dir():
+            return []
+        return sorted(
+            p for p in cat_dir.iterdir() if p.is_file() and p.suffix == ".json"
+        )
+    out: list = []
+    for cat in sorted(MEMORY_CATEGORIES):
+        cat_dir = root / cat
+        if cat_dir.is_dir():
+            out.extend(
+                sorted(
+                    p for p in cat_dir.iterdir()
+                    if p.is_file() and p.suffix == ".json"
+                )
+            )
+    return out
 
 
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
