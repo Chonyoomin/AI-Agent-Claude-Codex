@@ -2098,6 +2098,118 @@ def list_checkpoint_entries(repo_root: Path) -> list:
     )
 
 
+# Phase 6E - Checkpoint Resume Initial Slice.
+#
+# Read-side helpers that consume the Phase 6D checkpoint storage layer
+# during explicit `resume`. These helpers validate that a stored
+# checkpoint is consistent with the canonical loop-state context BEFORE
+# the existing strict-gate dispatch runs. They never write to disk,
+# never widen autonomy, never bypass any Phase 5 human gate, and never
+# implement token-exhaustion continuation chaining or automatic
+# continuation - those remain deferred to later 6x slices.
+#
+# The Phase 6A contract treats checkpoint memory as advisory in this
+# slice: a missing checkpoint MUST NOT block a strict-gate resume that
+# the canonical loop-state already supports (backward compatibility
+# with pre-6D / pre-6E paused cycles); a checkpoint that exists but
+# disagrees with the canonical loop-state MUST refuse fail-closed so
+# the operator sees the inconsistency.
+
+# Memory-level fields the loop-state and the checkpoint must agree on
+# before resume is permitted. These are the Phase 6A "cycle context"
+# subset that names which cycle is being resumed.
+CHECKPOINT_RESUME_CONTEXT_FIELDS = (
+    "phase",
+    "sub_phase",
+    "task",
+    "cycle_count",
+    "approval_mode",
+    "awaiting_human_for",
+)
+
+
+def _load_active_checkpoint(repo_root: Path) -> Optional[dict]:
+    """Return the newest valid checkpoint payload, or None if no
+    checkpoint artifacts exist.
+
+    Per the Phase 6A "append-mostly" model, multiple checkpoint
+    artifacts may accumulate over time. Only the newest by `created_at`
+    corresponds to the currently paused cycle; the older entries are
+    historical records of past halts. Each enumerated entry is
+    re-validated through `read_checkpoint_entry`, so a malformed,
+    missing-field, unrecognized-`checkpoint_signal_version`, or
+    out-of-vocabulary entry on disk causes the entire load to halt
+    fail-closed - the caller surfaces that refusal to the operator
+    rather than silently falling back to "no checkpoint".
+
+    Returns None only when the checkpoint subdirectory is absent or
+    empty. This preserves backward compatibility with pre-6D paused
+    cycles where no checkpoint was ever written.
+    """
+    paths = list_checkpoint_entries(repo_root)
+    if not paths:
+        return None
+    payloads = [read_checkpoint_entry(p) for p in paths]
+    payloads.sort(key=lambda e: e.get("created_at", ""), reverse=True)
+    return payloads[0]
+
+
+def _validate_checkpoint_against_loop_state(
+    checkpoint: dict, loop_state: dict,
+) -> None:
+    """Refuse fail-closed when the checkpoint does not name the same
+    cycle context as the canonical loop-state.
+
+    Per the Phase 6A contract: "on resume, the loop must verify that
+    the checkpoint's (phase, sub_phase, task, cycle_count) matches the
+    current loop-state.json; on any mismatch the loop must refuse and
+    require human resolution". This helper extends the comparison to
+    `approval_mode` and `awaiting_human_for` because the Phase 6A
+    contract also requires "token-exhaustion checkpoints inherit the
+    existing approval-mode vocabulary" and the strict-gate halt's
+    `awaiting_human_for` is the operator-facing gate identity.
+
+    When the loop-state is sitting at a Phase 5C strict-gate halt, the
+    checkpoint's `suspension_reason` must equal the halt status. This
+    is the contract's "a strict-gate halt that has its own resume path
+    must continue to dispatch through the existing strict-gate flow;
+    the checkpoint memory is advisory and does not replace strict-gate
+    dispatch" requirement: the checkpoint may name the same gate, but
+    it may not claim a different suspension reason.
+
+    The helper raises `HaltError("halted_input_missing", ...)` on any
+    mismatch. The caller is responsible for the resume-time recovery
+    pattern (preserve the saved strict-gate state, log the refusal,
+    exit 2 without going through `_halt`).
+    """
+    for field in CHECKPOINT_RESUME_CONTEXT_FIELDS:
+        checkpoint_value = checkpoint.get(field)
+        loop_state_value = loop_state.get(field)
+        if checkpoint_value != loop_state_value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"checkpoint {field}={checkpoint_value!r} does not match "
+                    f"loop-state {field}={loop_state_value!r}; the Phase 6A "
+                    f"contract refuses a stale or contradictory checkpoint "
+                    f"at resume time"
+                ),
+            )
+    loop_status = loop_state.get("status")
+    if loop_status in STRICT_GATE_HALT_STATUSES:
+        checkpoint_reason = checkpoint.get("suspension_reason")
+        if checkpoint_reason != loop_status:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"checkpoint suspension_reason={checkpoint_reason!r} "
+                    f"does not match the active strict-gate halt status "
+                    f"{loop_status!r}; the Phase 6A contract requires the "
+                    f"checkpoint to name the same gate the loop is paused at"
+                ),
+            )
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -5072,6 +5184,55 @@ def run_strict_resume(repo_root: Path) -> int:
         )
         _log_note(log_path, f"strict resume refused: {reason}")
         return 2
+
+    # Phase 6E checkpoint-backed resume validation.
+    #
+    # The Phase 6A contract treats checkpoint memory as advisory for
+    # strict-gate resume: a missing checkpoint must not block a resume
+    # the canonical loop-state already supports (backward compatibility
+    # with pre-6D paused cycles), but a checkpoint that exists and
+    # disagrees with the canonical loop-state must refuse fail-closed.
+    # Same recovery pattern as the mode-coherence refusal above: leave
+    # the saved strict-gate state intact (do NOT route through `_halt`,
+    # which would overwrite `status` with `halted_input_missing` and
+    # destroy the recovery point), log the refusal, and exit 2.
+    try:
+        checkpoint = _load_active_checkpoint(repo_root)
+    except HaltError as halt:
+        reason = (
+            f"strict resume refused: malformed or unrecognized checkpoint "
+            f"artifact: {halt.reason}"
+        )
+        print(
+            f"[orchestrator] STRICT RESUME REFUSED: {reason}",
+            file=sys.stderr,
+        )
+        _log_note(log_path, f"strict resume refused: {reason}")
+        return 2
+    if checkpoint is not None:
+        try:
+            _validate_checkpoint_against_loop_state(checkpoint, data)
+        except HaltError as halt:
+            reason = (
+                f"strict resume refused: checkpoint inconsistent with "
+                f"loop-state: {halt.reason}"
+            )
+            print(
+                f"[orchestrator] STRICT RESUME REFUSED: {reason}",
+                file=sys.stderr,
+            )
+            _log_note(log_path, f"strict resume refused: {reason}")
+            return 2
+        _log_note(
+            log_path,
+            (
+                f"checkpoint validated for resume: "
+                f"phase={checkpoint['phase']!r} "
+                f"sub_phase={checkpoint['sub_phase']!r} "
+                f"cycle_count={checkpoint['cycle_count']} "
+                f"suspension_reason={checkpoint['suspension_reason']!r}"
+            ),
+        )
 
     _log_note(
         log_path,
