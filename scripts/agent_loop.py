@@ -2129,19 +2129,26 @@ CHECKPOINT_RESUME_CONTEXT_FIELDS = (
 
 
 def _load_active_checkpoint(repo_root: Path) -> Optional[dict]:
-    """Return the active (newest) checkpoint payload, or None if no
-    checkpoint artifacts exist.
+    """Return the active (most recently written) checkpoint payload,
+    or None if no checkpoint artifacts exist.
 
-    Active-checkpoint selection rule: pick the checkpoint with the
-    lexically-largest filename and read ONLY that file.
+    Active-checkpoint selection rule: the active checkpoint is the
+    one with the largest filesystem mtime. Filename (lexical) is the
+    deterministic secondary tie-breaker only for the case where two
+    files share an identical mtime.
 
+    This rule actually tracks write order rather than filename order.
     The Phase 6D filename format is
-    `{YYYYMMDDTHHMMSSZ}-{sha256_short(body)[:8]}.json`, which makes
-    the filename a sort-friendly key whose primary component is the
-    `created_at` UTC timestamp and whose secondary component is a
-    deterministic body-hash tie-breaker. Two checkpoints written in
-    the same wall-clock second still order deterministically by the
-    body-hash tail rather than by directory iteration order.
+    `{YYYYMMDDTHHMMSSZ}-{sha256_short(body)[:8]}.json` whose
+    timestamp portion is second-granularity and whose body-hash tail
+    is deterministic but uncorrelated with write order. Two
+    checkpoints written in the same second can therefore have the
+    second-written file carry a lexically-smaller hash suffix - so
+    selecting by filename alone would pick the wrong "active"
+    checkpoint. Filesystem mtime on the platforms this project
+    targets (NTFS / ext4 / APFS) has nanosecond / 100ns resolution,
+    so two same-second writes still receive distinct mtimes that
+    reflect actual write order.
 
     Per the Phase 6A "append-mostly" model, older entries are
     historical records of past halts; they are NOT consulted for
@@ -2162,9 +2169,11 @@ def _load_active_checkpoint(repo_root: Path) -> Optional[dict]:
     paths = list_checkpoint_entries(repo_root)
     if not paths:
         return None
-    # list_checkpoint_entries returns paths sorted ascending; the
-    # lexically-largest filename is the newest active checkpoint.
-    return read_checkpoint_entry(paths[-1])
+    # Primary key: filesystem mtime (actual write order). Secondary
+    # key: filename (deterministic) for the rare case where two files
+    # share an identical mtime.
+    active = max(paths, key=lambda p: (p.stat().st_mtime_ns, p.name))
+    return read_checkpoint_entry(active)
 
 
 def _validate_checkpoint_against_loop_state(

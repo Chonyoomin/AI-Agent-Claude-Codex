@@ -29,12 +29,27 @@ behavior; no test in this suite exercises those paths.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 import unittest
 import unittest.mock as mock
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+
+# Epoch seconds for a far-past timestamp used to mark hand-crafted
+# historical checkpoint files as unambiguously older than any
+# live-writer mtime. 2020-01-01T00:00:00Z.
+_EPOCH_2020 = 1577836800
+
+
+def _age_file_to_2020(path: Path) -> None:
+    """Set the file's atime/mtime to 2020-01-01 UTC so the live writer's
+    natural now-mtime is always larger regardless of platform mtime
+    granularity. Used by tests that intend a hand-crafted file to be
+    unambiguously older than a subsequent live write."""
+    os.utime(path, (_EPOCH_2020, _EPOCH_2020))
 
 
 HERE = Path(__file__).resolve().parent
@@ -139,9 +154,10 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
         )
         self.assertTrue(path.is_file())  # storage not mutated
 
-    def test_returns_newest_by_created_at_when_multiple_exist(self) -> None:
+    def test_returns_most_recently_written_when_multiple_exist(self) -> None:
         # Plant three checkpoints with distinct bodies, spaced apart so
-        # their created_at timestamps differ. The newest should win.
+        # their filesystem mtimes differ. The most recently written one
+        # wins under the Phase 6E mtime-based active-checkpoint rule.
         self._write_checkpoint(task=f"{_ACTIVE_TASK} 1")
         time.sleep(1.05)
         self._write_checkpoint(task=f"{_ACTIVE_TASK} 2")
@@ -177,15 +193,12 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
     def test_malformed_older_checkpoint_does_not_block_newer_valid(
         self,
     ) -> None:
-        # Phase 6E selection rule: only the active (lexically-largest
-        # filename) checkpoint is read. A malformed historical entry
-        # with an older timestamp prefix must NOT block resume when a
-        # newer valid checkpoint exists.
-        #
-        # Plant a malformed older file with a far-past timestamp so it
-        # is always lexically smaller than any timestamp the live
-        # writer produces; the live writer's filename starts with a
-        # real-now `YYYYMMDDTHHMMSSZ` prefix.
+        # Phase 6E selection rule: only the active (most recently
+        # written by mtime) checkpoint is read. A malformed historical
+        # entry must NOT block resume when a newer valid checkpoint
+        # exists. Set the malformed file's mtime explicitly to 2020 so
+        # the live writer's natural now-mtime is unambiguously larger
+        # regardless of filesystem mtime granularity.
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         old_malformed = {
             "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
@@ -198,25 +211,30 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
             "supersedes": None,
             "body": json.dumps({}),  # missing every checkpoint-body field
         }
-        (self.checkpoint_dir / "20200101T000000Z-deadbeef.json").write_text(
-            json.dumps(old_malformed), encoding="utf-8",
-        )
+        old_path = self.checkpoint_dir / "20200101T000000Z-deadbeef.json"
+        old_path.write_text(json.dumps(old_malformed), encoding="utf-8")
+        _age_file_to_2020(old_path)
         # Now write a valid newer checkpoint via the live writer.
         self._write_checkpoint(task="newer-valid-task")
         loaded = agent_loop._load_active_checkpoint(self.repo_root)
         self.assertIsNotNone(loaded)
         self.assertEqual(loaded["task"], "newer-valid-task")
 
-    def test_same_second_writes_select_lexically_largest_filename(
+    def test_same_second_writes_select_most_recently_written_by_mtime(
         self,
     ) -> None:
         # The Phase 6D filename format is
-        # `{YYYYMMDDTHHMMSSZ}-{sha256_short(body)[:8]}.json`, so two
-        # entries written in the same second have identical timestamp
-        # prefixes but distinct body-hash suffixes. The active
-        # checkpoint must be the one with the lexically-larger
-        # suffix - a deterministic tie-breaker grounded in on-disk
-        # data, NOT directory iteration order.
+        # `{YYYYMMDDTHHMMSSZ}-{sha256_short(body)[:8]}.json`. The
+        # timestamp portion is only second-granularity and the
+        # body-hash tail is uncorrelated with write order. The Phase 6E
+        # active-checkpoint rule MUST therefore select by filesystem
+        # mtime, NOT by lexical filename order.
+        #
+        # Plant the lexically-LARGER filename FIRST (older mtime), then
+        # the lexically-SMALLER filename SECOND (newer mtime). The
+        # later-written file must win even though its filename suffix
+        # is lexically smaller. Set explicit mtimes via os.utime so the
+        # test is robust against filesystem mtime granularity quirks.
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         def _entry(task: str) -> dict:
@@ -245,23 +263,86 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
                 }),
             }
 
-        # Lexically-smaller suffix -> task "alpha"; lexically-larger
-        # suffix -> task "beta". The active checkpoint should be beta.
-        (self.checkpoint_dir / "20260609T120000Z-aaaaaaaa.json").write_text(
-            json.dumps(_entry("alpha")), encoding="utf-8",
+        # Lex-larger filename written first (older mtime).
+        larger_first = self.checkpoint_dir / "20260609T120000Z-bbbbbbbb.json"
+        larger_first.write_text(
+            json.dumps(_entry("written-first")), encoding="utf-8",
         )
-        (self.checkpoint_dir / "20260609T120000Z-bbbbbbbb.json").write_text(
-            json.dumps(_entry("beta")), encoding="utf-8",
+        os.utime(larger_first, (_EPOCH_2020, _EPOCH_2020))
+        # Lex-smaller filename written second (newer mtime). The newer
+        # mtime is "now"; we just need it to be larger than 2020.
+        smaller_second = self.checkpoint_dir / "20260609T120000Z-aaaaaaaa.json"
+        smaller_second.write_text(
+            json.dumps(_entry("written-second")), encoding="utf-8",
         )
+        # Live writer would naturally give it now-mtime; rely on that.
         loaded = agent_loop._load_active_checkpoint(self.repo_root)
         self.assertIsNotNone(loaded)
-        self.assertEqual(loaded["task"], "beta")
+        self.assertEqual(
+            loaded["task"], "written-second",
+            "mtime (write order) must win over lexical filename order",
+        )
+
+    def test_identical_mtime_falls_back_to_lexical_filename(self) -> None:
+        # In the impossible-in-practice case where two checkpoint files
+        # share an identical mtime down to the nanosecond, selection
+        # MUST still be deterministic. The Phase 6E secondary key is
+        # lexical filename, so the lexically-larger filename wins.
+        # Force identical mtimes via os.utime.
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        def _entry(task: str) -> dict:
+            return {
+                "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+                "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+                "phase": _ACTIVE_PHASE,
+                "sub_phase": _ACTIVE_SUB_PHASE,
+                "cycle_count": 0,
+                "source_artifact_path": _SOURCE_ARTIFACT,
+                "created_at": "2026-06-09T12:00:00Z",
+                "supersedes": None,
+                "body": json.dumps({
+                    "checkpoint_signal_version": (
+                        agent_loop.CHECKPOINT_SIGNAL_VERSION
+                    ),
+                    "task": task,
+                    "status": agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+                    "approval_mode": agent_loop.APPROVAL_MODE_STRICT,
+                    "awaiting_human_for": (
+                        agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT
+                    ),
+                    "active_prompt_path": ".agent-loop/claude-prompt.md",
+                    "suspension_reason": agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+                    "continuation_budget": 2,
+                }),
+            }
+
+        # Force both files to the same explicit mtime.
+        same_mtime = (_EPOCH_2020, _EPOCH_2020)
+        smaller_name = self.checkpoint_dir / "20260609T120000Z-aaaaaaaa.json"
+        larger_name = self.checkpoint_dir / "20260609T120000Z-bbbbbbbb.json"
+        smaller_name.write_text(
+            json.dumps(_entry("alpha-task")), encoding="utf-8",
+        )
+        larger_name.write_text(
+            json.dumps(_entry("beta-task")), encoding="utf-8",
+        )
+        os.utime(smaller_name, same_mtime)
+        os.utime(larger_name, same_mtime)
+        loaded = agent_loop._load_active_checkpoint(self.repo_root)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(
+            loaded["task"], "beta-task",
+            "with identical mtime, lexically-larger filename wins",
+        )
 
     def test_active_checkpoint_still_refuses_when_malformed(self) -> None:
-        # If the chosen active (lexically-largest filename) checkpoint
-        # is itself malformed, the existing fail-closed HaltError must
-        # still propagate. A valid older entry does NOT mask a
-        # malformed newer entry; the active selection is what counts.
+        # If the chosen active (most recently written by mtime)
+        # checkpoint is itself malformed, the existing fail-closed
+        # HaltError must still propagate. A valid older entry does NOT
+        # mask a malformed newer entry; the active selection is what
+        # counts. Use explicit mtimes so the older file is
+        # unambiguously older regardless of filesystem granularity.
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
         def _valid_body() -> str:
@@ -291,9 +372,9 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
             "supersedes": None,
             "body": _valid_body(),
         }
-        (self.checkpoint_dir / "20200101T000000Z-aaaaaaaa.json").write_text(
-            json.dumps(older_valid), encoding="utf-8",
-        )
+        older_path = self.checkpoint_dir / "20200101T000000Z-aaaaaaaa.json"
+        older_path.write_text(json.dumps(older_valid), encoding="utf-8")
+        _age_file_to_2020(older_path)
         newer_malformed = {
             "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
             "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
@@ -305,6 +386,8 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
             "supersedes": None,
             "body": json.dumps({}),  # missing every checkpoint-body field
         }
+        # Newer file: write last so its natural now-mtime is larger
+        # than the explicit 2020 mtime we set on the older file.
         (self.checkpoint_dir / "20300101T000000Z-bbbbbbbb.json").write_text(
             json.dumps(newer_malformed), encoding="utf-8",
         )
@@ -476,9 +559,10 @@ class StrictResumeWithValidCheckpointTests(_ResumeTestCase):
     ) -> None:
         # Phase 6E selection rule: a malformed historical checkpoint
         # must NOT block resume when a newer valid checkpoint is the
-        # active one. Plant the older malformed file by hand with a
-        # far-past timestamp so its filename is always lexically
-        # smaller than the live writer's now-timestamped filename.
+        # active one. Plant the older malformed file by hand and set
+        # its mtime explicitly to 2020 so the live writer's natural
+        # now-mtime is unambiguously larger regardless of filesystem
+        # mtime granularity.
         self._write_state()
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         old_malformed = {
@@ -492,9 +576,9 @@ class StrictResumeWithValidCheckpointTests(_ResumeTestCase):
             "supersedes": None,
             "body": json.dumps({}),  # missing every checkpoint-body field
         }
-        (self.checkpoint_dir / "20200101T000000Z-deadbeef.json").write_text(
-            json.dumps(old_malformed), encoding="utf-8",
-        )
+        old_path = self.checkpoint_dir / "20200101T000000Z-deadbeef.json"
+        old_path.write_text(json.dumps(old_malformed), encoding="utf-8")
+        _age_file_to_2020(old_path)
         self._write_checkpoint()  # newer valid, matches loop-state
         with mock.patch.object(
             agent_loop, "_run_normal_cycle_from_increment",
