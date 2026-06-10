@@ -2129,18 +2129,31 @@ CHECKPOINT_RESUME_CONTEXT_FIELDS = (
 
 
 def _load_active_checkpoint(repo_root: Path) -> Optional[dict]:
-    """Return the newest valid checkpoint payload, or None if no
+    """Return the active (newest) checkpoint payload, or None if no
     checkpoint artifacts exist.
 
-    Per the Phase 6A "append-mostly" model, multiple checkpoint
-    artifacts may accumulate over time. Only the newest by `created_at`
-    corresponds to the currently paused cycle; the older entries are
-    historical records of past halts. Each enumerated entry is
-    re-validated through `read_checkpoint_entry`, so a malformed,
-    missing-field, unrecognized-`checkpoint_signal_version`, or
-    out-of-vocabulary entry on disk causes the entire load to halt
-    fail-closed - the caller surfaces that refusal to the operator
-    rather than silently falling back to "no checkpoint".
+    Active-checkpoint selection rule: pick the checkpoint with the
+    lexically-largest filename and read ONLY that file.
+
+    The Phase 6D filename format is
+    `{YYYYMMDDTHHMMSSZ}-{sha256_short(body)[:8]}.json`, which makes
+    the filename a sort-friendly key whose primary component is the
+    `created_at` UTC timestamp and whose secondary component is a
+    deterministic body-hash tie-breaker. Two checkpoints written in
+    the same wall-clock second still order deterministically by the
+    body-hash tail rather than by directory iteration order.
+
+    Per the Phase 6A "append-mostly" model, older entries are
+    historical records of past halts; they are NOT consulted for
+    resume consistency once the active checkpoint has been
+    identified. A malformed historical checkpoint therefore does not
+    block resume; only the chosen active checkpoint is read through
+    `read_checkpoint_entry`. If THAT entry is malformed, missing a
+    required field, carries an unrecognized
+    `checkpoint_signal_version`, or has an out-of-vocabulary value,
+    the existing fail-closed `HaltError` propagates so the caller
+    surfaces the refusal to the operator rather than silently falling
+    back to "no checkpoint".
 
     Returns None only when the checkpoint subdirectory is absent or
     empty. This preserves backward compatibility with pre-6D paused
@@ -2149,9 +2162,9 @@ def _load_active_checkpoint(repo_root: Path) -> Optional[dict]:
     paths = list_checkpoint_entries(repo_root)
     if not paths:
         return None
-    payloads = [read_checkpoint_entry(p) for p in paths]
-    payloads.sort(key=lambda e: e.get("created_at", ""), reverse=True)
-    return payloads[0]
+    # list_checkpoint_entries returns paths sorted ascending; the
+    # lexically-largest filename is the newest active checkpoint.
+    return read_checkpoint_entry(paths[-1])
 
 
 def _validate_checkpoint_against_loop_state(

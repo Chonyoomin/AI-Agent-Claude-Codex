@@ -153,7 +153,8 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
     def test_propagates_haltError_for_malformed_checkpoint(self) -> None:
         # Plant a hand-crafted checkpoint with a missing required body
         # field; read_checkpoint_entry refuses fail-closed and the
-        # refusal propagates out of _load_active_checkpoint.
+        # refusal propagates out of _load_active_checkpoint when the
+        # malformed file is the ACTIVE (newest) checkpoint.
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         entry = {
             "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
@@ -168,6 +169,144 @@ class LoadActiveCheckpointTests(_ResumeTestCase):
         }
         (self.checkpoint_dir / "20260609T120000Z-deadbeef.json").write_text(
             json.dumps(entry), encoding="utf-8",
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._load_active_checkpoint(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+
+    def test_malformed_older_checkpoint_does_not_block_newer_valid(
+        self,
+    ) -> None:
+        # Phase 6E selection rule: only the active (lexically-largest
+        # filename) checkpoint is read. A malformed historical entry
+        # with an older timestamp prefix must NOT block resume when a
+        # newer valid checkpoint exists.
+        #
+        # Plant a malformed older file with a far-past timestamp so it
+        # is always lexically smaller than any timestamp the live
+        # writer produces; the live writer's filename starts with a
+        # real-now `YYYYMMDDTHHMMSSZ` prefix.
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        old_malformed = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+            "phase": _ACTIVE_PHASE,
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "cycle_count": 0,
+            "source_artifact_path": _SOURCE_ARTIFACT,
+            "created_at": "2020-01-01T00:00:00Z",
+            "supersedes": None,
+            "body": json.dumps({}),  # missing every checkpoint-body field
+        }
+        (self.checkpoint_dir / "20200101T000000Z-deadbeef.json").write_text(
+            json.dumps(old_malformed), encoding="utf-8",
+        )
+        # Now write a valid newer checkpoint via the live writer.
+        self._write_checkpoint(task="newer-valid-task")
+        loaded = agent_loop._load_active_checkpoint(self.repo_root)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["task"], "newer-valid-task")
+
+    def test_same_second_writes_select_lexically_largest_filename(
+        self,
+    ) -> None:
+        # The Phase 6D filename format is
+        # `{YYYYMMDDTHHMMSSZ}-{sha256_short(body)[:8]}.json`, so two
+        # entries written in the same second have identical timestamp
+        # prefixes but distinct body-hash suffixes. The active
+        # checkpoint must be the one with the lexically-larger
+        # suffix - a deterministic tie-breaker grounded in on-disk
+        # data, NOT directory iteration order.
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        def _entry(task: str) -> dict:
+            return {
+                "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+                "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+                "phase": _ACTIVE_PHASE,
+                "sub_phase": _ACTIVE_SUB_PHASE,
+                "cycle_count": 0,
+                "source_artifact_path": _SOURCE_ARTIFACT,
+                "created_at": "2026-06-09T12:00:00Z",
+                "supersedes": None,
+                "body": json.dumps({
+                    "checkpoint_signal_version": (
+                        agent_loop.CHECKPOINT_SIGNAL_VERSION
+                    ),
+                    "task": task,
+                    "status": agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+                    "approval_mode": agent_loop.APPROVAL_MODE_STRICT,
+                    "awaiting_human_for": (
+                        agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT
+                    ),
+                    "active_prompt_path": ".agent-loop/claude-prompt.md",
+                    "suspension_reason": agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+                    "continuation_budget": 2,
+                }),
+            }
+
+        # Lexically-smaller suffix -> task "alpha"; lexically-larger
+        # suffix -> task "beta". The active checkpoint should be beta.
+        (self.checkpoint_dir / "20260609T120000Z-aaaaaaaa.json").write_text(
+            json.dumps(_entry("alpha")), encoding="utf-8",
+        )
+        (self.checkpoint_dir / "20260609T120000Z-bbbbbbbb.json").write_text(
+            json.dumps(_entry("beta")), encoding="utf-8",
+        )
+        loaded = agent_loop._load_active_checkpoint(self.repo_root)
+        self.assertIsNotNone(loaded)
+        self.assertEqual(loaded["task"], "beta")
+
+    def test_active_checkpoint_still_refuses_when_malformed(self) -> None:
+        # If the chosen active (lexically-largest filename) checkpoint
+        # is itself malformed, the existing fail-closed HaltError must
+        # still propagate. A valid older entry does NOT mask a
+        # malformed newer entry; the active selection is what counts.
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+
+        def _valid_body() -> str:
+            return json.dumps({
+                "checkpoint_signal_version": (
+                    agent_loop.CHECKPOINT_SIGNAL_VERSION
+                ),
+                "task": _ACTIVE_TASK,
+                "status": agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+                "approval_mode": agent_loop.APPROVAL_MODE_STRICT,
+                "awaiting_human_for": (
+                    agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT
+                ),
+                "active_prompt_path": ".agent-loop/claude-prompt.md",
+                "suspension_reason": agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+                "continuation_budget": 2,
+            })
+
+        older_valid = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+            "phase": _ACTIVE_PHASE,
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "cycle_count": 0,
+            "source_artifact_path": _SOURCE_ARTIFACT,
+            "created_at": "2020-01-01T00:00:00Z",
+            "supersedes": None,
+            "body": _valid_body(),
+        }
+        (self.checkpoint_dir / "20200101T000000Z-aaaaaaaa.json").write_text(
+            json.dumps(older_valid), encoding="utf-8",
+        )
+        newer_malformed = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+            "phase": _ACTIVE_PHASE,
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "cycle_count": 0,
+            "source_artifact_path": _SOURCE_ARTIFACT,
+            "created_at": "2030-01-01T00:00:00Z",
+            "supersedes": None,
+            "body": json.dumps({}),  # missing every checkpoint-body field
+        }
+        (self.checkpoint_dir / "20300101T000000Z-bbbbbbbb.json").write_text(
+            json.dumps(newer_malformed), encoding="utf-8",
         )
         with self.assertRaises(agent_loop.HaltError) as cm:
             agent_loop._load_active_checkpoint(self.repo_root)
@@ -331,6 +470,42 @@ class StrictResumeWithValidCheckpointTests(_ResumeTestCase):
             rc = agent_loop.run_strict_resume(self.repo_root)
         self.assertEqual(rc, 0)
         dispatch.assert_called_once()
+
+    def test_resume_dispatches_when_older_malformed_alongside_newer_valid(
+        self,
+    ) -> None:
+        # Phase 6E selection rule: a malformed historical checkpoint
+        # must NOT block resume when a newer valid checkpoint is the
+        # active one. Plant the older malformed file by hand with a
+        # far-past timestamp so its filename is always lexically
+        # smaller than the live writer's now-timestamped filename.
+        self._write_state()
+        self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
+        old_malformed = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+            "phase": _ACTIVE_PHASE,
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "cycle_count": 0,
+            "source_artifact_path": _SOURCE_ARTIFACT,
+            "created_at": "2020-01-01T00:00:00Z",
+            "supersedes": None,
+            "body": json.dumps({}),  # missing every checkpoint-body field
+        }
+        (self.checkpoint_dir / "20200101T000000Z-deadbeef.json").write_text(
+            json.dumps(old_malformed), encoding="utf-8",
+        )
+        self._write_checkpoint()  # newer valid, matches loop-state
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_from_increment",
+            return_value=0,
+        ) as dispatch:
+            rc = agent_loop.run_strict_resume(self.repo_root)
+        self.assertEqual(rc, 0)
+        dispatch.assert_called_once()
+        # Log records that the active checkpoint validated.
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn("checkpoint validated for resume:", log_text)
 
 
 class StrictResumeStaleCheckpointRefusalTests(_ResumeTestCase):
