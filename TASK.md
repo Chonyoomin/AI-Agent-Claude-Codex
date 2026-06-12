@@ -20,41 +20,42 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6E - Checkpoint Resume Initial Slice
+Phase 6F - Token Exhaustion Continuation Initial Slice
 
 ## Phase Status
 
-Phase 6D (Checkpoint Artifact Storage Initial Slice) is closed after Codex review approval and human progression. Phase 6E is now active as the next implementation slice for Phase 6 durable memory. This sub-phase should implement initial checkpoint consumption on `resume`: validate and read stored checkpoint artifacts during resume handling, refuse stale or contradictory checkpoint context fail-closed, and preserve existing Phase 5 strict-gate semantics while still deferring token-exhaustion continuation chaining and any automatic continuation behavior.
+Phase 6E (Checkpoint Resume Initial Slice) is closed after Codex review approval and human progression. Phase 6F is now active as the next implementation slice for Phase 6 durable memory. This sub-phase should implement the first token-exhaustion continuation runtime on top of the shipped checkpoint-resume layer: classify token or context exhaustion as an interrupted-run state, persist the required checkpoint continuation metadata, and allow bounded continuation through explicit resume handling while still deferring automatic continuation chaining and broader memory distillation behavior.
 
 ## Active Task
 
-Implement the Phase 6 checkpoint resume foundation in code. This slice should consume and validate stored checkpoint artifacts during resume handling, compare checkpoint context against canonical loop state, preserve existing Phase 5 strict-gate routing semantics, and refuse stale or contradictory checkpoints fail-closed while still deferring token-exhaustion continuation chaining and any automatic continuation behavior.
+Implement the Phase 6 token-exhaustion continuation foundation in code. This slice should treat token or context exhaustion as a resumable interruption, persist and consume the required checkpoint continuation state, enforce bounded continuation attempts, preserve existing Phase 5 approval-mode and strict-gate semantics, and still defer automatic continuation chaining or broader memory distillation behavior.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6E as active
-- `.agent-loop/phase-plan.md` records Phase 6D as closed history and contains a `## Phase 6E - Checkpoint Resume Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the implementation consumes stored checkpoint artifacts during `resume` handling using the Phase 6D checkpoint storage layer
-- resume-path checkpoint handling validates checkpoint context against canonical loop state and refuses stale, contradictory, or malformed checkpoint records fail-closed
-- checkpoint consumption preserves the shipped Phase 5 strict-gate routing semantics and does not widen autonomy or bypass human gates
-- no token-exhaustion continuation chaining or other automatic continuation behavior is enabled in this slice
-- focused tests cover valid checkpoint-backed resume handling, stale-checkpoint refusal, contradictory-context refusal, malformed-checkpoint refusal, and preservation of canonical-artifact precedence
-- `README.md` reflects that Phase 6E is active and that checkpoint-backed resume handling is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6F as active
+- `.agent-loop/phase-plan.md` records Phase 6E as closed history and contains a `## Phase 6F - Token Exhaustion Continuation Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the implementation classifies token or context exhaustion as an interrupted-run state rather than silent success
+- token-exhaustion continuation persists and consumes checkpoint state using the shipped Phase 6D/6E checkpoint surfaces
+- bounded continuation attempts are enforced for the active checkpoint and refused fail-closed when exhausted, stale, contradictory, or malformed
+- the continuation path preserves the shipped Phase 5 approval-mode and strict-gate routing semantics and does not widen autonomy or bypass human gates
+- no automatic continuation chaining or other background continuation behavior is enabled in this slice
+- focused tests cover token-exhaustion interruption handling, bounded continuation-budget enforcement, valid continuation resume, exhausted-budget refusal, and preservation of canonical-artifact precedence
+- `README.md` reflects that Phase 6F is active and that token-exhaustion continuation handling is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6E until:
+Do not start the next 6x sub-phase after Phase 6F until:
 
-- this Phase 6E slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6F slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing token-exhaustion continuation chaining or any other automatic continuation-driving runtime behavior beyond explicit `resume`
-- implementing phase-boundary memory distillation or repeated-failure memory synthesis beyond the narrow checkpoint-resume helpers needed for this slice
-- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow checkpoint-resume implementation needed for future Phase 6 work
+- implementing automatic continuation chaining or any other background continuation-driving runtime behavior beyond the narrow explicit continuation path needed for token-exhaustion recovery
+- implementing phase-boundary memory distillation or repeated-failure memory synthesis beyond the narrow token-exhaustion continuation helpers needed for this slice
+- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow token-exhaustion continuation implementation needed for future Phase 6 work
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
