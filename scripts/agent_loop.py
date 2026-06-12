@@ -2786,10 +2786,29 @@ def run_auto_continue(repo_root: Path) -> int:
         # see whether the dispatched continuation re-entered the token-
         # exhaustion halt (a fresh `record_token_exhaustion(...)` call
         # during the continuation) or cleanly progressed past it.
+        #
+        # Run the same structural + contract-version checks the chain
+        # entry ran. The dispatched continuation owns its own
+        # writes through save_loop_state, but a hop that returns rc=0
+        # with loadable-but-invalid loop-state on disk (e.g. a missing
+        # required key or an unrecognized contract_version mutated in
+        # mid-hop) must NOT be silently logged as a successful
+        # completion and must NOT advance into another hop from
+        # malformed canonical state. Routing the refusal through `_halt`
+        # mirrors the chain-entry treatment of the same checks; the
+        # invalid state is best-effort overwritten with the
+        # halt_input_missing / halt_contract_version_mismatch
+        # vocabulary so the operator sees the structural reason rather
+        # than a misleading chain-success record.
         try:
             data = load_loop_state(state_path)
+            validate_loop_state(data)
+            check_contract_version(data)
         except HaltError as halt:
-            return _halt(state_path, {}, halt, log_path)
+            return _halt(
+                state_path, {} if "data" not in dir() else data, halt,
+                log_path,
+            )
         next_status = data.get("status")
         if next_status != HALTED_TOKEN_EXHAUSTION:
             _log_note(
