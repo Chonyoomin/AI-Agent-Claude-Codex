@@ -20,42 +20,42 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6H - Bounded Continuation Prompt Construction Initial Slice
+Phase 6I - Phase-Boundary Memory Distillation Initial Slice
 
 ## Phase Status
 
-Phase 6G (Automatic Continuation Chaining Initial Slice) is closed after Codex review approval and human progression. Phase 6H is now active as the next implementation slice for Phase 6 durable memory. This sub-phase should implement the first bounded continuation-prompt construction layer on top of the shipped 6B/6C/6D/6E/6F/6G memory and checkpoint surfaces: construct resume-safe continuation prompt context from canonical task/state artifacts plus the active checkpoint, relevant evidence, and bounded durable memory, while still deferring phase-boundary memory distillation and broader optional-context behavior.
+Phase 6H (Bounded Continuation Prompt Construction Initial Slice) is closed after Codex review approval and human progression. Phase 6I is now active as the next implementation slice for Phase 6 durable memory. This sub-phase should implement the first phase-boundary memory distillation layer on top of the shipped 6B/6C/6D/6E/6F/6G/6H memory, checkpoint, continuation, and continuation-context surfaces: distill durable summary/decision/failure knowledge at approved phase boundaries into append-mostly memory artifacts while preserving canonical task/state precedence and still deferring broader optional-context behavior.
 
 ## Active Task
 
-Implement the Phase 6 bounded continuation-prompt construction foundation in code. This slice should build a narrow, auditable continuation prompt/context surface from canonical task and loop-state artifacts, the active checkpoint, bounded evidence, and selectively retrieved durable memory, while preserving existing Phase 5 approval-mode and strict-gate semantics and still deferring broader memory distillation or optional-context expansion.
+Implement the Phase 6 phase-boundary memory distillation foundation in code. This slice should build a narrow, auditable distillation surface that writes durable memory entries from approved phase-boundary artifacts and recent review/evidence context, while preserving canonical task and loop-state precedence, existing Phase 5 approval-mode and strict-gate semantics, and still deferring broader optional-context expansion.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6H as active
-- `.agent-loop/phase-plan.md` records Phase 6G as closed history and contains a `## Phase 6H - Bounded Continuation Prompt Construction Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` exposes a narrow continuation prompt/context construction surface for interrupted Claude or Codex work
-- continuation prompt construction pulls from canonical task/state artifacts plus the active checkpoint, bounded evidence, and selectively retrieved durable memory rather than raw transcript history
-- continuation prompt construction enforces bounded inclusion rules and refuses stale, contradictory, malformed, or unrecognized continuation inputs fail-closed
-- continuation prompt construction preserves the shipped Phase 5 approval-mode and strict-gate routing semantics and does not widen autonomy or bypass human gates
-- no phase-boundary memory distillation or broader optional-context loading is enabled in this slice
-- focused tests cover valid continuation prompt construction, bounded evidence and memory inclusion, stale-or-contradictory checkpoint refusal, and preservation of canonical-artifact precedence
-- `README.md` reflects that Phase 6H is active and that bounded continuation prompt construction is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6I as active
+- `.agent-loop/phase-plan.md` records Phase 6H as closed history and contains a `## Phase 6I - Phase-Boundary Memory Distillation Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` exposes a narrow phase-boundary memory distillation surface for approved phase transitions and related human-approved boundary events
+- memory distillation writes append-mostly durable memory entries derived from canonical artifacts, bounded review/evidence context, and existing Phase 6 memory surfaces rather than raw transcript dumps
+- distillation preserves canonical task/state precedence and refuses stale, contradictory, malformed, or unrecognized source inputs fail-closed
+- distillation preserves the shipped Phase 5 approval-mode and strict-gate routing semantics and does not widen autonomy or bypass human gates
+- no broader optional-context loading is enabled in this slice
+- focused tests cover valid phase-boundary distillation, bounded source selection, refusal on malformed or contradictory distillation inputs, and preservation of canonical-artifact precedence
+- `README.md` reflects that Phase 6I is active and that phase-boundary memory distillation is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6H until:
+Do not start the next 6x sub-phase after Phase 6I until:
 
-- this Phase 6H slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6I slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing phase-boundary memory distillation or repeated-failure memory synthesis beyond the narrow continuation prompt construction helpers needed for this slice
-- implementing broader optional context-file loading or retrieval expansion beyond the narrow continuation prompt construction implementation needed for future Phase 6 work
-- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow continuation prompt construction implementation needed for future Phase 6 work
+- implementing repeated-failure memory synthesis beyond the narrow phase-boundary distillation helpers needed for this slice
+- implementing broader optional context-file loading or retrieval expansion beyond the narrow phase-boundary distillation implementation needed for future Phase 6 work
+- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow phase-boundary distillation implementation needed for future Phase 6 work
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
