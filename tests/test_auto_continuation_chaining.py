@@ -589,5 +589,179 @@ class CanonicalPrecedencePreservationTests(_AutoContinueTestCase):
         self.assertNotIn("autonomous mode:", log_text)
 
 
+# ----- post-hop loop-state validation (Phase 6G fix slice) -----
+
+
+class RunAutoContinuePostHopValidationTests(_AutoContinueTestCase):
+    """Prove the chain validates the freshly reloaded loop-state with the
+    same structural + contract checks used at chain entry BEFORE
+    branching on `status`. A successful hop that leaves loadable-but-
+    invalid canonical state on disk must:
+
+      - refuse fail-closed (no `auto-continue chain completed` audit
+        line, no further hop attempt)
+      - propagate the structural halt vocabulary
+        (`halted_input_missing` for a missing required key,
+        `halted_contract_version_mismatch` for an unsupported
+        `contract_version`) rather than silently logging a chain success
+    """
+
+    def _make_corrupting_dispatch(self, corruption):
+        """Build a side_effect callable that, on its only call,
+        overwrites loop-state.json with the supplied dict and returns 0.
+        The continuation itself succeeds end-to-end (rc=0) but leaves
+        invalid state on disk; the chain's post-hop validation must
+        catch the mismatch."""
+        call_state = {"count": 0}
+
+        def _side_effect(repo_root_arg, data_arg, log_arg) -> int:
+            call_state["count"] += 1
+            state_path = (
+                repo_root_arg / ".agent-loop" / "loop-state.json"
+            )
+            state_path.write_text(
+                json.dumps(corruption, indent=2) + "\n",
+                encoding="utf-8",
+            )
+            return 0
+
+        return _side_effect, call_state
+
+    def test_chain_refuses_when_post_hop_state_is_missing_required_keys(
+        self,
+    ) -> None:
+        # The dispatched continuation overwrites loop-state.json with a
+        # JSON object that is loadable but missing required keys
+        # (`task`, `phase`, etc.). The chain's post-hop
+        # validate_loop_state must catch this and refuse fail-closed.
+        self._write_state()
+        self._record(continuation_budget=2)
+        corruption = {
+            # `phase` and `task` are intentionally absent; both are in
+            # REQUIRED_STATE_KEYS so validate_loop_state must refuse.
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "status": "evidence_capture",
+            "cycle_count": 1,
+            "max_cycles": 3,
+            "contract_version": "phase-3a-v2",
+            "awaiting_human_for": None,
+            "approval_mode": agent_loop.APPROVAL_MODE_REVIEW,
+        }
+        side_effect, _call_state = self._make_corrupting_dispatch(corruption)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            side_effect=side_effect,
+        ):
+            rc = agent_loop.run_auto_continue(self.repo_root)
+        self.assertEqual(rc, 2)
+        # The structural halt vocabulary lands on disk (via `_halt`),
+        # NOT a chain-completion success record.
+        after = self._state_on_disk()
+        self.assertEqual(after["status"], "halted_input_missing")
+        log_text = self.log_path.read_text(encoding="utf-8")
+        # No chain-completion note was emitted from malformed state.
+        self.assertNotIn(
+            "auto-continue chain completed after", log_text,
+        )
+        # The structural HALT note IS recorded so the operator sees the
+        # root cause.
+        self.assertIn("halted_input_missing", log_text)
+        self.assertIn("missing required keys", log_text)
+
+    def test_chain_refuses_when_post_hop_state_has_unsupported_contract_version(
+        self,
+    ) -> None:
+        # The dispatched continuation overwrites loop-state.json with a
+        # JSON object that has every required key but an unsupported
+        # `contract_version`. The chain's post-hop check_contract_version
+        # must catch this and refuse fail-closed.
+        self._write_state()
+        self._record(continuation_budget=2)
+        corruption = {
+            "phase": _ACTIVE_PHASE,
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "task": _ACTIVE_TASK,
+            "status": "evidence_capture",
+            "cycle_count": 1,
+            "max_cycles": 3,
+            "contract_version": "phase-9z-from-the-future",
+            "claude_version": "claude-opus-4-7",
+            "codex_version": None,
+            "orchestrator_version": "phase-3d-v0",
+            "last_verdict": None,
+            "last_verdict_phase": None,
+            "approval_mode": agent_loop.APPROVAL_MODE_REVIEW,
+            "awaiting_human_for": None,
+        }
+        side_effect, _call_state = self._make_corrupting_dispatch(corruption)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            side_effect=side_effect,
+        ):
+            rc = agent_loop.run_auto_continue(self.repo_root)
+        self.assertEqual(rc, 2)
+        after = self._state_on_disk()
+        self.assertEqual(
+            after["status"], "halted_contract_version_mismatch",
+        )
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertNotIn(
+            "auto-continue chain completed after", log_text,
+        )
+        self.assertIn(
+            "halted_contract_version_mismatch", log_text,
+        )
+
+    def test_chain_does_not_advance_when_post_hop_state_is_invalid(
+        self,
+    ) -> None:
+        # Even though invalid post-hop loop-state could theoretically
+        # carry `status = HALTED_TOKEN_EXHAUSTION` (and would otherwise
+        # advance the chain), the structural validation must refuse
+        # BEFORE the status check, so no second hop is attempted.
+        self._write_state()
+        self._record(continuation_budget=4)
+        corruption = {
+            # status is the token-exhaustion halt (would advance the
+            # chain if status were inspected first); but contract_version
+            # is unsupported so validate must refuse.
+            "phase": _ACTIVE_PHASE,
+            "sub_phase": _ACTIVE_SUB_PHASE,
+            "task": _ACTIVE_TASK,
+            "status": agent_loop.HALTED_TOKEN_EXHAUSTION,
+            "cycle_count": 1,
+            "max_cycles": 3,
+            "contract_version": "phase-9z-from-the-future",
+            "claude_version": "claude-opus-4-7",
+            "codex_version": None,
+            "orchestrator_version": "phase-3d-v0",
+            "last_verdict": None,
+            "last_verdict_phase": None,
+            "approval_mode": agent_loop.APPROVAL_MODE_REVIEW,
+            "awaiting_human_for": (
+                agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION
+            ),
+        }
+        side_effect, call_state = self._make_corrupting_dispatch(corruption)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            side_effect=side_effect,
+        ) as continuation:
+            rc = agent_loop.run_auto_continue(self.repo_root)
+        self.assertEqual(rc, 2)
+        # Exactly ONE continuation call: the chain refused before
+        # attempting a second hop from malformed canonical state.
+        self.assertEqual(continuation.call_count, 1)
+        self.assertEqual(call_state["count"], 1)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn("auto-continue chain hop 1 begin", log_text)
+        # No hop 2 was attempted.
+        self.assertNotIn("auto-continue chain hop 2 begin", log_text)
+        # Successful completion is not logged.
+        self.assertNotIn(
+            "auto-continue chain completed after", log_text,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

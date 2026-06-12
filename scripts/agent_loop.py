@@ -2786,10 +2786,29 @@ def run_auto_continue(repo_root: Path) -> int:
         # see whether the dispatched continuation re-entered the token-
         # exhaustion halt (a fresh `record_token_exhaustion(...)` call
         # during the continuation) or cleanly progressed past it.
+        #
+        # Run the same structural + contract-version checks the chain
+        # entry ran. The dispatched continuation owns its own
+        # writes through save_loop_state, but a hop that returns rc=0
+        # with loadable-but-invalid loop-state on disk (e.g. a missing
+        # required key or an unrecognized contract_version mutated in
+        # mid-hop) must NOT be silently logged as a successful
+        # completion and must NOT advance into another hop from
+        # malformed canonical state. Routing the refusal through `_halt`
+        # mirrors the chain-entry treatment of the same checks; the
+        # invalid state is best-effort overwritten with the
+        # halt_input_missing / halt_contract_version_mismatch
+        # vocabulary so the operator sees the structural reason rather
+        # than a misleading chain-success record.
         try:
             data = load_loop_state(state_path)
+            validate_loop_state(data)
+            check_contract_version(data)
         except HaltError as halt:
-            return _halt(state_path, {}, halt, log_path)
+            return _halt(
+                state_path, {} if "data" not in dir() else data, halt,
+                log_path,
+            )
         next_status = data.get("status")
         if next_status != HALTED_TOKEN_EXHAUSTION:
             _log_note(
@@ -2816,6 +2835,402 @@ def run_auto_continue(repo_root: Path) -> int:
         f"(inspect the checkpoint chain or clear the halt manually) "
         f"rather than let the chain expand without bound."
     )
+
+
+# Phase 6H - Bounded Continuation Prompt Construction Initial Slice.
+#
+# Builds on the shipped 6B (storage), 6C (advisory-only retrieval), 6D
+# (checkpoint storage), 6E (checkpoint resume), 6F (token-exhaustion
+# continuation), and 6G (auto-continuation chaining) primitives. The new
+# `build_continuation_prompt_context(...)` surface assembles a
+# structured CONTEXT DICT a later continuation runtime can serialize to
+# a prompt. The dict is sourced from canonical artifacts (loop-state +
+# the active Phase 6F/6G checkpoint) plus BOUNDED evidence excerpts and
+# advisory-only memory entries, so a continuation cannot silently
+# expand into an unbounded repo dump.
+#
+# Refusal modes (all `halted_input_missing` unless noted):
+#   - missing / malformed `loop-state.json`
+#   - unsupported `contract_version`
+#     (`halted_contract_version_mismatch`)
+#   - loop-state `status` is not in
+#     `CONTINUATION_CONTEXT_ELIGIBLE_HALT_STATUSES` (only the Phase 6F
+#     token-exhaustion halt is supported in this initial slice; strict-
+#     gate halts already have the existing `resume` path and do not
+#     require bounded prompt construction)
+#   - no active checkpoint on disk
+#   - checkpoint schema / suspension_reason / cycle-identity mismatch
+#     (delegated to existing 6F validators)
+#   - memory_entry_limit out of the 6C bounds (delegated to
+#     `_validate_retrieval_limit`)
+#   - evidence_byte_limit not a positive int, or above
+#     `CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT`
+#
+# Out of scope for this initial slice (deferred per the 6H prompt):
+#   - phase-boundary memory distillation or repeated-failure synthesis
+#   - broader optional context-file loading (beyond the EVIDENCE_FILES
+#     set; no arbitrary repo file reads)
+#   - prompt SERIALIZATION (the slice returns a dict; turning it into a
+#     prompt string is a later runtime layer's job)
+#   - widening Phase 5 autonomy or bypassing human gates
+#
+# Canonical precedence: every returned dict carries
+# `CONTINUATION_CONTEXT_CANONICAL_PRECEDENCE_NOTE` so a downstream
+# consumer cannot accidentally treat advisory memory as canonical
+# state.
+
+CONTINUATION_CONTEXT_SIGNAL_VERSION = "phase-6h-v1"
+CONTINUATION_CONTEXT_DEFAULT_MEMORY_LIMIT = MEMORY_RETRIEVAL_DEFAULT_LIMIT
+CONTINUATION_CONTEXT_DEFAULT_EVIDENCE_BYTE_LIMIT = 4096
+CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT = 65536
+# Initial slice: only the Phase 6F / 6G token-exhaustion halt has the
+# checkpoint vocabulary the context builder relies on. Strict-gate halts
+# already have their own `resume` path. Widening this set is a later-
+# slice concern (each new halt category needs its own checkpoint-derived
+# context surface).
+CONTINUATION_CONTEXT_ELIGIBLE_HALT_STATUSES = frozenset({
+    HALTED_TOKEN_EXHAUSTION,
+})
+# Advisory memory retrieval intentionally excludes the `checkpoint`
+# category because the active checkpoint is already surfaced under the
+# dedicated `checkpoint` key of the returned payload; including it in
+# `memory_advisory` would duplicate the data and blur the canonical /
+# advisory boundary.
+CONTINUATION_CONTEXT_MEMORY_CATEGORIES = frozenset(
+    MEMORY_CATEGORIES - {MEMORY_CATEGORY_CHECKPOINT}
+)
+CONTINUATION_CONTEXT_OUTPUT_REL = ".agent-loop/continuation-context.json"
+CONTINUATION_CONTEXT_CANONICAL_PRECEDENCE_NOTE = (
+    "Canonical task and loop-state artifacts (TASK.md, "
+    ".agent-loop/current-task.md, .agent-loop/current-phase.md, "
+    ".agent-loop/loop-state.json) and the active checkpoint are the "
+    "source of truth. The `memory_advisory` entries are advisory only "
+    "per the Phase 6A / 6C contract and must NOT override canonical "
+    "state or any Phase 5 approval-mode / strict-gate decision. "
+    "Evidence excerpts are bounded; consult the named on-disk path for "
+    "the full content."
+)
+
+
+def _validate_evidence_byte_limit(value) -> None:
+    """Refuse fail-closed on an out-of-bounds evidence byte limit.
+
+    Mirrors `_validate_retrieval_limit`'s shape: bool rejected (bool is
+    int in Python; accepting True/False would silently coerce to 1/0),
+    non-int rejected, non-positive rejected, above the safety cap
+    rejected.
+    """
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"continuation-context evidence_byte_limit must be a "
+                f"positive int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"continuation-context evidence_byte_limit must be an "
+                f"int; got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"continuation-context evidence_byte_limit must be "
+                f"positive; got {value!r}"
+            ),
+        )
+    if value > CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"continuation-context evidence_byte_limit {value!r} "
+                f"exceeds CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT="
+                f"{CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT}; the "
+                f"safety cap prevents a continuation from silently "
+                f"expanding into an unbounded repo dump"
+            ),
+        )
+
+
+def _collect_bounded_evidence(repo_root: Path, byte_limit: int) -> dict:
+    """Return a dict of relative path -> excerpt metadata for each
+    `EVIDENCE_FILES` entry. Each entry carries `byte_size_on_disk`,
+    `excerpt`, `excerpt_byte_size`, and `truncated`. Missing files are
+    surfaced with `absent: True` so the continuation runtime sees the
+    same absence the orchestrator would see, not a silent omission.
+
+    An evidence file that exists but cannot be read (any `OSError`
+    from `Path.read_bytes`) refuses fail-closed via `HaltError` rather
+    than producing a success payload with an undocumented schema
+    branch. The Phase 6H continuation-context schema only documents
+    `absent: True` for missing files and the full metadata block for
+    readable files; any other on-disk state is a structural input
+    failure the operator must address before the context can be built.
+    """
+    out: dict = {}
+    for rel in EVIDENCE_FILES:
+        p = repo_root / rel
+        if not p.exists():
+            out[rel] = {"absent": True}
+            continue
+        try:
+            raw = p.read_bytes()
+        except OSError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"continuation context construction refused: "
+                    f"evidence file {rel!r} exists but is unreadable "
+                    f"({type(exc).__name__}: {exc}); resolve the read "
+                    f"failure before rebuilding the continuation context"
+                ),
+            )
+        total = len(raw)
+        excerpt_bytes = raw[:byte_limit]
+        # Decode best-effort as UTF-8 (evidence files are text). Replace
+        # malformed bytes so a binary or mis-encoded file does not
+        # crash the builder.
+        excerpt_text = excerpt_bytes.decode("utf-8", errors="replace")
+        out[rel] = {
+            "absent": False,
+            "byte_size_on_disk": total,
+            "excerpt": excerpt_text,
+            "excerpt_byte_size": len(excerpt_bytes),
+            "truncated": total > byte_limit,
+        }
+    return out
+
+
+def build_continuation_prompt_context(
+    repo_root: Path,
+    *,
+    memory_entry_limit: Optional[int] = None,
+    evidence_byte_limit: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> dict:
+    """Assemble a structured continuation prompt/context dict.
+
+    Returns a dict keyed by:
+      - `context_signal_version`: schema version tag the consumer
+        validates against
+      - `built_at`: UTC ISO timestamp of construction
+      - `canonical_state`: the canonical loop-state subset
+        (phase / sub_phase / task / cycle_count / approval_mode /
+        halt_status / awaiting_human_for)
+      - `checkpoint`: the active Phase 6F/6G token-exhaustion
+        checkpoint subset (suspension_reason / active_prompt_path /
+        continuation_budget / pre-suspension status / pre-suspension
+        awaiting_human_for / source_artifact_path / created_at)
+      - `evidence`: a dict of EVIDENCE_FILES rel path -> bounded
+        excerpt metadata (`byte_size_on_disk`, `excerpt`,
+        `excerpt_byte_size`, `truncated`, or `absent: True`)
+      - `memory_advisory`: a list of Phase 6C-retrieved entries each
+        already carrying `advisory_only = True`; bounded by
+        `memory_entry_limit`
+      - `memory_truncated_at_limit`: True if the retrieval matched
+        MORE entries than the limit allowed back; otherwise False
+      - `memory_limit_applied`: the limit that was actually used (the
+        caller's value or the default)
+      - `evidence_byte_limit_applied`: same for evidence
+      - `canonical_precedence_note`: the explicit reminder that
+        canonical artifacts win over advisory memory
+
+    Raises `HaltError` on any refusal mode. The caller (the CLI
+    handler) routes refusals through `_halt`.
+
+    Args:
+      repo_root: workspace root.
+      memory_entry_limit: optional override for the Phase 6C retrieval
+        limit. Defaults to `CONTINUATION_CONTEXT_DEFAULT_MEMORY_LIMIT`.
+      evidence_byte_limit: optional override for the per-file evidence
+        excerpt byte cap. Defaults to
+        `CONTINUATION_CONTEXT_DEFAULT_EVIDENCE_BYTE_LIMIT`.
+      log_path: optional orchestrator-log path. When supplied, a single
+        `continuation context built:` audit note is appended.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+
+    # 1. Load + validate loop-state with the same structural / contract
+    #    checks every Phase 6 surface uses.
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    # 2. Eligibility: only the Phase 6F token-exhaustion halt has the
+    #    checkpoint vocabulary this builder consumes. Other halts (or
+    #    a non-halt state) must be refused fail-closed; otherwise the
+    #    builder would be advertising a continuation context for a
+    #    halt that has no continuation semantics.
+    status = data.get("status")
+    if status not in CONTINUATION_CONTEXT_ELIGIBLE_HALT_STATUSES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"continuation context construction refused: loop-state "
+                f"status {status!r} is not in the eligible halt set "
+                f"{sorted(CONTINUATION_CONTEXT_ELIGIBLE_HALT_STATUSES)}. "
+                f"This initial Phase 6H slice only constructs continuation "
+                f"context for token-exhaustion halts; other halt categories "
+                f"use their existing resume paths."
+            ),
+        )
+
+    # 3. Active checkpoint must exist and validate against the Phase
+    #    6F cycle-identity + suspension_reason contract. Delegated to
+    #    the existing 6F validators so the same refusal vocabulary the
+    #    resume path uses applies here.
+    checkpoint = _load_active_checkpoint(repo_root)
+    if checkpoint is None:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "continuation context construction refused: no active "
+                "checkpoint on disk; cannot build continuation context "
+                "without a checkpoint that records the suspended cycle"
+            ),
+        )
+    _validate_token_exhaustion_checkpoint(checkpoint, data)
+    if checkpoint["suspension_reason"] != TOKEN_EXHAUSTION_SUSPENSION_REASON:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"continuation context construction refused: active "
+                f"checkpoint suspension_reason="
+                f"{checkpoint['suspension_reason']!r} is not "
+                f"{TOKEN_EXHAUSTION_SUSPENSION_REASON!r}; this initial "
+                f"slice only handles token-exhaustion continuation"
+            ),
+        )
+
+    # 4. Bound the memory retrieval and evidence inclusion. Both are
+    #    validated using the same helpers the underlying primitives
+    #    use, so an out-of-bounds limit refuses at the boundary rather
+    #    than inside `retrieve_memory_entries`.
+    mem_limit = (
+        memory_entry_limit
+        if memory_entry_limit is not None
+        else CONTINUATION_CONTEXT_DEFAULT_MEMORY_LIMIT
+    )
+    _validate_retrieval_limit(mem_limit)
+    ev_limit = (
+        evidence_byte_limit
+        if evidence_byte_limit is not None
+        else CONTINUATION_CONTEXT_DEFAULT_EVIDENCE_BYTE_LIMIT
+    )
+    _validate_evidence_byte_limit(ev_limit)
+
+    # 5. Retrieve advisory memory through the shipped 6C primitive.
+    #    Each returned entry already carries the structural
+    #    `advisory_only` marker. The retrieval primitive refuses
+    #    fail-closed on its own contract violations (malformed
+    #    entries, unknown category filter, out-of-bound limit) which
+    #    we propagate via HaltError unchanged.
+    memory_entries = retrieve_memory_entries(
+        repo_root,
+        phase=data["phase"],
+        sub_phase=data.get("sub_phase"),
+        categories=CONTINUATION_CONTEXT_MEMORY_CATEGORIES,
+        limit=mem_limit,
+    )
+
+    # Count actual matches without applying any limit so truncation
+    # detection is honest even when the caller's limit equals
+    # MEMORY_RETRIEVAL_MAX_LIMIT. A previous version re-ran
+    # retrieve_memory_entries with limit=MEMORY_RETRIEVAL_MAX_LIMIT
+    # and compared lengths, but if the caller already used that limit
+    # the second call also capped at MEMORY_RETRIEVAL_MAX_LIMIT and
+    # reported `memory_truncated_at_limit = False` even when
+    # additional matching entries existed on disk. Walking the
+    # entries directly with the same scope filters the retrieval
+    # primitive uses (category-in-set + phase + sub_phase) gives a
+    # truthful count regardless of the caller's chosen limit. The
+    # walk re-validates each entry via read_memory_entry so any
+    # malformed on-disk entry still surfaces as the same HaltError
+    # the retrieval primitive would raise.
+    total_matched = 0
+    for entry_path in list_memory_entries(repo_root):
+        payload = read_memory_entry(entry_path)
+        if payload["category"] not in CONTINUATION_CONTEXT_MEMORY_CATEGORIES:
+            continue
+        if not _is_entry_in_active_scope(
+            payload, phase=data["phase"], sub_phase=data.get("sub_phase"),
+        ):
+            continue
+        total_matched += 1
+    memory_truncated = total_matched > len(memory_entries)
+
+    # 6. Bounded evidence excerpts.
+    evidence = _collect_bounded_evidence(repo_root, ev_limit)
+
+    # 7. Resolve the active checkpoint's on-disk path (mtime-first
+    #    selection mirrors `_load_active_checkpoint`) so the dict
+    #    records exactly which file was the source.
+    paths = list_checkpoint_entries(repo_root)
+    active_path = max(paths, key=lambda p: (p.stat().st_mtime_ns, p.name))
+    checkpoint_rel = active_path.relative_to(repo_root).as_posix()
+
+    payload = {
+        "context_signal_version": CONTINUATION_CONTEXT_SIGNAL_VERSION,
+        "built_at": _utc_iso_now(),
+        "canonical_state": {
+            "phase": data["phase"],
+            "sub_phase": data.get("sub_phase"),
+            "task": data["task"],
+            "cycle_count": data["cycle_count"],
+            "approval_mode": data.get("approval_mode"),
+            "halt_status": data.get("status"),
+            "awaiting_human_for": data.get("awaiting_human_for"),
+        },
+        "checkpoint": {
+            "source_path": checkpoint_rel,
+            "suspension_reason": checkpoint["suspension_reason"],
+            "active_prompt_path": checkpoint["active_prompt_path"],
+            "continuation_budget": checkpoint["continuation_budget"],
+            "pre_suspension_status": checkpoint["status"],
+            "pre_suspension_awaiting_human_for": (
+                checkpoint["awaiting_human_for"]
+            ),
+            "source_artifact_path": checkpoint.get("source_artifact_path"),
+            "created_at": checkpoint.get("created_at"),
+        },
+        "evidence": evidence,
+        "evidence_byte_limit_applied": ev_limit,
+        "memory_advisory": memory_entries,
+        "memory_limit_applied": mem_limit,
+        "memory_truncated_at_limit": memory_truncated,
+        "canonical_precedence_note": (
+            CONTINUATION_CONTEXT_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+
+    if log_path is not None:
+        # Compact one-line audit note. The note records WHICH file the
+        # active checkpoint resolved to, the bounds applied, and the
+        # counts so the construction is reconstructable from
+        # `.agent-loop/orchestrator.log` alone.
+        present_evidence = sum(
+            1 for v in evidence.values() if not v.get("absent")
+        )
+        _log_note(
+            log_path,
+            (
+                f"continuation context built: signal_version="
+                f"{CONTINUATION_CONTEXT_SIGNAL_VERSION!r} "
+                f"checkpoint={checkpoint_rel!r} "
+                f"memory_limit={mem_limit} returned={len(memory_entries)} "
+                f"truncated={memory_truncated} "
+                f"evidence_byte_limit={ev_limit} "
+                f"evidence_present={present_evidence}/{len(EVIDENCE_FILES)}"
+            ),
+        )
+
+    return payload
 
 
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
@@ -5705,6 +6120,62 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def cmd_build_continuation_context(args: argparse.Namespace) -> int:
+    """Phase 6H operator runtime path: build a structured continuation
+    prompt/context dict from canonical artifacts + the active
+    checkpoint + bounded evidence + advisory memory, and persist it to
+    `.agent-loop/continuation-context.json` (or the path supplied via
+    `--output`) so the construction is auditable from on-disk
+    artifacts.
+
+    The artifact is regenerable from canonical state at any time; this
+    handler always overwrites it (NOT append-mostly) because it is an
+    audit/inspection artifact, not a canonical store. Refusal routes
+    through `_halt` so the structural failure vocabulary lands on disk
+    for human inspection, matching the other top-level `cmd_*`
+    refusals.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    output_path = (
+        Path(args.output) if args.output is not None
+        else repo_root / CONTINUATION_CONTEXT_OUTPUT_REL
+    )
+    if not output_path.is_absolute():
+        output_path = (repo_root / output_path).resolve()
+    kwargs: dict = {}
+    if args.memory_entry_limit is not None:
+        kwargs["memory_entry_limit"] = args.memory_entry_limit
+    if args.evidence_byte_limit is not None:
+        kwargs["evidence_byte_limit"] = args.evidence_byte_limit
+    try:
+        payload = build_continuation_prompt_context(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    try:
+        rel = output_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        rel = str(output_path)
+    print(
+        f"[orchestrator] continuation context written to {rel}; "
+        f"see {log_path.relative_to(repo_root).as_posix()} for the "
+        f"`continuation context built:` audit note."
+    )
+    return 0
+
+
 def cmd_auto_continue(_args: argparse.Namespace) -> int:
     """Phase 6G operator runtime path: bounded automatic continuation
     chaining over the shipped Phase 6F single-hop resume.
@@ -6397,6 +6868,53 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    build_ctx = sub.add_parser(
+        "build-continuation-context",
+        help=(
+            "Phase 6H bounded continuation prompt construction: assemble "
+            "a structured continuation context dict from canonical "
+            "loop-state + the active Phase 6F/6G token-exhaustion "
+            "checkpoint + bounded evidence excerpts + advisory durable "
+            "memory entries, and persist the JSON to "
+            "`.agent-loop/continuation-context.json` (override with "
+            "`--output`). Refuses fail-closed for an ineligible halt "
+            "status, a missing or contradictory checkpoint, an "
+            "out-of-bounds memory entry limit, or an out-of-bounds "
+            "evidence byte limit."
+        ),
+    )
+    build_ctx.add_argument(
+        "--memory-entry-limit",
+        type=int,
+        default=None,
+        help=(
+            "Override the Phase 6C retrieval limit. Defaults to "
+            f"CONTINUATION_CONTEXT_DEFAULT_MEMORY_LIMIT="
+            f"{CONTINUATION_CONTEXT_DEFAULT_MEMORY_LIMIT}; capped at "
+            f"MEMORY_RETRIEVAL_MAX_LIMIT={MEMORY_RETRIEVAL_MAX_LIMIT}."
+        ),
+    )
+    build_ctx.add_argument(
+        "--evidence-byte-limit",
+        type=int,
+        default=None,
+        help=(
+            "Per-file byte cap on the included evidence excerpt. "
+            f"Defaults to CONTINUATION_CONTEXT_DEFAULT_EVIDENCE_BYTE_LIMIT="
+            f"{CONTINUATION_CONTEXT_DEFAULT_EVIDENCE_BYTE_LIMIT}; capped "
+            f"at CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT="
+            f"{CONTINUATION_CONTEXT_MAX_EVIDENCE_BYTE_LIMIT}."
+        ),
+    )
+    build_ctx.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Override the output JSON path. Defaults to "
+            f"`{CONTINUATION_CONTEXT_OUTPUT_REL}`. Paths are resolved "
+            "relative to the repo root."
+        ),
+    )
     sub.add_parser(
         "auto-continue",
         help=(
@@ -6475,6 +6993,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "resume": cmd_resume,
     "auto-continue": cmd_auto_continue,
     "record-token-exhaustion": cmd_record_token_exhaustion,
+    "build-continuation-context": cmd_build_continuation_context,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
