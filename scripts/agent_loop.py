@@ -3233,6 +3233,462 @@ def build_continuation_prompt_context(
     return payload
 
 
+# Phase 6I - Phase-Boundary Memory Distillation Initial Slice.
+#
+# Builds on the shipped 6B (storage), 6C (advisory retrieval), 6D
+# (checkpoint storage), 6E (resume), 6F (token-exhaustion continuation),
+# 6G (auto-continue), and 6H (continuation context) primitives. The new
+# `distill_phase_boundary_memory(...)` surface writes append-mostly
+# durable memory entries in three allowed Phase 6A categories
+# (`summary`, `decision`, `failure`) at a successfully approved phase
+# boundary, sourced from the canonical phase/task artifacts plus
+# bounded review/evidence excerpts.
+#
+# Eligibility: this slice ONLY fires at the named phase boundary
+# (`status == phase_complete_awaiting_human_approval` AND
+# `last_verdict == APPROVED_FOR_HUMAN_REVIEW`). Other states are
+# refused so the slice cannot be misused as a "write whatever to
+# memory" backdoor.
+#
+# Idempotency: each call checks for an existing distillation-marked
+# `summary` entry for the active (phase, sub_phase, cycle_count); if
+# one exists the call refuses fail-closed. Append-mostly memory still
+# permits a later supersede pattern, but the initial slice favors the
+# stricter refusal so a re-run does not silently produce duplicate
+# entries.
+#
+# Refusal modes (all `halted_input_missing` unless noted):
+#   - missing / malformed `loop-state.json`
+#   - unsupported `contract_version`
+#     (`halted_contract_version_mismatch`)
+#   - status not the eligible phase-boundary value
+#   - `last_verdict` not `APPROVED_FOR_HUMAN_REVIEW`
+#   - missing canonical source artifacts
+#     (`.agent-loop/claude-summary.md`, `.agent-loop/codex-review.md`)
+#   - claude-summary structurally invalid
+#     (`halted_summary_malformed` propagated from
+#     `validate_claude_summary`)
+#   - codex-review structurally invalid
+#     (`halted_review_*` propagated from
+#     `validate_codex_review_and_parse_verdict`)
+#   - codex-review verdict does not also equal
+#     `APPROVED_FOR_HUMAN_REVIEW` (defense-in-depth against a
+#     loop-state / on-disk-review disagreement)
+#   - already-distilled (a marker summary entry for this exact
+#     (phase, sub_phase, cycle_count) already exists)
+#   - `excerpt_byte_limit` not a positive int, or above
+#     `DISTILLATION_MAX_EXCERPT_BYTE_LIMIT`
+#   - an unreadable source artifact (mirrors the Phase 6H fix-slice
+#     unreadable-evidence refusal pattern)
+#
+# Out of scope for this initial slice (deferred per the 6I prompt):
+#   - broader optional context-file loading
+#   - repeated-failure memory synthesis beyond the narrow phase-
+#     boundary failure-entry helper
+#   - widening Phase 5 autonomy or bypassing human gates
+#   - automatic invocation of distillation from the orchestrator's
+#     main verdict path (the orchestrator-side wiring is deferred so
+#     this slice can land as a narrow, operator-callable surface)
+#   - phase-boundary serialization (the slice writes structured
+#     memory entries; turning them into a phase-boundary prompt is a
+#     later layer's concern)
+
+DISTILLATION_SIGNAL_VERSION = "phase-6i-v1"
+DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT = 4096
+DISTILLATION_MAX_EXCERPT_BYTE_LIMIT = 65536
+DISTILLATION_ELIGIBLE_STATUS = "phase_complete_awaiting_human_approval"
+DISTILLATION_ELIGIBLE_VERDICT = "APPROVED_FOR_HUMAN_REVIEW"
+DISTILLATION_SOURCE_ARTIFACTS = (
+    ".agent-loop/claude-summary.md",
+    ".agent-loop/codex-review.md",
+)
+# Body marker every distillation memory entry carries. The field lives
+# inside the JSON body (not on the Phase 6B envelope) so existing 6B
+# memory entries from non-distillation writers are untouched. The
+# idempotency check keys off the (signal_version, phase, sub_phase,
+# cycle_count) tuple.
+DISTILLATION_BODY_MARKER_FIELD = "distillation_signal_version"
+
+
+def _validate_excerpt_byte_limit(value) -> None:
+    """Refuse fail-closed on an out-of-bounds distillation excerpt byte
+    limit. Mirrors `_validate_evidence_byte_limit`'s shape: bool
+    rejected, non-int rejected, non-positive rejected, above the
+    safety cap rejected.
+    """
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit must be a positive "
+                f"int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit must be positive; "
+                f"got {value!r}"
+            ),
+        )
+    if value > DISTILLATION_MAX_EXCERPT_BYTE_LIMIT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit {value!r} exceeds "
+                f"DISTILLATION_MAX_EXCERPT_BYTE_LIMIT="
+                f"{DISTILLATION_MAX_EXCERPT_BYTE_LIMIT}; the safety cap "
+                f"prevents distilled memory from silently expanding "
+                f"into an unbounded repo dump"
+            ),
+        )
+
+
+def _read_bounded_source_excerpt(path: Path, byte_limit: int) -> dict:
+    """Read a canonical source artifact and return a bounded-excerpt
+    metadata dict. Refuses fail-closed via `HaltError` when the path
+    is missing or unreadable so a distillation cannot proceed from a
+    partial input.
+    """
+    if not path.exists():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: canonical source artifact "
+                f"{path.name!r} is missing"
+            ),
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: canonical source artifact "
+                f"{path.name!r} exists but is unreadable "
+                f"({type(exc).__name__}: {exc})"
+            ),
+        )
+    total = len(raw)
+    excerpt_bytes = raw[:byte_limit]
+    return {
+        "byte_size_on_disk": total,
+        "excerpt": excerpt_bytes.decode("utf-8", errors="replace"),
+        "excerpt_byte_size": len(excerpt_bytes),
+        "truncated": total > byte_limit,
+    }
+
+
+def _find_existing_distillation_summary(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: Optional[str],
+    cycle_count: int,
+) -> Optional[Path]:
+    """Return the path of any existing distillation-marked `summary`
+    memory entry that matches the active (phase, sub_phase,
+    cycle_count) identity, else None.
+
+    The body marker field
+    (`DISTILLATION_BODY_MARKER_FIELD = "distillation_signal_version"`)
+    inside the entry body distinguishes a distillation-written summary
+    from any other summary-category entry a non-distillation writer
+    may have placed on disk. A malformed body (non-JSON, missing
+    field) does not count as a match and is skipped silently; the
+    Phase 6C retrieval primitive remains the strict-schema reader.
+    """
+    summary_dir = (
+        _memory_dir(repo_root) / MEMORY_CATEGORY_SUMMARY
+    )
+    if not summary_dir.exists():
+        return None
+    for entry_path in sorted(summary_dir.iterdir()):
+        if entry_path.suffix != ".json":
+            continue
+        try:
+            envelope = json.loads(entry_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(envelope, dict):
+            continue
+        if envelope.get("phase") != phase:
+            continue
+        if envelope.get("sub_phase") != sub_phase:
+            continue
+        if envelope.get("cycle_count") != cycle_count:
+            continue
+        body_raw = envelope.get("body")
+        if not isinstance(body_raw, str):
+            continue
+        try:
+            body = json.loads(body_raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(body, dict):
+            continue
+        if body.get(DISTILLATION_BODY_MARKER_FIELD) != (
+            DISTILLATION_SIGNAL_VERSION
+        ):
+            continue
+        return entry_path
+    return None
+
+
+def distill_phase_boundary_memory(
+    repo_root: Path,
+    *,
+    excerpt_byte_limit: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> list:
+    """Distill durable summary, decision, and (conditional) failure
+    memory entries at a successfully approved phase boundary.
+
+    Returns the list of newly written memory-entry `Path`s in fixed
+    order: `[summary_path, decision_path]` when the phase was
+    approved on its first cycle (`cycle_count == 1`); otherwise
+    `[summary_path, decision_path, failure_path]` because the failure
+    entry codifies "phase required N-1 fix cycle(s) before approval"
+    derived from the canonical `cycle_count`.
+
+    Refuses via `HaltError` on every refusal mode documented in the
+    Phase 6I block comment above. The caller (the CLI handler)
+    routes refusals through `_halt`.
+
+    Args:
+      repo_root: workspace root.
+      excerpt_byte_limit: optional override for the per-source-file
+        excerpt byte cap. Defaults to
+        `DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT`.
+      log_path: optional orchestrator-log path. When supplied a
+        single `phase-boundary distillation:` audit note is appended
+        recording the active phase, cycle_count, returned entry
+        count, and the chosen excerpt byte limit.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+
+    # 1. Load + validate loop-state with the same structural / contract
+    #    checks every Phase 6 surface uses.
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    # 2. Eligibility: the boundary state on disk must match the
+    #    contract terminal. Refuse fail-closed when either dimension
+    #    disagrees so the slice cannot be misused outside the named
+    #    boundary.
+    status = data.get("status")
+    if status != DISTILLATION_ELIGIBLE_STATUS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: loop-state status {status!r} "
+                f"is not {DISTILLATION_ELIGIBLE_STATUS!r}; phase-"
+                f"boundary distillation only fires at the named "
+                f"terminal state"
+            ),
+        )
+    last_verdict = data.get("last_verdict")
+    if last_verdict != DISTILLATION_ELIGIBLE_VERDICT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: loop-state last_verdict "
+                f"{last_verdict!r} is not "
+                f"{DISTILLATION_ELIGIBLE_VERDICT!r}; the phase boundary "
+                f"must reflect an APPROVED outcome before durable "
+                f"summary/decision/failure knowledge is distilled"
+            ),
+        )
+
+    # 3. Validate canonical source artifacts with their existing
+    #    Phase 2 / 3 validators so a distillation cannot proceed from
+    #    a structurally invalid input. The validators raise the
+    #    halt-status vocabulary the orchestrator already uses
+    #    (`halted_summary_malformed`, `halted_review_malformed`,
+    #    `halted_review_parse_failed`).
+    claude_summary_path = al / "claude-summary.md"
+    codex_review_path = al / "codex-review.md"
+    validate_claude_summary(
+        claude_summary_path,
+        data["phase"], data.get("sub_phase"),
+    )
+    review_verdict = validate_codex_review_and_parse_verdict(
+        codex_review_path,
+    )
+    if review_verdict != DISTILLATION_ELIGIBLE_VERDICT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: on-disk codex-review verdict "
+                f"{review_verdict!r} disagrees with loop-state.last_verdict "
+                f"{last_verdict!r}; the boundary cannot be distilled "
+                f"while the two sources contradict"
+            ),
+        )
+
+    # 4. Validate excerpt limit and read bounded excerpts.
+    ex_limit = (
+        excerpt_byte_limit
+        if excerpt_byte_limit is not None
+        else DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT
+    )
+    _validate_excerpt_byte_limit(ex_limit)
+    claude_excerpt = _read_bounded_source_excerpt(
+        claude_summary_path, ex_limit,
+    )
+    review_excerpt = _read_bounded_source_excerpt(
+        codex_review_path, ex_limit,
+    )
+
+    # 5. Idempotency: refuse if a distillation-marked summary entry
+    #    for this exact (phase, sub_phase, cycle_count) is already on
+    #    disk. Append-mostly memory permits a future supersede pattern,
+    #    but the initial slice favors the stricter refusal so a re-run
+    #    does not silently produce duplicate entries.
+    existing = _find_existing_distillation_summary(
+        repo_root,
+        phase=data["phase"],
+        sub_phase=data.get("sub_phase"),
+        cycle_count=data["cycle_count"],
+    )
+    if existing is not None:
+        rel = existing.relative_to(repo_root).as_posix()
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: an existing distillation-marked "
+                f"summary entry already exists for this phase boundary "
+                f"(phase={data['phase']!r} sub_phase="
+                f"{data.get('sub_phase')!r} cycle_count="
+                f"{data['cycle_count']}). Source entry: {rel}. "
+                f"Re-distillation would produce a duplicate; clear or "
+                f"supersede the existing entry first."
+            ),
+        )
+
+    # 6. Compose body payloads. Each entry references the same
+    #    `source_artifacts` list and the same bounded excerpts so a
+    #    later retrieval can trace where the distilled knowledge came
+    #    from. The body marker field is what
+    #    `_find_existing_distillation_summary` keys off of.
+    distilled_at = _utc_iso_now()
+    common = {
+        DISTILLATION_BODY_MARKER_FIELD: DISTILLATION_SIGNAL_VERSION,
+        "phase": data["phase"],
+        "sub_phase": data.get("sub_phase"),
+        "task": data["task"],
+        "cycle_count": data["cycle_count"],
+        "last_verdict": data.get("last_verdict"),
+        "last_verdict_phase": data.get("last_verdict_phase"),
+        "approval_mode": data.get("approval_mode"),
+        "source_artifacts": list(DISTILLATION_SOURCE_ARTIFACTS),
+        "excerpt_byte_limit_applied": ex_limit,
+        "claude_summary_excerpt": claude_excerpt,
+        "codex_review_excerpt": review_excerpt,
+        "distilled_at": distilled_at,
+    }
+    summary_body = json.dumps({
+        **common,
+        "knowledge_type": "summary",
+        "headline": (
+            f"phase {data['phase']!r} sub_phase {data.get('sub_phase')!r} "
+            f"approved at cycle_count={data['cycle_count']}"
+        ),
+    }, indent=2)
+    decision_body = json.dumps({
+        **common,
+        "knowledge_type": "decision",
+        "decision": (
+            f"phase {data['phase']!r} sub_phase {data.get('sub_phase')!r} "
+            f"approved at cycle_count={data['cycle_count']} with verdict "
+            f"{data['last_verdict']!r}"
+        ),
+    }, indent=2)
+
+    # 7. Write the entries. Each call to `write_memory_entry` is
+    #    individually fail-closed; the Phase 6B collision guard
+    #    refuses if the deterministic filename target is already
+    #    taken (so a hand-written conflicting entry surfaces rather
+    #    than being overwritten). The summary entry is written first
+    #    so the idempotency marker exists before any decision/failure
+    #    write happens.
+    written: list = []
+    summary_path = write_memory_entry(
+        repo_root,
+        category=MEMORY_CATEGORY_SUMMARY,
+        phase=data["phase"],
+        sub_phase=data.get("sub_phase"),
+        cycle_count=data["cycle_count"],
+        source_artifact_path=".agent-loop/loop-state.json",
+        body=summary_body,
+    )
+    written.append(summary_path)
+    decision_path = write_memory_entry(
+        repo_root,
+        category=MEMORY_CATEGORY_DECISION,
+        phase=data["phase"],
+        sub_phase=data.get("sub_phase"),
+        cycle_count=data["cycle_count"],
+        source_artifact_path=".agent-loop/loop-state.json",
+        body=decision_body,
+    )
+    written.append(decision_path)
+    if data["cycle_count"] > 1:
+        # Conditional failure entry: the phase required at least one
+        # NEEDS_FIXES round before reaching APPROVED. The exact number
+        # of fix cycles is `cycle_count - 1` (the final approval cycle
+        # is itself a cycle but not a fix cycle). Codifying this as a
+        # durable `failure` entry preserves the "had to retry" lesson
+        # across phase boundaries without parsing internal markdown
+        # structure.
+        failure_body = json.dumps({
+            **common,
+            "knowledge_type": "failure",
+            "failure": (
+                f"phase {data['phase']!r} sub_phase "
+                f"{data.get('sub_phase')!r} required "
+                f"{data['cycle_count'] - 1} fix cycle(s) before reaching "
+                f"verdict {data['last_verdict']!r}"
+            ),
+        }, indent=2)
+        failure_path = write_memory_entry(
+            repo_root,
+            category=MEMORY_CATEGORY_FAILURE,
+            phase=data["phase"],
+            sub_phase=data.get("sub_phase"),
+            cycle_count=data["cycle_count"],
+            source_artifact_path=".agent-loop/loop-state.json",
+            body=failure_body,
+        )
+        written.append(failure_path)
+
+    if log_path is not None:
+        _log_note(
+            log_path,
+            (
+                f"phase-boundary distillation: signal_version="
+                f"{DISTILLATION_SIGNAL_VERSION!r} phase="
+                f"{data['phase']!r} sub_phase={data.get('sub_phase')!r} "
+                f"cycle_count={data['cycle_count']} "
+                f"excerpt_byte_limit={ex_limit} entries_written="
+                f"{len(written)}"
+            ),
+        )
+
+    return written
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -6120,6 +6576,42 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
+    """Phase 6I operator runtime path: distill durable memory entries
+    at an approved phase boundary.
+
+    Calls `distill_phase_boundary_memory(...)` with the parsed argparse
+    args, routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection, and on
+    success prints the list of new memory-entry paths plus a pointer
+    at the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    kwargs: dict = {}
+    if args.excerpt_byte_limit is not None:
+        kwargs["excerpt_byte_limit"] = args.excerpt_byte_limit
+    try:
+        written = distill_phase_boundary_memory(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rels = [p.relative_to(repo_root).as_posix() for p in written]
+    print(
+        f"[orchestrator] phase-boundary distillation wrote "
+        f"{len(rels)} memory entr{'y' if len(rels) == 1 else 'ies'}: "
+        f"{rels}"
+    )
+    return 0
+
+
 def cmd_build_continuation_context(args: argparse.Namespace) -> int:
     """Phase 6H operator runtime path: build a structured continuation
     prompt/context dict from canonical artifacts + the active
@@ -6868,6 +7360,34 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    distill = sub.add_parser(
+        "distill-phase-boundary-memory",
+        help=(
+            "Phase 6I phase-boundary memory distillation: write append-"
+            "mostly durable `summary` + `decision` (+ `failure` when "
+            "cycle_count > 1) memory entries derived from canonical "
+            "loop-state plus bounded excerpts of "
+            "`.agent-loop/claude-summary.md` and "
+            "`.agent-loop/codex-review.md`. Refuses fail-closed unless "
+            "loop-state status is "
+            "`phase_complete_awaiting_human_approval` AND "
+            "`last_verdict == APPROVED_FOR_HUMAN_REVIEW` AND no "
+            "matching distillation entry already exists for this "
+            "(phase, sub_phase, cycle_count)."
+        ),
+    )
+    distill.add_argument(
+        "--excerpt-byte-limit",
+        type=int,
+        default=None,
+        help=(
+            "Per-source-file byte cap on the included excerpt. Defaults "
+            f"to DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT="
+            f"{DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT}; capped at "
+            f"DISTILLATION_MAX_EXCERPT_BYTE_LIMIT="
+            f"{DISTILLATION_MAX_EXCERPT_BYTE_LIMIT}."
+        ),
+    )
     build_ctx = sub.add_parser(
         "build-continuation-context",
         help=(
@@ -6994,6 +7514,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "auto-continue": cmd_auto_continue,
     "record-token-exhaustion": cmd_record_token_exhaustion,
     "build-continuation-context": cmd_build_continuation_context,
+    "distill-phase-boundary-memory": cmd_distill_phase_boundary_memory,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
