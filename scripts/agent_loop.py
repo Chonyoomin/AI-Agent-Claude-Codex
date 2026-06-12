@@ -2273,6 +2273,21 @@ TOKEN_EXHAUSTION_IDENTITY_FIELDS = (
     "approval_mode",
 )
 
+# Interrupted-cycle stages this initial Phase 6F slice can actually
+# dispatch back into. Each entry must have an existing continuation
+# entry-point that does NOT re-issue cycle_count for the same cycle, so
+# the resume path lands on the same logical work the suspension
+# interrupted rather than starting a fresh cycle. Statuses outside this
+# set are intentionally unsupported: the operator must drive the cycle
+# forward manually or activate a new sub-phase. Widening this set is a
+# later-slice concern (it would require new no-increment continuation
+# entry-points for `claude_implementing`, `evidence_capture`, and the
+# fix-cycle equivalents).
+TOKEN_EXHAUSTION_SUPPORTED_RESUME_STATUSES = frozenset({
+    "awaiting_claude_implementation",
+    "awaiting_codex_review",
+})
+
 
 def _validate_token_exhaustion_checkpoint(
     checkpoint: dict, loop_state: dict,
@@ -2531,6 +2546,26 @@ def run_token_exhaustion_resume(repo_root: Path) -> int:
             f"clear the halt manually) to recover."
         )
 
+    # Phase 6F initial slice: dispatch is only safe for a narrow set of
+    # interrupted stages where the orchestrator already has a
+    # continuation entry that re-uses the same cycle_count. Statuses
+    # outside that set are refused fail-closed BEFORE budget
+    # consumption so the operator does not silently lose a continuation
+    # slot to an unrecoverable saved state.
+    restored_status = checkpoint["status"]
+    if restored_status not in TOKEN_EXHAUSTION_SUPPORTED_RESUME_STATUSES:
+        return _refuse(
+            f"saved pre-suspension status {restored_status!r} is not in "
+            f"the supported interrupted-stage set "
+            f"{sorted(TOKEN_EXHAUSTION_SUPPORTED_RESUME_STATUSES)} for "
+            f"this initial Phase 6F slice. The cycle cannot be resumed "
+            f"end-to-end from that stage without a dedicated "
+            f"continuation entry-point. The operator must intervene "
+            f"(e.g. clear the halt manually, restart the active "
+            f"sub-phase) rather than have the resume path silently "
+            f"reissue the cycle."
+        )
+
     # Resolve the active checkpoint's on-disk path so the new checkpoint
     # can record a deterministic `supersedes` reference. Mirrors
     # `_load_active_checkpoint`'s mtime-first selection.
@@ -2557,9 +2592,11 @@ def run_token_exhaustion_resume(repo_root: Path) -> int:
     )
 
     # Restore loop-state to the pre-suspension cycle vocabulary. The
-    # halt is cleared; the operator's next orchestrator invocation picks
-    # up the cycle from the restored status.
-    save_loop_state(state_path, data, {
+    # halt is cleared; the dispatch below picks the cycle back up from
+    # the restored status so the interrupted cycle actually continues
+    # end-to-end (Issue 2 from the Phase 6F review) instead of just
+    # leaving the operator with a restored-but-still-stuck status.
+    data = save_loop_state(state_path, data, {
         "status": checkpoint["status"],
         "awaiting_human_for": checkpoint["awaiting_human_for"],
     })
@@ -2575,7 +2612,26 @@ def run_token_exhaustion_resume(repo_root: Path) -> int:
             f"{checkpoint['awaiting_human_for']!r}"
         ),
     )
-    return 0
+
+    # Dispatch to the matching continuation entry-point. Mirrors the
+    # end-of-function dispatch in `run_strict_resume`: the resume
+    # caller is responsible for getting the cycle's work moving again,
+    # not just rewriting a status field. Both supported entries skip
+    # the cycle_count increment that lives in `run_normal_cycle`'s own
+    # pre-amble, so the resumed work is the SAME cycle the suspension
+    # interrupted (no cycle_count drift, no Phase 5 gate skipped).
+    if restored_status == "awaiting_claude_implementation":
+        return _run_normal_cycle_from_increment(repo_root, data, log_path)
+    # restored_status == "awaiting_codex_review"; mirror the strict-
+    # resume HALTED_PRE_CODEX_REVIEW_NORMAL pattern: write a
+    # transitional `evidence_capture` (non-halt, signals "evidence
+    # done, about to review") so the dispatched continuation observes
+    # a meaningful intermediate state in the log.
+    data = save_loop_state(state_path, data, {
+        "status": "evidence_capture",
+        "awaiting_human_for": None,
+    })
+    return _run_normal_cycle_codex_review_step(repo_root, data, log_path)
 
 
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
@@ -5465,6 +5521,47 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def cmd_record_token_exhaustion(args: argparse.Namespace) -> int:
+    """Phase 6F operator runtime path: classify the current cycle as
+    interrupted by token / context exhaustion.
+
+    This subcommand is the wired runtime entry for `record_token_exhaustion`:
+    when the operator (or a higher-layer supervisor process) observes that
+    Claude or Codex ran out of context mid-cycle, running this command
+    persists the Phase 6D checkpoint and transitions loop-state to
+    `HALTED_TOKEN_EXHAUSTION` so the halt is auditable from the canonical
+    state artifacts. The operator then runs `resume` to consume the
+    bounded continuation budget and dispatch the cycle's continuation.
+
+    Refusal goes through `_halt` so the saved `halted_input_missing`
+    status is left on disk for human inspection - same pattern as the
+    other top-level `cmd_*` halts (cycle-start input refusal, evidence
+    refusal, etc.).
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    kwargs = {"active_prompt_path": args.active_prompt_path}
+    if args.continuation_budget is not None:
+        kwargs["continuation_budget"] = args.continuation_budget
+    try:
+        path = record_token_exhaustion(repo_root, log_path=log_path, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = path.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] token-exhaustion recorded: checkpoint={rel}; "
+        f"loop-state now at {HALTED_TOKEN_EXHAUSTION!r}. Run `resume` to "
+        f"consume the bounded continuation budget."
+    )
+    return 0
+
+
 def run_strict_resume(repo_root: Path) -> int:
     """Resume a cycle that was paused at a Phase 5C strict-mode gate.
 
@@ -6101,6 +6198,40 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    record_te = sub.add_parser(
+        "record-token-exhaustion",
+        help=(
+            "Phase 6F operator entry point: classify the current cycle "
+            "as interrupted by token / context exhaustion. Writes a "
+            "Phase 6D checkpoint preserving the pre-suspension cycle "
+            "context plus a bounded continuation budget, and transitions "
+            "loop-state to halted_awaiting_token_exhaustion_continuation "
+            "so the halt is auditable from the canonical state artifacts. "
+            "Run `resume` after this command to consume the continuation "
+            "budget and dispatch the cycle's continuation."
+        ),
+    )
+    record_te.add_argument(
+        "--active-prompt-path",
+        required=True,
+        choices=sorted(CHECKPOINT_ACTIVE_PROMPT_PATHS),
+        help=(
+            "Which active prompt the interrupted cycle was driving "
+            "(.agent-loop/claude-prompt.md for an implementation cycle, "
+            ".agent-loop/fix-prompt.md for a fix cycle)."
+        ),
+    )
+    record_te.add_argument(
+        "--continuation-budget",
+        type=int,
+        default=None,
+        help=(
+            "Bounded number of resume attempts allowed before further "
+            "continuation is refused. Default is "
+            f"TOKEN_EXHAUSTION_DEFAULT_BUDGET={TOKEN_EXHAUSTION_DEFAULT_BUDGET}; "
+            "the writer refuses negative values."
+        ),
+    )
     sub.add_parser(
         "bootstrap-prompt",
         help=(
@@ -6127,6 +6258,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "plan": cmd_plan,
     "activate": cmd_activate,
     "resume": cmd_resume,
+    "record-token-exhaustion": cmd_record_token_exhaustion,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 

@@ -324,14 +324,25 @@ class RunTokenExhaustionResumeTests(_TokenExhaustionTestCase):
 
     def test_resume_consumes_budget_and_restores_loop_state(self) -> None:
         self._setup_recorded(continuation_budget=2)
-        rc = agent_loop.run_token_exhaustion_resume(self.repo_root)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ) as continuation:
+            rc = agent_loop.run_token_exhaustion_resume(self.repo_root)
         self.assertEqual(rc, 0)
-        # Loop-state restored to pre-suspension cycle vocabulary.
+        continuation.assert_called_once()
+        # The HALTED_TOKEN_EXHAUSTION halt has been cleared (the
+        # dispatched continuation observed a non-halt status). For the
+        # `awaiting_codex_review` pre-suspension stage the dispatch
+        # writes a transitional `evidence_capture` before invoking the
+        # continuation, mirroring the strict-resume pattern for
+        # HALTED_PRE_CODEX_REVIEW_NORMAL. The continuation is mocked
+        # here so the on-disk state is left at that transitional value
+        # rather than the in-flight `awaiting_codex_review` the real
+        # continuation would write next.
         after = self._state_on_disk()
-        self.assertEqual(after["status"], _PRE_SUSPENSION_STATUS)
-        self.assertEqual(
-            after["awaiting_human_for"], _PRE_SUSPENSION_AWAITING_HUMAN_FOR,
-        )
+        self.assertEqual(after["status"], "evidence_capture")
+        self.assertIsNone(after["awaiting_human_for"])
         # cycle_count NOT advanced (continuation, not progression).
         self.assertEqual(after["cycle_count"], 1)
         # Phase / sub_phase / task untouched.
@@ -347,10 +358,12 @@ class RunTokenExhaustionResumeTests(_TokenExhaustionTestCase):
         self.assertEqual(new_payload["continuation_budget"], 1)
         # The new checkpoint records an explicit supersedes reference.
         self.assertIsNotNone(new_payload["supersedes"])
-        # Audit note landed.
+        # Audit note landed and records the pre-suspension status the
+        # resume restored before the transitional dispatch write.
         log_text = self.log_path.read_text(encoding="utf-8")
         self.assertIn("token-exhaustion resume consumed:", log_text)
         self.assertIn("2 -> 1", log_text)
+        self.assertIn(f"restored status={_PRE_SUSPENSION_STATUS!r}", log_text)
 
     def test_resume_refuses_when_status_is_not_token_exhaustion_halt(
         self,
@@ -487,43 +500,47 @@ class RunTokenExhaustionResumeTests(_TokenExhaustionTestCase):
         # Budget=2 -> first resume produces budget=1 -> second resume
         # produces budget=0; a third resume refuses.
         self._setup_recorded(continuation_budget=2)
-        # First resume.
-        rc1 = agent_loop.run_token_exhaustion_resume(self.repo_root)
-        self.assertEqual(rc1, 0)
-        # Re-record (since resume restored the loop-state to non-halt)
-        # so we can test consecutive consumption. Mutate loop-state
-        # back to the halt to simulate a second token-exhaustion event
-        # being recorded.
-        data = self._state_on_disk()
-        data["status"] = agent_loop.HALTED_TOKEN_EXHAUSTION
-        data["awaiting_human_for"] = (
-            agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION
-        )
-        self.state_path.write_text(
-            json.dumps(data, indent=2) + "\n", encoding="utf-8",
-        )
-        # Second resume against the budget=1 checkpoint (the newest).
-        rc2 = agent_loop.run_token_exhaustion_resume(self.repo_root)
-        self.assertEqual(rc2, 0)
-        # Newest checkpoint is now budget=0.
-        paths = agent_loop.list_checkpoint_entries(self.repo_root)
-        newest = max(
-            paths, key=lambda p: (p.stat().st_mtime_ns, p.name),
-        )
-        self.assertEqual(
-            agent_loop.read_checkpoint_entry(newest)["continuation_budget"], 0,
-        )
-        # Re-halt and try a third resume: budget=0 must refuse.
-        data = self._state_on_disk()
-        data["status"] = agent_loop.HALTED_TOKEN_EXHAUSTION
-        data["awaiting_human_for"] = (
-            agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION
-        )
-        self.state_path.write_text(
-            json.dumps(data, indent=2) + "\n", encoding="utf-8",
-        )
-        rc3 = agent_loop.run_token_exhaustion_resume(self.repo_root)
-        self.assertEqual(rc3, 2)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ):
+            # First resume.
+            rc1 = agent_loop.run_token_exhaustion_resume(self.repo_root)
+            self.assertEqual(rc1, 0)
+            # Re-record (since resume restored the loop-state to non-halt)
+            # so we can test consecutive consumption. Mutate loop-state
+            # back to the halt to simulate a second token-exhaustion event
+            # being recorded.
+            data = self._state_on_disk()
+            data["status"] = agent_loop.HALTED_TOKEN_EXHAUSTION
+            data["awaiting_human_for"] = (
+                agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION
+            )
+            self.state_path.write_text(
+                json.dumps(data, indent=2) + "\n", encoding="utf-8",
+            )
+            # Second resume against the budget=1 checkpoint (the newest).
+            rc2 = agent_loop.run_token_exhaustion_resume(self.repo_root)
+            self.assertEqual(rc2, 0)
+            # Newest checkpoint is now budget=0.
+            paths = agent_loop.list_checkpoint_entries(self.repo_root)
+            newest = max(
+                paths, key=lambda p: (p.stat().st_mtime_ns, p.name),
+            )
+            self.assertEqual(
+                agent_loop.read_checkpoint_entry(newest)["continuation_budget"], 0,
+            )
+            # Re-halt and try a third resume: budget=0 must refuse.
+            data = self._state_on_disk()
+            data["status"] = agent_loop.HALTED_TOKEN_EXHAUSTION
+            data["awaiting_human_for"] = (
+                agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION
+            )
+            self.state_path.write_text(
+                json.dumps(data, indent=2) + "\n", encoding="utf-8",
+            )
+            rc3 = agent_loop.run_token_exhaustion_resume(self.repo_root)
+            self.assertEqual(rc3, 2)
 
 
 # ----- cmd_resume routing -----
@@ -624,7 +641,11 @@ class CanonicalPrecedencePreservationTests(_TokenExhaustionTestCase):
     def test_successful_resume_does_not_advance_cycle_count(self) -> None:
         self._write_state(cycle_count=2)
         self._record()
-        agent_loop.run_token_exhaustion_resume(self.repo_root)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ):
+            agent_loop.run_token_exhaustion_resume(self.repo_root)
         after = self._state_on_disk()
         self.assertEqual(
             after["cycle_count"], 2,
@@ -635,7 +656,11 @@ class CanonicalPrecedencePreservationTests(_TokenExhaustionTestCase):
     def test_successful_resume_preserves_phase_identity(self) -> None:
         self._write_state()
         self._record()
-        agent_loop.run_token_exhaustion_resume(self.repo_root)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ):
+            agent_loop.run_token_exhaustion_resume(self.repo_root)
         after = self._state_on_disk()
         self.assertEqual(after["phase"], _ACTIVE_PHASE)
         self.assertEqual(after["sub_phase"], _ACTIVE_SUB_PHASE)
@@ -688,6 +713,234 @@ class CanonicalPrecedencePreservationTests(_TokenExhaustionTestCase):
             after["awaiting_human_for"],
             agent_loop.AWAITING_HUMAN_FOR_PRE_CLAUDE_PROMPT,
         )
+
+
+# ----- end-to-end dispatch (Issue 2 from the Phase 6F review) -----
+
+
+class TokenExhaustionResumeDispatchTests(_TokenExhaustionTestCase):
+    """Prove that successful token-exhaustion resume actually dispatches
+    to the continuation matched by the restored interrupted stage, not
+    just to a status-rewrite. Each supported stage must reach a real
+    continuation entry-point that re-uses the same cycle_count."""
+
+    def test_resume_dispatches_to_codex_review_step_for_awaiting_codex_review(
+        self,
+    ) -> None:
+        # Baseline pre-suspension status is `awaiting_codex_review`;
+        # successful resume must dispatch
+        # `_run_normal_cycle_codex_review_step` so the interrupted Codex
+        # review actually continues.
+        self._write_state(status="awaiting_codex_review")
+        self._record()
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=7,
+        ) as codex_step, mock.patch.object(
+            agent_loop, "_run_normal_cycle_from_increment",
+            return_value=0,
+        ) as from_increment:
+            rc = agent_loop.run_token_exhaustion_resume(self.repo_root)
+        # Dispatch return code is propagated unchanged: the resume layer
+        # does not swallow the continuation's exit code.
+        self.assertEqual(rc, 7)
+        codex_step.assert_called_once()
+        from_increment.assert_not_called()
+        # The continuation observed a non-halt loop-state (the resume
+        # already wrote the transitional `evidence_capture`).
+        ((_repo_root_arg, data_arg, _log_arg), _) = codex_step.call_args
+        self.assertEqual(data_arg["status"], "evidence_capture")
+        self.assertIsNone(data_arg["awaiting_human_for"])
+
+    def test_resume_dispatches_to_from_increment_for_awaiting_claude_implementation(
+        self,
+    ) -> None:
+        # Record exhaustion at the cycle-start `awaiting_claude_implementation`
+        # status; successful resume must dispatch
+        # `_run_normal_cycle_from_increment` so the cycle actually starts.
+        self._write_state(status="awaiting_claude_implementation")
+        self._record()
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_from_increment",
+            return_value=11,
+        ) as from_increment, mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ) as codex_step:
+            rc = agent_loop.run_token_exhaustion_resume(self.repo_root)
+        self.assertEqual(rc, 11)
+        from_increment.assert_called_once()
+        codex_step.assert_not_called()
+        # The continuation observed the restored pre-suspension status
+        # (no transitional rewrite for the cycle-start case - that path
+        # owns its own cycle_count increment).
+        ((_repo_root_arg, data_arg, _log_arg), _) = from_increment.call_args
+        self.assertEqual(data_arg["status"], "awaiting_claude_implementation")
+        self.assertIsNone(data_arg["awaiting_human_for"])
+
+    def test_resume_refuses_when_saved_status_is_unsupported_stage(
+        self,
+    ) -> None:
+        # `claude_implementing` is a real mid-cycle status but is NOT in
+        # `TOKEN_EXHAUSTION_SUPPORTED_RESUME_STATUSES` for this initial
+        # 6F slice (no no-increment continuation entry-point exists for
+        # it). Resume must refuse fail-closed BEFORE consuming budget so
+        # the operator does not lose a continuation slot to an
+        # unrecoverable state.
+        self._write_state(status="claude_implementing")
+        before_path = self._record()
+        before_payload = agent_loop.read_checkpoint_entry(before_path)
+        before_budget = before_payload["continuation_budget"]
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_from_increment",
+            return_value=0,
+        ) as from_increment, mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ) as codex_step:
+            rc = agent_loop.run_token_exhaustion_resume(self.repo_root)
+        self.assertEqual(rc, 2)
+        from_increment.assert_not_called()
+        codex_step.assert_not_called()
+        # Saved halt preserved (recovery-preserving refusal).
+        after = self._state_on_disk()
+        self.assertEqual(after["status"], agent_loop.HALTED_TOKEN_EXHAUSTION)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION,
+        )
+        # No new checkpoint was written - budget is not consumed.
+        paths = agent_loop.list_checkpoint_entries(self.repo_root)
+        self.assertEqual(len(paths), 1)
+        after_payload = agent_loop.read_checkpoint_entry(paths[0])
+        self.assertEqual(after_payload["continuation_budget"], before_budget)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn("supported interrupted-stage set", log_text)
+
+
+# ----- cmd_record_token_exhaustion (Issue 1 from the Phase 6F review) -----
+
+
+class CmdRecordTokenExhaustionTests(_TokenExhaustionTestCase):
+    """Prove `record-token-exhaustion` is a real orchestrator runtime
+    path: invoking it transitions the loop into HALTED_TOKEN_EXHAUSTION
+    end-to-end (via the HANDLERS dict that `main` dispatches through)
+    rather than only being a library helper. After this path runs, a
+    plain `resume` invocation reaches the token-exhaustion continuation."""
+
+    def _run_main(self, argv) -> int:
+        with mock.patch.object(
+            agent_loop, "find_repo_root", return_value=self.repo_root,
+        ):
+            return agent_loop.main(argv)
+
+    def test_cli_subcommand_records_halt_end_to_end(self) -> None:
+        self._write_state()
+        rc = self._run_main([
+            "record-token-exhaustion",
+            "--active-prompt-path", ".agent-loop/claude-prompt.md",
+        ])
+        self.assertEqual(rc, 0)
+        after = self._state_on_disk()
+        self.assertEqual(after["status"], agent_loop.HALTED_TOKEN_EXHAUSTION)
+        self.assertEqual(
+            after["awaiting_human_for"],
+            agent_loop.AWAITING_HUMAN_FOR_TOKEN_EXHAUSTION,
+        )
+        # Checkpoint written with the default budget.
+        paths = agent_loop.list_checkpoint_entries(self.repo_root)
+        self.assertEqual(len(paths), 1)
+        payload = agent_loop.read_checkpoint_entry(paths[0])
+        self.assertEqual(
+            payload["continuation_budget"],
+            agent_loop.TOKEN_EXHAUSTION_DEFAULT_BUDGET,
+        )
+        self.assertEqual(
+            payload["suspension_reason"],
+            agent_loop.TOKEN_EXHAUSTION_SUSPENSION_REASON,
+        )
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn("token exhaustion recorded:", log_text)
+
+    def test_cli_subcommand_honors_explicit_continuation_budget(self) -> None:
+        self._write_state()
+        rc = self._run_main([
+            "record-token-exhaustion",
+            "--active-prompt-path", ".agent-loop/claude-prompt.md",
+            "--continuation-budget", "5",
+        ])
+        self.assertEqual(rc, 0)
+        paths = agent_loop.list_checkpoint_entries(self.repo_root)
+        payload = agent_loop.read_checkpoint_entry(paths[0])
+        self.assertEqual(payload["continuation_budget"], 5)
+
+    def test_cli_subcommand_accepts_fix_prompt_path(self) -> None:
+        self._write_state()
+        rc = self._run_main([
+            "record-token-exhaustion",
+            "--active-prompt-path", ".agent-loop/fix-prompt.md",
+        ])
+        self.assertEqual(rc, 0)
+        paths = agent_loop.list_checkpoint_entries(self.repo_root)
+        payload = agent_loop.read_checkpoint_entry(paths[0])
+        self.assertEqual(
+            payload["active_prompt_path"], ".agent-loop/fix-prompt.md",
+        )
+
+    def test_cli_subcommand_rejects_unknown_active_prompt_path(self) -> None:
+        # argparse choices=... enforces this BEFORE the handler runs.
+        # Argparse exits with SystemExit(2) on an invalid choice.
+        self._write_state()
+        with self.assertRaises(SystemExit) as cm:
+            self._run_main([
+                "record-token-exhaustion",
+                "--active-prompt-path", ".agent-loop/bogus.md",
+            ])
+        self.assertEqual(cm.exception.code, 2)
+        # Loop-state untouched.
+        after = self._state_on_disk()
+        self.assertEqual(after["status"], _PRE_SUSPENSION_STATUS)
+
+    def test_cli_subcommand_refuses_when_loop_state_already_halted(self) -> None:
+        # The underlying record_token_exhaustion refuses on an existing
+        # halt; the CLI handler routes that refusal through `_halt`, so
+        # the persistence rule "the explicit refusal stays on disk for
+        # human inspection" still applies. The HALTED_TOKEN_EXHAUSTION
+        # recovery point is not at risk here because the halt-on-halt
+        # case is a different halt category being refused.
+        self._write_state(status=agent_loop.HALTED_PRE_CLAUDE_PROMPT)
+        rc = self._run_main([
+            "record-token-exhaustion",
+            "--active-prompt-path", ".agent-loop/claude-prompt.md",
+        ])
+        self.assertEqual(rc, 2)
+        after = self._state_on_disk()
+        self.assertEqual(after["status"], "halted_input_missing")
+        # No checkpoint was written.
+        self.assertFalse(self.checkpoint_dir.exists())
+
+    def test_cli_then_resume_reaches_token_continuation_end_to_end(self) -> None:
+        # The shipped repo state must be able to drive the cycle into
+        # HALTED_TOKEN_EXHAUSTION via the orchestrator runtime AND then
+        # back out into a real continuation via `resume`. Mock the
+        # continuation entry-point at the boundary so the test does not
+        # depend on the Codex adapter.
+        self._write_state()
+        record_rc = self._run_main([
+            "record-token-exhaustion",
+            "--active-prompt-path", ".agent-loop/claude-prompt.md",
+        ])
+        self.assertEqual(record_rc, 0)
+        with mock.patch.object(
+            agent_loop, "_run_normal_cycle_codex_review_step",
+            return_value=0,
+        ) as codex_step:
+            resume_rc = self._run_main(["resume"])
+        self.assertEqual(resume_rc, 0)
+        codex_step.assert_called_once()
+        # cycle_count unchanged across the full record -> resume path.
+        after = self._state_on_disk()
+        self.assertEqual(after["cycle_count"], 1)
 
 
 if __name__ == "__main__":
