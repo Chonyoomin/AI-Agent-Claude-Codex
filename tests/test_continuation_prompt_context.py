@@ -654,5 +654,148 @@ class CmdBuildContinuationContextTests(_ContinuationContextTestCase):
         self.assertFalse(self.output_default.exists())
 
 
+# ----- Phase 6H fix-slice regression coverage -----
+
+
+class BuildContextMemoryTruncationAtMaxCapTests(_ContinuationContextTestCase):
+    """Regression coverage for the fix-slice memory truncation semantics.
+
+    The prior implementation computed `memory_truncated_at_limit` by
+    re-running `retrieve_memory_entries(...)` with
+    `limit=MEMORY_RETRIEVAL_MAX_LIMIT` and comparing lengths against
+    the caller's bounded retrieval. When the caller ALSO used
+    `MEMORY_RETRIEVAL_MAX_LIMIT` and more entries than that actually
+    matched on disk, both calls capped at the same length and the
+    builder reported `memory_truncated_at_limit = False` even though
+    advisory memory was hidden by the cap. The fixed implementation
+    counts true matches by walking the entries with the same scope
+    filters the retrieval primitive uses, so the truncation flag is
+    truthful regardless of the caller's limit choice.
+    """
+
+    def _write_memory_entry(self, **overrides) -> Path:
+        kwargs = dict(
+            category=agent_loop.MEMORY_CATEGORY_DECISION,
+            phase=_ACTIVE_PHASE,
+            sub_phase=_ACTIVE_SUB_PHASE,
+            cycle_count=1,
+            source_artifact_path=".agent-loop/loop-state.json",
+            body="memory body",
+        )
+        kwargs.update(overrides)
+        return agent_loop.write_memory_entry(self.repo_root, **kwargs)
+
+    def test_memory_truncated_flag_true_at_max_cap_when_more_matches_exist(
+        self,
+    ) -> None:
+        # Plant MEMORY_RETRIEVAL_MAX_LIMIT + 1 distinct in-scope memory
+        # entries so a retrieval at the max cap necessarily hides at
+        # least one. The fix's direct-walk count must observe this and
+        # report `memory_truncated_at_limit = True`.
+        self._record_halted()
+        max_cap = agent_loop.MEMORY_RETRIEVAL_MAX_LIMIT
+        for i in range(max_cap + 1):
+            self._write_memory_entry(body=f"distinct body {i}")
+        ctx = agent_loop.build_continuation_prompt_context(
+            self.repo_root, memory_entry_limit=max_cap,
+        )
+        # The retrieval respects the caller's limit.
+        self.assertEqual(len(ctx["memory_advisory"]), max_cap)
+        self.assertEqual(ctx["memory_limit_applied"], max_cap)
+        # The flag must be TRUTHFUL even though the limit equals the
+        # max cap and the secondary check would have capped at the
+        # same length.
+        self.assertTrue(ctx["memory_truncated_at_limit"])
+
+    def test_memory_truncated_flag_false_at_max_cap_when_no_hidden_entries(
+        self,
+    ) -> None:
+        # Plant exactly MEMORY_RETRIEVAL_MAX_LIMIT in-scope entries:
+        # no entries hidden, so the flag must remain False even when
+        # the limit equals the max cap.
+        self._record_halted()
+        max_cap = agent_loop.MEMORY_RETRIEVAL_MAX_LIMIT
+        for i in range(max_cap):
+            self._write_memory_entry(body=f"distinct body {i}")
+        ctx = agent_loop.build_continuation_prompt_context(
+            self.repo_root, memory_entry_limit=max_cap,
+        )
+        self.assertEqual(len(ctx["memory_advisory"]), max_cap)
+        self.assertFalse(ctx["memory_truncated_at_limit"])
+
+
+class BuildContextUnreadableEvidenceRefusalTests(_ContinuationContextTestCase):
+    """Regression coverage for the fix-slice unreadable-evidence
+    handling. The prior implementation returned a success payload with
+    an undocumented `read_error` schema branch when `Path.read_bytes`
+    raised `OSError`; the fixed implementation refuses fail-closed via
+    `HaltError("halted_input_missing", ...)` so the documented
+    continuation-context schema does not silently grow an
+    undocumented branch."""
+
+    def _force_read_to_raise(self, target_rel: str):
+        """Build a mock side_effect on `Path.read_bytes` that raises
+        `OSError` for the target evidence file path and falls through
+        to the real read for any other path. Returns the patcher
+        context manager so the test can manage the patch lifetime."""
+        real_read_bytes = Path.read_bytes
+        target_path = self.repo_root / target_rel
+
+        def _side_effect(self_path: Path, *args, **kwargs):
+            if self_path.resolve() == target_path.resolve():
+                raise OSError("simulated read failure")
+            return real_read_bytes(self_path, *args, **kwargs)
+
+        return mock.patch.object(Path, "read_bytes", _side_effect)
+
+    def test_unreadable_evidence_file_causes_fail_closed_refusal(self) -> None:
+        # Plant every evidence file so none are absent, then make ONE
+        # of them raise OSError on read. The builder must refuse
+        # rather than emit a success payload.
+        self._record_halted()
+        self._plant_evidence_files({}, default_text="ok")
+        target_rel = ".agent-loop/git-diff.patch"
+        with self._force_read_to_raise(target_rel):
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop.build_continuation_prompt_context(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        # The refusal message names the unreadable file so the
+        # operator knows which evidence input to repair.
+        self.assertIn(target_rel, cm.exception.reason)
+        self.assertIn("unreadable", cm.exception.reason)
+
+    def test_cli_subcommand_refuses_on_unreadable_evidence_file(self) -> None:
+        # End-to-end through main(argv): the CLI handler routes the
+        # HaltError through `_halt` and writes no output artifact.
+        self._record_halted()
+        self._plant_evidence_files({}, default_text="ok")
+        target_rel = ".agent-loop/test-output.log"
+        with self._force_read_to_raise(target_rel):
+            with mock.patch.object(
+                agent_loop, "find_repo_root", return_value=self.repo_root,
+            ):
+                rc = agent_loop.main(["build-continuation-context"])
+        self.assertEqual(rc, 2)
+        # loop-state.json carries the structural failure vocabulary.
+        after = self._state_on_disk()
+        self.assertEqual(after["status"], "halted_input_missing")
+        # No success artifact written on refusal.
+        self.assertFalse(self.output_default.exists())
+
+    def test_no_evidence_payload_carries_a_read_error_branch(self) -> None:
+        # Pin the documented schema: when readable, the per-file
+        # evidence payload only carries (absent, byte_size_on_disk,
+        # excerpt, excerpt_byte_size, truncated). No `read_error` key
+        # should ever appear in the on-success payload.
+        self._record_halted()
+        self._plant_evidence_files({}, default_text="ok")
+        ctx = agent_loop.build_continuation_prompt_context(self.repo_root)
+        for rel, ev in ctx["evidence"].items():
+            self.assertNotIn(
+                "read_error", ev,
+                f"unexpected `read_error` key on evidence entry {rel!r}",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

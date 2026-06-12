@@ -2963,6 +2963,14 @@ def _collect_bounded_evidence(repo_root: Path, byte_limit: int) -> dict:
     `excerpt`, `excerpt_byte_size`, and `truncated`. Missing files are
     surfaced with `absent: True` so the continuation runtime sees the
     same absence the orchestrator would see, not a silent omission.
+
+    An evidence file that exists but cannot be read (any `OSError`
+    from `Path.read_bytes`) refuses fail-closed via `HaltError` rather
+    than producing a success payload with an undocumented schema
+    branch. The Phase 6H continuation-context schema only documents
+    `absent: True` for missing files and the full metadata block for
+    readable files; any other on-disk state is a structural input
+    failure the operator must address before the context can be built.
     """
     out: dict = {}
     for rel in EVIDENCE_FILES:
@@ -2973,11 +2981,15 @@ def _collect_bounded_evidence(repo_root: Path, byte_limit: int) -> dict:
         try:
             raw = p.read_bytes()
         except OSError as exc:
-            # Surface a structural read failure rather than silently
-            # treating it as absent; the operator should see the file
-            # exists but cannot be read.
-            out[rel] = {"absent": False, "read_error": repr(exc)}
-            continue
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"continuation context construction refused: "
+                    f"evidence file {rel!r} exists but is unreadable "
+                    f"({type(exc).__name__}: {exc}); resolve the read "
+                    f"failure before rebuilding the continuation context"
+                ),
+            )
         total = len(raw)
         excerpt_bytes = raw[:byte_limit]
         # Decode best-effort as UTF-8 (evidence files are text). Replace
@@ -3127,18 +3139,31 @@ def build_continuation_prompt_context(
         limit=mem_limit,
     )
 
-    # Count matches BEFORE limit-truncation so the consumer can tell
-    # whether the limit hid additional matched entries. We re-run
-    # retrieval with the max limit and compare counts; cheaper than
-    # plumbing a second return value through the 6C surface.
-    full_match = retrieve_memory_entries(
-        repo_root,
-        phase=data["phase"],
-        sub_phase=data.get("sub_phase"),
-        categories=CONTINUATION_CONTEXT_MEMORY_CATEGORIES,
-        limit=MEMORY_RETRIEVAL_MAX_LIMIT,
-    )
-    memory_truncated = len(full_match) > len(memory_entries)
+    # Count actual matches without applying any limit so truncation
+    # detection is honest even when the caller's limit equals
+    # MEMORY_RETRIEVAL_MAX_LIMIT. A previous version re-ran
+    # retrieve_memory_entries with limit=MEMORY_RETRIEVAL_MAX_LIMIT
+    # and compared lengths, but if the caller already used that limit
+    # the second call also capped at MEMORY_RETRIEVAL_MAX_LIMIT and
+    # reported `memory_truncated_at_limit = False` even when
+    # additional matching entries existed on disk. Walking the
+    # entries directly with the same scope filters the retrieval
+    # primitive uses (category-in-set + phase + sub_phase) gives a
+    # truthful count regardless of the caller's chosen limit. The
+    # walk re-validates each entry via read_memory_entry so any
+    # malformed on-disk entry still surfaces as the same HaltError
+    # the retrieval primitive would raise.
+    total_matched = 0
+    for entry_path in list_memory_entries(repo_root):
+        payload = read_memory_entry(entry_path)
+        if payload["category"] not in CONTINUATION_CONTEXT_MEMORY_CATEGORIES:
+            continue
+        if not _is_entry_in_active_scope(
+            payload, phase=data["phase"], sub_phase=data.get("sub_phase"),
+        ):
+            continue
+        total_matched += 1
+    memory_truncated = total_matched > len(memory_entries)
 
     # 6. Bounded evidence excerpts.
     evidence = _collect_bounded_evidence(repo_root, ev_limit)
