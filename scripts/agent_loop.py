@@ -2634,6 +2634,190 @@ def run_token_exhaustion_resume(repo_root: Path) -> int:
     return _run_normal_cycle_codex_review_step(repo_root, data, log_path)
 
 
+# Phase 6G - Automatic Continuation Chaining Initial Slice.
+#
+# Builds directly on the shipped Phase 6F single-hop
+# `run_token_exhaustion_resume(...)`. The chain primitive performs up to
+# AUTO_CONTINUE_MAX_HOPS hops of the existing single-hop resume in a
+# bounded loop. Each hop:
+#   1. consumes one continuation_budget unit (via the existing 6F
+#      writer)
+#   2. dispatches the cycle's matching continuation entry-point (via
+#      the existing 6F dispatch)
+#   3. inspects the post-dispatch loop-state to decide whether to
+#      continue the chain
+#
+# The chain control flow:
+#   - rc != 0 from any hop                    -> propagate rc, stop chain
+#   - rc == 0 AND status != HALTED_TOKEN_EXHAUSTION
+#                                             -> natural termination, rc=0
+#   - rc == 0 AND status == HALTED_TOKEN_EXHAUSTION
+#                                             -> the dispatched continuation
+#                                                re-entered the token-
+#                                                exhaustion halt (a fresh
+#                                                exhaustion was recorded
+#                                                during it); chain another
+#                                                hop within the cap
+#   - hop counter reaches AUTO_CONTINUE_MAX_HOPS
+#                                             -> refuse fail-closed, preserve
+#                                                the saved halt
+#
+# Bounding policy:
+#   - per-checkpoint continuation_budget (the existing Phase 6F bound)
+#     is the primary policy bound; each hop consumes 1 unit, so a
+#     budget of N self-terminates the chain after at most N hops via
+#     the existing 6F exhausted-budget refusal
+#   - AUTO_CONTINUE_MAX_HOPS is an independent defense-in-depth bound
+#     in case a fresh exhaustion event mid-chain resets the budget; it
+#     gives the operator a clear "the cycle is not making progress"
+#     signal even if the budget arithmetic somehow allows unbounded
+#     chaining
+#
+# Out of scope for this initial slice (deferred per Phase 6G prompt):
+#   - phase-boundary memory distillation
+#   - repeated-failure memory synthesis
+#   - broader optional context-file loading
+#   - widening Phase 5 autonomy or bypassing human gates
+#   - automatic orchestrator-side DETECTION of token exhaustion
+#     (`record_token_exhaustion(...)` remains the explicit recording
+#     surface; the chain only handles the case where the dispatched
+#     continuation re-records exhaustion via that surface)
+
+AUTO_CONTINUE_MAX_HOPS = 4
+
+
+def run_auto_continue(repo_root: Path) -> int:
+    """Phase 6G: bounded automatic continuation chaining.
+
+    Repeatedly applies the Phase 6F single-hop token-exhaustion resume
+    while the persisted halt status is `HALTED_TOKEN_EXHAUSTION`, until
+    one of these stop conditions:
+
+      - a hop's return code is non-zero (refusal or non-token halt
+        inside the dispatched continuation): propagate the rc unchanged
+      - the cycle has cleared the token-exhaustion halt after a
+        successful hop (no fresh exhaustion event was recorded during
+        the dispatched continuation): return 0
+      - `AUTO_CONTINUE_MAX_HOPS` hops have run without natural
+        termination: refuse fail-closed (the chain bound is a defense-
+        in-depth cap independent of the per-checkpoint budget)
+
+    Refusal handling:
+      - the initial "loop-state status is not `HALTED_TOKEN_EXHAUSTION`"
+        check uses the recovery-preserving stderr+log+exit-2 pattern
+        (NOT `_halt`) so an operator who runs `auto-continue` against a
+        strict-gate halt by mistake does not clobber the strict-gate
+        recovery point - this is intentionally MORE conservative than
+        the existing Phase 6F single-hop resume, which clobbers because
+        cmd_resume routes the status before that primitive sees it
+      - all downstream refusals come from `run_token_exhaustion_resume`
+        which preserves the saved `HALTED_TOKEN_EXHAUSTION` recovery
+        point; this function simply propagates their rc
+
+    The chain decision is made on the persisted halt VOCABULARY after
+    each hop (`loop-state.status == HALTED_TOKEN_EXHAUSTION`), not the
+    rc. The rc tells us "did this hop succeed end-to-end"; the
+    post-hop status tells us "is there another exhaustion event ready
+    to be continued from."
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+
+    try:
+        data = load_loop_state(state_path)
+        validate_loop_state(data)
+        check_contract_version(data)
+    except HaltError as halt:
+        return _halt(
+            state_path, {} if "data" not in dir() else data, halt, log_path,
+        )
+
+    def _refuse_no_clobber(reason_body: str) -> int:
+        # Recovery-preserving refusal: stderr-print + log note + exit 2
+        # WITHOUT routing through `_halt` so any pre-existing halt on
+        # disk (in particular a Phase 5C strict-gate halt that the
+        # operator mistakenly tried to auto-continue) keeps its
+        # recovery point intact. Mirrors the Phase 5C / 6E / 6F refusal
+        # pattern, applied here at the chain entry-point too.
+        msg = f"auto-continue refused: {reason_body}"
+        print(
+            f"[orchestrator] AUTO-CONTINUE REFUSED: {msg}",
+            file=sys.stderr,
+        )
+        _log_note(log_path, msg)
+        return 2
+
+    initial_status = data.get("status")
+    if initial_status != HALTED_TOKEN_EXHAUSTION:
+        return _refuse_no_clobber(
+            f"loop-state.json status is {initial_status!r}; auto-continue "
+            f"requires {HALTED_TOKEN_EXHAUSTION!r}. Use the standard "
+            f"`resume` subcommand for strict-gate halts; `auto-continue` "
+            f"is reserved for token-exhaustion chaining. The saved halt "
+            f"(if any) is preserved for inspection."
+        )
+
+    _log_note(
+        log_path,
+        (
+            f"auto-continue chain start: max_hops={AUTO_CONTINUE_MAX_HOPS}; "
+            f"phase={data.get('phase')!r} sub_phase={data.get('sub_phase')!r} "
+            f"cycle_count={data.get('cycle_count')}"
+        ),
+    )
+
+    for hop in range(1, AUTO_CONTINUE_MAX_HOPS + 1):
+        _log_note(log_path, f"auto-continue chain hop {hop} begin")
+        rc = run_token_exhaustion_resume(repo_root)
+        if rc != 0:
+            # Either the hop refused (budget exhausted, malformed
+            # checkpoint, unsupported saved status, etc.) or the
+            # dispatched continuation hit a non-token halt or terminal
+            # halt (FAILED_REQUIRES_HUMAN, max_cycles, evidence refusal,
+            # etc.). Both cases stop the chain; propagate the rc so the
+            # operator sees the actual halt vocabulary.
+            _log_note(
+                log_path,
+                f"auto-continue chain stopped at hop {hop}: rc={rc}",
+            )
+            return rc
+        # rc == 0: the hop succeeded end-to-end. Inspect loop-state to
+        # see whether the dispatched continuation re-entered the token-
+        # exhaustion halt (a fresh `record_token_exhaustion(...)` call
+        # during the continuation) or cleanly progressed past it.
+        try:
+            data = load_loop_state(state_path)
+        except HaltError as halt:
+            return _halt(state_path, {}, halt, log_path)
+        next_status = data.get("status")
+        if next_status != HALTED_TOKEN_EXHAUSTION:
+            _log_note(
+                log_path,
+                (
+                    f"auto-continue chain completed after {hop} hop(s); "
+                    f"final status={next_status!r}"
+                ),
+            )
+            return 0
+        # Still HALTED_TOKEN_EXHAUSTION: the dispatched continuation
+        # re-recorded a fresh exhaustion event. Loop into another hop
+        # (the next hop's call to `run_token_exhaustion_resume` will
+        # validate the new active checkpoint against its own contract
+        # before consuming another budget unit).
+
+    # Reached AUTO_CONTINUE_MAX_HOPS without natural termination. The
+    # defense-in-depth cap fires; refuse fail-closed and leave the
+    # saved HALTED_TOKEN_EXHAUSTION halt on disk for the operator.
+    return _refuse_no_clobber(
+        f"chain reached the AUTO_CONTINUE_MAX_HOPS={AUTO_CONTINUE_MAX_HOPS} "
+        f"defense-in-depth bound without naturally terminating; refusing "
+        f"further automatic continuation. The operator must intervene "
+        f"(inspect the checkpoint chain or clear the halt manually) "
+        f"rather than let the chain expand without bound."
+    )
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -5521,6 +5705,21 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def cmd_auto_continue(_args: argparse.Namespace) -> int:
+    """Phase 6G operator runtime path: bounded automatic continuation
+    chaining over the shipped Phase 6F single-hop resume.
+
+    Dispatches to `run_auto_continue(...)`, which performs up to
+    `AUTO_CONTINUE_MAX_HOPS` token-exhaustion resume hops in a single
+    invocation while the persisted halt status keeps re-entering
+    `HALTED_TOKEN_EXHAUSTION`. The standard single-hop `resume` is
+    unchanged; this is an additional operator entry-point for the
+    chained case.
+    """
+    repo_root = find_repo_root()
+    return run_auto_continue(repo_root)
+
+
 def cmd_record_token_exhaustion(args: argparse.Namespace) -> int:
     """Phase 6F operator runtime path: classify the current cycle as
     interrupted by token / context exhaustion.
@@ -6198,6 +6397,22 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    sub.add_parser(
+        "auto-continue",
+        help=(
+            "Phase 6G bounded automatic continuation chaining: while "
+            "loop-state.json status is "
+            "halted_awaiting_token_exhaustion_continuation, repeatedly "
+            "apply the single-hop token-exhaustion resume until either "
+            "the cycle clears the halt naturally, a hop refuses (e.g. "
+            "exhausted continuation_budget, unsupported saved stage, "
+            "malformed checkpoint), a non-token halt fires inside the "
+            "dispatched continuation, or AUTO_CONTINUE_MAX_HOPS is "
+            "reached. Refuses fail-closed (recovery-preserving, does "
+            "not clobber a strict-gate halt) when called from a status "
+            "other than the token-exhaustion halt."
+        ),
+    )
     record_te = sub.add_parser(
         "record-token-exhaustion",
         help=(
@@ -6258,6 +6473,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "plan": cmd_plan,
     "activate": cmd_activate,
     "resume": cmd_resume,
+    "auto-continue": cmd_auto_continue,
     "record-token-exhaustion": cmd_record_token_exhaustion,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
