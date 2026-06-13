@@ -593,5 +593,317 @@ class CmdDistillationTests(_DistillationTestCase):
         self.assertFalse(self.summary_dir.exists())
 
 
+# ----- Phase 6I fix-slice regression coverage -----
+
+
+class DistillationIdempotencyProbeMalformedTests(_DistillationTestCase):
+    """Regression coverage for the idempotency-probe fail-closed fix.
+
+    The prior implementation silently skipped any summary entry whose
+    envelope or body could not be parsed during the idempotency probe.
+    A malformed entry that happened to match this boundary's
+    `(phase, sub_phase, cycle_count)` identity could therefore go
+    unnoticed and let the distillation write a duplicate. The fixed
+    implementation refuses fail-closed when:
+      - the envelope is unreadable / not JSON / not a dict
+        (identity unknown - could collide), OR
+      - the envelope identity matches and the body is unreadable /
+        non-string / non-JSON / not a dict (matching-identity entry
+        of indeterminate marker status).
+    """
+
+    def _write_summary_entry_with_raw_envelope(
+        self, *, filename: str, envelope_obj,
+    ) -> Path:
+        """Plant an entry under `.agent-loop/memory/summary/` with the
+        supplied envelope (which may itself be malformed). If
+        `envelope_obj` is a string the raw text is written verbatim;
+        otherwise it is `json.dumps`-encoded."""
+        self.summary_dir.mkdir(parents=True, exist_ok=True)
+        path = self.summary_dir / filename
+        if isinstance(envelope_obj, str):
+            path.write_text(envelope_obj, encoding="utf-8")
+        else:
+            path.write_text(
+                json.dumps(envelope_obj), encoding="utf-8",
+            )
+        return path
+
+    def test_idempotency_refuses_on_unreadable_envelope_unknown_identity(
+        self,
+    ) -> None:
+        # Plant a summary entry whose JSON envelope is unreadable (a
+        # raw non-JSON byte sequence). The probe cannot determine
+        # identity from this file, so it must refuse rather than
+        # skip - the file could be a colliding distillation marker.
+        self._setup_boundary()
+        self._write_summary_entry_with_raw_envelope(
+            filename="20300101T000000Z-deadbeef.json",
+            envelope_obj="this is not valid JSON {{{",
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("idempotency probe", cm.exception.reason)
+        self.assertIn("not valid JSON", cm.exception.reason)
+
+    def test_idempotency_refuses_on_non_dict_envelope_unknown_identity(
+        self,
+    ) -> None:
+        # Envelope is valid JSON but a list, not a dict; identity
+        # cannot be determined.
+        self._setup_boundary()
+        self._write_summary_entry_with_raw_envelope(
+            filename="20300101T000001Z-cafebabe.json",
+            envelope_obj=["not", "a", "dict"],
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("not a dict", cm.exception.reason)
+
+    def test_idempotency_refuses_on_matching_identity_malformed_body(
+        self,
+    ) -> None:
+        # Envelope parses and identity MATCHES the active boundary;
+        # the body field, however, is not valid JSON. This is the
+        # exact regression class the fix prompt names: a matching-
+        # identity entry with malformed body must not be silently
+        # skipped, because it could be a partial / corrupted
+        # distillation entry whose marker is unrecoverable.
+        data = self._setup_boundary(cycle_count=1)
+        envelope = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_SUMMARY,
+            "phase": data["phase"],
+            "sub_phase": data["sub_phase"],
+            "cycle_count": data["cycle_count"],
+            "source_artifact_path": ".agent-loop/loop-state.json",
+            "created_at": "2030-01-01T00:00:00Z",
+            "supersedes": None,
+            # Matching identity above, malformed body below: a string
+            # that is not valid JSON.
+            "body": "{not: valid, json:::",
+        }
+        self._write_summary_entry_with_raw_envelope(
+            filename="20300101T000002Z-feedface.json",
+            envelope_obj=envelope,
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("matches identity", cm.exception.reason)
+        self.assertIn("not valid JSON", cm.exception.reason)
+
+    def test_idempotency_refuses_on_matching_identity_non_string_body(
+        self,
+    ) -> None:
+        # Envelope parses, identity matches, body is the wrong TYPE
+        # (a dict at the envelope level rather than a JSON-encoded
+        # string). The matching-identity case must refuse.
+        data = self._setup_boundary(cycle_count=1)
+        envelope = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_SUMMARY,
+            "phase": data["phase"],
+            "sub_phase": data["sub_phase"],
+            "cycle_count": data["cycle_count"],
+            "source_artifact_path": ".agent-loop/loop-state.json",
+            "created_at": "2030-01-01T00:00:00Z",
+            "supersedes": None,
+            "body": {"directly": "a dict, not a string"},
+        }
+        self._write_summary_entry_with_raw_envelope(
+            filename="20300101T000003Z-baadc0de.json",
+            envelope_obj=envelope,
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("body field is not a string", cm.exception.reason)
+
+    def test_idempotency_still_skips_mismatching_identity_silently(
+        self,
+    ) -> None:
+        # An envelope that parses but whose identity does NOT match
+        # this boundary is safe to skip. This pins the narrow scope
+        # of the fix: it tightens the matching-identity / unknown-
+        # identity branches, NOT the mismatching-identity branch.
+        self._setup_boundary(cycle_count=1)
+        unrelated_envelope = {
+            "signal_version": agent_loop.MEMORY_SIGNAL_VERSION,
+            "category": agent_loop.MEMORY_CATEGORY_SUMMARY,
+            "phase": "Phase 5 - Approval Modes",
+            "sub_phase": "Phase 5A - Approval Modes Contract",
+            "cycle_count": 1,
+            "source_artifact_path": ".agent-loop/loop-state.json",
+            "created_at": "2030-01-01T00:00:00Z",
+            "supersedes": None,
+            # Malformed body but identity DOES NOT match the active
+            # (Phase 6I) boundary, so the slice must skip and proceed
+            # to write a clean distillation.
+            "body": "{this body is malformed but identity does not match",
+        }
+        self._write_summary_entry_with_raw_envelope(
+            filename="20300101T000004Z-deadc0de.json",
+            envelope_obj=unrelated_envelope,
+        )
+        written = agent_loop.distill_phase_boundary_memory(self.repo_root)
+        # Distillation proceeded normally (summary + decision for
+        # cycle_count=1).
+        self.assertEqual(len(written), 2)
+
+
+class DistillationAtomicWriteTests(_DistillationTestCase):
+    """Regression coverage for the multi-entry atomic-write fix.
+
+    The prior implementation wrote `summary`, then `decision`, then
+    conditional `failure` with no rollback. A failed later write
+    (collision, OSError, any other write_memory_entry exception)
+    could leave a partial distillation on disk. In particular the
+    written `summary` entry would carry the
+    `DISTILLATION_BODY_MARKER_FIELD` marker, so the next clean
+    re-run would refuse via the idempotency probe even though the
+    original call failed.
+
+    The fix wraps the multi-write in a try/except that removes any
+    entries written in this call before re-raising. A clean retry
+    after the failure cause is removed must succeed.
+    """
+
+    def test_failure_during_decision_write_rolls_back_summary(self) -> None:
+        # Set up a successful boundary. Wrap write_memory_entry so the
+        # first call succeeds and the second call raises - simulating
+        # a collision or OS error during the decision write.
+        self._setup_boundary(cycle_count=1)
+        real_write = agent_loop.write_memory_entry
+        call_state = {"n": 0}
+        landed: list = []
+
+        def _wrapped(*args, **kwargs):
+            call_state["n"] += 1
+            if call_state["n"] == 2:
+                raise agent_loop.HaltError(
+                    "halted_input_missing",
+                    "simulated decision-write failure",
+                )
+            path = real_write(*args, **kwargs)
+            landed.append(path)
+            return path
+
+        with mock.patch.object(agent_loop, "write_memory_entry", _wrapped):
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertIn("simulated decision-write failure", cm.exception.reason)
+        # Exactly one entry was created by the underlying writer; that
+        # entry must have been rolled back (removed) by the slice
+        # before the exception propagated.
+        self.assertEqual(len(landed), 1)
+        self.assertFalse(
+            landed[0].exists(),
+            f"summary entry was not rolled back: {landed[0]}",
+        )
+
+    def test_failure_during_failure_write_rolls_back_summary_and_decision(
+        self,
+    ) -> None:
+        # cycle_count=2 -> the slice attempts to write three entries
+        # (summary, decision, failure). Make the third call fail and
+        # assert BOTH prior entries are rolled back.
+        self._setup_boundary(cycle_count=2)
+        real_write = agent_loop.write_memory_entry
+        call_state = {"n": 0}
+        landed: list = []
+
+        def _wrapped(*args, **kwargs):
+            call_state["n"] += 1
+            if call_state["n"] == 3:
+                raise OSError("simulated failure-write OSError")
+            path = real_write(*args, **kwargs)
+            landed.append(path)
+            return path
+
+        with mock.patch.object(agent_loop, "write_memory_entry", _wrapped):
+            with self.assertRaises(OSError):
+                agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertEqual(len(landed), 2)
+        for path in landed:
+            self.assertFalse(
+                path.exists(),
+                f"entry was not rolled back: {path}",
+            )
+
+    def test_clean_retry_after_rollback_succeeds(self) -> None:
+        # The load-bearing property of the rollback: after a failed
+        # call removes its partial output, a clean re-run produces
+        # the full set of distillation entries (the failed call's
+        # summary marker did NOT block the retry via the idempotency
+        # probe).
+        self._setup_boundary(cycle_count=1)
+        real_write = agent_loop.write_memory_entry
+        call_state = {"n": 0}
+
+        def _failing_once(*args, **kwargs):
+            call_state["n"] += 1
+            if call_state["n"] == 2:
+                raise agent_loop.HaltError(
+                    "halted_input_missing",
+                    "simulated decision-write failure",
+                )
+            return real_write(*args, **kwargs)
+
+        with mock.patch.object(
+            agent_loop, "write_memory_entry", _failing_once,
+        ):
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop.distill_phase_boundary_memory(self.repo_root)
+
+        # Clean retry: the rollback removed the summary marker, so the
+        # idempotency probe finds no matching entry and the full
+        # distillation proceeds end-to-end.
+        written = agent_loop.distill_phase_boundary_memory(self.repo_root)
+        self.assertEqual(len(written), 2)
+        for path in written:
+            self.assertTrue(path.exists())
+
+    def test_rollback_does_not_touch_pre_existing_unrelated_entries(
+        self,
+    ) -> None:
+        # An unrelated memory entry already on disk must NOT be
+        # removed by the rollback. The rollback only undoes entries
+        # this call wrote.
+        self._setup_boundary(cycle_count=1)
+        # Plant an unrelated memory entry first.
+        pre_existing = agent_loop.write_memory_entry(
+            self.repo_root,
+            category=agent_loop.MEMORY_CATEGORY_PREFERENCE,
+            phase="Some Other Phase",
+            sub_phase="Some Other Sub-Phase",
+            cycle_count=1,
+            source_artifact_path=".agent-loop/loop-state.json",
+            body="unrelated entry",
+        )
+        before_bytes = pre_existing.read_bytes()
+        real_write = agent_loop.write_memory_entry
+        call_state = {"n": 0}
+
+        def _failing_second(*args, **kwargs):
+            call_state["n"] += 1
+            if call_state["n"] == 2:
+                raise agent_loop.HaltError(
+                    "halted_input_missing", "decision failed",
+                )
+            return real_write(*args, **kwargs)
+
+        with mock.patch.object(
+            agent_loop, "write_memory_entry", _failing_second,
+        ):
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop.distill_phase_boundary_memory(self.repo_root)
+        # The unrelated entry survived the rollback byte-for-byte.
+        self.assertTrue(pre_existing.exists())
+        self.assertEqual(pre_existing.read_bytes(), before_bytes)
+
+
 if __name__ == "__main__":
     unittest.main()

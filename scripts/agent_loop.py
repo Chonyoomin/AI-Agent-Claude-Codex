@@ -3403,9 +3403,31 @@ def _find_existing_distillation_summary(
     (`DISTILLATION_BODY_MARKER_FIELD = "distillation_signal_version"`)
     inside the entry body distinguishes a distillation-written summary
     from any other summary-category entry a non-distillation writer
-    may have placed on disk. A malformed body (non-JSON, missing
-    field) does not count as a match and is skipped silently; the
-    Phase 6C retrieval primitive remains the strict-schema reader.
+    may have placed on disk.
+
+    Refusal vs skip:
+      - an envelope that is unreadable (`OSError`), not parseable as
+        JSON (`json.JSONDecodeError`), or not a dict has UNKNOWN
+        identity. It could be a colliding distillation marker; the
+        probe cannot prove it isn't, so it refuses fail-closed via
+        `HaltError("halted_input_missing", ...)` rather than skipping.
+      - an envelope whose identity does NOT match
+        (phase / sub_phase / cycle_count) is safe to skip - the
+        canonical state model assigns one active task per active
+        (phase, sub_phase) pair, so a mismatching envelope cannot be
+        a colliding distillation entry for THIS boundary.
+      - an envelope whose identity MATCHES but whose body is unreadable
+        (`None` / non-string / non-JSON / not a dict) refuses
+        fail-closed: the matching-identity entry could be a malformed
+        distillation entry the slice itself wrote that later got
+        corrupted, and proceeding would risk a duplicate.
+      - an envelope whose identity matches, body parses, and marker
+        equals the distillation signal version is the "already
+        distilled" case; the probe returns the entry path so the
+        caller refuses with the existing idempotency message.
+      - an envelope whose identity matches, body parses, but marker
+        is missing or different is a pre-existing non-distillation
+        summary entry. That is NOT the slice's concern; skip silently.
     """
     summary_dir = (
         _memory_dir(repo_root) / MEMORY_CATEGORY_SUMMARY
@@ -3415,30 +3437,86 @@ def _find_existing_distillation_summary(
     for entry_path in sorted(summary_dir.iterdir()):
         if entry_path.suffix != ".json":
             continue
+        rel = entry_path.relative_to(repo_root).as_posix()
         try:
-            envelope = json.loads(entry_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
+            envelope_text = entry_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} exists but is unreadable "
+                    f"({type(exc).__name__}: {exc}); its identity "
+                    f"cannot be determined and it may collide with "
+                    f"this boundary"
+                ),
+            )
+        try:
+            envelope = json.loads(envelope_text)
+        except json.JSONDecodeError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} is not valid JSON "
+                    f"({type(exc).__name__}: {exc}); its identity "
+                    f"cannot be determined"
+                ),
+            )
         if not isinstance(envelope, dict):
-            continue
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} parses as JSON but is not a dict; "
+                    f"its identity cannot be determined"
+                ),
+            )
         if envelope.get("phase") != phase:
             continue
         if envelope.get("sub_phase") != sub_phase:
             continue
         if envelope.get("cycle_count") != cycle_count:
             continue
+        # Identity matches. From here, an unparseable / malformed body
+        # is a fail-closed refusal because it could be a corrupted
+        # distillation entry for THIS exact boundary.
         body_raw = envelope.get("body")
         if not isinstance(body_raw, str):
-            continue
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} matches identity (phase, sub_phase, "
+                    f"cycle_count) but its body field is not a string "
+                    f"(got {type(body_raw).__name__})"
+                ),
+            )
         try:
             body = json.loads(body_raw)
-        except json.JSONDecodeError:
-            continue
+        except json.JSONDecodeError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} matches identity but its body is "
+                    f"not valid JSON ({type(exc).__name__}: {exc})"
+                ),
+            )
         if not isinstance(body, dict):
-            continue
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} matches identity but its body is "
+                    f"not a dict"
+                ),
+            )
         if body.get(DISTILLATION_BODY_MARKER_FIELD) != (
             DISTILLATION_SIGNAL_VERSION
         ):
+            # Pre-existing non-distillation summary entry; not ours
+            # to manage. Skip silently and keep scanning.
             continue
         return entry_path
     return None
@@ -3623,55 +3701,79 @@ def distill_phase_boundary_memory(
     #    than being overwritten). The summary entry is written first
     #    so the idempotency marker exists before any decision/failure
     #    write happens.
+    #
+    #    Multi-entry atomicity: the slice must be all-or-nothing. If
+    #    a later write fails (a collision the preflight idempotency
+    #    probe could not predict, an `OSError`, any other `Exception`
+    #    from `write_memory_entry`), the entries already written in
+    #    THIS call are rolled back from disk before the exception
+    #    propagates. Otherwise a partial distillation - in particular
+    #    a written `summary` entry carrying the
+    #    `DISTILLATION_BODY_MARKER_FIELD` marker - would land on disk
+    #    and the next clean re-run would refuse via the idempotency
+    #    probe, even though the original call failed.
     written: list = []
-    summary_path = write_memory_entry(
-        repo_root,
-        category=MEMORY_CATEGORY_SUMMARY,
-        phase=data["phase"],
-        sub_phase=data.get("sub_phase"),
-        cycle_count=data["cycle_count"],
-        source_artifact_path=".agent-loop/loop-state.json",
-        body=summary_body,
-    )
-    written.append(summary_path)
-    decision_path = write_memory_entry(
-        repo_root,
-        category=MEMORY_CATEGORY_DECISION,
-        phase=data["phase"],
-        sub_phase=data.get("sub_phase"),
-        cycle_count=data["cycle_count"],
-        source_artifact_path=".agent-loop/loop-state.json",
-        body=decision_body,
-    )
-    written.append(decision_path)
-    if data["cycle_count"] > 1:
-        # Conditional failure entry: the phase required at least one
-        # NEEDS_FIXES round before reaching APPROVED. The exact number
-        # of fix cycles is `cycle_count - 1` (the final approval cycle
-        # is itself a cycle but not a fix cycle). Codifying this as a
-        # durable `failure` entry preserves the "had to retry" lesson
-        # across phase boundaries without parsing internal markdown
-        # structure.
-        failure_body = json.dumps({
-            **common,
-            "knowledge_type": "failure",
-            "failure": (
-                f"phase {data['phase']!r} sub_phase "
-                f"{data.get('sub_phase')!r} required "
-                f"{data['cycle_count'] - 1} fix cycle(s) before reaching "
-                f"verdict {data['last_verdict']!r}"
-            ),
-        }, indent=2)
-        failure_path = write_memory_entry(
+    try:
+        summary_path = write_memory_entry(
             repo_root,
-            category=MEMORY_CATEGORY_FAILURE,
+            category=MEMORY_CATEGORY_SUMMARY,
             phase=data["phase"],
             sub_phase=data.get("sub_phase"),
             cycle_count=data["cycle_count"],
             source_artifact_path=".agent-loop/loop-state.json",
-            body=failure_body,
+            body=summary_body,
         )
-        written.append(failure_path)
+        written.append(summary_path)
+        decision_path = write_memory_entry(
+            repo_root,
+            category=MEMORY_CATEGORY_DECISION,
+            phase=data["phase"],
+            sub_phase=data.get("sub_phase"),
+            cycle_count=data["cycle_count"],
+            source_artifact_path=".agent-loop/loop-state.json",
+            body=decision_body,
+        )
+        written.append(decision_path)
+        if data["cycle_count"] > 1:
+            # Conditional failure entry: the phase required at least
+            # one NEEDS_FIXES round before reaching APPROVED. The exact
+            # number of fix cycles is `cycle_count - 1` (the final
+            # approval cycle is itself a cycle but not a fix cycle).
+            # Codifying this as a durable `failure` entry preserves the
+            # "had to retry" lesson across phase boundaries without
+            # parsing internal markdown structure.
+            failure_body = json.dumps({
+                **common,
+                "knowledge_type": "failure",
+                "failure": (
+                    f"phase {data['phase']!r} sub_phase "
+                    f"{data.get('sub_phase')!r} required "
+                    f"{data['cycle_count'] - 1} fix cycle(s) before "
+                    f"reaching verdict {data['last_verdict']!r}"
+                ),
+            }, indent=2)
+            failure_path = write_memory_entry(
+                repo_root,
+                category=MEMORY_CATEGORY_FAILURE,
+                phase=data["phase"],
+                sub_phase=data.get("sub_phase"),
+                cycle_count=data["cycle_count"],
+                source_artifact_path=".agent-loop/loop-state.json",
+                body=failure_body,
+            )
+            written.append(failure_path)
+    except BaseException:
+        # Rollback any partial output so a failed distillation does
+        # not leave entries on disk. Best-effort: a `Path.unlink`
+        # failure is suppressed so the original cause still
+        # propagates as the visible exception. A successful unlink
+        # restores the pre-call state of `.agent-loop/memory/<cat>/`.
+        for p in written:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        raise
 
     if log_path is not None:
         _log_note(
