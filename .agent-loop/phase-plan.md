@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 6 - Durable Memory and Optional Context Layer (sub-phase: Phase 6M - Runtime Adapter Contract For Framework Evaluation)
+Phase 6 - Durable Memory and Optional Context Layer (sub-phase: Phase 6N - Experimental LangGraph Runtime Mirror)
 
 ## Phase 0 - Instruction Foundation
 
@@ -2513,7 +2513,8 @@ provenance, and the shipped Phase 5 approval-mode and strict-gate behavior.
 
 ### Status
 
-Active. Contract-definition slice for evaluating future framework-backed runtimes without weakening the shipped local artifact contract.
+Closed after Codex review approval and human phase progression.
+Historical record preserved.
 
 ### Objective
 
@@ -2988,3 +2989,62 @@ must resolve each before shipping:
 Resolving any open question above MUST be accompanied by an update
 to this contract or to a downstream Phase 6 contract before the
 implementation slice ships.
+
+## Phase 6N - Experimental LangGraph Runtime Mirror
+
+### Status
+
+Active. First opt-in framework-backed runtime implementation slice under the shipped Phase 6M adapter contract.
+
+### Objective
+
+Implement a narrow experimental LangGraph-backed runtime mirror that exercises
+the Phase 6M adapter contract in code. This slice should add an opt-in
+alternate runtime path that mirrors the shipped local orchestrator's state
+machine, halt/refusal vocabulary, checkpoint and continuation behavior,
+durable-memory boundaries, and approval-mode semantics closely enough to be
+evaluated against the local runtime, while preserving canonical repo-artifact
+truth and keeping `scripts/agent_loop.py`'s existing local path as the default.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 6 / 6N as active
+- `.agent-loop/phase-plan.md` records Phase 6M as closed history and contains a
+  `## Phase 6N - Experimental LangGraph Runtime Mirror` section with concrete
+  objective, done criteria, and exclusions
+- `scripts/agent_loop.py` exposes a narrow opt-in alternate-runtime selection
+  surface for an experimental LangGraph-backed runtime mirror while preserving
+  the shipped local runtime as the default when no explicit selection is made
+- the experimental runtime mirrors the shipped halt/refusal vocabulary,
+  approval-mode behavior, checkpoint/continuation handling, durable-memory
+  boundaries, and audit-note expectations closely enough to be compared against
+  the default runtime under the Phase 6M contract
+- the experimental runtime preserves canonical repo-artifact precedence over
+  framework-managed state and refuses fail-closed when framework state
+  contradicts canonical task, loop-state, checkpoint, memory, or review
+  artifacts
+- the experimental runtime remains explicitly opt-in, evaluation-oriented, and
+  non-default; Phase 6N does not promote it to the repo's default runtime
+- focused tests cover runtime selection, default-runtime preservation,
+  representative halt/refusal mirroring, checkpoint/continuation compatibility,
+  and canonical-precedence preservation for the experimental mirror
+- `README.md` reflects that Phase 6N is active and that experimental LangGraph
+  runtime mirroring is now the implementation focus
+
+### Exclusions
+
+- no LangChain support-layer implementation in this slice
+- no CrewAI or broader multi-agent framework evaluation in this slice
+- no broader autonomy model than the shipped Phase 5D runtime behavior
+- no arbitrary repo-file ingestion, semantic retrieval expansion, or broader
+  RAG/runtime behavior beyond the narrow experimental mirror needed here
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body beyond the narrow
+  opt-in experimental mirror implementation
+- no change to the Phase 4A Planning Contract body
+- no regression of the shipped Phase 5 review, strict, autonomous,
+  reconciliation, or prompt-bootstrap runtime behavior
+- no change to `AGENTS.md` or `CLAUDE.md`
+- no Phase 7 editor integration
+- no Git automation
