@@ -500,8 +500,10 @@ Success:
 
 Add a future selectable mode that can take a PRD, product brief, or raw
 idea and drive the system from planning through implementation and
-fix/review loops to a substantially complete product without stepwise
-human intervention.
+fix/review loops until every PRD-derived phase is completed, explicitly
+deferred, or explicitly blocked for human attention, with the run then
+stopping at a final human acceptance gate rather than at an intermediate
+partially finished state.
 
 Phase 9 is delivered in sub-phases:
 
@@ -510,7 +512,8 @@ Phase 9 is delivered in sub-phases:
 - Phase 9C - Orchestrator-Driven Prompt Handoff: remove manual prompt transfer by letting the orchestrator drive Codex and Claude handoff within the existing ownership boundary
 - Phase 9D - Autonomous Internal Review/Fix Loop: allow automatic review/fix continuation across bounded internal cycles while preserving hard-stop conditions and artifact truth
 - Phase 9E - Long-Run Continuation And Completion Heuristics: extend checkpoint/resume, token-reset continuation, and "done enough" detection for long product-building runs
-- Phase 9F - Final Human Acceptance And Polish Gate: require an explicit final human review, polish, and acceptance step before the run is treated as complete
+- Phase 9F - Capacity-Halt Reprobe And Automatic Resume: treat Claude/Codex token or rate-limit exhaustion as a resumable external-capacity halt, persist retry metadata beside the existing checkpoint, wait with bounded backoff, re-probe availability, and resume the exact suspended step automatically when capacity returns without silently widening autonomy or retrying forever
+- Phase 9G - Final Human Acceptance And Polish Gate: require an explicit final human review, polish, and acceptance step before the run is treated as complete
 
 This is a separate mode, not a replacement for the human-governed
 approval modes from Phase 5. The user should still be able to select
@@ -527,14 +530,21 @@ Build:
   requirements or looser idea-driven inputs
 - automatic decomposition of the PRD/idea into internal phases, tasks,
   and acceptance criteria
+- a canonical machine-readable PRD execution ledger that tracks every
+  derived phase/task as pending, active, complete, deferred, or blocked
 - orchestrator-driven Codex/Claude handoff without manual prompt
   transfer
 - automatic review/fix continuation across multiple internal cycles
+- automatic activation of the next PRD-derived phase when the current
+  phase reaches its terminal approved state
 - completion heuristics for determining when the product is
-  "done enough" to present for final human inspection
+  complete relative to the PRD rather than merely "done enough" for the
+  current step
 - strong checkpoint/resume behavior for long autonomous runs
 - token-reset continuation and continuation chaining for long product
   builds
+- bounded capacity-halt retry metadata, backoff policy, re-probe logic,
+  and automatic resume for Claude/Codex usage-limit interruptions
 - explicit autonomy-boundary policy for installs, tests, browser work,
   tool usage, and external calls
 - a final human review/polish gate after the autonomous build completes
@@ -545,8 +555,17 @@ Design rules:
   artifacts
 - the mode must preserve durable checkpoints and resumability rather
   than relying on one long uninterrupted session
+- the mode should continue automatically after Claude/Codex token or
+  rate-limit exhaustion when capacity later returns, but only through
+  bounded, auditable re-probe and resume policy
+- the mode should not assume an exact provider reset timestamp unless a
+  runtime surface exposes one; when unavailable it must infer recovery
+  through bounded re-probe attempts and auditable retry state
 - the mode may skip intermediate human approvals during the build, but
   it must still preserve a final human acceptance/polish point
+- automatic resume after capacity exhaustion must be bounded by max
+  attempts and/or max wait windows and must fall back to a human-visible
+  halt when capacity does not return in time
 - the mode must not silently claim success without objective completion
   signals such as updated artifacts, passing validations where required,
   and explicit completion reporting
@@ -561,13 +580,14 @@ Success:
 - a user can select fully autonomous PRD-to-product mode as a distinct
   run mode
 - the system can take a PRD or idea and carry the build through
-  planning, implementation, review, and fix cycles without stepwise
-  human handoff
+  planning, implementation, review, fix cycles, and phase transitions
+  without stepwise human handoff
 - long autonomous runs can survive token exhaustion, interruptions, and
-  continuation boundaries
-- the final output is a substantially complete product ready for human
-  inspection, fine edits, and final acceptance rather than a partially
-  completed intermediate state
+  continuation boundaries, and resume automatically when capacity
+  returns within policy limits
+- the run stops only when every PRD-derived phase has been completed,
+  deferred, or blocked with explicit status, and the remaining outcome
+  is final human inspection, fine edits, and acceptance
 
 ## Phase 10 - Future Product Features
 
