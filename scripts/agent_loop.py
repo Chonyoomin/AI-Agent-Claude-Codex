@@ -4720,6 +4720,426 @@ def integrate_optional_context(
     return integration
 
 
+# ---------------------------------------------------------------------------
+# Phase 6L: Repeated-Failure Memory Synthesis Initial Slice
+#
+# Distill recurring failure patterns into a durable advisory failure
+# memory entry on top of the shipped Phase 6B (storage), 6C
+# (retrieval), and 6I (phase-boundary distillation) primitives. The
+# synthesis:
+#   - reads ONLY the existing `failure`-category memory entries that
+#     match the active loop-state (phase, sub_phase) (bounded, on-
+#     disk, structurally validated by Phase 6B `read_memory_entry`)
+#   - skips prior 6L synthesis entries so the synthesis layer stays
+#     flat (no synthesis-of-syntheses; the upstream entries remain
+#     the durable source of truth)
+#   - writes a NEW `failure` entry through the existing Phase 6B
+#     `write_memory_entry` plumbing carrying an explicit
+#     `synthesis_signal_version = "phase-6l-v1"` body marker plus
+#     the ordered list of source memory entry paths so a later
+#     retrieval can trace provenance
+#   - refuses fail-closed on every missing / malformed / contradictory
+#     / unreadable / unsupported / out-of-bound / ineligible input
+#   - never reads arbitrary repo files, raw logs, transcripts, or
+#     anything outside the validated memory directory
+#   - never widens Phase 5 approval-mode or strict-gate semantics
+#
+# Out of scope for this initial slice (deferred per the 6L prompt):
+#   - arbitrary repo-file ingestion or raw-transcript-as-memory
+#   - any RAG / semantic retrieval / framework-backed runtime path
+#   - synthesis-of-syntheses (entries carrying the 6L marker are
+#     filtered out of the source set)
+#   - orchestrator-side automatic invocation from the verdict-
+#     handling, continuation, or prompt-bootstrap paths
+#   - any widening of Phase 5 autonomy
+
+REPEATED_FAILURE_SIGNAL_VERSION = "phase-6l-v1"
+REPEATED_FAILURE_DEFAULT_MIN_ENTRIES = 2
+REPEATED_FAILURE_MAX_MIN_ENTRIES = 32
+REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES = 8
+REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES = 32
+REPEATED_FAILURE_BODY_MARKER_FIELD = "synthesis_signal_version"
+REPEATED_FAILURE_CANONICAL_PRECEDENCE_NOTE = (
+    "Repeated-failure synthesis entries written by Phase 6L are "
+    "advisory only. Canonical task and loop-state artifacts "
+    "(TASK.md, .agent-loop/current-task.md, "
+    ".agent-loop/current-phase.md, .agent-loop/loop-state.json) "
+    "remain the source of truth. The synthesized entry MUST NOT "
+    "override canonical state or any Phase 5 approval-mode / "
+    "strict-gate decision."
+)
+
+
+def _validate_repeated_failure_min_entries(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `min_entries`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries must be a positive int, "
+                f"not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 2:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries must be >= 2 (a single "
+                f"failure entry is not a 'repeated' pattern); got "
+                f"{value!r}"
+            ),
+        )
+    if value > REPEATED_FAILURE_MAX_MIN_ENTRIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries {value!r} exceeds "
+                f"REPEATED_FAILURE_MAX_MIN_ENTRIES="
+                f"{REPEATED_FAILURE_MAX_MIN_ENTRIES}; the safety cap "
+                f"prevents a synthesis from requiring an unbounded "
+                f"source-set"
+            ),
+        )
+
+
+def _validate_repeated_failure_max_source_entries(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_source_entries`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries must be a positive "
+                f"int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries must be an int; "
+                f"got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 2:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries must be >= 2 "
+                f"(synthesis requires at least two sources); got "
+                f"{value!r}"
+            ),
+        )
+    if value > REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries {value!r} exceeds "
+                f"REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES="
+                f"{REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES}; the safety "
+                f"cap prevents a synthesis from silently expanding into "
+                f"an unbounded read"
+            ),
+        )
+
+
+def _find_existing_repeated_failure_synthesis(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: Optional[str],
+    source_entries: list,
+) -> Optional[Path]:
+    """Return the path of any existing 6L synthesis-marked `failure`
+    memory entry that matches the active (phase, sub_phase) AND the
+    same `source_memory_entries` set, else None.
+
+    The body marker field
+    (`REPEATED_FAILURE_BODY_MARKER_FIELD = "synthesis_signal_version"`)
+    inside the entry body distinguishes a synthesis-written failure
+    from any other failure-category entry on disk (in particular from
+    a Phase 6I distillation `failure` entry, which does NOT carry this
+    marker).
+
+    Refusal vs skip mirrors the Phase 6I idempotency probe:
+      - an envelope that is unreadable, not parseable, not a dict, or
+        missing the required Phase 6B metadata fields raises
+        `HaltError` (the synthesis must not proceed past an unverifiable
+        on-disk neighbor)
+      - an envelope whose phase / sub_phase does not match the active
+        loop-state context is skipped (it belongs to a different
+        synthesis identity)
+      - an envelope whose body is not parseable as JSON, is not a dict,
+        or does not carry the 6L marker is skipped (it is a non-6L
+        failure entry, e.g. a Phase 6I distillation `failure`)
+      - a matching-identity envelope whose body IS 6L-marked but whose
+        body is unreadable / non-string / non-JSON / not a dict raises
+        `HaltError` (a malformed entry that could collide must never
+        be silently skipped)
+      - a matching-identity 6L-marked entry whose `source_memory_entries`
+        equals the new source-set is returned (the caller refuses the
+        re-synthesis)
+    """
+    cat_dir = _memory_dir(repo_root) / MEMORY_CATEGORY_FAILURE
+    if not cat_dir.is_dir():
+        return None
+    source_set = sorted(source_entries)
+    for entry_path in sorted(cat_dir.iterdir()):
+        if not entry_path.is_file():
+            continue
+        try:
+            envelope = read_memory_entry(entry_path)
+        except HaltError:
+            raise
+        if envelope.get("phase") != phase:
+            continue
+        if envelope.get("sub_phase") != sub_phase:
+            continue
+        body_raw = envelope.get("body")
+        if not isinstance(body_raw, str):
+            continue
+        try:
+            body = json.loads(body_raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(body, dict):
+            continue
+        marker = body.get(REPEATED_FAILURE_BODY_MARKER_FIELD)
+        if marker != REPEATED_FAILURE_SIGNAL_VERSION:
+            continue
+        existing_sources = body.get("source_memory_entries")
+        if not isinstance(existing_sources, list):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"repeated-failure synthesis refused: existing "
+                    f"6L-marked failure entry {entry_path} has malformed "
+                    f"source_memory_entries (not a list)"
+                ),
+            )
+        if sorted(existing_sources) == source_set:
+            return entry_path
+    return None
+
+
+def synthesize_repeated_failures(
+    repo_root: Path,
+    *,
+    min_entries: Optional[int] = None,
+    max_source_entries: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Synthesize recurring failure patterns from existing
+    `failure`-category memory entries into a NEW durable
+    advisory `failure` memory entry. Returns the path of the
+    newly written entry.
+
+    The synthesis source set is exactly the existing failure entries
+    that match the active loop-state (phase, sub_phase) AND are NOT
+    themselves 6L-marked synthesis entries. The source set is sorted
+    by `(cycle_count, created_at)` so a stable order is recorded on
+    disk; the newest `max_source_entries` are kept when more than the
+    cap match.
+
+    Raises `HaltError("halted_input_missing", ...)` on every refusal
+    mode documented in the Phase 6L block comment above. The caller
+    (the CLI handler) routes refusals through `_halt`.
+
+    Args:
+      repo_root: workspace root.
+      min_entries: minimum number of matching source entries required
+        before the synthesis fires. Defaults to
+        `REPEATED_FAILURE_DEFAULT_MIN_ENTRIES = 2`.
+      max_source_entries: maximum number of source entries that may
+        feed a single synthesis. Defaults to
+        `REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES = 8`.
+      log_path: optional orchestrator-log path. When supplied a single
+        `repeated-failure synthesis:` audit note is appended recording
+        the signal version, phase, sub_phase, cycle_count, source
+        count, and the chosen min / max bounds.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    min_e = (
+        min_entries if min_entries is not None
+        else REPEATED_FAILURE_DEFAULT_MIN_ENTRIES
+    )
+    _validate_repeated_failure_min_entries(min_e)
+    max_se = (
+        max_source_entries if max_source_entries is not None
+        else REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES
+    )
+    _validate_repeated_failure_max_source_entries(max_se)
+    if max_se < min_e:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries ({max_se}) must "
+                f"be >= min_entries ({min_e}); a synthesis that caps "
+                f"sources below its own minimum is contradictory"
+            ),
+        )
+
+    active_phase = data["phase"]
+    active_sub_phase = data.get("sub_phase")
+
+    failure_paths = list_memory_entries(
+        repo_root, category=MEMORY_CATEGORY_FAILURE,
+    )
+    candidates: list = []
+    for fp in failure_paths:
+        envelope = read_memory_entry(fp)
+        if envelope.get("phase") != active_phase:
+            continue
+        if envelope.get("sub_phase") != active_sub_phase:
+            continue
+        body_raw = envelope.get("body")
+        body_dict: Optional[dict] = None
+        if isinstance(body_raw, str):
+            try:
+                parsed = json.loads(body_raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                body_dict = parsed
+        if (
+            body_dict is not None
+            and body_dict.get(REPEATED_FAILURE_BODY_MARKER_FIELD)
+            == REPEATED_FAILURE_SIGNAL_VERSION
+        ):
+            continue
+        candidates.append((fp, envelope, body_dict))
+
+    if len(candidates) < min_e:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure synthesis refused: only "
+                f"{len(candidates)} matching non-synthesis failure "
+                f"entr{'y' if len(candidates) == 1 else 'ies'} on disk "
+                f"for phase={active_phase!r} sub_phase="
+                f"{active_sub_phase!r}; min_entries={min_e} is the "
+                f"minimum source count for a synthesis"
+            ),
+        )
+
+    candidates.sort(
+        key=lambda t: (
+            t[1].get("cycle_count", 0), t[1].get("created_at", ""),
+        ),
+    )
+    if len(candidates) > max_se:
+        candidates = candidates[-max_se:]
+
+    source_rels: list = []
+    source_cycle_counts: list = []
+    source_excerpts: list = []
+    for fp, envelope, body_dict in candidates:
+        rel = fp.relative_to(repo_root).as_posix()
+        source_rels.append(rel)
+        source_cycle_counts.append(envelope.get("cycle_count"))
+        excerpt: dict = {
+            "source_memory_entry": rel,
+            "cycle_count": envelope.get("cycle_count"),
+            "created_at": envelope.get("created_at"),
+        }
+        if isinstance(body_dict, dict):
+            kt = body_dict.get("knowledge_type")
+            if isinstance(kt, str):
+                excerpt["knowledge_type"] = kt
+            fail = body_dict.get("failure")
+            if isinstance(fail, str):
+                excerpt["failure"] = fail
+        source_excerpts.append(excerpt)
+
+    existing = _find_existing_repeated_failure_synthesis(
+        repo_root,
+        phase=active_phase,
+        sub_phase=active_sub_phase,
+        source_entries=source_rels,
+    )
+    if existing is not None:
+        rel = existing.relative_to(repo_root).as_posix()
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure synthesis refused: an existing 6L "
+                f"synthesis entry already exists for this "
+                f"(phase, sub_phase, source-set) identity. Existing "
+                f"entry: {rel}. Re-synthesis would produce a "
+                f"duplicate; clear or supersede the existing entry "
+                f"first."
+            ),
+        )
+
+    synthesized_at = _utc_iso_now()
+    body = json.dumps({
+        REPEATED_FAILURE_BODY_MARKER_FIELD: (
+            REPEATED_FAILURE_SIGNAL_VERSION
+        ),
+        "phase": active_phase,
+        "sub_phase": active_sub_phase,
+        "task": data["task"],
+        "cycle_count": data["cycle_count"],
+        "approval_mode": data.get("approval_mode"),
+        "knowledge_type": "failure",
+        "synthesis_summary": (
+            f"phase {active_phase!r} sub_phase {active_sub_phase!r} "
+            f"has accumulated {len(source_rels)} prior failure "
+            f"entr{'y' if len(source_rels) == 1 else 'ies'} "
+            f"(cycle_counts={source_cycle_counts!r}); a recurring "
+            f"failure pattern is advised at this scope"
+        ),
+        "source_memory_entries": source_rels,
+        "source_count": len(source_rels),
+        "source_cycle_counts": source_cycle_counts,
+        "source_excerpts": source_excerpts,
+        "min_entries_applied": min_e,
+        "max_source_entries_applied": max_se,
+        "synthesized_at": synthesized_at,
+        "canonical_precedence_note": (
+            REPEATED_FAILURE_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }, indent=2)
+
+    written_path = write_memory_entry(
+        repo_root,
+        category=MEMORY_CATEGORY_FAILURE,
+        phase=active_phase,
+        sub_phase=active_sub_phase,
+        cycle_count=data["cycle_count"],
+        source_artifact_path=".agent-loop/loop-state.json",
+        body=body,
+    )
+
+    if log_path is not None:
+        _log_note(
+            log_path,
+            (
+                f"repeated-failure synthesis: signal_version="
+                f"{REPEATED_FAILURE_SIGNAL_VERSION!r} phase="
+                f"{active_phase!r} sub_phase={active_sub_phase!r} "
+                f"cycle_count={data['cycle_count']} source_count="
+                f"{len(source_rels)} min_entries={min_e} "
+                f"max_source_entries={max_se}"
+            ),
+        )
+
+    return written_path
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -7712,6 +8132,46 @@ def cmd_integrate_optional_context_prompt(
     return 0
 
 
+def cmd_synthesize_repeated_failures(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 6L operator runtime path: synthesize a durable advisory
+    failure memory entry from recurring failure entries.
+
+    Calls `synthesize_repeated_failures(...)` with the parsed argparse
+    args, routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection, and on
+    success prints the path of the newly written memory entry plus a
+    pointer to the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    kwargs: dict = {}
+    if args.min_entries is not None:
+        kwargs["min_entries"] = args.min_entries
+    if args.max_source_entries is not None:
+        kwargs["max_source_entries"] = args.max_source_entries
+    try:
+        written = synthesize_repeated_failures(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] repeated-failure synthesis wrote {rel}; "
+        f"see {log_path.relative_to(repo_root).as_posix()} for the "
+        f"`repeated-failure synthesis:` audit note."
+    )
+    return 0
+
+
 def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
     """Phase 6I operator runtime path: distill durable memory entries
     at an approved phase boundary.
@@ -8592,6 +9052,52 @@ def build_parser() -> argparse.ArgumentParser:
             "root (for example via `..`) refuse fail-closed."
         ),
     )
+    synth = sub.add_parser(
+        "synthesize-repeated-failures",
+        help=(
+            "Phase 6L repeated-failure memory synthesis: read the "
+            "existing `failure`-category memory entries that match the "
+            "active loop-state (phase, sub_phase) and write a NEW "
+            "advisory `failure` entry carrying a `synthesis_signal_"
+            "version=\"phase-6l-v1\"` body marker plus the ordered "
+            "list of source memory entry paths. Skips prior 6L "
+            "synthesis entries so the synthesis layer stays flat. "
+            "Refuses fail-closed when fewer than `--min-entries` "
+            "matching source entries are on disk, on every malformed / "
+            "out-of-bound input, and idempotently when an existing 6L "
+            "synthesis for the same (phase, sub_phase, source-set) "
+            "identity is already on disk."
+        ),
+    )
+    synth.add_argument(
+        "--min-entries",
+        type=int,
+        default=None,
+        help=(
+            "Minimum number of matching source `failure` entries "
+            "required before the synthesis fires. Defaults to "
+            f"REPEATED_FAILURE_DEFAULT_MIN_ENTRIES="
+            f"{REPEATED_FAILURE_DEFAULT_MIN_ENTRIES}; must be >= 2 and "
+            f"capped at REPEATED_FAILURE_MAX_MIN_ENTRIES="
+            f"{REPEATED_FAILURE_MAX_MIN_ENTRIES}."
+        ),
+    )
+    synth.add_argument(
+        "--max-source-entries",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of source `failure` entries that may feed "
+            "a single synthesis. Defaults to "
+            f"REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES="
+            f"{REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES}; must be "
+            ">= 2 and capped at "
+            f"REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES="
+            f"{REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES}. When more "
+            "than the cap match, the newest entries (by cycle_count, "
+            "created_at) are kept."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -8749,6 +9255,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "distill-phase-boundary-memory": cmd_distill_phase_boundary_memory,
     "load-optional-context": cmd_load_optional_context,
     "integrate-optional-context": cmd_integrate_optional_context_prompt,
+    "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
