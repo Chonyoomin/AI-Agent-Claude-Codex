@@ -35,7 +35,12 @@ coverage/
 htmlcov/
 
 # Agent loop transient state
-.agent-loop/
+.agent-loop/*
+!.agent-loop/phase-plan.md
+!.agent-loop/current-phase.md
+!.agent-loop/current-task.md
+!.agent-loop/claude-prompt.md
+!.agent-loop/fix-prompt.md
 
 # Build artifacts
 dist/
