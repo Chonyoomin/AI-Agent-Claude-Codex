@@ -3791,6 +3791,365 @@ def distill_phase_boundary_memory(
     return written
 
 
+# Phase 6J - Optional Context File Loading Initial Slice.
+#
+# Builds on the shipped 6B / 6C / 6D / 6E / 6F / 6G / 6H / 6I
+# primitives. The new `load_optional_context(...)` surface accepts an
+# EXPLICITLY DECLARED list of in-repo file paths and emits a bounded,
+# advisory-only context payload sourced from those files. No glob
+# expansion, no arbitrary repo traversal, no out-of-repo paths, no
+# implicit canonical-artifact ingestion. Each loaded file's metadata
+# carries an explicit `advisory_only = True` marker plus the source
+# path so the consumer can reason about provenance without treating
+# the loaded text as canonical.
+#
+# Refusal modes (all `halted_input_missing` unless noted):
+#   - `declared_paths` is not a list, or is empty
+#   - `len(declared_paths)` exceeds `max_files`
+#   - a path is not a string, or is empty
+#   - a path contains a glob character (`*`, `?`, `[`, `]`)
+#   - a path is absolute, contains a `..` segment, or otherwise
+#     resolves outside `repo_root`
+#   - a path appears more than once in `declared_paths` (explicit
+#     declaration means no silent dedup)
+#   - a path does not exist, is not a regular file, or is unreadable
+#     (`OSError` on `Path.read_bytes`)
+#   - `max_files` is bool / non-int / non-positive / above the cap
+#   - `max_bytes_per_file` is bool / non-int / non-positive / above
+#     the cap
+#
+# Out of scope for this initial slice (deferred per the 6J prompt):
+#   - repeated-failure synthesis (a Phase 6I-adjacent concern; the
+#     phase-boundary distillation slice is the only place that writes
+#     a `failure`-category memory entry today)
+#   - arbitrary repo-file ingestion (only EXPLICITLY DECLARED paths)
+#   - glob expansion (operator must enumerate the paths)
+#   - semantic retrieval / embedding index / broader RAG layer
+#   - LangChain / LangGraph / CrewAI-style framework integration
+#   - widening Phase 5 autonomy or bypassing human gates
+#   - automatic invocation from the orchestrator's verdict-handling
+#     or continuation paths (the slice is operator-callable; future
+#     wiring is a later-slice concern)
+
+OPTIONAL_CONTEXT_SIGNAL_VERSION = "phase-6j-v1"
+OPTIONAL_CONTEXT_DEFAULT_MAX_FILES = 8
+OPTIONAL_CONTEXT_MAX_MAX_FILES = 32
+OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE = 4096
+OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE = 65536
+OPTIONAL_CONTEXT_GLOB_CHARS = frozenset("*?[]")
+OPTIONAL_CONTEXT_OUTPUT_REL = ".agent-loop/optional-context.json"
+OPTIONAL_CONTEXT_CANONICAL_PRECEDENCE_NOTE = (
+    "Files loaded by Phase 6J optional-context are advisory only. "
+    "Canonical task and loop-state artifacts (TASK.md, "
+    ".agent-loop/current-task.md, .agent-loop/current-phase.md, "
+    ".agent-loop/loop-state.json) and any active Phase 6D/6F/6G "
+    "checkpoint remain the source of truth. The `files` list MUST "
+    "NOT override canonical state or any Phase 5 approval-mode / "
+    "strict-gate decision."
+)
+
+
+def _validate_optional_context_max_files(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_files`. Mirrors the
+    other Phase 6 limit validators: bool rejected, non-int rejected,
+    non-positive rejected, above the safety cap rejected.
+    """
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files must be a positive int, "
+                f"not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files must be positive; got "
+                f"{value!r}"
+            ),
+        )
+    if value > OPTIONAL_CONTEXT_MAX_MAX_FILES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files {value!r} exceeds "
+                f"OPTIONAL_CONTEXT_MAX_MAX_FILES="
+                f"{OPTIONAL_CONTEXT_MAX_MAX_FILES}; the safety cap "
+                f"prevents a prompt from silently expanding into an "
+                f"unbounded repo dump"
+            ),
+        )
+
+
+def _validate_optional_context_bytes_per_file(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_bytes_per_file`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file must be a "
+                f"positive int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file must be an int; "
+                f"got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file must be "
+                f"positive; got {value!r}"
+            ),
+        )
+    if value > OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file {value!r} "
+                f"exceeds OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE="
+                f"{OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE}; the safety "
+                f"cap prevents a prompt from silently expanding into "
+                f"an unbounded repo dump"
+            ),
+        )
+
+
+def _resolve_in_repo_path(repo_root: Path, declared: str) -> Path:
+    """Validate a single declared path and return its resolved absolute
+    location. Refuses fail-closed when the path is malformed, contains
+    a glob character, is absolute, or resolves outside `repo_root`.
+    The resolution uses `Path.resolve(strict=False)` so missing-file
+    cases are surfaced by the existence check (not by the resolution
+    itself), but `..` segments and symlink-escapes still resolve away
+    from the repo root and trip the in-repo check.
+    """
+    if not isinstance(declared, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared path must be a string; "
+                f"got {type(declared).__name__}={declared!r}"
+            ),
+        )
+    if not declared:
+        raise HaltError(
+            "halted_input_missing",
+            "optional-context declared path must be non-empty",
+        )
+    for ch in declared:
+        if ch in OPTIONAL_CONTEXT_GLOB_CHARS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"contains glob character {ch!r}; glob expansion "
+                    f"is intentionally disabled - enumerate the paths "
+                    f"explicitly"
+                ),
+            )
+    candidate = Path(declared)
+    if candidate.is_absolute():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared path {declared!r} is "
+                f"absolute; only repo-relative paths are accepted"
+            ),
+        )
+    repo_root_abs = repo_root.resolve()
+    resolved = (repo_root_abs / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root_abs)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared path {declared!r} resolves "
+                f"outside the repo root ({resolved}); out-of-repo "
+                f"targets are intentionally disabled"
+            ),
+        )
+    return resolved
+
+
+def load_optional_context(
+    repo_root: Path,
+    *,
+    declared_paths,
+    max_files: Optional[int] = None,
+    max_bytes_per_file: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> dict:
+    """Build a structured advisory-only context dict from an EXPLICITLY
+    DECLARED set of in-repo file paths.
+
+    Returns a dict keyed by:
+      - `context_signal_version`: schema version tag the consumer
+        validates against
+      - `loaded_at`: UTC ISO timestamp of construction
+      - `max_files_applied`, `max_bytes_per_file_applied`: the limits
+        that were actually used (caller's value or defaults)
+      - `declared_paths`: the input list, preserved in declaration
+        order
+      - `files`: list of dicts, one per declared path, in declaration
+        order, each carrying `source_path`, `byte_size_on_disk`,
+        `excerpt`, `excerpt_byte_size`, `truncated`, and
+        `advisory_only = True`
+      - `canonical_precedence_note`: literal named constant the
+        consumer can compare by equality
+
+    Raises `HaltError` on every refusal mode. The caller (the CLI
+    handler) routes refusals through `_halt`.
+    """
+    # 1. declared_paths shape.
+    if not isinstance(declared_paths, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared_paths must be a list; got "
+                f"{type(declared_paths).__name__}"
+            ),
+        )
+    if not declared_paths:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "optional-context declared_paths is empty; at least "
+                "one in-repo path must be declared explicitly"
+            ),
+        )
+
+    # 2. Limits.
+    mf = (
+        max_files
+        if max_files is not None
+        else OPTIONAL_CONTEXT_DEFAULT_MAX_FILES
+    )
+    _validate_optional_context_max_files(mf)
+    if len(declared_paths) > mf:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared_paths has "
+                f"{len(declared_paths)} entries; exceeds "
+                f"max_files={mf}"
+            ),
+        )
+    mb = (
+        max_bytes_per_file
+        if max_bytes_per_file is not None
+        else OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE
+    )
+    _validate_optional_context_bytes_per_file(mb)
+
+    # 3. Duplicate check before per-path validation so a duplicate
+    #    surfaces with a clearer message than the second-pass file
+    #    refusal would produce.
+    seen: set = set()
+    for declared in declared_paths:
+        if isinstance(declared, str) and declared in seen:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"appears more than once; explicit declaration "
+                    f"means no silent dedup"
+                ),
+            )
+        if isinstance(declared, str):
+            seen.add(declared)
+
+    # 4. Per-path validation + bounded read. Refuse on the first
+    #    failure rather than collecting partial results - the slice is
+    #    all-or-nothing so a missing or malformed declared path is a
+    #    structural input error the operator must repair before the
+    #    payload can be built.
+    files: list = []
+    for declared in declared_paths:
+        resolved = _resolve_in_repo_path(repo_root, declared)
+        if not resolved.exists():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"does not exist on disk ({resolved})"
+                ),
+            )
+        if not resolved.is_file():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} is "
+                    f"not a regular file ({resolved})"
+                ),
+            )
+        try:
+            raw = resolved.read_bytes()
+        except OSError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"exists but is unreadable "
+                    f"({type(exc).__name__}: {exc})"
+                ),
+            )
+        total = len(raw)
+        excerpt_bytes = raw[:mb]
+        excerpt_text = excerpt_bytes.decode("utf-8", errors="replace")
+        files.append({
+            "source_path": declared,
+            "byte_size_on_disk": total,
+            "excerpt": excerpt_text,
+            "excerpt_byte_size": len(excerpt_bytes),
+            "truncated": total > mb,
+            "advisory_only": True,
+        })
+
+    payload = {
+        "context_signal_version": OPTIONAL_CONTEXT_SIGNAL_VERSION,
+        "loaded_at": _utc_iso_now(),
+        "max_files_applied": mf,
+        "max_bytes_per_file_applied": mb,
+        "declared_paths": list(declared_paths),
+        "files": files,
+        "canonical_precedence_note": (
+            OPTIONAL_CONTEXT_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+
+    if log_path is not None:
+        any_truncated = any(f["truncated"] for f in files)
+        _log_note(
+            log_path,
+            (
+                f"optional-context loaded: signal_version="
+                f"{OPTIONAL_CONTEXT_SIGNAL_VERSION!r} "
+                f"declared_paths={len(declared_paths)} "
+                f"max_files={mf} max_bytes_per_file={mb} "
+                f"any_truncated={any_truncated}"
+            ),
+        )
+
+    return payload
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -6678,6 +7037,59 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def cmd_load_optional_context(args: argparse.Namespace) -> int:
+    """Phase 6J operator runtime path: load an explicitly declared set
+    of in-repo files as bounded advisory context.
+
+    Calls `load_optional_context(...)` with the parsed argparse args,
+    routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands on disk for human inspection, and on success
+    writes the JSON payload to the resolved output path (default
+    `.agent-loop/optional-context.json`; override via `--output`). The
+    artifact is overwritten rather than appended because it is an
+    audit/inspection artifact regenerable from the declared paths.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    output_path = (
+        Path(args.output) if args.output is not None
+        else repo_root / OPTIONAL_CONTEXT_OUTPUT_REL
+    )
+    if not output_path.is_absolute():
+        output_path = (repo_root / output_path).resolve()
+    kwargs: dict = {"declared_paths": list(args.declared_path or [])}
+    if args.max_files is not None:
+        kwargs["max_files"] = args.max_files
+    if args.max_bytes_per_file is not None:
+        kwargs["max_bytes_per_file"] = args.max_bytes_per_file
+    try:
+        payload = load_optional_context(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    try:
+        rel = output_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        rel = str(output_path)
+    print(
+        f"[orchestrator] optional context written to {rel}; "
+        f"declared_paths={len(payload['declared_paths'])} "
+        f"files_loaded={len(payload['files'])}"
+    )
+    return 0
+
+
 def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
     """Phase 6I operator runtime path: distill durable memory entries
     at an approved phase boundary.
@@ -7462,6 +7874,62 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    load_ctx = sub.add_parser(
+        "load-optional-context",
+        help=(
+            "Phase 6J declared optional-context file loading: read an "
+            "explicit, bounded set of in-repo files as advisory context "
+            "and persist the JSON payload to "
+            "`.agent-loop/optional-context.json` (override with "
+            "`--output`). Refuses fail-closed for empty / missing / "
+            "out-of-repo / duplicate / glob-bearing / absolute / "
+            "unreadable / non-file paths and for out-of-bound limits."
+        ),
+    )
+    load_ctx.add_argument(
+        "--declared-path",
+        action="append",
+        required=True,
+        help=(
+            "Repo-relative path to include as advisory context. Repeat "
+            "the flag to declare multiple paths (the slice intentionally "
+            "does NOT accept globs or directory traversal). The order of "
+            "the flags is preserved in the output payload."
+        ),
+    )
+    load_ctx.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of declared paths the slice will load. "
+            f"Defaults to OPTIONAL_CONTEXT_DEFAULT_MAX_FILES="
+            f"{OPTIONAL_CONTEXT_DEFAULT_MAX_FILES}; capped at "
+            f"OPTIONAL_CONTEXT_MAX_MAX_FILES="
+            f"{OPTIONAL_CONTEXT_MAX_MAX_FILES}."
+        ),
+    )
+    load_ctx.add_argument(
+        "--max-bytes-per-file",
+        type=int,
+        default=None,
+        help=(
+            "Per-file byte cap on the included excerpt. Defaults to "
+            f"OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE="
+            f"{OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE}; capped at "
+            f"OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE="
+            f"{OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE}."
+        ),
+    )
+    load_ctx.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Override the output JSON path. Defaults to "
+            f"`{OPTIONAL_CONTEXT_OUTPUT_REL}`. Paths are resolved "
+            "relative to the repo root."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -7617,6 +8085,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "record-token-exhaustion": cmd_record_token_exhaustion,
     "build-continuation-context": cmd_build_continuation_context,
     "distill-phase-boundary-memory": cmd_distill_phase_boundary_memory,
+    "load-optional-context": cmd_load_optional_context,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
