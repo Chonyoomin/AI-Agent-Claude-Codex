@@ -20,42 +20,42 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6K - Optional Context Prompt Integration Initial Slice
+Phase 6L - Repeated-Failure Memory Synthesis Initial Slice
 
 ## Phase Status
 
-Phase 6J (Optional Context File Loading Initial Slice) is closed after Codex review approval and human progression. Phase 6K is now active as the next implementation slice for Phase 6 durable memory and optional context support. This sub-phase should integrate the shipped 6J declared optional-context payload into prompt/context construction in a narrow, auditable way: consume only the existing bounded advisory payload, preserve canonical task/state/checkpoint precedence, keep optional context explicitly advisory, and still defer repeated-failure synthesis, arbitrary repo ingestion, and broader framework-backed context behavior.
+Phase 6K (Optional Context Prompt Integration Initial Slice) is closed after Codex review approval and human progression. Phase 6L is now active as the next implementation slice for Phase 6 durable memory and optional context support. This sub-phase should synthesize repeated-failure memory in a narrow, auditable way: distill recurring review/fix failure patterns into durable failure knowledge from bounded canonical artifacts and existing loop-state evidence, preserve canonical task/state/checkpoint precedence, keep failure memory explicitly advisory, and still defer arbitrary repo ingestion, broader framework-backed context behavior, and any widening of autonomy.
 
 ## Active Task
 
-Implement the Phase 6 optional-context prompt-integration foundation in code. This slice should connect the shipped declared optional-context payload to prompt/context construction through a narrow, auditable integration path that reads only the existing bounded .agent-loop/optional-context.json artifact, preserves canonical task and loop-state precedence, existing Phase 5 approval-mode and strict-gate semantics, and still defers repeated-failure synthesis, arbitrary repo ingestion, and broader optional-context expansion.
+Implement the Phase 6 repeated-failure memory synthesis foundation in code. This slice should distill recurring review/fix failure patterns into durable advisory failure knowledge through a narrow, auditable synthesis path that reads only bounded canonical artifacts and existing loop-state context, preserves canonical task and loop-state precedence, existing Phase 5 approval-mode and strict-gate semantics, and still defers arbitrary repo ingestion, broader optional-context expansion, and wider autonomy.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6K as active
-- `.agent-loop/phase-plan.md` records Phase 6J as closed history and contains a `## Phase 6K - Optional Context Prompt Integration Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` exposes a narrow optional-context prompt/context integration surface for active-phase use
-- prompt/context construction can consume the shipped `.agent-loop/optional-context.json` payload only when it is structurally valid, current-phase compatible, and explicitly advisory; malformed, contradictory, missing-required-field, unreadable, or unsupported payloads refuse fail-closed
-- integrated optional context remains subordinate to canonical task / phase / loop-state / checkpoint artifacts and does not override Phase 5 approval-mode or strict-gate decisions
-- integrated optional context remains explicitly bounded and provenance-carrying; the slice does not re-open raw repo files or silently expand beyond the shipped 6J payload
-- no repeated-failure synthesis, arbitrary repo-file ingestion, or broader framework-backed context loading is enabled in this slice
-- focused tests cover valid optional-context prompt/context integration, advisory precedence preservation, malformed-or-contradictory payload refusal, and bounded inclusion behavior
-- `README.md` reflects that Phase 6K is active and that optional-context prompt integration is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6L as active
+- `.agent-loop/phase-plan.md` records Phase 6K as closed history and contains a `## Phase 6L - Repeated-Failure Memory Synthesis Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` exposes a narrow repeated-failure memory synthesis surface for active-phase use
+- repeated-failure synthesis reads only bounded canonical artifacts and existing loop-state context, and does not treat raw logs, arbitrary repo files, or whole transcripts as durable memory input
+- synthesized failure memory remains subordinate to canonical task / phase / loop-state / checkpoint artifacts and does not override Phase 5 approval-mode or strict-gate decisions
+- repeated-failure synthesis is explicitly advisory, provenance-carrying, and append-mostly within the existing memory model
+- malformed, contradictory, unreadable, unsupported, out-of-bound, or ineligible repeated-failure synthesis inputs refuse fail-closed
+- no arbitrary repo-file ingestion, broader optional-context loading, or broader framework-backed context behavior is enabled in this slice
+- focused tests cover valid repeated-failure synthesis, refusal on malformed-or-contradictory inputs, bounded source selection, and canonical-precedence preservation
+- `README.md` reflects that Phase 6L is active and that repeated-failure memory synthesis is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6K until:
+Do not start the next 6x sub-phase after Phase 6L until:
 
-- this Phase 6K slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6L slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing repeated-failure memory synthesis in this slice
-- implementing arbitrary repo-file ingestion, semantic retrieval, or broader optional context-file loading beyond the narrow 6J payload integration needed for this slice
-- changing current planner, activator, adapter, evidence-collection, or review routing behavior beyond the narrow optional-context prompt/context integration needed for future Phase 6 work
+- implementing arbitrary repo-file ingestion, semantic retrieval, or broader optional context-file loading beyond the narrow repeated-failure synthesis needed for this slice
+- changing current planner, activator, adapter, evidence-collection, or review routing behavior beyond the narrow repeated-failure memory synthesis needed for future Phase 6 work
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
