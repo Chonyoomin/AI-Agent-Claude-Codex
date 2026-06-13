@@ -3988,6 +3988,41 @@ def _resolve_in_repo_path(repo_root: Path, declared: str) -> Path:
     return resolved
 
 
+def _resolve_optional_context_output_path(repo_root: Path, value):
+    """Refuse fail-closed when the operator-supplied `--output` path
+    would write outside the repo root. The slice's write boundary is
+    `repo_root`; both absolute paths and `..`-escaping relative paths
+    refuse via `HaltError("halted_input_missing", ...)`. Returns the
+    resolved absolute path on success; the caller writes to it.
+    """
+    repo_root_abs = repo_root.resolve()
+    if value is None:
+        return repo_root_abs / OPTIONAL_CONTEXT_OUTPUT_REL
+    candidate = Path(value)
+    if candidate.is_absolute():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context --output {value!r} is absolute; only "
+                f"repo-relative output paths inside the repo root are "
+                f"accepted"
+            ),
+        )
+    resolved = (repo_root_abs / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root_abs)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context --output {value!r} resolves outside "
+                f"the repo root ({resolved}); out-of-repo output paths "
+                f"are intentionally disabled"
+            ),
+        )
+    return resolved
+
+
 def load_optional_context(
     repo_root: Path,
     *,
@@ -7053,18 +7088,15 @@ def cmd_load_optional_context(args: argparse.Namespace) -> int:
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
     log_path = al / "orchestrator.log"
-    output_path = (
-        Path(args.output) if args.output is not None
-        else repo_root / OPTIONAL_CONTEXT_OUTPUT_REL
-    )
-    if not output_path.is_absolute():
-        output_path = (repo_root / output_path).resolve()
     kwargs: dict = {"declared_paths": list(args.declared_path or [])}
     if args.max_files is not None:
         kwargs["max_files"] = args.max_files
     if args.max_bytes_per_file is not None:
         kwargs["max_bytes_per_file"] = args.max_bytes_per_file
     try:
+        output_path = _resolve_optional_context_output_path(
+            repo_root, args.output,
+        )
         payload = load_optional_context(
             repo_root, log_path=log_path, **kwargs,
         )
@@ -7926,8 +7958,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help=(
             "Override the output JSON path. Defaults to "
-            f"`{OPTIONAL_CONTEXT_OUTPUT_REL}`. Paths are resolved "
-            "relative to the repo root."
+            f"`{OPTIONAL_CONTEXT_OUTPUT_REL}`. Only repo-relative "
+            "paths inside the repo root are accepted; absolute paths "
+            "and paths that resolve outside the repo root (for "
+            "example via `..`) refuse fail-closed."
         ),
     )
     distill = sub.add_parser(

@@ -452,14 +452,55 @@ class CmdLoadOptionalContextTests(_OptionalContextTestCase):
 
     def test_cli_honors_explicit_output_override(self) -> None:
         self._plant("a.txt", "ok")
-        custom = self.al / "custom-context.json"
+        # Phase 6J fix: --output must be repo-relative and stay inside
+        # the repo root. The handler resolves the path under repo_root.
+        rel = ".agent-loop/custom-context.json"
+        custom = self.repo_root / rel
         rc = self._run_main([
             "load-optional-context",
             "--declared-path", "a.txt",
-            "--output", str(custom),
+            "--output", rel,
         ])
         self.assertEqual(rc, 0)
         self.assertTrue(custom.is_file())
+        self.assertFalse(self.output_default.exists())
+
+    def test_cli_refuses_absolute_output_path(self) -> None:
+        # Phase 6J fix: an absolute --output is refused fail-closed
+        # through the existing HaltError / _halt flow. The artifact
+        # must not be written.
+        self._plant("a.txt", "ok")
+        absolute = (self.repo_root / "elsewhere.json").resolve()
+        self.assertTrue(absolute.is_absolute())
+        rc = self._run_main([
+            "load-optional-context",
+            "--declared-path", "a.txt",
+            "--output", str(absolute),
+        ])
+        self.assertEqual(rc, 2)
+        self.assertFalse(absolute.exists())
+        self.assertFalse(self.output_default.exists())
+
+    def test_cli_refuses_output_path_escaping_repo_via_dotdot(
+        self,
+    ) -> None:
+        # Phase 6J fix: a relative --output that resolves outside the
+        # repo root (e.g. via `..`) is refused fail-closed. The escape
+        # target must not be written and no default artifact appears.
+        self._plant("a.txt", "ok")
+        repo_root_abs = self.repo_root.resolve()
+        escape_rel = "../outside-context.json"
+        escape_resolved = (repo_root_abs / escape_rel).resolve()
+        # Sanity check: the escape path is genuinely outside repo_root.
+        with self.assertRaises(ValueError):
+            escape_resolved.relative_to(repo_root_abs)
+        rc = self._run_main([
+            "load-optional-context",
+            "--declared-path", "a.txt",
+            "--output", escape_rel,
+        ])
+        self.assertEqual(rc, 2)
+        self.assertFalse(escape_resolved.exists())
         self.assertFalse(self.output_default.exists())
 
     def test_cli_honors_explicit_limit_overrides(self) -> None:
