@@ -4185,6 +4185,961 @@ def load_optional_context(
     return payload
 
 
+# ---------------------------------------------------------------------------
+# Phase 6K: Optional Context Prompt Integration Initial Slice
+#
+# Connect the shipped Phase 6J advisory payload at
+# `.agent-loop/optional-context.json` to a later prompt / context path
+# in a narrow, auditable way. The integration:
+#   - reads ONLY the existing 6J payload (no arbitrary repo reads)
+#   - preserves canonical task / phase / loop-state / checkpoint
+#     precedence (advisory_only is structural)
+#   - preserves the 6J bounded inclusion contract (source_path,
+#     excerpt, excerpt_byte_size, truncated, advisory_only)
+#   - refuses fail-closed on missing / malformed / contradictory /
+#     unreadable / unsupported / out-of-bound / unrecognized payloads
+#   - never widens Phase 5 approval-mode or strict-gate semantics
+#
+# Out of scope for this initial slice (deferred per the 6K prompt):
+#   - reopening or re-reading any of the declared source files
+#   - automatic invocation from the orchestrator's verdict-handling /
+#     continuation / prompt-bootstrap paths
+#   - any RAG / semantic retrieval / framework-backed runtime path
+#   - repeated-failure synthesis
+
+OPTIONAL_CONTEXT_PROMPT_SIGNAL_VERSION = "phase-6k-v1"
+OPTIONAL_CONTEXT_PROMPT_SOURCE_REL = OPTIONAL_CONTEXT_OUTPUT_REL
+OPTIONAL_CONTEXT_PROMPT_OUTPUT_REL = (
+    ".agent-loop/optional-context-prompt.json"
+)
+OPTIONAL_CONTEXT_PROMPT_SUPPORTED_SOURCE_SIGNAL_VERSIONS = frozenset({
+    OPTIONAL_CONTEXT_SIGNAL_VERSION,
+})
+OPTIONAL_CONTEXT_PROMPT_REQUIRED_SOURCE_KEYS = frozenset({
+    "context_signal_version",
+    "loaded_at",
+    "max_files_applied",
+    "max_bytes_per_file_applied",
+    "declared_paths",
+    "files",
+    "canonical_precedence_note",
+})
+OPTIONAL_CONTEXT_PROMPT_REQUIRED_FILE_KEYS = frozenset({
+    "source_path",
+    "byte_size_on_disk",
+    "excerpt",
+    "excerpt_byte_size",
+    "truncated",
+    "advisory_only",
+})
+OPTIONAL_CONTEXT_PROMPT_CANONICAL_PRECEDENCE_NOTE = (
+    "Optional-context entries surfaced into a prompt by Phase 6K are "
+    "advisory only. Canonical task and loop-state artifacts (TASK.md, "
+    ".agent-loop/current-task.md, .agent-loop/current-phase.md, "
+    ".agent-loop/loop-state.json), any active Phase 6D/6F/6G "
+    "checkpoint, and any Phase 6H continuation context remain the "
+    "source of truth. The `files` list MUST NOT override canonical "
+    "state or any Phase 5 approval-mode / strict-gate decision."
+)
+
+
+def _resolve_optional_context_prompt_path(
+    repo_root: Path, value, *, default_rel: str, flag: str,
+) -> Path:
+    """Refuse fail-closed when an operator-supplied `--source` or
+    `--output` path would escape the repo root. Returns the resolved
+    absolute path; the caller reads / writes through it. Shared by
+    both flags so the boundary policy is identical for the read source
+    and the write destination.
+    """
+    repo_root_abs = repo_root.resolve()
+    if value is None:
+        return repo_root_abs / default_rel
+    candidate = Path(value)
+    if candidate.is_absolute():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt {flag} {value!r} is absolute; "
+                f"only repo-relative paths inside the repo root are "
+                f"accepted"
+            ),
+        )
+    resolved = (repo_root_abs / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root_abs)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt {flag} {value!r} resolves "
+                f"outside the repo root ({resolved}); out-of-repo paths "
+                f"are intentionally disabled"
+            ),
+        )
+    return resolved
+
+
+def _validate_optional_context_payload(payload) -> None:
+    """Structural validation of a loaded Phase 6J optional-context
+    payload. Refuses fail-closed (`HaltError("halted_input_missing", ...)`)
+    on every missing / malformed / contradictory / out-of-bound shape so
+    a stale or hand-edited 6J artifact cannot drive the integration into
+    a downstream prompt. Returns None on success; raises on every
+    refusal mode.
+    """
+    if not isinstance(payload, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source payload must be a "
+                f"JSON object; got {type(payload).__name__}"
+            ),
+        )
+    missing = OPTIONAL_CONTEXT_PROMPT_REQUIRED_SOURCE_KEYS - set(
+        payload.keys()
+    )
+    if missing:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source payload missing "
+                f"required key(s): {sorted(missing)!r}"
+            ),
+        )
+    csv = payload["context_signal_version"]
+    if csv not in OPTIONAL_CONTEXT_PROMPT_SUPPORTED_SOURCE_SIGNAL_VERSIONS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source context_signal_version "
+                f"{csv!r} is not in the supported set "
+                f"{sorted(OPTIONAL_CONTEXT_PROMPT_SUPPORTED_SOURCE_SIGNAL_VERSIONS)!r}"
+            ),
+        )
+    note = payload["canonical_precedence_note"]
+    if note != OPTIONAL_CONTEXT_CANONICAL_PRECEDENCE_NOTE:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "optional-context-prompt source canonical_precedence_"
+                "note does not match the shipped Phase 6J literal "
+                "constant; the artifact is contradictory or stale"
+            ),
+        )
+    mf = payload["max_files_applied"]
+    if (
+        isinstance(mf, bool) or not isinstance(mf, int)
+        or mf <= 0 or mf > OPTIONAL_CONTEXT_MAX_MAX_FILES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source max_files_applied "
+                f"{mf!r} is out of the Phase 6J bounds (0, "
+                f"{OPTIONAL_CONTEXT_MAX_MAX_FILES}]"
+            ),
+        )
+    mb = payload["max_bytes_per_file_applied"]
+    if (
+        isinstance(mb, bool) or not isinstance(mb, int)
+        or mb <= 0 or mb > OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source max_bytes_per_file_"
+                f"applied {mb!r} is out of the Phase 6J bounds (0, "
+                f"{OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE}]"
+            ),
+        )
+    loaded_at = payload["loaded_at"]
+    if not isinstance(loaded_at, str) or not loaded_at:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source loaded_at must be a "
+                f"non-empty string; got "
+                f"{type(loaded_at).__name__}={loaded_at!r}"
+            ),
+        )
+    declared = payload["declared_paths"]
+    if not isinstance(declared, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source declared_paths must "
+                f"be a list; got {type(declared).__name__}"
+            ),
+        )
+    seen_declared: set = set()
+    for d in declared:
+        if not isinstance(d, str) or not d:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source declared_paths "
+                    f"entry must be a non-empty string; got {d!r}"
+                ),
+            )
+        if d in seen_declared:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source declared_paths "
+                    f"contains duplicate entry {d!r}; the shipped "
+                    f"Phase 6J producer refuses duplicate declared "
+                    f"paths and the integration enforces the same "
+                    f"structural guarantee"
+                ),
+            )
+        seen_declared.add(d)
+    files = payload["files"]
+    if not isinstance(files, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source files must be a list; "
+                f"got {type(files).__name__}"
+            ),
+        )
+    if len(files) != len(declared):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source files length "
+                f"({len(files)}) contradicts declared_paths length "
+                f"({len(declared)})"
+            ),
+        )
+    if len(files) > mf:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source files length "
+                f"({len(files)}) exceeds max_files_applied ({mf})"
+            ),
+        )
+    for idx, entry in enumerate(files):
+        if not isinstance(entry, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] must "
+                    f"be a JSON object; got {type(entry).__name__}"
+                ),
+            )
+        missing_f = OPTIONAL_CONTEXT_PROMPT_REQUIRED_FILE_KEYS - set(
+            entry.keys()
+        )
+        if missing_f:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"missing required key(s): {sorted(missing_f)!r}"
+                ),
+            )
+        if entry["advisory_only"] is not True:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"advisory_only is not True; the integration "
+                    f"refuses any entry that is not explicitly advisory"
+                ),
+            )
+        sp = entry["source_path"]
+        if not isinstance(sp, str) or not sp:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"source_path must be a non-empty string; got "
+                    f"{sp!r}"
+                ),
+            )
+        if entry["source_path"] != declared[idx]:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"source_path {sp!r} does not match declared_paths"
+                    f"[{idx}] {declared[idx]!r}; the artifact is "
+                    f"contradictory"
+                ),
+            )
+        bs = entry["byte_size_on_disk"]
+        if isinstance(bs, bool) or not isinstance(bs, int) or bs < 0:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"byte_size_on_disk must be a non-negative int; "
+                    f"got {bs!r}"
+                ),
+            )
+        es = entry["excerpt_byte_size"]
+        if isinstance(es, bool) or not isinstance(es, int) or es < 0:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"excerpt_byte_size must be a non-negative int; "
+                    f"got {es!r}"
+                ),
+            )
+        if es > mb:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"excerpt_byte_size ({es}) exceeds "
+                    f"max_bytes_per_file_applied ({mb})"
+                ),
+            )
+        excerpt = entry["excerpt"]
+        if not isinstance(excerpt, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"excerpt must be a string; got "
+                    f"{type(excerpt).__name__}"
+                ),
+            )
+        tr = entry["truncated"]
+        if not isinstance(tr, bool):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source files[{idx}] "
+                    f"truncated must be a bool; got "
+                    f"{type(tr).__name__}={tr!r}"
+                ),
+            )
+
+
+def _render_optional_context_prompt_block(
+    files: list, source_artifact_rel: str, source_signal_version: str,
+    source_loaded_at: str,
+) -> str:
+    """Render the validated 6J entries as a deterministic markdown
+    block ready to surface inside a prompt. Bounded inclusion is
+    inherited from the 6J payload: this renderer never reads any
+    source file, never expands the excerpt, and never adds content
+    beyond what the 6J payload already carries.
+    """
+    lines: list = [
+        "## Optional Advisory Context (Phase 6K, advisory only)",
+        "",
+        (
+            f"Source artifact: `{source_artifact_rel}` "
+            f"(signal_version=`{source_signal_version}`, "
+            f"loaded_at=`{source_loaded_at}`)."
+        ),
+        "",
+        (
+            "Canonical precedence: TASK.md, "
+            ".agent-loop/current-task.md, "
+            ".agent-loop/current-phase.md, "
+            ".agent-loop/loop-state.json, and any active checkpoint "
+            "remain authoritative. The entries below are advisory "
+            "only."
+        ),
+        "",
+    ]
+    if not files:
+        lines.append(
+            "(No optional-context files were declared by the 6J "
+            "payload.)"
+        )
+        return "\n".join(lines)
+    for entry in files:
+        lines.append(
+            f"### Source: `{entry['source_path']}` "
+            f"(byte_size_on_disk={entry['byte_size_on_disk']}, "
+            f"excerpt_byte_size={entry['excerpt_byte_size']}, "
+            f"truncated={'true' if entry['truncated'] else 'false'})"
+        )
+        lines.append("")
+        lines.append("```")
+        lines.append(entry["excerpt"])
+        lines.append("```")
+        lines.append("")
+    return "\n".join(lines)
+
+
+def integrate_optional_context(
+    repo_root: Path,
+    *,
+    source_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+) -> dict:
+    """Read the shipped Phase 6J advisory payload from
+    `.agent-loop/optional-context.json` (or the override at
+    `source_path`) and return a structured advisory-only integration
+    dict suitable for surfacing in a later prompt / context path.
+
+    The returned dict carries:
+      - `integration_signal_version`: schema version the consumer
+        validates against
+      - `integrated_at`: UTC ISO timestamp of construction
+      - `source_artifact`: repo-relative path of the consumed 6J
+        artifact
+      - `source_signal_version` / `source_loaded_at`: pass-through
+        from the 6J payload so provenance is preserved
+      - `max_files_applied` / `max_bytes_per_file_applied`: the
+        bounds the 6J payload was built under (the integration adds
+        no new bounds; it preserves the 6J ones)
+      - `advisory_only = True`: structural marker that the whole
+        block is advisory
+      - `canonical_precedence_note`: literal Phase 6K reminder string
+      - `source_canonical_precedence_note`: literal Phase 6J reminder
+        string passed through for cross-version equality checks
+      - `declared_paths`: pass-through ordered list
+      - `files`: pass-through ordered list, each entry preserving
+        the 6J shape (`source_path`, `byte_size_on_disk`, `excerpt`,
+        `excerpt_byte_size`, `truncated`, `advisory_only = True`)
+      - `prompt_block`: deterministic markdown rendering ready to drop
+        into a downstream prompt
+
+    Raises `HaltError("halted_input_missing", ...)` on every refusal
+    mode (missing / malformed / contradictory / unreadable / out-of-
+    bound / unsupported source payload). Never reads any of the
+    declared source files; never writes to canonical artifacts; never
+    creates the output artifact (only the CLI handler does).
+    """
+    src = (
+        source_path if source_path is not None
+        else repo_root.resolve() / OPTIONAL_CONTEXT_PROMPT_SOURCE_REL
+    )
+    if not src.exists():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source artifact {str(src)!r} "
+                f"does not exist; run `load-optional-context` first"
+            ),
+        )
+    if not src.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source artifact {str(src)!r} "
+                f"is not a regular file"
+            ),
+        )
+    try:
+        raw = src.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source artifact {str(src)!r} "
+                f"exists but is unreadable "
+                f"({type(exc).__name__}: {exc})"
+            ),
+        )
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source artifact {str(src)!r} "
+                f"is not valid JSON ({exc})"
+            ),
+        )
+    _validate_optional_context_payload(payload)
+
+    repo_root_abs = repo_root.resolve()
+    try:
+        source_rel = src.resolve().relative_to(repo_root_abs).as_posix()
+    except ValueError:
+        source_rel = str(src)
+
+    files_out: list = [
+        {
+            "source_path": entry["source_path"],
+            "byte_size_on_disk": entry["byte_size_on_disk"],
+            "excerpt": entry["excerpt"],
+            "excerpt_byte_size": entry["excerpt_byte_size"],
+            "truncated": entry["truncated"],
+            "advisory_only": True,
+        }
+        for entry in payload["files"]
+    ]
+
+    prompt_block = _render_optional_context_prompt_block(
+        files_out,
+        source_rel,
+        payload["context_signal_version"],
+        payload["loaded_at"],
+    )
+
+    integration = {
+        "integration_signal_version": (
+            OPTIONAL_CONTEXT_PROMPT_SIGNAL_VERSION
+        ),
+        "integrated_at": _utc_iso_now(),
+        "source_artifact": source_rel,
+        "source_signal_version": payload["context_signal_version"],
+        "source_loaded_at": payload["loaded_at"],
+        "max_files_applied": payload["max_files_applied"],
+        "max_bytes_per_file_applied": (
+            payload["max_bytes_per_file_applied"]
+        ),
+        "advisory_only": True,
+        "canonical_precedence_note": (
+            OPTIONAL_CONTEXT_PROMPT_CANONICAL_PRECEDENCE_NOTE
+        ),
+        "source_canonical_precedence_note": (
+            payload["canonical_precedence_note"]
+        ),
+        "declared_paths": list(payload["declared_paths"]),
+        "files": files_out,
+        "prompt_block": prompt_block,
+    }
+
+    if log_path is not None:
+        _log_note(
+            log_path,
+            (
+                f"optional-context prompt integrated: "
+                f"signal_version="
+                f"{OPTIONAL_CONTEXT_PROMPT_SIGNAL_VERSION!r} "
+                f"source_signal_version="
+                f"{payload['context_signal_version']!r} "
+                f"source_artifact={source_rel!r} "
+                f"declared_paths={len(payload['declared_paths'])} "
+                f"files_integrated={len(files_out)}"
+            ),
+        )
+
+    return integration
+
+
+# ---------------------------------------------------------------------------
+# Phase 6L: Repeated-Failure Memory Synthesis Initial Slice
+#
+# Distill recurring failure patterns into a durable advisory failure
+# memory entry on top of the shipped Phase 6B (storage), 6C
+# (retrieval), and 6I (phase-boundary distillation) primitives. The
+# synthesis:
+#   - reads ONLY the existing `failure`-category memory entries that
+#     match the active loop-state (phase, sub_phase) (bounded, on-
+#     disk, structurally validated by Phase 6B `read_memory_entry`)
+#   - skips prior 6L synthesis entries so the synthesis layer stays
+#     flat (no synthesis-of-syntheses; the upstream entries remain
+#     the durable source of truth)
+#   - writes a NEW `failure` entry through the existing Phase 6B
+#     `write_memory_entry` plumbing carrying an explicit
+#     `synthesis_signal_version = "phase-6l-v1"` body marker plus
+#     the ordered list of source memory entry paths so a later
+#     retrieval can trace provenance
+#   - refuses fail-closed on every missing / malformed / contradictory
+#     / unreadable / unsupported / out-of-bound / ineligible input
+#   - never reads arbitrary repo files, raw logs, transcripts, or
+#     anything outside the validated memory directory
+#   - never widens Phase 5 approval-mode or strict-gate semantics
+#
+# Out of scope for this initial slice (deferred per the 6L prompt):
+#   - arbitrary repo-file ingestion or raw-transcript-as-memory
+#   - any RAG / semantic retrieval / framework-backed runtime path
+#   - synthesis-of-syntheses (entries carrying the 6L marker are
+#     filtered out of the source set)
+#   - orchestrator-side automatic invocation from the verdict-
+#     handling, continuation, or prompt-bootstrap paths
+#   - any widening of Phase 5 autonomy
+
+REPEATED_FAILURE_SIGNAL_VERSION = "phase-6l-v1"
+REPEATED_FAILURE_DEFAULT_MIN_ENTRIES = 2
+REPEATED_FAILURE_MAX_MIN_ENTRIES = 32
+REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES = 8
+REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES = 32
+REPEATED_FAILURE_BODY_MARKER_FIELD = "synthesis_signal_version"
+REPEATED_FAILURE_CANONICAL_PRECEDENCE_NOTE = (
+    "Repeated-failure synthesis entries written by Phase 6L are "
+    "advisory only. Canonical task and loop-state artifacts "
+    "(TASK.md, .agent-loop/current-task.md, "
+    ".agent-loop/current-phase.md, .agent-loop/loop-state.json) "
+    "remain the source of truth. The synthesized entry MUST NOT "
+    "override canonical state or any Phase 5 approval-mode / "
+    "strict-gate decision."
+)
+
+
+def _validate_repeated_failure_min_entries(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `min_entries`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries must be a positive int, "
+                f"not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 2:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries must be >= 2 (a single "
+                f"failure entry is not a 'repeated' pattern); got "
+                f"{value!r}"
+            ),
+        )
+    if value > REPEATED_FAILURE_MAX_MIN_ENTRIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure min_entries {value!r} exceeds "
+                f"REPEATED_FAILURE_MAX_MIN_ENTRIES="
+                f"{REPEATED_FAILURE_MAX_MIN_ENTRIES}; the safety cap "
+                f"prevents a synthesis from requiring an unbounded "
+                f"source-set"
+            ),
+        )
+
+
+def _validate_repeated_failure_max_source_entries(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_source_entries`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries must be a positive "
+                f"int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries must be an int; "
+                f"got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 2:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries must be >= 2 "
+                f"(synthesis requires at least two sources); got "
+                f"{value!r}"
+            ),
+        )
+    if value > REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries {value!r} exceeds "
+                f"REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES="
+                f"{REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES}; the safety "
+                f"cap prevents a synthesis from silently expanding into "
+                f"an unbounded read"
+            ),
+        )
+
+
+def _find_existing_repeated_failure_synthesis(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: Optional[str],
+    source_entries: list,
+) -> Optional[Path]:
+    """Return the path of any existing 6L synthesis-marked `failure`
+    memory entry that matches the active (phase, sub_phase) AND the
+    same `source_memory_entries` set, else None.
+
+    The body marker field
+    (`REPEATED_FAILURE_BODY_MARKER_FIELD = "synthesis_signal_version"`)
+    inside the entry body distinguishes a synthesis-written failure
+    from any other failure-category entry on disk (in particular from
+    a Phase 6I distillation `failure` entry, which does NOT carry this
+    marker).
+
+    Refusal vs skip mirrors the Phase 6I idempotency probe:
+      - an envelope that is unreadable, not parseable, not a dict, or
+        missing the required Phase 6B metadata fields raises
+        `HaltError` (the synthesis must not proceed past an unverifiable
+        on-disk neighbor)
+      - an envelope whose phase / sub_phase does not match the active
+        loop-state context is skipped (it belongs to a different
+        synthesis identity)
+      - an envelope whose body is not parseable as JSON, is not a dict,
+        or does not carry the 6L marker is skipped (it is a non-6L
+        failure entry, e.g. a Phase 6I distillation `failure`)
+      - a matching-identity envelope whose body IS 6L-marked but whose
+        body is unreadable / non-string / non-JSON / not a dict raises
+        `HaltError` (a malformed entry that could collide must never
+        be silently skipped)
+      - a matching-identity 6L-marked entry whose `source_memory_entries`
+        equals the new source-set is returned (the caller refuses the
+        re-synthesis)
+    """
+    cat_dir = _memory_dir(repo_root) / MEMORY_CATEGORY_FAILURE
+    if not cat_dir.is_dir():
+        return None
+    source_set = sorted(source_entries)
+    for entry_path in sorted(cat_dir.iterdir()):
+        if not entry_path.is_file():
+            continue
+        try:
+            envelope = read_memory_entry(entry_path)
+        except HaltError:
+            raise
+        if envelope.get("phase") != phase:
+            continue
+        if envelope.get("sub_phase") != sub_phase:
+            continue
+        body_raw = envelope.get("body")
+        if not isinstance(body_raw, str):
+            continue
+        try:
+            body = json.loads(body_raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(body, dict):
+            continue
+        marker = body.get(REPEATED_FAILURE_BODY_MARKER_FIELD)
+        if marker != REPEATED_FAILURE_SIGNAL_VERSION:
+            continue
+        existing_sources = body.get("source_memory_entries")
+        if not isinstance(existing_sources, list):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"repeated-failure synthesis refused: existing "
+                    f"6L-marked failure entry {entry_path} has malformed "
+                    f"source_memory_entries (not a list)"
+                ),
+            )
+        if sorted(existing_sources) == source_set:
+            return entry_path
+    return None
+
+
+def synthesize_repeated_failures(
+    repo_root: Path,
+    *,
+    min_entries: Optional[int] = None,
+    max_source_entries: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Synthesize recurring failure patterns from existing
+    `failure`-category memory entries into a NEW durable
+    advisory `failure` memory entry. Returns the path of the
+    newly written entry.
+
+    The synthesis source set is exactly the existing failure entries
+    that match the active loop-state (phase, sub_phase) AND are NOT
+    themselves 6L-marked synthesis entries. The source set is sorted
+    by `(cycle_count, created_at)` so a stable order is recorded on
+    disk; the newest `max_source_entries` are kept when more than the
+    cap match.
+
+    Raises `HaltError("halted_input_missing", ...)` on every refusal
+    mode documented in the Phase 6L block comment above. The caller
+    (the CLI handler) routes refusals through `_halt`.
+
+    Args:
+      repo_root: workspace root.
+      min_entries: minimum number of matching source entries required
+        before the synthesis fires. Defaults to
+        `REPEATED_FAILURE_DEFAULT_MIN_ENTRIES = 2`.
+      max_source_entries: maximum number of source entries that may
+        feed a single synthesis. Defaults to
+        `REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES = 8`.
+      log_path: optional orchestrator-log path. When supplied a single
+        `repeated-failure synthesis:` audit note is appended recording
+        the signal version, phase, sub_phase, cycle_count, source
+        count, and the chosen min / max bounds.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    min_e = (
+        min_entries if min_entries is not None
+        else REPEATED_FAILURE_DEFAULT_MIN_ENTRIES
+    )
+    _validate_repeated_failure_min_entries(min_e)
+    max_se = (
+        max_source_entries if max_source_entries is not None
+        else REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES
+    )
+    _validate_repeated_failure_max_source_entries(max_se)
+    if max_se < min_e:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure max_source_entries ({max_se}) must "
+                f"be >= min_entries ({min_e}); a synthesis that caps "
+                f"sources below its own minimum is contradictory"
+            ),
+        )
+
+    active_phase = data["phase"]
+    active_sub_phase = data.get("sub_phase")
+
+    failure_paths = list_memory_entries(
+        repo_root, category=MEMORY_CATEGORY_FAILURE,
+    )
+    candidates: list = []
+    for fp in failure_paths:
+        envelope = read_memory_entry(fp)
+        if envelope.get("phase") != active_phase:
+            continue
+        if envelope.get("sub_phase") != active_sub_phase:
+            continue
+        body_raw = envelope.get("body")
+        body_dict: Optional[dict] = None
+        if isinstance(body_raw, str):
+            try:
+                parsed = json.loads(body_raw)
+            except json.JSONDecodeError:
+                parsed = None
+            if isinstance(parsed, dict):
+                body_dict = parsed
+        if (
+            body_dict is not None
+            and body_dict.get(REPEATED_FAILURE_BODY_MARKER_FIELD)
+            == REPEATED_FAILURE_SIGNAL_VERSION
+        ):
+            continue
+        candidates.append((fp, envelope, body_dict))
+
+    if len(candidates) < min_e:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure synthesis refused: only "
+                f"{len(candidates)} matching non-synthesis failure "
+                f"entr{'y' if len(candidates) == 1 else 'ies'} on disk "
+                f"for phase={active_phase!r} sub_phase="
+                f"{active_sub_phase!r}; min_entries={min_e} is the "
+                f"minimum source count for a synthesis"
+            ),
+        )
+
+    candidates.sort(
+        key=lambda t: (
+            t[1].get("cycle_count", 0), t[1].get("created_at", ""),
+        ),
+    )
+    if len(candidates) > max_se:
+        candidates = candidates[-max_se:]
+
+    source_rels: list = []
+    source_cycle_counts: list = []
+    source_excerpts: list = []
+    for fp, envelope, body_dict in candidates:
+        rel = fp.relative_to(repo_root).as_posix()
+        source_rels.append(rel)
+        source_cycle_counts.append(envelope.get("cycle_count"))
+        excerpt: dict = {
+            "source_memory_entry": rel,
+            "cycle_count": envelope.get("cycle_count"),
+            "created_at": envelope.get("created_at"),
+        }
+        if isinstance(body_dict, dict):
+            kt = body_dict.get("knowledge_type")
+            if isinstance(kt, str):
+                excerpt["knowledge_type"] = kt
+            fail = body_dict.get("failure")
+            if isinstance(fail, str):
+                excerpt["failure"] = fail
+        source_excerpts.append(excerpt)
+
+    existing = _find_existing_repeated_failure_synthesis(
+        repo_root,
+        phase=active_phase,
+        sub_phase=active_sub_phase,
+        source_entries=source_rels,
+    )
+    if existing is not None:
+        rel = existing.relative_to(repo_root).as_posix()
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"repeated-failure synthesis refused: an existing 6L "
+                f"synthesis entry already exists for this "
+                f"(phase, sub_phase, source-set) identity. Existing "
+                f"entry: {rel}. Re-synthesis would produce a "
+                f"duplicate; clear or supersede the existing entry "
+                f"first."
+            ),
+        )
+
+    synthesized_at = _utc_iso_now()
+    body = json.dumps({
+        REPEATED_FAILURE_BODY_MARKER_FIELD: (
+            REPEATED_FAILURE_SIGNAL_VERSION
+        ),
+        "phase": active_phase,
+        "sub_phase": active_sub_phase,
+        "task": data["task"],
+        "cycle_count": data["cycle_count"],
+        "approval_mode": data.get("approval_mode"),
+        "knowledge_type": "failure",
+        "synthesis_summary": (
+            f"phase {active_phase!r} sub_phase {active_sub_phase!r} "
+            f"has accumulated {len(source_rels)} prior failure "
+            f"entr{'y' if len(source_rels) == 1 else 'ies'} "
+            f"(cycle_counts={source_cycle_counts!r}); a recurring "
+            f"failure pattern is advised at this scope"
+        ),
+        "source_memory_entries": source_rels,
+        "source_count": len(source_rels),
+        "source_cycle_counts": source_cycle_counts,
+        "source_excerpts": source_excerpts,
+        "min_entries_applied": min_e,
+        "max_source_entries_applied": max_se,
+        "synthesized_at": synthesized_at,
+        "canonical_precedence_note": (
+            REPEATED_FAILURE_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }, indent=2)
+
+    written_path = write_memory_entry(
+        repo_root,
+        category=MEMORY_CATEGORY_FAILURE,
+        phase=active_phase,
+        sub_phase=active_sub_phase,
+        cycle_count=data["cycle_count"],
+        source_artifact_path=".agent-loop/loop-state.json",
+        body=body,
+    )
+
+    if log_path is not None:
+        _log_note(
+            log_path,
+            (
+                f"repeated-failure synthesis: signal_version="
+                f"{REPEATED_FAILURE_SIGNAL_VERSION!r} phase="
+                f"{active_phase!r} sub_phase={active_sub_phase!r} "
+                f"cycle_count={data['cycle_count']} source_count="
+                f"{len(source_rels)} min_entries={min_e} "
+                f"max_source_entries={max_se}"
+            ),
+        )
+
+    return written_path
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -7122,6 +8077,101 @@ def cmd_load_optional_context(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_integrate_optional_context_prompt(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 6K operator runtime path: integrate the shipped Phase 6J
+    optional-context payload into a prompt-ready advisory block.
+
+    Reads `.agent-loop/optional-context.json` (or the path supplied via
+    `--source`), validates the payload structurally, and writes the
+    integration dict to `.agent-loop/optional-context-prompt.json` (or
+    the path supplied via `--output`). Both `--source` and `--output`
+    are repo-relative and refuse fail-closed when absolute or escaping
+    the repo root, mirroring the Phase 6J `--output` write boundary.
+    Refusal routes through `_halt` so the structural failure
+    vocabulary lands on disk for human inspection.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        source = _resolve_optional_context_prompt_path(
+            repo_root, args.source,
+            default_rel=OPTIONAL_CONTEXT_PROMPT_SOURCE_REL,
+            flag="--source",
+        )
+        output_path = _resolve_optional_context_prompt_path(
+            repo_root, args.output,
+            default_rel=OPTIONAL_CONTEXT_PROMPT_OUTPUT_REL,
+            flag="--output",
+        )
+        payload = integrate_optional_context(
+            repo_root, source_path=source, log_path=log_path,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    try:
+        rel = output_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        rel = str(output_path)
+    print(
+        f"[orchestrator] optional-context prompt integration "
+        f"written to {rel}; source_artifact={payload['source_artifact']} "
+        f"files_integrated={len(payload['files'])}"
+    )
+    return 0
+
+
+def cmd_synthesize_repeated_failures(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 6L operator runtime path: synthesize a durable advisory
+    failure memory entry from recurring failure entries.
+
+    Calls `synthesize_repeated_failures(...)` with the parsed argparse
+    args, routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection, and on
+    success prints the path of the newly written memory entry plus a
+    pointer to the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    kwargs: dict = {}
+    if args.min_entries is not None:
+        kwargs["min_entries"] = args.min_entries
+    if args.max_source_entries is not None:
+        kwargs["max_source_entries"] = args.max_source_entries
+    try:
+        written = synthesize_repeated_failures(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] repeated-failure synthesis wrote {rel}; "
+        f"see {log_path.relative_to(repo_root).as_posix()} for the "
+        f"`repeated-failure synthesis:` audit note."
+    )
+    return 0
+
+
 def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
     """Phase 6I operator runtime path: distill durable memory entries
     at an approved phase boundary.
@@ -7964,6 +9014,90 @@ def build_parser() -> argparse.ArgumentParser:
             "example via `..`) refuse fail-closed."
         ),
     )
+    integrate_ctx = sub.add_parser(
+        "integrate-optional-context",
+        help=(
+            "Phase 6K optional-context prompt integration: read the "
+            "shipped Phase 6J advisory payload at "
+            f"`{OPTIONAL_CONTEXT_PROMPT_SOURCE_REL}` (override with "
+            "`--source`), structurally validate it, and persist a "
+            "prompt-integrated dict (with a deterministic "
+            "`prompt_block`) to "
+            f"`{OPTIONAL_CONTEXT_PROMPT_OUTPUT_REL}` (override with "
+            "`--output`). Refuses fail-closed on missing / "
+            "unreadable / malformed / contradictory / out-of-bound / "
+            "unsupported source payloads. Never reads any of the "
+            "declared source files; never widens Phase 5 autonomy."
+        ),
+    )
+    integrate_ctx.add_argument(
+        "--source",
+        default=None,
+        help=(
+            "Override the input JSON path. Defaults to "
+            f"`{OPTIONAL_CONTEXT_PROMPT_SOURCE_REL}`. Only repo-"
+            "relative paths inside the repo root are accepted; "
+            "absolute paths and paths that resolve outside the repo "
+            "root (for example via `..`) refuse fail-closed."
+        ),
+    )
+    integrate_ctx.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Override the output JSON path. Defaults to "
+            f"`{OPTIONAL_CONTEXT_PROMPT_OUTPUT_REL}`. Only repo-"
+            "relative paths inside the repo root are accepted; "
+            "absolute paths and paths that resolve outside the repo "
+            "root (for example via `..`) refuse fail-closed."
+        ),
+    )
+    synth = sub.add_parser(
+        "synthesize-repeated-failures",
+        help=(
+            "Phase 6L repeated-failure memory synthesis: read the "
+            "existing `failure`-category memory entries that match the "
+            "active loop-state (phase, sub_phase) and write a NEW "
+            "advisory `failure` entry carrying a `synthesis_signal_"
+            "version=\"phase-6l-v1\"` body marker plus the ordered "
+            "list of source memory entry paths. Skips prior 6L "
+            "synthesis entries so the synthesis layer stays flat. "
+            "Refuses fail-closed when fewer than `--min-entries` "
+            "matching source entries are on disk, on every malformed / "
+            "out-of-bound input, and idempotently when an existing 6L "
+            "synthesis for the same (phase, sub_phase, source-set) "
+            "identity is already on disk."
+        ),
+    )
+    synth.add_argument(
+        "--min-entries",
+        type=int,
+        default=None,
+        help=(
+            "Minimum number of matching source `failure` entries "
+            "required before the synthesis fires. Defaults to "
+            f"REPEATED_FAILURE_DEFAULT_MIN_ENTRIES="
+            f"{REPEATED_FAILURE_DEFAULT_MIN_ENTRIES}; must be >= 2 and "
+            f"capped at REPEATED_FAILURE_MAX_MIN_ENTRIES="
+            f"{REPEATED_FAILURE_MAX_MIN_ENTRIES}."
+        ),
+    )
+    synth.add_argument(
+        "--max-source-entries",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of source `failure` entries that may feed "
+            "a single synthesis. Defaults to "
+            f"REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES="
+            f"{REPEATED_FAILURE_DEFAULT_MAX_SOURCE_ENTRIES}; must be "
+            ">= 2 and capped at "
+            f"REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES="
+            f"{REPEATED_FAILURE_MAX_MAX_SOURCE_ENTRIES}. When more "
+            "than the cap match, the newest entries (by cycle_count, "
+            "created_at) are kept."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -8120,6 +9254,8 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "build-continuation-context": cmd_build_continuation_context,
     "distill-phase-boundary-memory": cmd_distill_phase_boundary_memory,
     "load-optional-context": cmd_load_optional_context,
+    "integrate-optional-context": cmd_integrate_optional_context_prompt,
+    "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 

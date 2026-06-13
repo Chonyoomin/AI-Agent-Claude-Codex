@@ -20,42 +20,40 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6J - Optional Context File Loading Initial Slice
+Phase 6N - Experimental LangGraph Runtime Mirror
 
 ## Phase Status
 
-Phase 6I (Phase-Boundary Memory Distillation Initial Slice) is closed after Codex review approval and human progression. Phase 6J is now active as the next implementation slice for Phase 6 durable memory and optional context support. This sub-phase should implement the first declared optional-context file loading layer on top of the shipped 6B/6C/6D/6E/6F/6G/6H/6I memory, checkpoint, continuation, continuation-context, and distillation surfaces: load only explicitly declared in-repo context files into bounded advisory payloads while preserving canonical task/state precedence and still deferring repeated-failure synthesis, arbitrary repo ingestion, and broader framework-backed context behavior.
+Phase 6M (Runtime Adapter Contract For Framework Evaluation) is closed after Codex review approval and human progression. Phase 6N is now active as the next Phase 6 slice. This sub-phase should add an opt-in experimental LangGraph-backed runtime mirror that exercises the Phase 6M adapter contract in code while preserving the shipped local orchestrator as the default runtime, keeping canonical repo artifacts authoritative, and refusing fail-closed on any divergence from the existing halt, checkpoint, memory, and approval-mode behavior.
 
 ## Active Task
 
-Implement the Phase 6 optional-context file loading foundation in code. This slice should build a narrow, auditable loader that validates an explicit declaration of in-repo context files and emits bounded advisory context payloads from those files, while preserving canonical task and loop-state precedence, existing Phase 5 approval-mode and strict-gate semantics, and still deferring repeated-failure synthesis, arbitrary repo ingestion, and broader optional-context expansion.
+Implement the first experimental LangGraph runtime mirror for Phase 6. This slice should add an opt-in framework-backed execution path that mirrors the shipped local orchestrator's state-machine behavior, halt/refusal vocabulary, checkpoint and continuation handling, durable-memory boundaries, audit signals, and approval-mode semantics while keeping the current local runtime as the default and preserving canonical repo-artifact precedence over any framework-managed state.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6J as active
-- `.agent-loop/phase-plan.md` records Phase 6I as closed history and contains a `## Phase 6J - Optional Context File Loading Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` exposes a narrow optional-context file declaration and loading surface for active-phase use
-- optional context loading accepts only explicitly declared in-repo files, reads bounded advisory excerpts, and records provenance to the source paths rather than silently ingesting arbitrary repo files
-- optional context loading preserves canonical task/state precedence and refuses stale, contradictory, malformed, unreadable, out-of-bound, or unrecognized source inputs fail-closed
-- optional context loading preserves the shipped Phase 5 approval-mode and strict-gate routing semantics and does not widen autonomy or bypass human gates
-- no repeated-failure synthesis, arbitrary repo-file ingestion, or broader framework-backed context loading is enabled in this slice
-- focused tests cover valid optional-context loading, declaration/path validation, excerpt bounding, malformed-or-unreadable input refusal, and preservation of canonical-artifact precedence
-- `README.md` reflects that Phase 6J is active and that optional-context file loading is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6N as active
+- `.agent-loop/phase-plan.md` records Phase 6M as closed history and contains a `## Phase 6N - Experimental LangGraph Runtime Mirror` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `scripts/agent_loop.py` exposes an opt-in experimental LangGraph-backed runtime mirror or equivalent narrow alternate-runtime entry surface that is explicitly subordinate to the shipped local runtime and the Phase 6M adapter contract
+- the experimental runtime preserves canonical repo-artifact truth for task / phase / loop-state / evidence / review / memory / checkpoint artifacts and refuses fail-closed on contradiction with framework-managed state
+- the experimental runtime mirrors the shipped halt/refusal vocabulary, approval-mode behavior, checkpoint and continuation rules, durable-memory boundaries, and audit expectations closely enough to be evaluated against the local runtime
+- the shipped local orchestrator remains the default runtime when no explicit alternate-runtime selection is provided
+- focused tests cover runtime selection, default-runtime preservation, representative halt/refusal mirroring, checkpoint/continuation compatibility, and canonical-precedence preservation for the experimental mirror
+- `README.md` reflects that Phase 6N is active and that experimental LangGraph runtime mirroring is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6J until:
+Do not start the next 6x sub-phase after Phase 6N until:
 
-- this Phase 6J slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6N slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing repeated-failure memory synthesis in this slice
-- implementing arbitrary repo-file ingestion, semantic retrieval, or broader optional context-file loading beyond the narrow declared-file loader needed for this slice
-- changing current planner, activator, adapter, evidence-collection, review routing, or phase-start prompt-bootstrap behavior beyond the narrow optional-context loading implementation needed for future Phase 6 work
+- implementing LangChain support-layer work, CrewAI evaluation, or broader multi-framework orchestration beyond the narrow LangGraph mirror needed for this slice
+- changing current planner, activator, evidence-collection, review routing, checkpoint, continuation, memory, or prompt-integration semantics for the default local runtime beyond the narrow opt-in experimental mirror path
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
