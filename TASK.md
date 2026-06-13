@@ -20,42 +20,40 @@ Phase 6 - Durable Memory and Optional Context Layer
 
 ## Active Sub-Phase
 
-Phase 6L - Repeated-Failure Memory Synthesis Initial Slice
+Phase 6M - Runtime Adapter Contract For Framework Evaluation
 
 ## Phase Status
 
-Phase 6K (Optional Context Prompt Integration Initial Slice) is closed after Codex review approval and human progression. Phase 6L is now active as the next implementation slice for Phase 6 durable memory and optional context support. This sub-phase should synthesize repeated-failure memory in a narrow, auditable way: distill recurring review/fix failure patterns into durable failure knowledge from bounded canonical artifacts and existing loop-state evidence, preserve canonical task/state/checkpoint precedence, keep failure memory explicitly advisory, and still defer arbitrary repo ingestion, broader framework-backed context behavior, and any widening of autonomy.
+Phase 6L (Repeated-Failure Memory Synthesis Initial Slice) is closed after Codex review approval and human progression. Phase 6M is now active as the next Phase 6 slice. This sub-phase should define the runtime adapter contract that any future framework-backed execution path must satisfy so LangGraph, LangChain-adjacent helpers, or other alternate runtimes can be evaluated without weakening canonical repo-artifact truth, human approval gates, ownership boundaries, or the shipped local orchestrator defaults.
 
 ## Active Task
 
-Implement the Phase 6 repeated-failure memory synthesis foundation in code. This slice should distill recurring review/fix failure patterns into durable advisory failure knowledge through a narrow, auditable synthesis path that reads only bounded canonical artifacts and existing loop-state context, preserves canonical task and loop-state precedence, existing Phase 5 approval-mode and strict-gate semantics, and still defers arbitrary repo ingestion, broader optional-context expansion, and wider autonomy.
+Define the Phase 6 runtime adapter contract for framework evaluation. This slice should specify, before any framework-backed runtime is implemented, the adapter boundary alternate runtimes must honor: canonical inputs, allowed writes, halt/refusal behavior, checkpoint and memory interaction rules, approval-mode preservation, artifact-precedence guarantees, and evaluation constraints that keep the shipped local orchestrator as the default source-of-truth runtime.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6L as active
-- `.agent-loop/phase-plan.md` records Phase 6K as closed history and contains a `## Phase 6L - Repeated-Failure Memory Synthesis Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` exposes a narrow repeated-failure memory synthesis surface for active-phase use
-- repeated-failure synthesis reads only bounded canonical artifacts and existing loop-state context, and does not treat raw logs, arbitrary repo files, or whole transcripts as durable memory input
-- synthesized failure memory remains subordinate to canonical task / phase / loop-state / checkpoint artifacts and does not override Phase 5 approval-mode or strict-gate decisions
-- repeated-failure synthesis is explicitly advisory, provenance-carrying, and append-mostly within the existing memory model
-- malformed, contradictory, unreadable, unsupported, out-of-bound, or ineligible repeated-failure synthesis inputs refuse fail-closed
-- no arbitrary repo-file ingestion, broader optional-context loading, or broader framework-backed context behavior is enabled in this slice
-- focused tests cover valid repeated-failure synthesis, refusal on malformed-or-contradictory inputs, bounded source selection, and canonical-precedence preservation
-- `README.md` reflects that Phase 6L is active and that repeated-failure memory synthesis is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6M as active
+- `.agent-loop/phase-plan.md` records Phase 6L as closed history and contains a `## Phase 6M - Runtime Adapter Contract For Framework Evaluation` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the Phase 6M contract defines the adapter boundary that future framework-backed runtimes must satisfy before any LangGraph, LangChain-adjacent, or similar runtime path is implemented
+- the contract preserves canonical repo-artifact truth for `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, `.agent-loop/phase-plan.md`, `.agent-loop/loop-state.json`, evidence files, review artifacts, memory entries, and checkpoints
+- the contract defines allowed inputs, allowed writes, halt/refusal behavior, checkpoint and durable-memory interaction, approval-mode preservation, and audit expectations for alternate runtimes
+- the contract explicitly keeps the shipped local orchestrator as the default runtime and treats framework-backed execution as optional future evaluation rather than replacement behavior
+- the contract forbids widening autonomy, bypassing human gates, mutating Codex-owned planning artifacts, or treating framework state as superior to canonical repo artifacts
+- `README.md` reflects that Phase 6M is active and that runtime-adapter contract definition is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6L until:
+Do not start the next 6x sub-phase after Phase 6M until:
 
-- this Phase 6L slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 6M slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- implementing arbitrary repo-file ingestion, semantic retrieval, or broader optional context-file loading beyond the narrow repeated-failure synthesis needed for this slice
-- changing current planner, activator, adapter, evidence-collection, or review routing behavior beyond the narrow repeated-failure memory synthesis needed for future Phase 6 work
+- implementing any LangGraph, LangChain, CrewAI, or other framework-backed runtime path in code during this contract slice
+- changing current planner, activator, adapter, evidence-collection, review routing, checkpoint, continuation, memory, or prompt-integration runtime behavior beyond documenting the future adapter boundary
 - editor integration (Phase 7)
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
