@@ -4353,6 +4353,16 @@ def _validate_optional_context_payload(payload) -> None:
                 f"{OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE}]"
             ),
         )
+    loaded_at = payload["loaded_at"]
+    if not isinstance(loaded_at, str) or not loaded_at:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context-prompt source loaded_at must be a "
+                f"non-empty string; got "
+                f"{type(loaded_at).__name__}={loaded_at!r}"
+            ),
+        )
     declared = payload["declared_paths"]
     if not isinstance(declared, list):
         raise HaltError(
@@ -4362,6 +4372,7 @@ def _validate_optional_context_payload(payload) -> None:
                 f"be a list; got {type(declared).__name__}"
             ),
         )
+    seen_declared: set = set()
     for d in declared:
         if not isinstance(d, str) or not d:
             raise HaltError(
@@ -4371,6 +4382,18 @@ def _validate_optional_context_payload(payload) -> None:
                     f"entry must be a non-empty string; got {d!r}"
                 ),
             )
+        if d in seen_declared:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context-prompt source declared_paths "
+                    f"contains duplicate entry {d!r}; the shipped "
+                    f"Phase 6J producer refuses duplicate declared "
+                    f"paths and the integration enforces the same "
+                    f"structural guarantee"
+                ),
+            )
+        seen_declared.add(d)
     files = payload["files"]
     if not isinstance(files, list):
         raise HaltError(

@@ -475,6 +475,60 @@ class IntegrateOptionalContextMalformedRefusalTests(
         self.assertEqual(cm.exception.status, "halted_input_missing")
         self.assertIn("non-empty string", cm.exception.reason)
 
+    def test_refuses_loaded_at_non_string(self) -> None:
+        # Phase 6K fix: `loaded_at` must be a non-empty string so it can
+        # be passed through into `source_loaded_at` and interpolated
+        # into the rendered prompt block.
+        payload = _valid_payload(self.repo_root)
+        payload["loaded_at"] = {"not": "a string"}
+        self._plant_source(payload)
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.integrate_optional_context(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("loaded_at", cm.exception.reason)
+
+    def test_refuses_loaded_at_empty_string(self) -> None:
+        payload = _valid_payload(self.repo_root)
+        payload["loaded_at"] = ""
+        self._plant_source(payload)
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.integrate_optional_context(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("loaded_at", cm.exception.reason)
+
+    def test_refuses_duplicate_declared_paths(self) -> None:
+        # Phase 6K fix: the shipped 6J producer refuses duplicate
+        # declared paths as a structural input error. A hand-edited 6J
+        # payload with duplicate `declared_paths` (and matching
+        # duplicate `files` entries to satisfy the length check) must
+        # also be refused by the integration so the upstream contract
+        # is preserved end-to-end.
+        payload = _valid_payload(self.repo_root)
+        payload["declared_paths"] = ["docs/a.md", "docs/a.md"]
+        payload["files"] = [
+            {
+                "source_path": "docs/a.md",
+                "byte_size_on_disk": 5,
+                "excerpt": "alpha",
+                "excerpt_byte_size": 5,
+                "truncated": False,
+                "advisory_only": True,
+            },
+            {
+                "source_path": "docs/a.md",
+                "byte_size_on_disk": 5,
+                "excerpt": "alpha",
+                "excerpt_byte_size": 5,
+                "truncated": False,
+                "advisory_only": True,
+            },
+        ]
+        self._plant_source(payload)
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.integrate_optional_context(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("duplicate", cm.exception.reason)
+
 
 # ----- integrate_optional_context: canonical-precedence -----
 
