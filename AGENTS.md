@@ -108,10 +108,10 @@ Every review should answer:
 
 Codex should classify findings with clear severity:
 
-- `blocker`: unsafe, incorrect, unreviewable, or outside scope
-- `major`: meaningful bug, regression risk, missing validation, or weak repair needed
-- `minor`: quality issue that does not block the phase
-- `note`: observation or follow-up idea
+- `Critical`: unsafe, destructive, unreviewable, or materially outside scope
+- `High`: meaningful bug, contract violation, missing runtime wiring, regression risk, or missing validation that blocks approval
+- `Medium`: real quality or correctness issue that should normally be fixed before approval, but is narrower in blast radius
+- `Low`: minor quality issue, documentation drift, or limited inconsistency that does not materially change runtime behavior
 
 ## Required Review Verdict
 
@@ -159,20 +159,13 @@ Passed | Failed | Not run | Inconclusive
 
 ## Issues found
 
-### Issue 1
+Issue 1
 Severity: Low | Medium | High | Critical
 Category: Bug | Test Failure | Scope Drift | Architecture Violation | Instruction Violation | Summary Mismatch | Other
-File(s): [file paths]
-Owner: Claude | Codex [optional when file ownership already makes it obvious]
+File(s): [file path with line reference links]
+Owner: Claude | Codex
 Codex action: [optional machine-readable Codex-owned auto-fix action when supported]
-Problem:
-[clear explanation of the issue]
-
-Evidence:
-[reference the diff, Claude summary, validation logs, or instruction files]
-
-Required fix:
-[concrete fix required]
+[one concise paragraph explaining the issue, why it matters, and what evidence in repo state supports it]
 
 ## Fix prompt for Claude
 [Only include this section if verdict is NEEDS_FIXES. Write a direct repair prompt Claude Code can execute.]
@@ -185,8 +178,12 @@ Rules:
 
 - return exactly one allowed verdict
 - base the review on objective evidence, not Claude's claims alone
-- reference evidence for every issue
-- mark Codex-owned issues explicitly when ownership is not obvious from the file list
+- every issue must include a specific file reference when one exists; prefer clickable line links
+- every issue must explicitly name an `Owner: Claude` or `Owner: Codex`; do not leave fix ownership implicit
+- write the issue body as a compact, self-contained paragraph rather than splitting it into separate `Problem`, `Evidence`, and `Required fix` subsections
+- the issue paragraph should state the defect, the concrete evidence from repo state, and the expected fix direction
+- use `Owner: Claude` for implementation fixes in Claude-owned code, tests, scripts, config, and other repo implementation surfaces unless Codex has reserved them
+- use `Owner: Codex` for planning, review, prompt, governance, instruction, task-state, phase-management, routing, or other Codex-owned loop artifacts and decisions
 - only use `Codex action:` for supported machine-readable Codex-owned follow-up actions
 - omit `## Fix prompt for Claude` unless the verdict is `NEEDS_FIXES`
 - omit `## Human attention required` unless the verdict is `FAILED_REQUIRES_HUMAN`

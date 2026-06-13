@@ -3233,6 +3233,958 @@ def build_continuation_prompt_context(
     return payload
 
 
+# Phase 6I - Phase-Boundary Memory Distillation Initial Slice.
+#
+# Builds on the shipped 6B (storage), 6C (advisory retrieval), 6D
+# (checkpoint storage), 6E (resume), 6F (token-exhaustion continuation),
+# 6G (auto-continue), and 6H (continuation context) primitives. The new
+# `distill_phase_boundary_memory(...)` surface writes append-mostly
+# durable memory entries in three allowed Phase 6A categories
+# (`summary`, `decision`, `failure`) at a successfully approved phase
+# boundary, sourced from the canonical phase/task artifacts plus
+# bounded review/evidence excerpts.
+#
+# Eligibility: this slice ONLY fires at the named phase boundary
+# (`status == phase_complete_awaiting_human_approval` AND
+# `last_verdict == APPROVED_FOR_HUMAN_REVIEW`). Other states are
+# refused so the slice cannot be misused as a "write whatever to
+# memory" backdoor.
+#
+# Idempotency: each call checks for an existing distillation-marked
+# `summary` entry for the active (phase, sub_phase, cycle_count); if
+# one exists the call refuses fail-closed. Append-mostly memory still
+# permits a later supersede pattern, but the initial slice favors the
+# stricter refusal so a re-run does not silently produce duplicate
+# entries.
+#
+# Refusal modes (all `halted_input_missing` unless noted):
+#   - missing / malformed `loop-state.json`
+#   - unsupported `contract_version`
+#     (`halted_contract_version_mismatch`)
+#   - status not the eligible phase-boundary value
+#   - `last_verdict` not `APPROVED_FOR_HUMAN_REVIEW`
+#   - missing canonical source artifacts
+#     (`.agent-loop/claude-summary.md`, `.agent-loop/codex-review.md`)
+#   - claude-summary structurally invalid
+#     (`halted_summary_malformed` propagated from
+#     `validate_claude_summary`)
+#   - codex-review structurally invalid
+#     (`halted_review_*` propagated from
+#     `validate_codex_review_and_parse_verdict`)
+#   - codex-review verdict does not also equal
+#     `APPROVED_FOR_HUMAN_REVIEW` (defense-in-depth against a
+#     loop-state / on-disk-review disagreement)
+#   - already-distilled (a marker summary entry for this exact
+#     (phase, sub_phase, cycle_count) already exists)
+#   - `excerpt_byte_limit` not a positive int, or above
+#     `DISTILLATION_MAX_EXCERPT_BYTE_LIMIT`
+#   - an unreadable source artifact (mirrors the Phase 6H fix-slice
+#     unreadable-evidence refusal pattern)
+#
+# Out of scope for this initial slice (deferred per the 6I prompt):
+#   - broader optional context-file loading
+#   - repeated-failure memory synthesis beyond the narrow phase-
+#     boundary failure-entry helper
+#   - widening Phase 5 autonomy or bypassing human gates
+#   - automatic invocation of distillation from the orchestrator's
+#     main verdict path (the orchestrator-side wiring is deferred so
+#     this slice can land as a narrow, operator-callable surface)
+#   - phase-boundary serialization (the slice writes structured
+#     memory entries; turning them into a phase-boundary prompt is a
+#     later layer's concern)
+
+DISTILLATION_SIGNAL_VERSION = "phase-6i-v1"
+DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT = 4096
+DISTILLATION_MAX_EXCERPT_BYTE_LIMIT = 65536
+DISTILLATION_ELIGIBLE_STATUS = "phase_complete_awaiting_human_approval"
+DISTILLATION_ELIGIBLE_VERDICT = "APPROVED_FOR_HUMAN_REVIEW"
+DISTILLATION_SOURCE_ARTIFACTS = (
+    ".agent-loop/claude-summary.md",
+    ".agent-loop/codex-review.md",
+)
+# Body marker every distillation memory entry carries. The field lives
+# inside the JSON body (not on the Phase 6B envelope) so existing 6B
+# memory entries from non-distillation writers are untouched. The
+# idempotency check keys off the (signal_version, phase, sub_phase,
+# cycle_count) tuple.
+DISTILLATION_BODY_MARKER_FIELD = "distillation_signal_version"
+
+
+def _validate_excerpt_byte_limit(value) -> None:
+    """Refuse fail-closed on an out-of-bounds distillation excerpt byte
+    limit. Mirrors `_validate_evidence_byte_limit`'s shape: bool
+    rejected, non-int rejected, non-positive rejected, above the
+    safety cap rejected.
+    """
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit must be a positive "
+                f"int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit must be positive; "
+                f"got {value!r}"
+            ),
+        )
+    if value > DISTILLATION_MAX_EXCERPT_BYTE_LIMIT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation excerpt_byte_limit {value!r} exceeds "
+                f"DISTILLATION_MAX_EXCERPT_BYTE_LIMIT="
+                f"{DISTILLATION_MAX_EXCERPT_BYTE_LIMIT}; the safety cap "
+                f"prevents distilled memory from silently expanding "
+                f"into an unbounded repo dump"
+            ),
+        )
+
+
+def _read_bounded_source_excerpt(path: Path, byte_limit: int) -> dict:
+    """Read a canonical source artifact and return a bounded-excerpt
+    metadata dict. Refuses fail-closed via `HaltError` when the path
+    is missing or unreadable so a distillation cannot proceed from a
+    partial input.
+    """
+    if not path.exists():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: canonical source artifact "
+                f"{path.name!r} is missing"
+            ),
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: canonical source artifact "
+                f"{path.name!r} exists but is unreadable "
+                f"({type(exc).__name__}: {exc})"
+            ),
+        )
+    total = len(raw)
+    excerpt_bytes = raw[:byte_limit]
+    return {
+        "byte_size_on_disk": total,
+        "excerpt": excerpt_bytes.decode("utf-8", errors="replace"),
+        "excerpt_byte_size": len(excerpt_bytes),
+        "truncated": total > byte_limit,
+    }
+
+
+def _find_existing_distillation_summary(
+    repo_root: Path,
+    *,
+    phase: str,
+    sub_phase: Optional[str],
+    cycle_count: int,
+) -> Optional[Path]:
+    """Return the path of any existing distillation-marked `summary`
+    memory entry that matches the active (phase, sub_phase,
+    cycle_count) identity, else None.
+
+    The body marker field
+    (`DISTILLATION_BODY_MARKER_FIELD = "distillation_signal_version"`)
+    inside the entry body distinguishes a distillation-written summary
+    from any other summary-category entry a non-distillation writer
+    may have placed on disk.
+
+    Refusal vs skip:
+      - an envelope that is unreadable (`OSError`), not parseable as
+        JSON (`json.JSONDecodeError`), or not a dict has UNKNOWN
+        identity. It could be a colliding distillation marker; the
+        probe cannot prove it isn't, so it refuses fail-closed via
+        `HaltError("halted_input_missing", ...)` rather than skipping.
+      - an envelope whose identity does NOT match
+        (phase / sub_phase / cycle_count) is safe to skip - the
+        canonical state model assigns one active task per active
+        (phase, sub_phase) pair, so a mismatching envelope cannot be
+        a colliding distillation entry for THIS boundary.
+      - an envelope whose identity MATCHES but whose body is unreadable
+        (`None` / non-string / non-JSON / not a dict) refuses
+        fail-closed: the matching-identity entry could be a malformed
+        distillation entry the slice itself wrote that later got
+        corrupted, and proceeding would risk a duplicate.
+      - an envelope whose identity matches, body parses, and marker
+        equals the distillation signal version is the "already
+        distilled" case; the probe returns the entry path so the
+        caller refuses with the existing idempotency message.
+      - an envelope whose identity matches, body parses, but marker
+        is missing or different is a pre-existing non-distillation
+        summary entry. That is NOT the slice's concern; skip silently.
+    """
+    summary_dir = (
+        _memory_dir(repo_root) / MEMORY_CATEGORY_SUMMARY
+    )
+    if not summary_dir.exists():
+        return None
+    for entry_path in sorted(summary_dir.iterdir()):
+        if entry_path.suffix != ".json":
+            continue
+        rel = entry_path.relative_to(repo_root).as_posix()
+        try:
+            envelope_text = entry_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} exists but is unreadable "
+                    f"({type(exc).__name__}: {exc}); its identity "
+                    f"cannot be determined and it may collide with "
+                    f"this boundary"
+                ),
+            )
+        try:
+            envelope = json.loads(envelope_text)
+        except json.JSONDecodeError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} is not valid JSON "
+                    f"({type(exc).__name__}: {exc}); its identity "
+                    f"cannot be determined"
+                ),
+            )
+        if not isinstance(envelope, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} parses as JSON but is not a dict; "
+                    f"its identity cannot be determined"
+                ),
+            )
+        if envelope.get("phase") != phase:
+            continue
+        if envelope.get("sub_phase") != sub_phase:
+            continue
+        if envelope.get("cycle_count") != cycle_count:
+            continue
+        # Identity matches. From here, an unparseable / malformed body
+        # is a fail-closed refusal because it could be a corrupted
+        # distillation entry for THIS exact boundary.
+        body_raw = envelope.get("body")
+        if not isinstance(body_raw, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} matches identity (phase, sub_phase, "
+                    f"cycle_count) but its body field is not a string "
+                    f"(got {type(body_raw).__name__})"
+                ),
+            )
+        try:
+            body = json.loads(body_raw)
+        except json.JSONDecodeError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} matches identity but its body is "
+                    f"not valid JSON ({type(exc).__name__}: {exc})"
+                ),
+            )
+        if not isinstance(body, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"distillation idempotency probe refused: summary "
+                    f"entry {rel!r} matches identity but its body is "
+                    f"not a dict"
+                ),
+            )
+        if body.get(DISTILLATION_BODY_MARKER_FIELD) != (
+            DISTILLATION_SIGNAL_VERSION
+        ):
+            # Pre-existing non-distillation summary entry; not ours
+            # to manage. Skip silently and keep scanning.
+            continue
+        return entry_path
+    return None
+
+
+def distill_phase_boundary_memory(
+    repo_root: Path,
+    *,
+    excerpt_byte_limit: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> list:
+    """Distill durable summary, decision, and (conditional) failure
+    memory entries at a successfully approved phase boundary.
+
+    Returns the list of newly written memory-entry `Path`s in fixed
+    order: `[summary_path, decision_path]` when the phase was
+    approved on its first cycle (`cycle_count == 1`); otherwise
+    `[summary_path, decision_path, failure_path]` because the failure
+    entry codifies "phase required N-1 fix cycle(s) before approval"
+    derived from the canonical `cycle_count`.
+
+    Refuses via `HaltError` on every refusal mode documented in the
+    Phase 6I block comment above. The caller (the CLI handler)
+    routes refusals through `_halt`.
+
+    Args:
+      repo_root: workspace root.
+      excerpt_byte_limit: optional override for the per-source-file
+        excerpt byte cap. Defaults to
+        `DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT`.
+      log_path: optional orchestrator-log path. When supplied a
+        single `phase-boundary distillation:` audit note is appended
+        recording the active phase, cycle_count, returned entry
+        count, and the chosen excerpt byte limit.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+
+    # 1. Load + validate loop-state with the same structural / contract
+    #    checks every Phase 6 surface uses.
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    # 2. Eligibility: the boundary state on disk must match the
+    #    contract terminal. Refuse fail-closed when either dimension
+    #    disagrees so the slice cannot be misused outside the named
+    #    boundary.
+    status = data.get("status")
+    if status != DISTILLATION_ELIGIBLE_STATUS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: loop-state status {status!r} "
+                f"is not {DISTILLATION_ELIGIBLE_STATUS!r}; phase-"
+                f"boundary distillation only fires at the named "
+                f"terminal state"
+            ),
+        )
+    last_verdict = data.get("last_verdict")
+    if last_verdict != DISTILLATION_ELIGIBLE_VERDICT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: loop-state last_verdict "
+                f"{last_verdict!r} is not "
+                f"{DISTILLATION_ELIGIBLE_VERDICT!r}; the phase boundary "
+                f"must reflect an APPROVED outcome before durable "
+                f"summary/decision/failure knowledge is distilled"
+            ),
+        )
+
+    # 3. Validate canonical source artifacts with their existing
+    #    Phase 2 / 3 validators so a distillation cannot proceed from
+    #    a structurally invalid input. The validators raise the
+    #    halt-status vocabulary the orchestrator already uses
+    #    (`halted_summary_malformed`, `halted_review_malformed`,
+    #    `halted_review_parse_failed`).
+    claude_summary_path = al / "claude-summary.md"
+    codex_review_path = al / "codex-review.md"
+    validate_claude_summary(
+        claude_summary_path,
+        data["phase"], data.get("sub_phase"),
+    )
+    review_verdict = validate_codex_review_and_parse_verdict(
+        codex_review_path,
+    )
+    if review_verdict != DISTILLATION_ELIGIBLE_VERDICT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: on-disk codex-review verdict "
+                f"{review_verdict!r} disagrees with loop-state.last_verdict "
+                f"{last_verdict!r}; the boundary cannot be distilled "
+                f"while the two sources contradict"
+            ),
+        )
+
+    # 4. Validate excerpt limit and read bounded excerpts.
+    ex_limit = (
+        excerpt_byte_limit
+        if excerpt_byte_limit is not None
+        else DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT
+    )
+    _validate_excerpt_byte_limit(ex_limit)
+    claude_excerpt = _read_bounded_source_excerpt(
+        claude_summary_path, ex_limit,
+    )
+    review_excerpt = _read_bounded_source_excerpt(
+        codex_review_path, ex_limit,
+    )
+
+    # 5. Idempotency: refuse if a distillation-marked summary entry
+    #    for this exact (phase, sub_phase, cycle_count) is already on
+    #    disk. Append-mostly memory permits a future supersede pattern,
+    #    but the initial slice favors the stricter refusal so a re-run
+    #    does not silently produce duplicate entries.
+    existing = _find_existing_distillation_summary(
+        repo_root,
+        phase=data["phase"],
+        sub_phase=data.get("sub_phase"),
+        cycle_count=data["cycle_count"],
+    )
+    if existing is not None:
+        rel = existing.relative_to(repo_root).as_posix()
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"distillation refused: an existing distillation-marked "
+                f"summary entry already exists for this phase boundary "
+                f"(phase={data['phase']!r} sub_phase="
+                f"{data.get('sub_phase')!r} cycle_count="
+                f"{data['cycle_count']}). Source entry: {rel}. "
+                f"Re-distillation would produce a duplicate; clear or "
+                f"supersede the existing entry first."
+            ),
+        )
+
+    # 6. Compose body payloads. Each entry references the same
+    #    `source_artifacts` list and the same bounded excerpts so a
+    #    later retrieval can trace where the distilled knowledge came
+    #    from. The body marker field is what
+    #    `_find_existing_distillation_summary` keys off of.
+    distilled_at = _utc_iso_now()
+    common = {
+        DISTILLATION_BODY_MARKER_FIELD: DISTILLATION_SIGNAL_VERSION,
+        "phase": data["phase"],
+        "sub_phase": data.get("sub_phase"),
+        "task": data["task"],
+        "cycle_count": data["cycle_count"],
+        "last_verdict": data.get("last_verdict"),
+        "last_verdict_phase": data.get("last_verdict_phase"),
+        "approval_mode": data.get("approval_mode"),
+        "source_artifacts": list(DISTILLATION_SOURCE_ARTIFACTS),
+        "excerpt_byte_limit_applied": ex_limit,
+        "claude_summary_excerpt": claude_excerpt,
+        "codex_review_excerpt": review_excerpt,
+        "distilled_at": distilled_at,
+    }
+    summary_body = json.dumps({
+        **common,
+        "knowledge_type": "summary",
+        "headline": (
+            f"phase {data['phase']!r} sub_phase {data.get('sub_phase')!r} "
+            f"approved at cycle_count={data['cycle_count']}"
+        ),
+    }, indent=2)
+    decision_body = json.dumps({
+        **common,
+        "knowledge_type": "decision",
+        "decision": (
+            f"phase {data['phase']!r} sub_phase {data.get('sub_phase')!r} "
+            f"approved at cycle_count={data['cycle_count']} with verdict "
+            f"{data['last_verdict']!r}"
+        ),
+    }, indent=2)
+
+    # 7. Write the entries. Each call to `write_memory_entry` is
+    #    individually fail-closed; the Phase 6B collision guard
+    #    refuses if the deterministic filename target is already
+    #    taken (so a hand-written conflicting entry surfaces rather
+    #    than being overwritten). The summary entry is written first
+    #    so the idempotency marker exists before any decision/failure
+    #    write happens.
+    #
+    #    Multi-entry atomicity: the slice must be all-or-nothing. If
+    #    a later write fails (a collision the preflight idempotency
+    #    probe could not predict, an `OSError`, any other `Exception`
+    #    from `write_memory_entry`), the entries already written in
+    #    THIS call are rolled back from disk before the exception
+    #    propagates. Otherwise a partial distillation - in particular
+    #    a written `summary` entry carrying the
+    #    `DISTILLATION_BODY_MARKER_FIELD` marker - would land on disk
+    #    and the next clean re-run would refuse via the idempotency
+    #    probe, even though the original call failed.
+    written: list = []
+    try:
+        summary_path = write_memory_entry(
+            repo_root,
+            category=MEMORY_CATEGORY_SUMMARY,
+            phase=data["phase"],
+            sub_phase=data.get("sub_phase"),
+            cycle_count=data["cycle_count"],
+            source_artifact_path=".agent-loop/loop-state.json",
+            body=summary_body,
+        )
+        written.append(summary_path)
+        decision_path = write_memory_entry(
+            repo_root,
+            category=MEMORY_CATEGORY_DECISION,
+            phase=data["phase"],
+            sub_phase=data.get("sub_phase"),
+            cycle_count=data["cycle_count"],
+            source_artifact_path=".agent-loop/loop-state.json",
+            body=decision_body,
+        )
+        written.append(decision_path)
+        if data["cycle_count"] > 1:
+            # Conditional failure entry: the phase required at least
+            # one NEEDS_FIXES round before reaching APPROVED. The exact
+            # number of fix cycles is `cycle_count - 1` (the final
+            # approval cycle is itself a cycle but not a fix cycle).
+            # Codifying this as a durable `failure` entry preserves the
+            # "had to retry" lesson across phase boundaries without
+            # parsing internal markdown structure.
+            failure_body = json.dumps({
+                **common,
+                "knowledge_type": "failure",
+                "failure": (
+                    f"phase {data['phase']!r} sub_phase "
+                    f"{data.get('sub_phase')!r} required "
+                    f"{data['cycle_count'] - 1} fix cycle(s) before "
+                    f"reaching verdict {data['last_verdict']!r}"
+                ),
+            }, indent=2)
+            failure_path = write_memory_entry(
+                repo_root,
+                category=MEMORY_CATEGORY_FAILURE,
+                phase=data["phase"],
+                sub_phase=data.get("sub_phase"),
+                cycle_count=data["cycle_count"],
+                source_artifact_path=".agent-loop/loop-state.json",
+                body=failure_body,
+            )
+            written.append(failure_path)
+    except BaseException:
+        # Rollback any partial output so a failed distillation does
+        # not leave entries on disk. Best-effort: a `Path.unlink`
+        # failure is suppressed so the original cause still
+        # propagates as the visible exception. A successful unlink
+        # restores the pre-call state of `.agent-loop/memory/<cat>/`.
+        for p in written:
+            try:
+                p.unlink()
+            except OSError:
+                pass
+        raise
+
+    if log_path is not None:
+        _log_note(
+            log_path,
+            (
+                f"phase-boundary distillation: signal_version="
+                f"{DISTILLATION_SIGNAL_VERSION!r} phase="
+                f"{data['phase']!r} sub_phase={data.get('sub_phase')!r} "
+                f"cycle_count={data['cycle_count']} "
+                f"excerpt_byte_limit={ex_limit} entries_written="
+                f"{len(written)}"
+            ),
+        )
+
+    return written
+
+
+# Phase 6J - Optional Context File Loading Initial Slice.
+#
+# Builds on the shipped 6B / 6C / 6D / 6E / 6F / 6G / 6H / 6I
+# primitives. The new `load_optional_context(...)` surface accepts an
+# EXPLICITLY DECLARED list of in-repo file paths and emits a bounded,
+# advisory-only context payload sourced from those files. No glob
+# expansion, no arbitrary repo traversal, no out-of-repo paths, no
+# implicit canonical-artifact ingestion. Each loaded file's metadata
+# carries an explicit `advisory_only = True` marker plus the source
+# path so the consumer can reason about provenance without treating
+# the loaded text as canonical.
+#
+# Refusal modes (all `halted_input_missing` unless noted):
+#   - `declared_paths` is not a list, or is empty
+#   - `len(declared_paths)` exceeds `max_files`
+#   - a path is not a string, or is empty
+#   - a path contains a glob character (`*`, `?`, `[`, `]`)
+#   - a path is absolute, contains a `..` segment, or otherwise
+#     resolves outside `repo_root`
+#   - a path appears more than once in `declared_paths` (explicit
+#     declaration means no silent dedup)
+#   - a path does not exist, is not a regular file, or is unreadable
+#     (`OSError` on `Path.read_bytes`)
+#   - `max_files` is bool / non-int / non-positive / above the cap
+#   - `max_bytes_per_file` is bool / non-int / non-positive / above
+#     the cap
+#
+# Out of scope for this initial slice (deferred per the 6J prompt):
+#   - repeated-failure synthesis (a Phase 6I-adjacent concern; the
+#     phase-boundary distillation slice is the only place that writes
+#     a `failure`-category memory entry today)
+#   - arbitrary repo-file ingestion (only EXPLICITLY DECLARED paths)
+#   - glob expansion (operator must enumerate the paths)
+#   - semantic retrieval / embedding index / broader RAG layer
+#   - LangChain / LangGraph / CrewAI-style framework integration
+#   - widening Phase 5 autonomy or bypassing human gates
+#   - automatic invocation from the orchestrator's verdict-handling
+#     or continuation paths (the slice is operator-callable; future
+#     wiring is a later-slice concern)
+
+OPTIONAL_CONTEXT_SIGNAL_VERSION = "phase-6j-v1"
+OPTIONAL_CONTEXT_DEFAULT_MAX_FILES = 8
+OPTIONAL_CONTEXT_MAX_MAX_FILES = 32
+OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE = 4096
+OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE = 65536
+OPTIONAL_CONTEXT_GLOB_CHARS = frozenset("*?[]")
+OPTIONAL_CONTEXT_OUTPUT_REL = ".agent-loop/optional-context.json"
+OPTIONAL_CONTEXT_CANONICAL_PRECEDENCE_NOTE = (
+    "Files loaded by Phase 6J optional-context are advisory only. "
+    "Canonical task and loop-state artifacts (TASK.md, "
+    ".agent-loop/current-task.md, .agent-loop/current-phase.md, "
+    ".agent-loop/loop-state.json) and any active Phase 6D/6F/6G "
+    "checkpoint remain the source of truth. The `files` list MUST "
+    "NOT override canonical state or any Phase 5 approval-mode / "
+    "strict-gate decision."
+)
+
+
+def _validate_optional_context_max_files(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_files`. Mirrors the
+    other Phase 6 limit validators: bool rejected, non-int rejected,
+    non-positive rejected, above the safety cap rejected.
+    """
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files must be a positive int, "
+                f"not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files must be positive; got "
+                f"{value!r}"
+            ),
+        )
+    if value > OPTIONAL_CONTEXT_MAX_MAX_FILES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_files {value!r} exceeds "
+                f"OPTIONAL_CONTEXT_MAX_MAX_FILES="
+                f"{OPTIONAL_CONTEXT_MAX_MAX_FILES}; the safety cap "
+                f"prevents a prompt from silently expanding into an "
+                f"unbounded repo dump"
+            ),
+        )
+
+
+def _validate_optional_context_bytes_per_file(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_bytes_per_file`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file must be a "
+                f"positive int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file must be an int; "
+                f"got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value <= 0:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file must be "
+                f"positive; got {value!r}"
+            ),
+        )
+    if value > OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context max_bytes_per_file {value!r} "
+                f"exceeds OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE="
+                f"{OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE}; the safety "
+                f"cap prevents a prompt from silently expanding into "
+                f"an unbounded repo dump"
+            ),
+        )
+
+
+def _resolve_in_repo_path(repo_root: Path, declared: str) -> Path:
+    """Validate a single declared path and return its resolved absolute
+    location. Refuses fail-closed when the path is malformed, contains
+    a glob character, is absolute, or resolves outside `repo_root`.
+    The resolution uses `Path.resolve(strict=False)` so missing-file
+    cases are surfaced by the existence check (not by the resolution
+    itself), but `..` segments and symlink-escapes still resolve away
+    from the repo root and trip the in-repo check.
+    """
+    if not isinstance(declared, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared path must be a string; "
+                f"got {type(declared).__name__}={declared!r}"
+            ),
+        )
+    if not declared:
+        raise HaltError(
+            "halted_input_missing",
+            "optional-context declared path must be non-empty",
+        )
+    for ch in declared:
+        if ch in OPTIONAL_CONTEXT_GLOB_CHARS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"contains glob character {ch!r}; glob expansion "
+                    f"is intentionally disabled - enumerate the paths "
+                    f"explicitly"
+                ),
+            )
+    candidate = Path(declared)
+    if candidate.is_absolute():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared path {declared!r} is "
+                f"absolute; only repo-relative paths are accepted"
+            ),
+        )
+    repo_root_abs = repo_root.resolve()
+    resolved = (repo_root_abs / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root_abs)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared path {declared!r} resolves "
+                f"outside the repo root ({resolved}); out-of-repo "
+                f"targets are intentionally disabled"
+            ),
+        )
+    return resolved
+
+
+def _resolve_optional_context_output_path(repo_root: Path, value):
+    """Refuse fail-closed when the operator-supplied `--output` path
+    would write outside the repo root. The slice's write boundary is
+    `repo_root`; both absolute paths and `..`-escaping relative paths
+    refuse via `HaltError("halted_input_missing", ...)`. Returns the
+    resolved absolute path on success; the caller writes to it.
+    """
+    repo_root_abs = repo_root.resolve()
+    if value is None:
+        return repo_root_abs / OPTIONAL_CONTEXT_OUTPUT_REL
+    candidate = Path(value)
+    if candidate.is_absolute():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context --output {value!r} is absolute; only "
+                f"repo-relative output paths inside the repo root are "
+                f"accepted"
+            ),
+        )
+    resolved = (repo_root_abs / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root_abs)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context --output {value!r} resolves outside "
+                f"the repo root ({resolved}); out-of-repo output paths "
+                f"are intentionally disabled"
+            ),
+        )
+    return resolved
+
+
+def load_optional_context(
+    repo_root: Path,
+    *,
+    declared_paths,
+    max_files: Optional[int] = None,
+    max_bytes_per_file: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> dict:
+    """Build a structured advisory-only context dict from an EXPLICITLY
+    DECLARED set of in-repo file paths.
+
+    Returns a dict keyed by:
+      - `context_signal_version`: schema version tag the consumer
+        validates against
+      - `loaded_at`: UTC ISO timestamp of construction
+      - `max_files_applied`, `max_bytes_per_file_applied`: the limits
+        that were actually used (caller's value or defaults)
+      - `declared_paths`: the input list, preserved in declaration
+        order
+      - `files`: list of dicts, one per declared path, in declaration
+        order, each carrying `source_path`, `byte_size_on_disk`,
+        `excerpt`, `excerpt_byte_size`, `truncated`, and
+        `advisory_only = True`
+      - `canonical_precedence_note`: literal named constant the
+        consumer can compare by equality
+
+    Raises `HaltError` on every refusal mode. The caller (the CLI
+    handler) routes refusals through `_halt`.
+    """
+    # 1. declared_paths shape.
+    if not isinstance(declared_paths, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared_paths must be a list; got "
+                f"{type(declared_paths).__name__}"
+            ),
+        )
+    if not declared_paths:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "optional-context declared_paths is empty; at least "
+                "one in-repo path must be declared explicitly"
+            ),
+        )
+
+    # 2. Limits.
+    mf = (
+        max_files
+        if max_files is not None
+        else OPTIONAL_CONTEXT_DEFAULT_MAX_FILES
+    )
+    _validate_optional_context_max_files(mf)
+    if len(declared_paths) > mf:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"optional-context declared_paths has "
+                f"{len(declared_paths)} entries; exceeds "
+                f"max_files={mf}"
+            ),
+        )
+    mb = (
+        max_bytes_per_file
+        if max_bytes_per_file is not None
+        else OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE
+    )
+    _validate_optional_context_bytes_per_file(mb)
+
+    # 3. Duplicate check before per-path validation so a duplicate
+    #    surfaces with a clearer message than the second-pass file
+    #    refusal would produce.
+    seen: set = set()
+    for declared in declared_paths:
+        if isinstance(declared, str) and declared in seen:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"appears more than once; explicit declaration "
+                    f"means no silent dedup"
+                ),
+            )
+        if isinstance(declared, str):
+            seen.add(declared)
+
+    # 4. Per-path validation + bounded read. Refuse on the first
+    #    failure rather than collecting partial results - the slice is
+    #    all-or-nothing so a missing or malformed declared path is a
+    #    structural input error the operator must repair before the
+    #    payload can be built.
+    files: list = []
+    for declared in declared_paths:
+        resolved = _resolve_in_repo_path(repo_root, declared)
+        if not resolved.exists():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"does not exist on disk ({resolved})"
+                ),
+            )
+        if not resolved.is_file():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} is "
+                    f"not a regular file ({resolved})"
+                ),
+            )
+        try:
+            raw = resolved.read_bytes()
+        except OSError as exc:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"optional-context declared path {declared!r} "
+                    f"exists but is unreadable "
+                    f"({type(exc).__name__}: {exc})"
+                ),
+            )
+        total = len(raw)
+        excerpt_bytes = raw[:mb]
+        excerpt_text = excerpt_bytes.decode("utf-8", errors="replace")
+        files.append({
+            "source_path": declared,
+            "byte_size_on_disk": total,
+            "excerpt": excerpt_text,
+            "excerpt_byte_size": len(excerpt_bytes),
+            "truncated": total > mb,
+            "advisory_only": True,
+        })
+
+    payload = {
+        "context_signal_version": OPTIONAL_CONTEXT_SIGNAL_VERSION,
+        "loaded_at": _utc_iso_now(),
+        "max_files_applied": mf,
+        "max_bytes_per_file_applied": mb,
+        "declared_paths": list(declared_paths),
+        "files": files,
+        "canonical_precedence_note": (
+            OPTIONAL_CONTEXT_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+
+    if log_path is not None:
+        any_truncated = any(f["truncated"] for f in files)
+        _log_note(
+            log_path,
+            (
+                f"optional-context loaded: signal_version="
+                f"{OPTIONAL_CONTEXT_SIGNAL_VERSION!r} "
+                f"declared_paths={len(declared_paths)} "
+                f"max_files={mf} max_bytes_per_file={mb} "
+                f"any_truncated={any_truncated}"
+            ),
+        )
+
+    return payload
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -6120,6 +7072,92 @@ def cmd_activate(_args: argparse.Namespace) -> int:
     return run_activation(repo_root)
 
 
+def cmd_load_optional_context(args: argparse.Namespace) -> int:
+    """Phase 6J operator runtime path: load an explicitly declared set
+    of in-repo files as bounded advisory context.
+
+    Calls `load_optional_context(...)` with the parsed argparse args,
+    routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands on disk for human inspection, and on success
+    writes the JSON payload to the resolved output path (default
+    `.agent-loop/optional-context.json`; override via `--output`). The
+    artifact is overwritten rather than appended because it is an
+    audit/inspection artifact regenerable from the declared paths.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    kwargs: dict = {"declared_paths": list(args.declared_path or [])}
+    if args.max_files is not None:
+        kwargs["max_files"] = args.max_files
+    if args.max_bytes_per_file is not None:
+        kwargs["max_bytes_per_file"] = args.max_bytes_per_file
+    try:
+        output_path = _resolve_optional_context_output_path(
+            repo_root, args.output,
+        )
+        payload = load_optional_context(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    try:
+        rel = output_path.relative_to(repo_root).as_posix()
+    except ValueError:
+        rel = str(output_path)
+    print(
+        f"[orchestrator] optional context written to {rel}; "
+        f"declared_paths={len(payload['declared_paths'])} "
+        f"files_loaded={len(payload['files'])}"
+    )
+    return 0
+
+
+def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
+    """Phase 6I operator runtime path: distill durable memory entries
+    at an approved phase boundary.
+
+    Calls `distill_phase_boundary_memory(...)` with the parsed argparse
+    args, routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection, and on
+    success prints the list of new memory-entry paths plus a pointer
+    at the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    kwargs: dict = {}
+    if args.excerpt_byte_limit is not None:
+        kwargs["excerpt_byte_limit"] = args.excerpt_byte_limit
+    try:
+        written = distill_phase_boundary_memory(
+            repo_root, log_path=log_path, **kwargs,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rels = [p.relative_to(repo_root).as_posix() for p in written]
+    print(
+        f"[orchestrator] phase-boundary distillation wrote "
+        f"{len(rels)} memory entr{'y' if len(rels) == 1 else 'ies'}: "
+        f"{rels}"
+    )
+    return 0
+
+
 def cmd_build_continuation_context(args: argparse.Namespace) -> int:
     """Phase 6H operator runtime path: build a structured continuation
     prompt/context dict from canonical artifacts + the active
@@ -6868,6 +7906,92 @@ def build_parser() -> argparse.ArgumentParser:
             "work is re-done and the next gate (if any) still fires."
         ),
     )
+    load_ctx = sub.add_parser(
+        "load-optional-context",
+        help=(
+            "Phase 6J declared optional-context file loading: read an "
+            "explicit, bounded set of in-repo files as advisory context "
+            "and persist the JSON payload to "
+            "`.agent-loop/optional-context.json` (override with "
+            "`--output`). Refuses fail-closed for empty / missing / "
+            "out-of-repo / duplicate / glob-bearing / absolute / "
+            "unreadable / non-file paths and for out-of-bound limits."
+        ),
+    )
+    load_ctx.add_argument(
+        "--declared-path",
+        action="append",
+        required=True,
+        help=(
+            "Repo-relative path to include as advisory context. Repeat "
+            "the flag to declare multiple paths (the slice intentionally "
+            "does NOT accept globs or directory traversal). The order of "
+            "the flags is preserved in the output payload."
+        ),
+    )
+    load_ctx.add_argument(
+        "--max-files",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of declared paths the slice will load. "
+            f"Defaults to OPTIONAL_CONTEXT_DEFAULT_MAX_FILES="
+            f"{OPTIONAL_CONTEXT_DEFAULT_MAX_FILES}; capped at "
+            f"OPTIONAL_CONTEXT_MAX_MAX_FILES="
+            f"{OPTIONAL_CONTEXT_MAX_MAX_FILES}."
+        ),
+    )
+    load_ctx.add_argument(
+        "--max-bytes-per-file",
+        type=int,
+        default=None,
+        help=(
+            "Per-file byte cap on the included excerpt. Defaults to "
+            f"OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE="
+            f"{OPTIONAL_CONTEXT_DEFAULT_BYTES_PER_FILE}; capped at "
+            f"OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE="
+            f"{OPTIONAL_CONTEXT_MAX_BYTES_PER_FILE}."
+        ),
+    )
+    load_ctx.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "Override the output JSON path. Defaults to "
+            f"`{OPTIONAL_CONTEXT_OUTPUT_REL}`. Only repo-relative "
+            "paths inside the repo root are accepted; absolute paths "
+            "and paths that resolve outside the repo root (for "
+            "example via `..`) refuse fail-closed."
+        ),
+    )
+    distill = sub.add_parser(
+        "distill-phase-boundary-memory",
+        help=(
+            "Phase 6I phase-boundary memory distillation: write append-"
+            "mostly durable `summary` + `decision` (+ `failure` when "
+            "cycle_count > 1) memory entries derived from canonical "
+            "loop-state plus bounded excerpts of "
+            "`.agent-loop/claude-summary.md` and "
+            "`.agent-loop/codex-review.md`. Refuses fail-closed unless "
+            "loop-state status is "
+            "`phase_complete_awaiting_human_approval` AND "
+            "`last_verdict == APPROVED_FOR_HUMAN_REVIEW` AND no "
+            "matching distillation entry already exists for this "
+            "(phase, sub_phase, cycle_count)."
+        ),
+    )
+    distill.add_argument(
+        "--excerpt-byte-limit",
+        type=int,
+        default=None,
+        help=(
+            "Per-source-file byte cap on the included excerpt. Defaults "
+            f"to DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT="
+            f"{DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT}; capped at "
+            f"DISTILLATION_MAX_EXCERPT_BYTE_LIMIT="
+            f"{DISTILLATION_MAX_EXCERPT_BYTE_LIMIT}."
+        ),
+    )
     build_ctx = sub.add_parser(
         "build-continuation-context",
         help=(
@@ -6994,6 +8118,8 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "auto-continue": cmd_auto_continue,
     "record-token-exhaustion": cmd_record_token_exhaustion,
     "build-continuation-context": cmd_build_continuation_context,
+    "distill-phase-boundary-memory": cmd_distill_phase_boundary_memory,
+    "load-optional-context": cmd_load_optional_context,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 

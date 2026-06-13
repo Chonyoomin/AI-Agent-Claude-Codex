@@ -348,6 +348,24 @@ Success:
 
 Add a durable memory system that preserves important project knowledge across compaction, phase boundaries, and long autonomous build runs, while still supporting optional context files and future tools.
 
+Phase 6 is delivered in sub-phases:
+
+- Phase 6A - Durable Memory Contract
+- Phase 6B - Structured Durable Memory Storage
+- Phase 6C - Selective Memory Retrieval Initial Slice
+- Phase 6D - Checkpoint Artifact Storage Initial Slice
+- Phase 6E - Checkpoint Resume Initial Slice
+- Phase 6F - Token Exhaustion Continuation Initial Slice
+- Phase 6G - Automatic Continuation Chaining Initial Slice
+- Phase 6H - Bounded Continuation Prompt Construction Initial Slice
+- Phase 6I - Phase-Boundary Memory Distillation Initial Slice
+- Phase 6J - Optional Context File Loading Initial Slice
+- Phase 6K - Optional Context Prompt Integration Initial Slice: connect the declared optional-context loader to prompt/context construction with explicit advisory precedence, bounded inclusion, and no arbitrary repo-file ingestion
+- Phase 6L - Repeated-Failure Memory Synthesis Initial Slice: distill recurring review/fix failure patterns into durable failure knowledge without widening autonomy or turning raw logs into memory
+- Phase 6M - Runtime Adapter Contract For Framework Evaluation: define the adapter boundary alternate runtimes must honor so framework-backed execution can be evaluated without weakening artifact truth, human gates, or ownership rules
+- Phase 6N - Experimental LangGraph Runtime Mirror: add an opt-in LangGraph-backed state-machine path that mirrors the local orchestrator's halt conditions, checkpoint behavior, and artifact writes while the current repo runtime remains the default
+- Phase 6O - LangChain Support Layer: add optional LangChain-based helpers only for prompt construction, selective retrieval, and tool abstraction layers, not as the top-level orchestrator
+
 Build:
 
 - a memory contract that defines what counts as durable memory versus canonical task / state artifacts
@@ -395,6 +413,10 @@ Design rules:
   checkpoint/resume experimentation; LangChain should remain a supporting
   library for retrieval/prompt/tool layers instead of controlling the
   loop directly
+- CrewAI or similar delegated-role multi-agent frameworks should be
+  evaluated only after durable memory, checkpoint/resume, adapter
+  boundaries, and controlled-concurrency rules are stable; they are not
+  a near-term dependency for completing Phase 6
 - human-reviewed policy changes and repeated operational failures should become durable memory entries
 - missing optional context files or missing memory notes must not break the loop
 - token exhaustion must be treated as an interrupted run state that requires either automatic continuation from a valid checkpoint or an explicit halt, never silent success
@@ -421,6 +443,12 @@ Success:
 
 Make the system comfortable to run inside VS Code.
 
+Phase 7 is delivered in sub-phases:
+
+- Phase 7A - VS Code Task Entrypoints: ship `.vscode/tasks.json` commands for the common operator flows without changing the CLI-first runtime contract
+- Phase 7B - Artifact Inspection And Review Workflow: make Codex review, fix prompt, evidence logs, and active task artifacts easy to open and inspect from VS Code
+- Phase 7C - Status, Reset, And Recovery UX: add clear operator-facing run/status/reset ergonomics in VS Code while preserving the repo-artifact source of truth
+
 Build:
 
 - `.vscode/tasks.json`
@@ -446,6 +474,12 @@ Success:
 
 Make the project understandable from a clean repository clone.
 
+Phase 8 is delivered in sub-phases:
+
+- Phase 8A - Architecture And Usage Docs: explain the end-to-end loop, runtime surfaces, and operator flows from a clean clone
+- Phase 8B - Safety, Approval, And Operational Playbooks: document halt reasons, approval modes, recovery paths, and troubleshooting guidance
+- Phase 8C - Final README Alignment And Clean-Clone Polish: ensure the README, examples, and getting-started path exactly match the shipped behavior and future roadmap boundaries
+
 Build:
 
 - `README.md`
@@ -468,6 +502,15 @@ Add a future selectable mode that can take a PRD, product brief, or raw
 idea and drive the system from planning through implementation and
 fix/review loops to a substantially complete product without stepwise
 human intervention.
+
+Phase 9 is delivered in sub-phases:
+
+- Phase 9A - Autonomous Mode Contract And Safety Policy: define what autonomy is allowed, what still requires explicit approval, and how the mode remains auditable from repo artifacts
+- Phase 9B - PRD Intake And Decomposition: accept structured PRDs or looser ideas and decompose them into bounded internal phases, tasks, risks, and acceptance criteria
+- Phase 9C - Orchestrator-Driven Prompt Handoff: remove manual prompt transfer by letting the orchestrator drive Codex and Claude handoff within the existing ownership boundary
+- Phase 9D - Autonomous Internal Review/Fix Loop: allow automatic review/fix continuation across bounded internal cycles while preserving hard-stop conditions and artifact truth
+- Phase 9E - Long-Run Continuation And Completion Heuristics: extend checkpoint/resume, token-reset continuation, and "done enough" detection for long product-building runs
+- Phase 9F - Final Human Acceptance And Polish Gate: require an explicit final human review, polish, and acceptance step before the run is treated as complete
 
 This is a separate mode, not a replacement for the human-governed
 approval modes from Phase 5. The user should still be able to select
@@ -530,107 +573,19 @@ Success:
 
 Track future non-MVP features.
 
-Possible additions:
+Phase 10 is organized as future sub-phase candidates:
 
-- structured durable memory on top of the Phase 6 memory/checkpoint
-  system, with machine-owned decision, failure, preference, and summary
-  artifacts that remain distinct from canonical task/loop-state files
-- stronger checkpoint/resume behavior for interrupted Claude and Codex
-  runs, including token-exhaustion recovery, bounded continuation
-  chaining, and selective restore from the active prompt/fix-prompt plus
-  the latest objective evidence
-- explicit autonomy policy for autonomous or semi-autonomous project
-  creation, including rules for installs, migrations, browser use,
-  secrets, destructive commands, escalation triggers, and when the loop
-  must stop instead of guessing
-- MCP server integration so the agent can use live tools and external
-  system connectors while planning, implementing, and reviewing
-- narrowly scoped MCP tools for things like filesystem/project
-  inspection, schema inspection, related repo search, internal API
-  discovery, design-system lookup, issue/task retrieval, deployment
-  metadata, or other project-specific operations
-- controlled browser/app inspection and testing tools for local
-  applications so the loop can verify UI flows and runtime behavior as
-  part of autonomous project work
-- project-intake and decomposition support that can turn a PRD, brief, or
-  rough idea into acceptance criteria, risks, dependencies, and bounded
-  internal implementation phases
-- automated artifact synthesis from evidence, such as Codex review
-  drafting, fix-prompt drafting, phase proposal drafting, and compact
-  risk/change summaries that remain auditable against the underlying
-  artifacts
-- verification-focused skills for autonomous project work, such as test
-  generation, bug triage, regression review, and interruption-recovery
-  workflows
-- durable RAG-backed project knowledge retrieval layered on top of the
-  Phase 6 memory/checkpoint system so the agent can pull only the most
-  relevant architecture docs, past decisions, standards, PRD sections,
-  and prior failure/fix patterns into a given run
-- repo-local or external knowledge indexing pipelines for PRDs, design
-  docs, architecture notes, internal standards, and historical build
-  artifacts
-- MCP server integration so the agent can use live tools and external
-  system connectors while planning, implementing, and reviewing
-- narrowly scoped MCP tools for things like schema inspection, related
-  repo search, internal API discovery, design-system lookup, issue/task
-  retrieval, deployment metadata, or other project-specific operations
-- explicit policy boundaries for MCP/RAG usage so retrieval and tool use
-  enhance the loop without bypassing evidence review, phase safety, or
-  prompt/review ownership
-- combined RAG + MCP operation for future PRD-to-product runs, where
-  retrieved knowledge informs planning and live tools provide real
-  system context during implementation
-- later evaluation of multi-agent frameworks such as CrewAI, only after
-  durable memory, checkpoint/resume, and adapter boundaries are stable,
-  for cases where explicit delegated roles like planner, implementer,
-  reviewer, or artifact reconciler add value beyond the current
-  Codex/Claude ownership model
-- central-controller / external-workspace mode where this agent system
-  targets another folder or repository instead of only operating inside
-  its own repo
-- target-folder / target-repository selection so a user can point the
-  agent at a different project workspace and have it work there
-- project bootstrap / attach flow for external targets, including
-  initializing the required `.agent-loop` artifacts in the target
-  workspace when appropriate
-- UI-driven project selection and run control for external targets
-- `n8n` or similar workflow-engine integration as an outer trigger layer
-  that can accept a PRD/task, choose a target folder, and launch the
-  controller against that workspace
-- separation between controller-owned files and target-project-owned
-  files so the reusable agent framework can orchestrate many projects
-  without embedding itself into every repo
-- PRD / task intake for external-target runs so a user can hand the
-  controller an idea or spec and direct it at a chosen workspace
-- controlled concurrent-agent operation where Codex may continue Codex-owned work
-  (for example task-state, prompt, review, or governance-artifact updates)
-  while Claude Code is in flight on Claude-owned implementation work
-- explicit concurrency rules for that mode, including file-ownership
-  boundaries, safe-overlap policies, checkpoint/recovery behavior,
-  stale-artifact detection, and refusal behavior when Codex-side updates
-  would invalidate Claude's active prompt or implementation context
-- multi-model support
-- MCP tool execution
-- API tool execution
-- custom policy packs
-- project templates
-- configurable agent roles
-- Obsidian or similar human-facing knowledge-vault integration as an
-  optional mirror/export surface for durable memory, decision logs, and
-  architecture notes, while keeping machine-owned memory in stricter repo
-  artifacts rather than making a notes app the primary source of truth
-- desktop UI
-- progress dashboard
-- run history
-- review summaries
-- diff visualization
-- approval buttons
-- more granular autonomy controls
-- cost and token usage tracking
-- failure analytics
-- rollback support
-- branch-per-task workflow
-- GitHub PR review integration
+- Phase 10A - External Workspace Controller Contract: let this agent system target other folders or repositories safely, with explicit controller-vs-target ownership boundaries instead of assuming the agent only operates inside its own repo
+- Phase 10B - External Workspace Bootstrap And Target Selection: add attach/bootstrap flows, target-folder or target-repository selection, and initialization of required `.agent-loop` artifacts for a chosen external workspace when appropriate
+- Phase 10C - Minimal External UI And Run Control: add a thin operator UI that can pick a target project, show active phase/task/status, open prompt/review/evidence artifacts, and run or resume the loop without replacing the CLI-first contract
+- Phase 10D - Artifact Dashboard And Run History: expand the external UI with review summaries, diff visualization, progress history, approval actions, cost/token tracking, and failure analytics while keeping repo artifacts as the source of truth
+- Phase 10E - Controlled Concurrent Agent Operation: allow Codex to continue Codex-owned work while Claude is implementing, with explicit overlap rules, stale-artifact detection, recovery behavior, and refusal paths when concurrency would invalidate the active task context
+- Phase 10F - MCP Integration Contract And Safe Tool Boundary: add MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules that let live tools assist planning, implementation, and review without bypassing evidence review or ownership boundaries
+- Phase 10G - RAG And Knowledge Indexing Layer: add durable retrieval over repo-local or external knowledge sources so the loop can pull only the most relevant docs, decisions, standards, PRD sections, and failure/fix patterns into a run
+- Phase 10H - GitHub / Branch / Review Integrations: add branch-per-task workflow support, GitHub PR review integration, rollback-aware workflow helpers, and related release-facing workflow surfaces
+- Phase 10I - Model, Policy Pack, And Template Extensibility: add multi-model support, API tool execution, custom policy packs, project templates, configurable agent-role presets, and more granular autonomy controls
+- Phase 10J - Human-Facing Memory Vault Surfaces: add optional Obsidian-style memory exports and related human-readable decision or architecture views without replacing repo artifacts as the primary source of truth
+- Phase 10K - Multi-Agent Framework Evaluation Beyond The Native Loop: evaluate CrewAI or similar delegated-role frameworks only after the adapter boundary, durable memory, external-workspace control, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
 
 Success:
 
