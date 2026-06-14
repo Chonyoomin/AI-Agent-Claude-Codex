@@ -1,30 +1,30 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix the remaining Phase 6O canonical-state validation bug so the LangChain tool registry refuses malformed `loop-state.json` through the shipped validator path instead of returning partial canonical state to a support-layer consumer.
+Fix the remaining Phase 7A gap so the VS Code task layer actually covers the evidence-collection operator flow the active task promises, rather than only validating already-existing artifacts.
 
 ## Context
-Codex re-reviewed the active Phase 6O implementation. The overall shape is in scope and the focused plus full suites pass, but one Claude-owned bug remains in the tool-registry read path.
+Codex reviewed the current Phase 7A implementation from repo state. The task layer is structurally narrow and the focused test suite passes, but one contract-level gap remains.
 
-`LangChainToolRegistry.invoke("read_loop_state")` currently returns `load_loop_state(state_path)` directly. That only parses JSON; it does not enforce `validate_loop_state(...)` or `check_contract_version(...)`. As a result, malformed-but-parseable canonical state can leak through the support layer instead of refusing fail-closed with the shipped halt vocabulary. A direct repro with a `.agent-loop/loop-state.json` containing only `{"phase": "P"}` returns `{"phase": "P"}` instead of halting.
+`TASK.md` says this slice should add VS Code tasks for common operator flows "such as running the loop, collecting evidence, opening review artifacts, and other CLI-backed entrypoints." The current `.vscode/tasks.json` includes `validate-artifacts`, which only validates artifacts that already exist, but it does not expose the actual evidence-collection surface. In this repo, the evidence producer is still `scripts/run_checks.sh`, not `python scripts/agent_loop.py validate-artifacts`.
+
+The tests and README currently lock in that narrower interpretation by treating the expected common task set as only the eight `agent_loop.py` subcommands. That means the suite passes while the implementation still misses one of the phase's named operator flows.
 
 ## Required fixes
-- Route the `read_loop_state` tool-registry path through the shipped structural validator chain, not just the JSON loader.
-- Preserve the existing halt vocabulary by reusing the shipped `HaltError` behavior rather than inventing a new status.
-- Add focused tests covering at least:
-- `LangChainToolRegistry.invoke("read_loop_state")` on malformed-but-parseable loop-state
-- the refusal status / reason shape for that case
-- any updated success-path expectation if the implementation changes the returned object
-- Update `.agent-loop/claude-summary.md` so it accurately describes the final post-fix behavior and the exact validation commands run.
+- Add a VS Code task that exposes the actual evidence-collection flow using the shipped evidence command surface, while preserving the CLI-first contract and avoiding IDE-owned reimplementation.
+- Keep the task layer thin and auditable: no shell-chaining, no inline scripting, no new orchestrator behavior, and no widening into unrelated VS Code integration scope.
+- Update the focused Phase 7A tests so the expected common operator flow set includes the real evidence-collection task and verifies the corrected command mapping.
+- Update `README.md` so the Phase 7A description and task list match the corrected implementation.
+- Update `.agent-loop/claude-summary.md` so it accurately describes the final task set and exact validation commands run.
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay within Phase 6O scope.
+- Stay within Phase 7A scope.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not broaden into real LangChain package wiring, CrewAI work, or runtime-control-plane changes.
-- Preserve the existing read-only and default-off behavior of the 6O support layer.
-- Prefer the smallest safe fix.
+- Do not broaden into Phase 7B/7C work such as dashboards, inspection UX, reset UX, keybindings, launch configs, or VS Code-owned orchestration behavior.
+- Preserve the existing Phase 5 and Phase 6 runtime semantics unchanged.
+- Prefer the smallest safe fix that makes the shipped task set and tests match the active Phase 7A contract.
 
 ## Required output
 After implementing the fix, update `.agent-loop/claude-summary.md` with the required summary format and include the exact validation commands you ran.
