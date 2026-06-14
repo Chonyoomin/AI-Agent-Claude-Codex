@@ -1,3 +1,3 @@
 # Current Phase
 
-Phase 6 - Durable Memory and Optional Context Layer (sub-phase: Phase 6O - LangChain Support Layer)
+Phase 7 - VS Code Polish (sub-phase: Phase 7A - VS Code Task Entrypoints)
