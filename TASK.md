@@ -16,46 +16,45 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 6 - Durable Memory and Optional Context Layer
+Phase 7 - VS Code Polish
 
 ## Active Sub-Phase
 
-Phase 6O - LangChain Support Layer
+Phase 7A - VS Code Task Entrypoints
 
 ## Phase Status
 
-Phase 6N (Experimental LangGraph Runtime Mirror) is closed after Codex review approval and human progression. Phase 6O is now active as the next Phase 6 slice. This sub-phase should add optional LangChain-based support only for prompt construction, selective retrieval, and tool abstraction layers while preserving the shipped local orchestrator and the 6N runtime-adapter seam as the authoritative top-level runtime surfaces.
+Phase 6O (LangChain Support Layer) is closed after Codex review approval and human progression. Phase 7A is now active as the first Phase 7 slice. This sub-phase should add VS Code task entrypoints for common operator flows while preserving the CLI-first contract, keeping repo artifacts as the source of truth, and avoiding any IDE-owned replacement for the shipped orchestrator behavior.
 
 ## Active Task
 
-Implement the LangChain support layer for Phase 6. This slice should add optional LangChain-based helpers only for prompt construction, selective retrieval, and tool abstraction layers while keeping the existing local orchestrator and the shipped Phase 6N LangGraph runtime mirror as the only runtime-control surfaces, preserving canonical repo-artifact precedence and avoiding any promotion of LangChain into a top-level orchestrator role.
+Implement the first VS Code task entrypoints for the agent loop. This slice should add `.vscode/tasks.json` commands for the common operator flows such as running the loop, collecting evidence, opening review artifacts, and other CLI-backed entrypoints, while preserving the current CLI-first runtime contract and avoiding any change to the orchestrator's ownership, halt, approval, or artifact-truth rules.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 6 / 6O as active
-- `.agent-loop/phase-plan.md` records Phase 6N as closed history and contains a `## Phase 6O - LangChain Support Layer` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- `scripts/agent_loop.py` exposes a narrow optional LangChain support layer only for prompt construction, selective retrieval, and tool abstraction surfaces, without promoting LangChain to the top-level orchestrator
-- the LangChain support layer preserves canonical repo-artifact truth for task / phase / loop-state / evidence / review / memory / checkpoint artifacts and remains subordinate to the shipped local runtime plus the shipped 6N runtime-adapter seam
-- the LangChain support layer preserves the shipped halt/refusal vocabulary, approval-mode behavior, checkpoint and continuation rules, durable-memory boundaries, and audit expectations where it touches existing Phase 6 surfaces
-- the shipped local orchestrator remains the default runtime and LangChain remains optional support-only behavior when no explicit support-layer selection is provided
-- focused tests cover support-layer selection or activation boundaries, canonical-precedence preservation, refusal behavior, and proof that LangChain does not become a top-level runtime controller
-- `README.md` reflects that Phase 6O is active and that LangChain support-layer work is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 7 / 7A as active
+- `.agent-loop/phase-plan.md` records Phase 6O as closed history and contains a `## Phase 7A - VS Code Task Entrypoints` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- `.vscode/tasks.json` exists and exposes common operator entrypoints as thin wrappers around the shipped CLI surfaces, without introducing IDE-only runtime behavior
+- the VS Code tasks preserve canonical repo-artifact truth by invoking the existing orchestrator and evidence-collection commands rather than reimplementing their behavior
+- the VS Code tasks preserve the shipped halt/refusal vocabulary, approval-mode behavior, checkpoint/continuation behavior, and artifact ownership boundaries by delegating to existing CLI commands
+- the system remains CLI-first: every VS Code task maps to an existing documented command, and the repo remains fully usable without VS Code
+- focused tests or validation coverage prove the task definitions point at the intended commands and do not widen scope beyond operator entrypoints
+- `README.md` reflects that Phase 7A is active and that VS Code task entrypoints are now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 6x sub-phase after Phase 6O until:
+Do not start the next 7x sub-phase after Phase 7A until:
 
-- this Phase 6O slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 7A slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
 - any broader autonomy model than the current Phase 5D runtime behavior
-- promoting LangChain into the top-level orchestrator, runtime owner, or phase-transition controller
-- CrewAI evaluation or broader multi-framework orchestration beyond the narrow LangChain support layer needed for this slice
-- changing current planner, activator, evidence-collection, review routing, checkpoint, continuation, memory, or prompt-integration semantics for the default local runtime beyond the narrow optional LangChain support path
-- editor integration (Phase 7)
+- replacing the CLI-first workflow with a VS Code-only workflow
+- artifact dashboards, inspection workflow polish, or reset/recovery UX beyond the narrow task-entrypoint layer for this slice
+- changing current planner, activator, evidence-collection, review routing, checkpoint, continuation, memory, prompt-integration, runtime-adapter, or LangChain support-layer semantics for the default local runtime
 - MCP support (future)
 - recursive invocation of the locally installed `claude` CLI
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
