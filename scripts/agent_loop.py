@@ -5140,6 +5140,244 @@ def synthesize_repeated_failures(
     return written_path
 
 
+# ---------------------------------------------------------------------------
+# Phase 6N: Experimental LangGraph Runtime Mirror
+#
+# First implementation slice exercising the Phase 6M runtime-adapter
+# contract in code. Adds a narrow, opt-in alternate-runtime selection
+# seam. The default local runtime (the shipped in-process flow) is
+# unchanged when no alternate-runtime selection is made.
+#
+# Selection vocabulary:
+#   - `local` (default): the shipped in-process flow. The
+#     `LocalRuntimeAdapter` is a sentinel - the local path is the
+#     shipped flow, not an adapter-driven path. Selecting `local`
+#     explicitly is supported for symmetry.
+#   - `langgraph`: the experimental `LangGraphExperimentalRuntimeAdapter`.
+#     A pure-stdlib structural emulation of LangGraph's StateGraph
+#     pattern (named nodes walked in a fixed order, no caching across
+#     hops). The mirror exists to exercise the 6M contract surface; a
+#     later slice can swap the implementation to wire the real
+#     langgraph package behind the same adapter interface.
+#
+# Selection precedence:
+#   1. an explicit `--runtime=<id>` CLI flag on the new
+#      `runtime-adapter-eval` subcommand
+#   2. the `AGENT_LOOP_RUNTIME` env var
+#   3. the default `local`
+#
+# 6M contract compliance:
+#   - the `langgraph` mirror re-loads loop-state from disk on every
+#     node entry (no caching across hops, framework-state subordination)
+#   - the mirror never writes to canonical artifacts; only the audit
+#     trail is appended via `_log_note(...)`
+#   - the audit trail prefix is `runtime adapter: <runtime_id> ...`
+#     per the 6M `### Contract` -> `#### Audit expectations`
+#     subsubsection
+#   - every refusal raises `HaltError` with the shipped halt-status
+#     vocabulary (`halted_input_missing`,
+#     `halted_contract_version_mismatch`); the CLI handler routes
+#     refusals through `_halt(...)` exactly like every other 6x cmd
+#
+# Out of scope for this initial slice (deferred):
+#   - wiring the real `langgraph` package; this slice is a structural
+#     mirror only
+#   - LangChain support-layer work, CrewAI evaluation, or any other
+#     framework-backed runtime path
+#   - driving an actual Claude/Codex cycle through the mirror (the
+#     mirror is evaluation-oriented; it inspects canonical state and
+#     emits audit notes, but does not invoke the adapters)
+#   - promoting any alternate runtime to default (the 6M contract
+#     requires a separate human decision plus a phase-plan revision)
+
+RUNTIME_ADAPTER_DEFAULT = "local"
+RUNTIME_ADAPTER_LANGGRAPH = "langgraph"
+RUNTIME_ADAPTERS_SUPPORTED = frozenset({
+    RUNTIME_ADAPTER_DEFAULT, RUNTIME_ADAPTER_LANGGRAPH,
+})
+RUNTIME_ADAPTER_ENV_VAR = "AGENT_LOOP_RUNTIME"
+RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX = "runtime adapter:"
+LANGGRAPH_RUNTIME_ID = "langgraph_experimental"
+LANGGRAPH_NODE_NAMES = (
+    "load_state",
+    "validate_state",
+    "consult_memory",
+    "consult_checkpoint",
+    "evaluate",
+)
+
+
+def resolve_runtime_adapter_id(
+    cli_value: Optional[str], env_value: Optional[str],
+) -> str:
+    """Resolve the runtime adapter id from CLI + env. CLI takes
+    precedence; an empty string is treated as 'unset'. Returns the
+    default `local` when both inputs are unset. Refuses fail-closed
+    when the resolved id is not in `RUNTIME_ADAPTERS_SUPPORTED`.
+    """
+    chosen = cli_value if cli_value not in (None, "") else env_value
+    if chosen in (None, ""):
+        return RUNTIME_ADAPTER_DEFAULT
+    if chosen not in RUNTIME_ADAPTERS_SUPPORTED:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime adapter id {chosen!r} is not in the supported "
+                f"set {sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}; the "
+                f"Phase 6M contract pins the supported set"
+            ),
+        )
+    return chosen
+
+
+class LocalRuntimeAdapter:
+    """The default runtime sentinel. The shipped in-process flow IS
+    the local runtime; this adapter exists so the runtime-selection
+    seam has a `local` callable, not so the local path is rerouted
+    through an adapter. Selecting `local` and calling `evaluate(...)`
+    returns a sentinel dict; no canonical state is read or mutated.
+    """
+
+    runtime_id = RUNTIME_ADAPTER_DEFAULT
+
+    def evaluate(
+        self, repo_root: Path, *, log_path: Optional[Path] = None,
+    ) -> dict:
+        if log_path is not None:
+            _log_note(
+                log_path,
+                (
+                    f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} "
+                    f"{self.runtime_id} local_default_sentinel"
+                ),
+            )
+        return {
+            "runtime_id": self.runtime_id,
+            "outcome": "local_default_unchanged",
+        }
+
+
+class LangGraphExperimentalRuntimeAdapter:
+    """Phase 6N experimental LangGraph runtime mirror.
+
+    A pure-stdlib structural emulation of LangGraph's StateGraph
+    pattern: a fixed ordered list of named nodes
+    (`LANGGRAPH_NODE_NAMES`), each walked exactly once per
+    `evaluate(...)` call. Every node re-loads loop-state from disk
+    (no caching across hops, per the 6M framework-state subordination
+    rule) and inspects canonical state through the shipped validators
+    (`load_loop_state`, `validate_loop_state`, `check_contract_version`,
+    `list_memory_entries`, `_load_active_checkpoint`).
+
+    The mirror never writes to canonical artifacts. The only on-disk
+    side-effect is an append to `.agent-loop/orchestrator.log` via
+    `_log_note(...)` when `log_path` is supplied; the prefix is
+    `runtime adapter: langgraph_experimental ...` per the 6M
+    `#### Audit expectations` requirement.
+
+    Refusal vocabulary: every `HaltError` raised by the shipped
+    validators is re-raised verbatim. The mirror does NOT introduce
+    a new halt status, mirroring the 6M
+    `#### Strict-gate, halt, and refusal vocabulary preservation`
+    requirement.
+    """
+
+    runtime_id = LANGGRAPH_RUNTIME_ID
+    node_names = LANGGRAPH_NODE_NAMES
+
+    def evaluate(
+        self, repo_root: Path, *, log_path: Optional[Path] = None,
+    ) -> dict:
+        if log_path is not None:
+            _log_note(
+                log_path,
+                (
+                    f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} "
+                    f"{self.runtime_id} evaluate_begin"
+                ),
+            )
+        node_results: dict = {}
+        for node in self.node_names:
+            if log_path is not None:
+                _log_note(
+                    log_path,
+                    (
+                        f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} "
+                        f"{self.runtime_id} node={node}"
+                    ),
+                )
+            node_results[node] = self._run_node(node, repo_root)
+        if log_path is not None:
+            _log_note(
+                log_path,
+                (
+                    f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} "
+                    f"{self.runtime_id} evaluate_complete "
+                    f"nodes={len(self.node_names)}"
+                ),
+            )
+        return {
+            "runtime_id": self.runtime_id,
+            "node_names": list(self.node_names),
+            "node_results": node_results,
+        }
+
+    def _run_node(self, node: str, repo_root: Path) -> dict:
+        # Per the 6M framework-state subordination rule: re-load
+        # canonical state on every node entry. No caching across hops.
+        state_path = repo_root / ".agent-loop" / "loop-state.json"
+        data = load_loop_state(state_path)
+        validate_loop_state(data)
+        check_contract_version(data)
+        if node == "load_state":
+            return {
+                "phase": data["phase"],
+                "sub_phase": data.get("sub_phase"),
+                "cycle_count": data["cycle_count"],
+            }
+        if node == "validate_state":
+            return {"valid": True, "status": data.get("status")}
+        if node == "consult_memory":
+            entries = list_memory_entries(repo_root)
+            return {"memory_entries_seen": len(entries)}
+        if node == "consult_checkpoint":
+            cp = _load_active_checkpoint(repo_root)
+            return {"active_checkpoint_present": cp is not None}
+        if node == "evaluate":
+            return {
+                "approval_mode": data.get("approval_mode"),
+                "awaiting_human_for": data.get("awaiting_human_for"),
+                "last_verdict": data.get("last_verdict"),
+            }
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"langgraph_experimental mirror: unknown node "
+                f"{node!r}; LANGGRAPH_NODE_NAMES is the authoritative "
+                f"set"
+            ),
+        )
+
+
+def make_runtime_adapter(runtime_id: str):
+    """Factory for the Phase 6N runtime adapter seam. Returns a
+    LocalRuntimeAdapter for `local`, a LangGraphExperimentalRuntimeAdapter
+    for `langgraph`. Refuses fail-closed on any other id.
+    """
+    if runtime_id == RUNTIME_ADAPTER_DEFAULT:
+        return LocalRuntimeAdapter()
+    if runtime_id == RUNTIME_ADAPTER_LANGGRAPH:
+        return LangGraphExperimentalRuntimeAdapter()
+    raise HaltError(
+        "halted_input_missing",
+        (
+            f"make_runtime_adapter: unsupported runtime id "
+            f"{runtime_id!r}; the Phase 6M contract pins the "
+            f"supported set {sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}"
+        ),
+    )
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -8172,6 +8410,48 @@ def cmd_synthesize_repeated_failures(
     return 0
 
 
+def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
+    """Phase 6N operator runtime path: evaluate the selected runtime
+    adapter against the shipped Phase 6M contract.
+
+    Resolves the runtime id from `--runtime` then the
+    `AGENT_LOOP_RUNTIME` env var then the default `local`,
+    instantiates the matching adapter, and calls `evaluate(...)`.
+    Routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands on disk for human inspection. On success prints
+    a summary of the evaluation and a pointer to the audit log.
+
+    Default behavior preservation: when `--runtime` is omitted and
+    `AGENT_LOOP_RUNTIME` is unset, the default `local` runtime is
+    selected and the `LocalRuntimeAdapter` sentinel returns without
+    reading or mutating any canonical artifact. The shipped local
+    orchestrator's in-process flow is unaffected by this command.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    env_value = os.environ.get(RUNTIME_ADAPTER_ENV_VAR)
+    try:
+        runtime_id = resolve_runtime_adapter_id(args.runtime, env_value)
+        adapter = make_runtime_adapter(runtime_id)
+        result = adapter.evaluate(repo_root, log_path=log_path)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    print(
+        f"[orchestrator] runtime adapter evaluation: "
+        f"runtime_id={result['runtime_id']!r} "
+        f"outcome={result.get('outcome', 'evaluated')!r}; "
+        f"see {log_path.relative_to(repo_root).as_posix()} for the "
+        f"`{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX}` audit notes."
+    )
+    return 0
+
+
 def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
     """Phase 6I operator runtime path: distill durable memory entries
     at an approved phase boundary.
@@ -9052,6 +9332,36 @@ def build_parser() -> argparse.ArgumentParser:
             "root (for example via `..`) refuse fail-closed."
         ),
     )
+    runtime_eval = sub.add_parser(
+        "runtime-adapter-eval",
+        help=(
+            "Phase 6N experimental runtime adapter evaluation: select "
+            "an alternate runtime adapter (default 'local'; opt-in "
+            "'langgraph' selects the experimental LangGraph mirror) "
+            "and run its `evaluate(...)` surface against the shipped "
+            "Phase 6M contract. The default 'local' runtime is a "
+            "sentinel that reads and mutates nothing; the experimental "
+            "'langgraph' mirror walks a fixed ordered node list, "
+            "re-loading canonical state on every node and emitting "
+            f"`{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX}` audit notes to "
+            ".agent-loop/orchestrator.log. The shipped local "
+            "orchestrator's in-process flow is unaffected by this "
+            "command."
+        ),
+    )
+    runtime_eval.add_argument(
+        "--runtime",
+        default=None,
+        help=(
+            "Runtime adapter id (one of "
+            f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}). When omitted, "
+            f"falls back to the {RUNTIME_ADAPTER_ENV_VAR!r} env var, "
+            f"then to {RUNTIME_ADAPTER_DEFAULT!r}. The Phase 6N slice "
+            "preserves the default local runtime; promotion to "
+            "default requires a separate human decision per the "
+            "Phase 6M contract."
+        ),
+    )
     synth = sub.add_parser(
         "synthesize-repeated-failures",
         help=(
@@ -9256,6 +9566,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "load-optional-context": cmd_load_optional_context,
     "integrate-optional-context": cmd_integrate_optional_context_prompt,
     "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
+    "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
