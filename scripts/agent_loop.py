@@ -5950,7 +5950,15 @@ class LangChainToolRegistry:
             state_path = (
                 self._repo_root / ".agent-loop" / "loop-state.json"
             )
-            return load_loop_state(state_path)
+            # Phase 6O fix: route through the full shipped validator
+            # chain, not just the JSON loader. Otherwise malformed-but-
+            # parseable canonical state (e.g. `{"phase": "P"}`) would
+            # leak through the support layer instead of refusing
+            # fail-closed via the shipped halt vocabulary.
+            data = load_loop_state(state_path)
+            validate_loop_state(data)
+            check_contract_version(data)
+            return data
         if tool_name == "list_memory_entries":
             paths = list_memory_entries(self._repo_root)
             return [

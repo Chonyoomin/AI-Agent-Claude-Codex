@@ -450,6 +450,67 @@ class LangChainToolRegistryTests(_LangChainSupportTestCase):
         self.assertEqual(cm.exception.status, "halted_input_missing")
         self.assertIn("not in the registry", cm.exception.reason)
 
+    def test_invoke_read_loop_state_refuses_on_malformed_state(
+        self,
+    ) -> None:
+        # Phase 6O fix: a parseable-but-structurally-invalid
+        # loop-state must refuse fail-closed through the shipped
+        # validator chain, not leak through as a partial dict.
+        self.state_path.write_text(
+            json.dumps({"phase": "P"}) + "\n", encoding="utf-8",
+        )
+        reg = agent_loop.LangChainToolRegistry(
+            self.repo_root, enabled=True,
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            reg.invoke("read_loop_state")
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("missing required keys", cm.exception.reason)
+
+    def test_invoke_read_loop_state_refuses_on_unsupported_contract(
+        self,
+    ) -> None:
+        self._write_state(contract_version="phase-bogus-vX")
+        reg = agent_loop.LangChainToolRegistry(
+            self.repo_root, enabled=True,
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            reg.invoke("read_loop_state")
+        self.assertEqual(
+            cm.exception.status, "halted_contract_version_mismatch",
+        )
+
+    def test_invoke_read_loop_state_refuses_on_missing_file(
+        self,
+    ) -> None:
+        # No loop-state.json written.
+        reg = agent_loop.LangChainToolRegistry(
+            self.repo_root, enabled=True,
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            reg.invoke("read_loop_state")
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+
+    def test_invoke_read_loop_state_returns_full_validated_state(
+        self,
+    ) -> None:
+        # Post-fix: success path returns the full validated dict (the
+        # same shape the rest of the orchestrator works with), not a
+        # narrower projection.
+        data = self._write_state(cycle_count=3)
+        reg = agent_loop.LangChainToolRegistry(
+            self.repo_root, enabled=True,
+        )
+        loaded = reg.invoke("read_loop_state")
+        self.assertEqual(loaded["phase"], data["phase"])
+        self.assertEqual(loaded["cycle_count"], 3)
+        self.assertEqual(
+            loaded["contract_version"], data["contract_version"],
+        )
+        self.assertEqual(
+            loaded["approval_mode"], data["approval_mode"],
+        )
+
     def test_tool_names_are_all_read_only(self) -> None:
         # Defense-in-depth: every name in the static set is read-only;
         # the registry never exposes a write-side tool in this slice.
