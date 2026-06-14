@@ -5378,6 +5378,241 @@ def make_runtime_adapter(runtime_id: str):
     )
 
 
+# Phase 6N fix-slice: persisted default-off runtime-selection config.
+#
+# The Phase 6M `#### Default-runtime and evaluation constraints`
+# subsubsection requires the alternate runtime to ship behind a
+# feature flag with a default of off. The persisted flag lives at
+# `.agent-loop/runtime-config.json` and is consulted AFTER the CLI
+# `--runtime` flag and the `AGENT_LOOP_RUNTIME` env var so an
+# operator can pin a selection across invocations without re-typing
+# the flag, while CLI and env still take precedence for one-off
+# overrides.
+#
+# Default off is enforced by the absence of the file: a fresh
+# checkout has no `runtime-config.json`, `read_runtime_config(...)`
+# returns None, and the resolver falls through to the default
+# `local`. Refusal vocabulary mirrors the rest of Phase 6N: every
+# malformed-config branch raises `HaltError("halted_input_missing",
+# ...)`.
+
+RUNTIME_CONFIG_REL = ".agent-loop/runtime-config.json"
+RUNTIME_CONFIG_SIGNAL_VERSION = "phase-6n-v1"
+RUNTIME_CONFIG_REQUIRED_KEYS = frozenset({
+    "runtime_config_signal_version",
+    "selected_runtime",
+})
+
+
+def read_runtime_config(repo_root: Path) -> Optional[str]:
+    """Read the persisted runtime-selection config from
+    `.agent-loop/runtime-config.json`. Returns the selected runtime
+    id when the file exists AND validates; returns None when the
+    file is absent (default off). Refuses fail-closed via
+    `HaltError("halted_input_missing", ...)` on every malformed
+    shape (non-file, unreadable, non-JSON, top-level not dict,
+    missing required key, unrecognized `runtime_config_signal_version`,
+    `selected_runtime` outside `RUNTIME_ADAPTERS_SUPPORTED`).
+    """
+    path = repo_root / RUNTIME_CONFIG_REL
+    if not path.exists():
+        return None
+    if not path.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact {RUNTIME_CONFIG_REL!r} is "
+                f"not a regular file"
+            ),
+        )
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact {RUNTIME_CONFIG_REL!r} "
+                f"exists but is unreadable "
+                f"({type(exc).__name__}: {exc})"
+            ),
+        )
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact {RUNTIME_CONFIG_REL!r} is "
+                f"not valid JSON ({exc})"
+            ),
+        )
+    if not isinstance(payload, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact top-level must be a JSON "
+                f"object; got {type(payload).__name__}"
+            ),
+        )
+    missing = RUNTIME_CONFIG_REQUIRED_KEYS - set(payload.keys())
+    if missing:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact missing required key(s): "
+                f"{sorted(missing)!r}"
+            ),
+        )
+    sv = payload["runtime_config_signal_version"]
+    if sv != RUNTIME_CONFIG_SIGNAL_VERSION:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact runtime_config_signal_version "
+                f"{sv!r} is not {RUNTIME_CONFIG_SIGNAL_VERSION!r}"
+            ),
+        )
+    selected = payload["selected_runtime"]
+    if selected not in RUNTIME_ADAPTERS_SUPPORTED:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config artifact selected_runtime {selected!r} "
+                f"is not in the supported set "
+                f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}"
+            ),
+        )
+    return selected
+
+
+def write_runtime_config(repo_root: Path, selected_runtime: str) -> Path:
+    """Persist a `runtime-config.json` selecting `selected_runtime`.
+    Validates the id against `RUNTIME_ADAPTERS_SUPPORTED` before
+    writing; refuses fail-closed on any unsupported id. The file is
+    overwritten on each call (operators MAY pin a different selection
+    later) and the `.agent-loop/` directory is created if missing.
+    Returns the resolved write path on success.
+    """
+    if selected_runtime not in RUNTIME_ADAPTERS_SUPPORTED:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config write refused: selected_runtime "
+                f"{selected_runtime!r} not in the supported set "
+                f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}"
+            ),
+        )
+    path = repo_root / RUNTIME_CONFIG_REL
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "runtime_config_signal_version": RUNTIME_CONFIG_SIGNAL_VERSION,
+        "selected_runtime": selected_runtime,
+    }
+    path.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    return path
+
+
+def clear_runtime_config(repo_root: Path) -> bool:
+    """Remove the persisted `runtime-config.json`. Returns True when
+    a file was removed, False when the file was already absent.
+    Restoring default off requires no file on disk; this helper is
+    the operator-facing way to do it without hand-editing.
+    """
+    path = repo_root / RUNTIME_CONFIG_REL
+    if not path.exists():
+        return False
+    path.unlink()
+    return True
+
+
+def _resolve_runtime_with_persisted(
+    repo_root: Path,
+    cli_value: Optional[str],
+    env_value: Optional[str],
+) -> str:
+    """CLI > env > persisted config > default `local`. Each layer
+    treats None and empty string as 'unset'. Every layer's id is
+    routed through `resolve_runtime_adapter_id` so the supported-set
+    refusal vocabulary is consistent regardless of which layer
+    provided the value.
+    """
+    if cli_value not in (None, ""):
+        return resolve_runtime_adapter_id(cli_value, None)
+    if env_value not in (None, ""):
+        return resolve_runtime_adapter_id(None, env_value)
+    persisted = read_runtime_config(repo_root)
+    if persisted is not None:
+        return resolve_runtime_adapter_id(persisted, None)
+    return RUNTIME_ADAPTER_DEFAULT
+
+
+def _apply_runtime_selection(
+    repo_root: Path,
+    args: argparse.Namespace,
+    *,
+    hop_kind: str,
+) -> Optional[int]:
+    """Resolve the active runtime and run the alternate-runtime
+    pre-pass if needed. Returns None when the caller should proceed
+    with the default in-process flow; returns an int exit code when
+    a halt has been recorded.
+
+    Behavior:
+      - `local` (or unset): returns None immediately. The shipped
+        in-process flow runs unchanged; no audit notes are emitted,
+        no canonical artifact is read. The pre-6N entry-point
+        behavior is byte-equivalent.
+      - `langgraph`: runs the LangGraph mirror's `evaluate(...)`
+        pre-pass through `make_runtime_adapter(...)`, which inspects
+        canonical state (re-loads loop-state per node), refuses
+        fail-closed on contradiction (every shipped-validator
+        `HaltError` is re-raised verbatim), and emits a
+        `runtime adapter: langgraph_experimental dispatch hop_kind=...`
+        note + the mirror's own evaluate-begin / per-node /
+        evaluate-complete notes. On success the caller proceeds with
+        the default in-process flow so the actual cycle work still
+        runs through the shipped writers (canonical-artifact
+        precedence preserved).
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    cli_value = getattr(args, "runtime", None)
+    env_value = os.environ.get(RUNTIME_ADAPTER_ENV_VAR)
+    try:
+        runtime_id = _resolve_runtime_with_persisted(
+            repo_root, cli_value, env_value,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    if runtime_id == RUNTIME_ADAPTER_DEFAULT:
+        return None
+    try:
+        adapter = make_runtime_adapter(runtime_id)
+        _log_note(
+            log_path,
+            (
+                f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} "
+                f"{adapter.runtime_id} dispatch "
+                f"hop_kind={hop_kind!r}"
+            ),
+        )
+        adapter.evaluate(repo_root, log_path=log_path)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    return None
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -8250,8 +8485,11 @@ def cmd_validate_artifacts(_args: argparse.Namespace) -> int:
     return 2 if any_fail else 0
 
 
-def cmd_run(_args: argparse.Namespace) -> int:
+def cmd_run(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
+    rc = _apply_runtime_selection(repo_root, args, hop_kind="run")
+    if rc is not None:
+        return rc
     return run_normal_cycle(repo_root)
 
 
@@ -8452,6 +8690,51 @@ def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_set_runtime_config(args: argparse.Namespace) -> int:
+    """Phase 6N operator runtime path: persist the runtime selection
+    to `.agent-loop/runtime-config.json` or clear it. Refusals route
+    through `_halt` so the structural failure vocabulary lands on
+    disk for human inspection.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        if args.clear:
+            removed = clear_runtime_config(repo_root)
+            note = (
+                f"runtime-config cleared (default off, was "
+                f"{'present' if removed else 'absent'})"
+            )
+            _log_note(
+                log_path,
+                f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} {note}",
+            )
+            print(f"[orchestrator] {note}")
+            return 0
+        path = write_runtime_config(repo_root, args.runtime)
+        rel = path.relative_to(repo_root).as_posix()
+        _log_note(
+            log_path,
+            (
+                f"{RUNTIME_ADAPTER_AUDIT_NOTE_PREFIX} runtime-config "
+                f"persisted: selected_runtime={args.runtime!r} -> {rel}"
+            ),
+        )
+        print(
+            f"[orchestrator] runtime-config persisted to {rel}; "
+            f"selected_runtime={args.runtime!r}"
+        )
+        return 0
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+
+
 def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
     """Phase 6I operator runtime path: distill durable memory entries
     at an approved phase boundary.
@@ -8544,7 +8827,7 @@ def cmd_build_continuation_context(args: argparse.Namespace) -> int:
     return 0
 
 
-def cmd_auto_continue(_args: argparse.Namespace) -> int:
+def cmd_auto_continue(args: argparse.Namespace) -> int:
     """Phase 6G operator runtime path: bounded automatic continuation
     chaining over the shipped Phase 6F single-hop resume.
 
@@ -8554,8 +8837,19 @@ def cmd_auto_continue(_args: argparse.Namespace) -> int:
     `HALTED_TOKEN_EXHAUSTION`. The standard single-hop `resume` is
     unchanged; this is an additional operator entry-point for the
     chained case.
+
+    Phase 6N: the alternate-runtime selection is consulted via
+    `_apply_runtime_selection`; the `local` default routes
+    byte-equivalent to the pre-6N path, the `langgraph` mirror runs
+    its evaluation pre-pass through the shipped writers before the
+    chain begins.
     """
     repo_root = find_repo_root()
+    rc = _apply_runtime_selection(
+        repo_root, args, hop_kind="auto-continue",
+    )
+    if rc is not None:
+        return rc
     return run_auto_continue(repo_root)
 
 
@@ -8797,8 +9091,15 @@ def run_strict_resume(repo_root: Path) -> int:
     )
 
 
-def cmd_resume(_args: argparse.Namespace) -> int:
+def cmd_resume(args: argparse.Namespace) -> int:
     repo_root = find_repo_root()
+    # Phase 6N: alternate-runtime selection runs FIRST so the audit
+    # trail records the dispatch before any token-exhaustion / strict
+    # routing happens. Local (or unset) returns None and the rest of
+    # the resume dispatch is byte-equivalent to the pre-6N path.
+    rc = _apply_runtime_selection(repo_root, args, hop_kind="resume")
+    if rc is not None:
+        return rc
     # Phase 6F routing: inspect the persisted halt status BEFORE
     # entering the strict-resume path. A `HALTED_TOKEN_EXHAUSTION`
     # status dispatches to the token-exhaustion continuation; every
@@ -9194,11 +9495,23 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-artifacts",
         help="validate per-cycle artifact structure against the contract",
     )
-    sub.add_parser(
+    run_parser = sub.add_parser(
         "run",
         help=(
             "execute one normal cycle and, on NEEDS_FIXES, walk through "
             "automated fix cycles until a terminal state"
+        ),
+    )
+    run_parser.add_argument(
+        "--runtime",
+        default=None,
+        help=(
+            "Phase 6N opt-in runtime selection. One of "
+            f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}. CLI takes "
+            f"precedence over the {RUNTIME_ADAPTER_ENV_VAR!r} env "
+            f"var and the persisted "
+            f"`{RUNTIME_CONFIG_REL}`. When absent / 'local', the "
+            "shipped local orchestrator runs unchanged."
         ),
     )
     sub.add_parser(
@@ -9224,7 +9537,7 @@ def build_parser() -> argparse.ArgumentParser:
             "approval source to .agent-loop/planner.log. Refusal exits 2."
         ),
     )
-    sub.add_parser(
+    resume_parser = sub.add_parser(
         "resume",
         help=(
             "Phase 5C strict-mode resume: continue a cycle paused at a "
@@ -9234,6 +9547,18 @@ def build_parser() -> argparse.ArgumentParser:
             "on success clears awaiting_human_for and dispatches to the "
             "continuation matched by the persisted gate, so no earlier "
             "work is re-done and the next gate (if any) still fires."
+        ),
+    )
+    resume_parser.add_argument(
+        "--runtime",
+        default=None,
+        help=(
+            "Phase 6N opt-in runtime selection. One of "
+            f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}. CLI takes "
+            f"precedence over the {RUNTIME_ADAPTER_ENV_VAR!r} env "
+            f"var and the persisted "
+            f"`{RUNTIME_CONFIG_REL}`. When absent / 'local', the "
+            "shipped resume path runs unchanged."
         ),
     )
     load_ctx = sub.add_parser(
@@ -9483,7 +9808,7 @@ def build_parser() -> argparse.ArgumentParser:
             "relative to the repo root."
         ),
     )
-    sub.add_parser(
+    autoc_parser = sub.add_parser(
         "auto-continue",
         help=(
             "Phase 6G bounded automatic continuation chaining: while "
@@ -9497,6 +9822,47 @@ def build_parser() -> argparse.ArgumentParser:
             "reached. Refuses fail-closed (recovery-preserving, does "
             "not clobber a strict-gate halt) when called from a status "
             "other than the token-exhaustion halt."
+        ),
+    )
+    autoc_parser.add_argument(
+        "--runtime",
+        default=None,
+        help=(
+            "Phase 6N opt-in runtime selection. One of "
+            f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}. CLI takes "
+            f"precedence over the {RUNTIME_ADAPTER_ENV_VAR!r} env "
+            f"var and the persisted "
+            f"`{RUNTIME_CONFIG_REL}`. When absent / 'local', the "
+            "shipped auto-continue chain runs unchanged."
+        ),
+    )
+    rt_cfg = sub.add_parser(
+        "set-runtime-config",
+        help=(
+            "Phase 6N persisted runtime-selection config: write "
+            f"`{RUNTIME_CONFIG_REL}` (default off; absence = local). "
+            f"`--runtime` writes the file with the chosen id; "
+            "`--clear` removes it. The CLI / env var still take "
+            "precedence over this persisted selection. Operators MAY "
+            "pin a long-running selection without re-typing the CLI "
+            "flag each invocation."
+        ),
+    )
+    rt_cfg_group = rt_cfg.add_mutually_exclusive_group(required=True)
+    rt_cfg_group.add_argument(
+        "--runtime",
+        default=None,
+        help=(
+            "Persist a runtime selection. One of "
+            f"{sorted(RUNTIME_ADAPTERS_SUPPORTED)!r}."
+        ),
+    )
+    rt_cfg_group.add_argument(
+        "--clear",
+        action="store_true",
+        help=(
+            "Remove the persisted runtime-selection file (returns to "
+            "the default off / local)."
         ),
     )
     record_te = sub.add_parser(
@@ -9567,6 +9933,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "integrate-optional-context": cmd_integrate_optional_context_prompt,
     "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
+    "set-runtime-config": cmd_set_runtime_config,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 

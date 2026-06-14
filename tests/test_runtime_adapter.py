@@ -40,6 +40,7 @@ interface without changing the contract surface.
 
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import sys
@@ -679,6 +680,486 @@ class DefaultRuntimePreservationTests(_RuntimeAdapterTestCase):
             rc = agent_loop.main(["runtime-adapter-eval"])
         self.assertEqual(rc, 0)
         self.assertEqual(self.state_path.read_bytes(), before)
+
+
+# ----- read_runtime_config / write_runtime_config / clear_runtime_config -----
+
+
+class RuntimeConfigReadWriteTests(_RuntimeAdapterTestCase):
+
+    @property
+    def config_path(self) -> Path:
+        return self.repo_root / agent_loop.RUNTIME_CONFIG_REL
+
+    def test_read_returns_none_when_file_absent(self) -> None:
+        self.assertFalse(self.config_path.exists())
+        self.assertIsNone(agent_loop.read_runtime_config(self.repo_root))
+
+    def test_write_persists_selected_runtime(self) -> None:
+        path = agent_loop.write_runtime_config(
+            self.repo_root, "langgraph",
+        )
+        self.assertEqual(path, self.config_path)
+        self.assertTrue(self.config_path.is_file())
+        payload = json.loads(
+            self.config_path.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(
+            payload["runtime_config_signal_version"],
+            agent_loop.RUNTIME_CONFIG_SIGNAL_VERSION,
+        )
+        self.assertEqual(payload["selected_runtime"], "langgraph")
+
+    def test_read_returns_persisted_selection(self) -> None:
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        self.assertEqual(
+            agent_loop.read_runtime_config(self.repo_root),
+            "langgraph",
+        )
+
+    def test_write_refuses_unsupported_runtime(self) -> None:
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.write_runtime_config(self.repo_root, "crewai")
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertFalse(self.config_path.exists())
+
+    def test_clear_removes_persisted_config(self) -> None:
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        self.assertTrue(self.config_path.is_file())
+        removed = agent_loop.clear_runtime_config(self.repo_root)
+        self.assertTrue(removed)
+        self.assertFalse(self.config_path.exists())
+        self.assertIsNone(
+            agent_loop.read_runtime_config(self.repo_root),
+        )
+
+    def test_clear_when_absent_returns_false(self) -> None:
+        self.assertFalse(self.config_path.exists())
+        self.assertFalse(
+            agent_loop.clear_runtime_config(self.repo_root),
+        )
+
+    def test_read_refuses_non_json_file(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text("not json {", encoding="utf-8")
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_runtime_config(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("not valid JSON", cm.exception.reason)
+
+    def test_read_refuses_top_level_not_dict(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text("[]", encoding="utf-8")
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_runtime_config(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("JSON object", cm.exception.reason)
+
+    def test_read_refuses_missing_required_key(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps({"selected_runtime": "langgraph"}),
+            encoding="utf-8",
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_runtime_config(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("required key", cm.exception.reason)
+
+    def test_read_refuses_unrecognized_signal_version(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps({
+                "runtime_config_signal_version": "phase-6z-vX",
+                "selected_runtime": "langgraph",
+            }),
+            encoding="utf-8",
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_runtime_config(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("signal_version", cm.exception.reason)
+
+    def test_read_refuses_unsupported_selected_runtime(self) -> None:
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.write_text(
+            json.dumps({
+                "runtime_config_signal_version": (
+                    agent_loop.RUNTIME_CONFIG_SIGNAL_VERSION
+                ),
+                "selected_runtime": "crewai",
+            }),
+            encoding="utf-8",
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.read_runtime_config(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("supported set", cm.exception.reason)
+
+
+# ----- _resolve_runtime_with_persisted: precedence -----
+
+
+class ResolveRuntimeWithPersistedTests(_RuntimeAdapterTestCase):
+
+    def test_default_when_all_three_sources_unset(self) -> None:
+        self.assertEqual(
+            agent_loop._resolve_runtime_with_persisted(
+                self.repo_root, None, None,
+            ),
+            "local",
+        )
+
+    def test_persisted_config_used_when_cli_and_env_unset(self) -> None:
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        self.assertEqual(
+            agent_loop._resolve_runtime_with_persisted(
+                self.repo_root, None, None,
+            ),
+            "langgraph",
+        )
+
+    def test_env_overrides_persisted_config(self) -> None:
+        agent_loop.write_runtime_config(self.repo_root, "local")
+        self.assertEqual(
+            agent_loop._resolve_runtime_with_persisted(
+                self.repo_root, None, "langgraph",
+            ),
+            "langgraph",
+        )
+
+    def test_cli_overrides_env_and_persisted(self) -> None:
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        self.assertEqual(
+            agent_loop._resolve_runtime_with_persisted(
+                self.repo_root, "local", "langgraph",
+            ),
+            "local",
+        )
+
+    def test_persisted_refusal_propagates(self) -> None:
+        # A malformed persisted config refuses fail-closed even when
+        # CLI and env are unset (the persisted file is the active
+        # source, not the default).
+        config_path = self.repo_root / agent_loop.RUNTIME_CONFIG_REL
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("not json", encoding="utf-8")
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._resolve_runtime_with_persisted(
+                self.repo_root, None, None,
+            )
+
+
+# ----- _apply_runtime_selection: wired entry-point dispatch -----
+
+
+class ApplyRuntimeSelectionTests(_RuntimeAdapterTestCase):
+
+    def _make_args(self, runtime=None) -> argparse.Namespace:
+        return argparse.Namespace(runtime=runtime)
+
+    def test_returns_none_for_default_local(self) -> None:
+        # Local must return None without reading any canonical state
+        # or emitting an audit note; the default-runtime path is
+        # byte-equivalent to the pre-6N behavior.
+        before = (
+            self.log_path.read_bytes()
+            if self.log_path.exists() else b""
+        )
+        rc = agent_loop._apply_runtime_selection(
+            self.repo_root, self._make_args(), hop_kind="run",
+        )
+        self.assertIsNone(rc)
+        after = (
+            self.log_path.read_bytes()
+            if self.log_path.exists() else b""
+        )
+        self.assertEqual(before, after)
+
+    def test_runs_pre_pass_for_langgraph(self) -> None:
+        # Selecting langgraph runs the mirror's evaluate(...) pass,
+        # which emits the dispatch + evaluate-begin + per-node +
+        # evaluate-complete audit notes.
+        self._write_state()
+        rc = agent_loop._apply_runtime_selection(
+            self.repo_root,
+            self._make_args(runtime="langgraph"),
+            hop_kind="run",
+        )
+        self.assertIsNone(rc)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "langgraph_experimental dispatch hop_kind='run'",
+            log_text,
+        )
+        self.assertIn(
+            "langgraph_experimental evaluate_begin", log_text,
+        )
+        self.assertIn(
+            "langgraph_experimental evaluate_complete", log_text,
+        )
+
+    def test_persisted_config_drives_dispatch_when_no_cli_or_env(
+        self,
+    ) -> None:
+        self._write_state()
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        rc = agent_loop._apply_runtime_selection(
+            self.repo_root, self._make_args(), hop_kind="resume",
+        )
+        self.assertIsNone(rc)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "langgraph_experimental dispatch hop_kind='resume'",
+            log_text,
+        )
+
+    def test_unsupported_id_returns_halt_exit_code(self) -> None:
+        os.environ[agent_loop.RUNTIME_ADAPTER_ENV_VAR] = "crewai"
+        try:
+            rc = agent_loop._apply_runtime_selection(
+                self.repo_root,
+                self._make_args(),
+                hop_kind="auto-continue",
+            )
+        finally:
+            os.environ.pop(
+                agent_loop.RUNTIME_ADAPTER_ENV_VAR, None,
+            )
+        self.assertEqual(rc, 2)
+
+    def test_langgraph_with_missing_loop_state_returns_halt_exit(
+        self,
+    ) -> None:
+        # The mirror's first node calls load_loop_state which refuses
+        # via HaltError; _apply_runtime_selection routes it through
+        # _halt and returns rc=2.
+        self.assertFalse(self.state_path.exists())
+        rc = agent_loop._apply_runtime_selection(
+            self.repo_root,
+            self._make_args(runtime="langgraph"),
+            hop_kind="run",
+        )
+        self.assertEqual(rc, 2)
+
+
+# ----- cmd_run / cmd_resume / cmd_auto_continue wiring -----
+
+
+class WiredEntryPointTests(_RuntimeAdapterTestCase):
+
+    def _run_main(self, argv) -> int:
+        with mock.patch.object(
+            agent_loop, "find_repo_root",
+            return_value=self.repo_root,
+        ):
+            return agent_loop.main(argv)
+
+    def test_cmd_run_default_local_path_calls_run_normal_cycle(
+        self,
+    ) -> None:
+        # Default (no --runtime, no env, no persisted): cmd_run must
+        # dispatch directly to run_normal_cycle without invoking the
+        # langgraph adapter. Spy on both targets.
+        with mock.patch.object(
+            agent_loop, "run_normal_cycle", return_value=0,
+        ) as rnc, mock.patch.object(
+            agent_loop, "LangGraphExperimentalRuntimeAdapter",
+        ) as lg:
+            rc = self._run_main(["run"])
+        self.assertEqual(rc, 0)
+        rnc.assert_called_once_with(self.repo_root)
+        lg.assert_not_called()
+
+    def test_cmd_run_with_langgraph_runs_pre_pass_then_default(
+        self,
+    ) -> None:
+        # --runtime=langgraph runs the mirror evaluate pass FIRST
+        # (audit notes land in orchestrator.log) and THEN delegates
+        # to run_normal_cycle for the actual work. Canonical artifact
+        # precedence preserved.
+        self._write_state()
+        with mock.patch.object(
+            agent_loop, "run_normal_cycle", return_value=0,
+        ) as rnc:
+            rc = self._run_main(["run", "--runtime", "langgraph"])
+        self.assertEqual(rc, 0)
+        rnc.assert_called_once_with(self.repo_root)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "langgraph_experimental dispatch hop_kind='run'",
+            log_text,
+        )
+
+    def test_cmd_auto_continue_default_calls_run_auto_continue(
+        self,
+    ) -> None:
+        with mock.patch.object(
+            agent_loop, "run_auto_continue", return_value=0,
+        ) as rac, mock.patch.object(
+            agent_loop, "LangGraphExperimentalRuntimeAdapter",
+        ) as lg:
+            rc = self._run_main(["auto-continue"])
+        self.assertEqual(rc, 0)
+        rac.assert_called_once_with(self.repo_root)
+        lg.assert_not_called()
+
+    def test_cmd_auto_continue_with_langgraph_runs_pre_pass(
+        self,
+    ) -> None:
+        self._write_state()
+        with mock.patch.object(
+            agent_loop, "run_auto_continue", return_value=0,
+        ) as rac:
+            rc = self._run_main([
+                "auto-continue", "--runtime", "langgraph",
+            ])
+        self.assertEqual(rc, 0)
+        rac.assert_called_once_with(self.repo_root)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "langgraph_experimental dispatch hop_kind='auto-continue'",
+            log_text,
+        )
+
+    def test_cmd_resume_default_uses_existing_dispatch(self) -> None:
+        # Default (no --runtime): cmd_resume falls through to the
+        # pre-6N dispatch. Missing loop-state -> run_strict_resume,
+        # which raises its own halt; we just confirm the langgraph
+        # adapter is NOT instantiated on the default path.
+        with mock.patch.object(
+            agent_loop, "run_strict_resume", return_value=2,
+        ) as rsr, mock.patch.object(
+            agent_loop, "LangGraphExperimentalRuntimeAdapter",
+        ) as lg:
+            rc = self._run_main(["resume"])
+        self.assertEqual(rc, 2)
+        rsr.assert_called_once_with(self.repo_root)
+        lg.assert_not_called()
+
+    def test_cmd_resume_with_langgraph_runs_pre_pass_then_dispatch(
+        self,
+    ) -> None:
+        # --runtime=langgraph runs the mirror evaluate pass FIRST,
+        # then the existing resume dispatch. Confirm both audit
+        # notes land and run_strict_resume is invoked (no token-
+        # exhaustion halt is planted, so the default branch).
+        self._write_state()
+        with mock.patch.object(
+            agent_loop, "run_strict_resume", return_value=0,
+        ) as rsr:
+            rc = self._run_main(["resume", "--runtime", "langgraph"])
+        self.assertEqual(rc, 0)
+        rsr.assert_called_once_with(self.repo_root)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "langgraph_experimental dispatch hop_kind='resume'",
+            log_text,
+        )
+
+    def test_cmd_run_persisted_config_drives_langgraph_pre_pass(
+        self,
+    ) -> None:
+        # No --runtime, no env: the persisted config selects
+        # langgraph. The pre-pass runs, then run_normal_cycle.
+        self._write_state()
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        with mock.patch.object(
+            agent_loop, "run_normal_cycle", return_value=0,
+        ) as rnc:
+            rc = self._run_main(["run"])
+        self.assertEqual(rc, 0)
+        rnc.assert_called_once_with(self.repo_root)
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "langgraph_experimental dispatch hop_kind='run'",
+            log_text,
+        )
+
+    def test_cmd_run_cli_overrides_persisted_langgraph_back_to_local(
+        self,
+    ) -> None:
+        # Persisted config selects langgraph; --runtime=local
+        # overrides back to the default and the mirror does NOT run.
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        with mock.patch.object(
+            agent_loop, "run_normal_cycle", return_value=0,
+        ) as rnc, mock.patch.object(
+            agent_loop, "LangGraphExperimentalRuntimeAdapter",
+        ) as lg:
+            rc = self._run_main(["run", "--runtime", "local"])
+        self.assertEqual(rc, 0)
+        rnc.assert_called_once_with(self.repo_root)
+        lg.assert_not_called()
+
+
+# ----- cmd_set_runtime_config -----
+
+
+class CmdSetRuntimeConfigTests(_RuntimeAdapterTestCase):
+
+    @property
+    def config_path(self) -> Path:
+        return self.repo_root / agent_loop.RUNTIME_CONFIG_REL
+
+    def _run_main(self, argv) -> int:
+        with mock.patch.object(
+            agent_loop, "find_repo_root",
+            return_value=self.repo_root,
+        ):
+            return agent_loop.main(argv)
+
+    def test_cli_writes_persisted_config(self) -> None:
+        rc = self._run_main([
+            "set-runtime-config", "--runtime", "langgraph",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue(self.config_path.is_file())
+        payload = json.loads(
+            self.config_path.read_text(encoding="utf-8"),
+        )
+        self.assertEqual(payload["selected_runtime"], "langgraph")
+
+    def test_cli_clear_removes_persisted_config(self) -> None:
+        agent_loop.write_runtime_config(self.repo_root, "langgraph")
+        rc = self._run_main(["set-runtime-config", "--clear"])
+        self.assertEqual(rc, 0)
+        self.assertFalse(self.config_path.exists())
+
+    def test_cli_clear_when_absent_is_idempotent(self) -> None:
+        # Clearing an absent config is rc=0 (the post-condition is
+        # 'default off', which is already satisfied).
+        self.assertFalse(self.config_path.exists())
+        rc = self._run_main(["set-runtime-config", "--clear"])
+        self.assertEqual(rc, 0)
+
+    def test_cli_refuses_unsupported_runtime_via_halt(self) -> None:
+        rc = self._run_main([
+            "set-runtime-config", "--runtime", "crewai",
+        ])
+        self.assertEqual(rc, 2)
+        self.assertFalse(self.config_path.exists())
+
+    def test_cli_requires_runtime_or_clear(self) -> None:
+        # argparse rejects an invocation with neither flag.
+        with self.assertRaises(SystemExit) as cm:
+            self._run_main(["set-runtime-config"])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_cli_emits_persist_audit_note(self) -> None:
+        self._run_main([
+            "set-runtime-config", "--runtime", "langgraph",
+        ])
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn(
+            "runtime-config persisted: selected_runtime='langgraph'",
+            log_text,
+        )
+
+    def test_cli_emits_clear_audit_note(self) -> None:
+        self._run_main(["set-runtime-config", "--clear"])
+        log_text = self.log_path.read_text(encoding="utf-8")
+        self.assertIn("runtime-config cleared", log_text)
 
 
 if __name__ == "__main__":
