@@ -1,30 +1,30 @@
 # Claude Code Task
 
 ## Phase
-Phase 6M - Runtime Adapter Contract For Framework Evaluation
+Phase 6N - Experimental LangGraph Runtime Mirror
 
 ## Objective
-Define the Phase 6 runtime adapter contract for framework evaluation. This slice should specify, before any framework-backed runtime is implemented, the adapter boundary alternate runtimes must honor: canonical inputs, allowed writes, halt/refusal behavior, checkpoint and memory interaction rules, approval-mode preservation, artifact-precedence guarantees, and evaluation constraints that keep the shipped local orchestrator as the default source-of-truth runtime.
+Implement the first experimental LangGraph runtime mirror for Phase 6. This slice should add an opt-in framework-backed execution path that mirrors the shipped local orchestrator's state-machine behavior, halt/refusal vocabulary, checkpoint and continuation handling, durable-memory boundaries, audit signals, and approval-mode semantics while keeping the current local runtime as the default and preserving canonical repo-artifact precedence over any framework-managed state.
 
 ## Context
-Phase 6M is a contract-definition slice, not an implementation slice for LangGraph, LangChain, CrewAI, or any other framework runtime. The repo has already shipped the local Phase 6 memory, checkpoint, continuation, optional-context, and repeated-failure synthesis surfaces through 6L. This phase must define how any future alternate runtime would interoperate with those existing artifact-driven behaviors without superseding canonical repo state, widening autonomy, or bypassing the shipped human-gated workflow. Update the planning/docs artifacts needed for this contract so the next framework-evaluation phase can implement against a clear boundary.
+Phase 6N is the first implementation slice that exercises the shipped Phase 6M runtime-adapter contract in code. The repo already has the default local orchestrator and the durable-memory, checkpoint, continuation, optional-context, and repeated-failure surfaces through 6L, plus the 6M adapter contract that defines how an alternate runtime must behave. This phase should add a narrow experimental LangGraph-backed mirror path that is explicitly opt-in, subordinate to the existing artifact contract, and safe to compare against the local runtime. The default local path must remain unchanged when no alternate-runtime selection is made.
 
 ## Required work
-- Add a `## Phase 6M - Runtime Adapter Contract For Framework Evaluation` section to `.agent-loop/phase-plan.md` that concretely defines the contract alternate runtimes must satisfy.
-- Define the canonical source-of-truth artifacts that alternate runtimes must treat as authoritative over any framework-managed state, including task/phase artifacts, `loop-state.json`, evidence files, review artifacts, durable memory entries, and checkpoints.
-- Define allowed reads, allowed writes, and forbidden writes for a future alternate runtime, preserving Codex/Claude/human ownership boundaries and the existing local orchestrator default.
-- Define how an alternate runtime must preserve approval-mode behavior, strict-gate semantics, halt/refusal vocabulary, checkpoint/continuation handling, durable-memory interaction, and auditability.
-- Define evaluation constraints for future opt-in framework experiments so they can be compared against the shipped local orchestrator without replacing it.
-- Update `README.md` so it accurately describes Phase 6M as the active contract-definition slice and explains the scope of this phase at a high level.
-- Keep the contract concrete enough that a later implementation phase can build a LangGraph or similar runtime mirror against it without making fresh architectural decisions.
+- Add a narrow opt-in alternate-runtime selection surface in `scripts/agent_loop.py` for an experimental LangGraph-backed runtime mirror while preserving the existing local runtime as the default.
+- Implement the experimental LangGraph mirror only to the extent needed to exercise the 6M adapter contract: canonical repo artifacts remain authoritative, and the mirror must refuse fail-closed on contradiction with framework-managed state.
+- Mirror the shipped halt/refusal vocabulary, approval-mode behavior, checkpoint/continuation handling, durable-memory boundaries, and audit-note expectations closely enough to evaluate the mirror against the default runtime.
+- Ensure the experimental path is explicitly non-default and evaluation-oriented; Phase 6N must not promote the LangGraph runtime to the repo default.
+- Add focused tests covering runtime selection, default-runtime preservation, representative halt/refusal mirroring, checkpoint/continuation compatibility, and canonical-precedence preservation for the experimental mirror.
+- Update `README.md` so it accurately describes Phase 6N as the active implementation slice and explains the narrow LangGraph-mirror scope at a high level.
 
 ## Files likely involved
+- `scripts/agent_loop.py`
+- `tests/`
 - `.agent-loop/phase-plan.md`
+- `README.md`
 - `TASK.md`
 - `.agent-loop/current-task.md`
 - `.agent-loop/current-phase.md`
-- `README.md`
-- `ROADMAP.md`
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -35,13 +35,16 @@ Phase 6M is a contract-definition slice, not an implementation slice for LangGra
 - Do not delete files unless explicitly instructed.
 - Prefer small, testable, reversible changes.
 - Add or update tests when behavior changes.
-- This is a contract/documentation slice; do not implement any LangGraph, LangChain, CrewAI, or other framework-backed runtime path in code.
-- Preserve the shipped local orchestrator as the default runtime and preserve canonical repo-artifact precedence over any future framework state.
-- Do not widen autonomy, bypass human gates, or change existing Phase 5 runtime behavior as part of this phase.
+- Keep this slice narrow: implement only the opt-in LangGraph runtime mirror needed to exercise the 6M adapter contract.
+- Do not broaden into LangChain support-layer work, CrewAI evaluation, or broader multi-framework orchestration.
+- Do not change the default local runtime behavior when no explicit alternate-runtime selection is provided.
+- Do not widen autonomy or change the shipped `review`, `strict`, or `autonomous` semantics.
+- Preserve canonical repo-artifact precedence over any framework-managed state.
 
 ## Validation expected
-- No new runtime behavior is expected in this slice; focused validation may be limited to artifact consistency checks if no executable behavior changes.
-- If any tests or commands are run, record them exactly in `.agent-loop/claude-summary.md`.
+- Run the focused tests you add or update for the experimental mirror.
+- Run `python -m pytest tests -q`.
+- If you add new Python code paths in `scripts/agent_loop.py`, ensure they still compile cleanly.
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required Claude Implementation Summary format.
