@@ -1,7 +1,6 @@
 # Claude Code Fix Task
 
 ## Objective
-<<<<<<< Updated upstream
 Fix the remaining Phase 6N persisted-config recovery bug so malformed `.agent-loop/runtime-config.json` artifacts are handled fail-closed instead of crashing the operator-facing clear path.
 
 ## Context
@@ -26,19 +25,6 @@ If `.agent-loop/runtime-config.json` exists as a directory instead of a regular 
 - Do not modify `CLAUDE.md`.
 - Do not weaken the existing runtime selection, precedence, or default-local behavior.
 - Prefer the smallest safe fix.
-=======
-No active Claude fix task. Phase 6O is approved in the current repo state.
-
-## Context
-The latest Codex re-review found no remaining Claude-owned issues for Phase 6O. The LangChain support layer remains optional, read-only, and subordinate to the shipped runtime surfaces, and the remaining `read_loop_state` validation gap is now fixed so malformed canonical state refuses through the shipped validator path.
-
-## Required fixes
-- None.
-
-## Constraints
-- Do not make changes from this file alone.
-- Wait for a new Codex `NEEDS_FIXES` verdict before implementing another fix cycle.
->>>>>>> Stashed changes
 
 ## Required output
-No output required until a future Codex review generates a new active fix task.
+After implementing the fix, update `.agent-loop/claude-summary.md` with the required summary format and include the exact validation commands you ran.
