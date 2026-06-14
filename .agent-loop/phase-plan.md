@@ -2,7 +2,11 @@
 
 ## Active Phase
 
+<<<<<<< Updated upstream
 Phase 6 - Durable Memory and Optional Context Layer (sub-phase: Phase 6N - Experimental LangGraph Runtime Mirror)
+=======
+Phase 7 - VS Code Polish (sub-phase: Phase 7A - VS Code Task Entrypoints)
+>>>>>>> Stashed changes
 
 ## Phase 0 - Instruction Foundation
 
@@ -3048,3 +3052,123 @@ truth and keeping `scripts/agent_loop.py`'s existing local path as the default.
 - no change to `AGENTS.md` or `CLAUDE.md`
 - no Phase 7 editor integration
 - no Git automation
+<<<<<<< Updated upstream
+=======
+
+## Phase 6O - LangChain Support Layer
+
+### Status
+
+Complete and approved by human to advance to Phase 7A. Phase 6O closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the optional LangChain support layer, read-only tool registry, eval surface, and canonical-state validation fix were all verified in the current repo state.
+
+### Objective
+
+Implement an optional LangChain-based support layer that can assist prompt
+construction, selective retrieval, and tool abstraction without becoming the
+top-level orchestrator. This slice should preserve the shipped local runtime as
+the authoritative default control path, keep the shipped 6N LangGraph runtime
+mirror subordinate and opt-in, preserve canonical repo-artifact precedence, and
+refuse fail-closed on any attempt to let LangChain-managed state override
+loop-state, checkpoints, memory, evidence, review artifacts, or phase/task
+planning state.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 6 / 6O as active
+- `.agent-loop/phase-plan.md` records Phase 6N as closed history and contains a
+  `## Phase 6O - LangChain Support Layer` section with concrete objective, done
+  criteria, and exclusions
+- `scripts/agent_loop.py` exposes a narrow optional LangChain support-layer
+  surface only for prompt construction, selective retrieval, and tool
+  abstraction, not as the top-level orchestrator or runtime owner
+- the LangChain support layer preserves canonical repo-artifact precedence over
+  LangChain-managed state and refuses fail-closed when LangChain state
+  contradicts canonical task, loop-state, checkpoint, memory, review, or
+  evidence artifacts
+- the LangChain support layer preserves the shipped halt/refusal vocabulary,
+  approval-mode behavior, checkpoint/continuation handling, durable-memory
+  boundaries, and audit-note expectations where it touches existing runtime
+  surfaces
+- the shipped local orchestrator remains the default runtime when no explicit
+  support-layer selection is made, and the shipped 6N LangGraph runtime mirror
+  remains opt-in and non-default
+- focused tests cover support-layer activation boundaries, default-runtime
+  preservation, canonical-precedence preservation, representative refusal
+  behavior, and proof that LangChain does not become a top-level runtime
+  controller
+- `README.md` reflects that Phase 6O is active and that LangChain support-layer
+  work is now the implementation focus
+
+### Exclusions
+
+- no promotion of LangChain into the top-level orchestrator, runtime owner, or
+  phase-transition controller
+- no CrewAI evaluation or broader delegated-role multi-agent framework work in
+  this slice
+- no broader autonomy model than the shipped Phase 5D runtime behavior
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body beyond the narrow
+  support-layer integration needed here
+- no change to the Phase 4A Planning Contract body
+- no regression of the shipped Phase 5 review, strict, autonomous,
+  reconciliation, or prompt-bootstrap runtime behavior
+- no arbitrary repo-file ingestion, semantic retrieval expansion, or broader
+  RAG/runtime behavior beyond the narrow LangChain support layer needed here
+- no change to `AGENTS.md` or `CLAUDE.md`
+- no Phase 7 editor integration
+- no Git automation
+
+## Phase 7A - VS Code Task Entrypoints
+
+### Status
+
+Active. Initial VS Code entrypoint slice that adds thin task wrappers around the shipped CLI surfaces while preserving the repository's CLI-first runtime contract.
+
+### Objective
+
+Implement `.vscode/tasks.json` entries for the common operator flows so the
+project is easier to run from VS Code without changing the underlying runtime
+contract. This slice should surface existing CLI commands for loop execution,
+evidence collection, review-artifact access, and adjacent operator entrypoints
+while keeping repo artifacts as the source of truth, preserving halt and
+approval behavior, and avoiding any IDE-owned replacement for the shipped
+orchestrator.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 7 / 7A as active
+- `.agent-loop/phase-plan.md` records Phase 6O as closed history and contains a
+  `## Phase 7A - VS Code Task Entrypoints` section with concrete objective, done
+  criteria, and exclusions
+- `.vscode/tasks.json` exists and exposes thin task wrappers for the common
+  operator flows using the shipped CLI commands rather than reimplementing them
+- the VS Code tasks preserve canonical repo-artifact truth by invoking the
+  existing orchestrator and evidence-collection commands instead of replacing
+  them with editor-owned behavior
+- the VS Code task layer preserves the shipped halt/refusal vocabulary,
+  approval-mode behavior, checkpoint/continuation behavior, and artifact
+  ownership boundaries by delegating to existing commands
+- the repository remains fully usable without VS Code, and every VS Code task
+  corresponds to an existing documented CLI surface
+- focused validation covers task definitions, command mapping, and proof that
+  the task layer does not widen runtime or ownership scope
+- `README.md` reflects that Phase 7A is active and that VS Code task entrypoints
+  are now the implementation focus
+
+### Exclusions
+
+- no artifact dashboard, inspection workflow polish, or reset/recovery UX beyond
+  the narrow task-entrypoint layer for this slice
+- no replacement of the CLI-first workflow with a VS Code-only workflow
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no regression of the shipped Phase 5 review, strict, autonomous,
+  reconciliation, or prompt-bootstrap runtime behavior
+- no regression of the shipped Phase 6 memory, checkpoint, runtime-adapter, or
+  LangChain support-layer behavior
+- no change to `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+>>>>>>> Stashed changes
