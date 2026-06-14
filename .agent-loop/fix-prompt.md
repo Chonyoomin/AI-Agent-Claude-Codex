@@ -1,29 +1,29 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix the remaining Phase 6N persisted-config recovery bug so malformed `.agent-loop/runtime-config.json` artifacts are handled fail-closed instead of crashing the operator-facing clear path.
+Fix the remaining Phase 6O canonical-state validation bug so the LangChain tool registry refuses malformed `loop-state.json` through the shipped validator path instead of returning partial canonical state to a support-layer consumer.
 
 ## Context
-Codex re-reviewed the post-fix 6N implementation. The main contract gaps are closed: the runtime seam is wired into `run` / `resume` / `auto-continue`, the persisted default-off runtime config exists, and the focused plus full suites pass. One Claude-owned bug remains in the new recovery path.
+Codex re-reviewed the active Phase 6O implementation. The overall shape is in scope and the focused plus full suites pass, but one Claude-owned bug remains in the tool-registry read path.
 
-If `.agent-loop/runtime-config.json` exists as a directory instead of a regular file, `clear_runtime_config(repo_root)` currently calls `Path.unlink()` unconditionally and raises an uncaught `PermissionError` / `IsADirectoryError`. `cmd_set_runtime_config(args)` only catches `HaltError`, so `python scripts/agent_loop.py set-runtime-config --clear` can crash exactly when the persisted config is malformed and the operator is trying to recover from it.
+`LangChainToolRegistry.invoke("read_loop_state")` currently returns `load_loop_state(state_path)` directly. That only parses JSON; it does not enforce `validate_loop_state(...)` or `check_contract_version(...)`. As a result, malformed-but-parseable canonical state can leak through the support layer instead of refusing fail-closed with the shipped halt vocabulary. A direct repro with a `.agent-loop/loop-state.json` containing only `{"phase": "P"}` returns `{"phase": "P"}` instead of halting.
 
 ## Required fixes
-- Make clearing the persisted runtime config fail-closed for malformed on-disk artifact shapes, especially the "path exists but is a directory" case.
-- Keep the operator-facing recovery path usable: `set-runtime-config --clear` should not crash on malformed persisted config artifacts.
-- Route the malformed-clear path through the existing halt vocabulary and `_halt` behavior rather than through an uncaught filesystem exception.
+- Route the `read_loop_state` tool-registry path through the shipped structural validator chain, not just the JSON loader.
+- Preserve the existing halt vocabulary by reusing the shipped `HaltError` behavior rather than inventing a new status.
 - Add focused tests covering at least:
-- `clear_runtime_config(...)` on a directory at `.agent-loop/runtime-config.json`
-- `cmd_set_runtime_config --clear` on that malformed artifact shape
-- any updated success-path expectations if you change the helper contract
-- Update `.agent-loop/claude-summary.md` to describe the final post-fix behavior and validation commands exactly.
+- `LangChainToolRegistry.invoke("read_loop_state")` on malformed-but-parseable loop-state
+- the refusal status / reason shape for that case
+- any updated success-path expectation if the implementation changes the returned object
+- Update `.agent-loop/claude-summary.md` so it accurately describes the final post-fix behavior and the exact validation commands run.
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay within Phase 6N scope.
+- Stay within Phase 6O scope.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not weaken the existing runtime selection, precedence, or default-local behavior.
+- Do not broaden into real LangChain package wiring, CrewAI work, or runtime-control-plane changes.
+- Preserve the existing read-only and default-off behavior of the 6O support layer.
 - Prefer the smallest safe fix.
 
 ## Required output
