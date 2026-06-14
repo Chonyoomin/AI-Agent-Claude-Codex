@@ -5644,6 +5644,332 @@ def _apply_runtime_selection(
     return None
 
 
+# ---------------------------------------------------------------------------
+# Phase 6O: LangChain Support Layer
+#
+# Optional opt-in support layer for prompt construction, selective
+# retrieval, and tool abstraction. NOT a runtime owner: the shipped
+# local orchestrator remains the default; the 6N `LangGraphExperimental
+# RuntimeAdapter` remains the only opt-in alternate runtime path. The
+# 6O helpers never drive `cmd_run` / `cmd_resume` / `cmd_auto_continue`
+# and never modify the Phase 6N runtime-selection seam.
+#
+# Three narrow helper surfaces:
+#   - `LangChainPromptHelper`: build a prompt-construction payload
+#     from canonical artifacts (loop-state). Inspects only; mutates
+#     nothing. The payload carries an explicit `advisory_only = True`
+#     and the literal `LANGCHAIN_SUPPORT_CANONICAL_PRECEDENCE_NOTE`.
+#   - `LangChainRetrievalHelper`: wrap the shipped Phase 6C
+#     `retrieve_memory_entries(...)` and preserve every entry's
+#     `MEMORY_RETRIEVAL_ADVISORY_FIELD = True` structural marker
+#     verbatim. Refuses fail-closed if any retrieved entry is missing
+#     the advisory-only marker (defense in depth against a hand-edited
+#     memory entry).
+#   - `LangChainToolRegistry`: static registry of named read-only
+#     tools wrapping shipped inspectors (`load_loop_state`,
+#     `list_memory_entries`, `_load_active_checkpoint`,
+#     `retrieve_memory_entries`). No write-side tools.
+#
+# Default off: every helper raises `HaltError("halted_input_missing",
+# ...)` when called without explicit opt-in. The opt-in is via the
+# CLI `--enable-langchain-support` flag OR the
+# `AGENT_LOOP_LANGCHAIN_SUPPORT` env var with a recognized truthy
+# value. Importing or instantiating the helpers without opt-in is
+# safe; only calling a helper method raises.
+#
+# Out of scope for this initial slice (deferred):
+#   - any real `langchain` / `langgraph` / `crewai` package import;
+#     this slice is pure-stdlib structural support (the same shape as
+#     the Phase 6N mirror)
+#   - write-side tools (the registry is read-only)
+#   - promotion of the support layer into the runtime control plane
+#   - LangChain-managed state overriding canonical state (refused
+#     fail-closed; the support layer is structurally subordinate)
+
+LANGCHAIN_SUPPORT_SIGNAL_VERSION = "phase-6o-v1"
+LANGCHAIN_SUPPORT_ENV_VAR = "AGENT_LOOP_LANGCHAIN_SUPPORT"
+LANGCHAIN_SUPPORT_AUDIT_NOTE_PREFIX = "langchain support:"
+LANGCHAIN_SUPPORT_TRUTHY_VALUES = frozenset({"1", "true", "yes", "on"})
+LANGCHAIN_SUPPORT_FALSY_VALUES = frozenset({"0", "false", "no", "off", ""})
+LANGCHAIN_SUPPORT_TOOL_NAMES = (
+    "read_loop_state",
+    "list_memory_entries",
+    "load_active_checkpoint",
+    "retrieve_memory_entries",
+)
+LANGCHAIN_SUPPORT_OUTPUT_REL = ".agent-loop/langchain-support.json"
+LANGCHAIN_SUPPORT_CANONICAL_PRECEDENCE_NOTE = (
+    "LangChain support-layer outputs written by Phase 6O are "
+    "advisory only. Canonical task and loop-state artifacts "
+    "(TASK.md, .agent-loop/current-task.md, "
+    ".agent-loop/current-phase.md, .agent-loop/loop-state.json), "
+    "any active Phase 6D/6F/6G checkpoint, the Phase 6B durable "
+    "memory tree, the Phase 2A evidence files, and the Phase 5 "
+    "review artifacts remain the source of truth. LangChain-managed "
+    "state MUST NOT override canonical state, the Phase 5 "
+    "approval-mode decision, the strict-gate halt status, or the "
+    "runtime selection. The shipped local orchestrator remains the "
+    "default runtime; the 6N LangGraph mirror remains the only "
+    "opt-in alternate runtime path."
+)
+
+
+def is_langchain_support_enabled(
+    cli_flag: bool, env_value: Optional[str],
+) -> bool:
+    """Resolve the Phase 6O LangChain support opt-in. CLI flag takes
+    precedence (any truthy CLI flag enables); the env var is only
+    consulted when the CLI flag is False. Default is False (default
+    off). Refuses fail-closed via `HaltError("halted_input_missing",
+    ...)` when the env var carries a value that is neither in the
+    recognized truthy set nor in the recognized falsy set, so a typo
+    surfaces as a refusal rather than a silent default.
+    """
+    if cli_flag:
+        return True
+    if env_value is None:
+        return False
+    ev = env_value.strip().lower()
+    if ev in LANGCHAIN_SUPPORT_TRUTHY_VALUES:
+        return True
+    if ev in LANGCHAIN_SUPPORT_FALSY_VALUES:
+        return False
+    raise HaltError(
+        "halted_input_missing",
+        (
+            f"LangChain support env var "
+            f"{LANGCHAIN_SUPPORT_ENV_VAR!r} value {env_value!r} is "
+            f"not in the recognized truthy or falsy set "
+            f"({sorted(LANGCHAIN_SUPPORT_TRUTHY_VALUES | LANGCHAIN_SUPPORT_FALSY_VALUES)!r})"
+        ),
+    )
+
+
+def _ensure_langchain_support_enabled(*, enabled: bool) -> None:
+    """Guard: refuses fail-closed when a Phase 6O helper is invoked
+    without explicit opt-in. Importing or instantiating a helper
+    without opt-in is safe (constructors do not call this guard);
+    only calling a helper method raises.
+    """
+    if not enabled:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "LangChain support is opt-in and default off; enable "
+                "via the CLI `--enable-langchain-support` flag or "
+                f"set {LANGCHAIN_SUPPORT_ENV_VAR}=1 before invoking "
+                "any Phase 6O helper"
+            ),
+        )
+
+
+class LangChainPromptHelper:
+    """Phase 6O optional prompt-construction helper.
+
+    Reads canonical loop-state and returns a structured advisory-only
+    payload suitable for surfacing in a LangChain-style prompt. The
+    payload carries an explicit `advisory_only = True`, the literal
+    `LANGCHAIN_SUPPORT_CANONICAL_PRECEDENCE_NOTE`, a `canonical_state`
+    subset of loop-state, and a deterministic `system_prompt_block`
+    rendering. The helper re-reads loop-state on every call (no
+    caching) and never mutates any canonical artifact.
+    """
+
+    support_signal_version = LANGCHAIN_SUPPORT_SIGNAL_VERSION
+
+    def __init__(
+        self, repo_root: Path, *, enabled: bool = False,
+    ) -> None:
+        self._enabled = bool(enabled)
+        self._repo_root = repo_root
+
+    def build_prompt_payload(
+        self, *, log_path: Optional[Path] = None,
+    ) -> dict:
+        _ensure_langchain_support_enabled(enabled=self._enabled)
+        state_path = (
+            self._repo_root / ".agent-loop" / "loop-state.json"
+        )
+        data = load_loop_state(state_path)
+        validate_loop_state(data)
+        check_contract_version(data)
+        canonical = {
+            "phase": data["phase"],
+            "sub_phase": data.get("sub_phase"),
+            "task": data["task"],
+            "cycle_count": data["cycle_count"],
+            "approval_mode": data.get("approval_mode"),
+            "status": data.get("status"),
+            "awaiting_human_for": data.get("awaiting_human_for"),
+        }
+        payload = {
+            "support_signal_version": (
+                LANGCHAIN_SUPPORT_SIGNAL_VERSION
+            ),
+            "built_at": _utc_iso_now(),
+            "advisory_only": True,
+            "canonical_precedence_note": (
+                LANGCHAIN_SUPPORT_CANONICAL_PRECEDENCE_NOTE
+            ),
+            "canonical_state": canonical,
+            "system_prompt_block": (
+                f"You are a Phase 6O LangChain support-layer prompt "
+                f"payload (advisory only). Active phase: "
+                f"{canonical['phase']!r}, sub-phase: "
+                f"{canonical['sub_phase']!r}, task: "
+                f"{canonical['task']!r}. Approval mode: "
+                f"{canonical['approval_mode']!r}. Canonical "
+                f"loop-state remains the source of truth; this "
+                f"payload MUST NOT be used to override loop-state, "
+                f"checkpoints, memory, evidence, review artifacts, "
+                f"or the runtime selection."
+            ),
+        }
+        if log_path is not None:
+            _log_note(
+                log_path,
+                (
+                    f"{LANGCHAIN_SUPPORT_AUDIT_NOTE_PREFIX} "
+                    f"prompt_payload built "
+                    f"signal_version="
+                    f"{LANGCHAIN_SUPPORT_SIGNAL_VERSION!r} phase="
+                    f"{canonical['phase']!r} sub_phase="
+                    f"{canonical['sub_phase']!r}"
+                ),
+            )
+        return payload
+
+
+class LangChainRetrievalHelper:
+    """Phase 6O optional retrieval helper. Wraps the shipped Phase 6C
+    `retrieve_memory_entries(...)` and preserves the advisory-only
+    marker verbatim. Refuses fail-closed if any retrieved entry is
+    missing the `MEMORY_RETRIEVAL_ADVISORY_FIELD` marker (defense in
+    depth - the shipped retrieval always sets it, so a missing marker
+    signals a contract drift).
+    """
+
+    support_signal_version = LANGCHAIN_SUPPORT_SIGNAL_VERSION
+
+    def __init__(
+        self, repo_root: Path, *, enabled: bool = False,
+    ) -> None:
+        self._enabled = bool(enabled)
+        self._repo_root = repo_root
+
+    def retrieve(
+        self,
+        *,
+        phase: str,
+        sub_phase: Optional[str] = None,
+        categories: Optional[Iterable[str]] = None,
+        limit: Optional[int] = None,
+        log_path: Optional[Path] = None,
+    ) -> list:
+        _ensure_langchain_support_enabled(enabled=self._enabled)
+        kwargs: dict = {"phase": phase}
+        if sub_phase is not None:
+            kwargs["sub_phase"] = sub_phase
+        if categories is not None:
+            kwargs["categories"] = categories
+        if limit is not None:
+            kwargs["limit"] = limit
+        if log_path is not None:
+            kwargs["log_path"] = log_path
+        results = retrieve_memory_entries(self._repo_root, **kwargs)
+        for r in results:
+            if not r.get(MEMORY_RETRIEVAL_ADVISORY_FIELD):
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        "LangChain retrieval wrapper saw a "
+                        "non-advisory memory entry; refusing "
+                        "(the shipped retrieve_memory_entries "
+                        "always sets the advisory marker)"
+                    ),
+                )
+        if log_path is not None:
+            _log_note(
+                log_path,
+                (
+                    f"{LANGCHAIN_SUPPORT_AUDIT_NOTE_PREFIX} "
+                    f"retrieval wrapped phase={phase!r} "
+                    f"returned={len(results)}"
+                ),
+            )
+        return results
+
+
+class LangChainToolRegistry:
+    """Phase 6O optional tool-abstraction registry. Static set of
+    named READ-ONLY tools wrapping shipped inspectors. No write-side
+    tools in this slice: an alternate runtime that wants to write
+    MUST route through the shipped Phase 6B / 6D / 6F / 6G / 6H / 6I
+    / 6J / 6K / 6L writers directly, not through this registry.
+
+    Tool dispatch is fixed (no dynamic registration); the four tool
+    names in `LANGCHAIN_SUPPORT_TOOL_NAMES` are the complete set.
+    Adding a tool requires a contract revision plus updating both
+    `LANGCHAIN_SUPPORT_TOOL_NAMES` and the `invoke(...)` dispatcher.
+    """
+
+    support_signal_version = LANGCHAIN_SUPPORT_SIGNAL_VERSION
+    tool_names = LANGCHAIN_SUPPORT_TOOL_NAMES
+
+    def __init__(
+        self, repo_root: Path, *, enabled: bool = False,
+    ) -> None:
+        self._enabled = bool(enabled)
+        self._repo_root = repo_root
+
+    def list_tools(self) -> list:
+        _ensure_langchain_support_enabled(enabled=self._enabled)
+        return [
+            {
+                "name": name,
+                "kind": "read",
+                "support_signal_version": (
+                    self.support_signal_version
+                ),
+            }
+            for name in self.tool_names
+        ]
+
+    def invoke(self, tool_name: str, **kwargs):
+        _ensure_langchain_support_enabled(enabled=self._enabled)
+        if tool_name not in self.tool_names:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"LangChain tool {tool_name!r} is not in the "
+                    f"registry; supported set is "
+                    f"{sorted(self.tool_names)!r}"
+                ),
+            )
+        if tool_name == "read_loop_state":
+            state_path = (
+                self._repo_root / ".agent-loop" / "loop-state.json"
+            )
+            return load_loop_state(state_path)
+        if tool_name == "list_memory_entries":
+            paths = list_memory_entries(self._repo_root)
+            return [
+                p.relative_to(self._repo_root).as_posix()
+                for p in paths
+            ]
+        if tool_name == "load_active_checkpoint":
+            return _load_active_checkpoint(self._repo_root)
+        if tool_name == "retrieve_memory_entries":
+            return retrieve_memory_entries(self._repo_root, **kwargs)
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"LangChain tool dispatcher fell through for "
+                f"{tool_name!r}; this is a bug"
+            ),
+        )
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -8766,6 +9092,95 @@ def cmd_set_runtime_config(args: argparse.Namespace) -> int:
         return _halt(state_path, data, halt, log_path)
 
 
+def cmd_langchain_support_eval(args: argparse.Namespace) -> int:
+    """Phase 6O operator runtime path: evaluate the LangChain support
+    layer against the shipped 6M / 6N contracts.
+
+    Resolves the opt-in via CLI flag then env var (default off,
+    refuses fail-closed if not opted in). On opt-in, runs the
+    `LangChainPromptHelper.build_prompt_payload(...)` + the
+    `LangChainToolRegistry.list_tools(...)` and writes the combined
+    payload to `.agent-loop/langchain-support.json`. Refusal routes
+    through `_halt` so the structural failure vocabulary lands on
+    disk for human inspection.
+
+    Default-runtime preservation: this command never modifies the
+    runtime selection, never invokes `run` / `resume` /
+    `auto-continue`, and never writes outside the named output
+    artifact + the orchestrator log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    output_path = repo_root / LANGCHAIN_SUPPORT_OUTPUT_REL
+    env_value = os.environ.get(LANGCHAIN_SUPPORT_ENV_VAR)
+    try:
+        enabled = is_langchain_support_enabled(
+            bool(args.enable_langchain_support), env_value,
+        )
+        if not enabled:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    "langchain-support-eval refused: LangChain "
+                    "support is opt-in (default off). Pass "
+                    "`--enable-langchain-support` or set "
+                    f"{LANGCHAIN_SUPPORT_ENV_VAR}=1 to enable."
+                ),
+            )
+        prompt_helper = LangChainPromptHelper(
+            repo_root, enabled=True,
+        )
+        prompt_payload = prompt_helper.build_prompt_payload(
+            log_path=log_path,
+        )
+        tool_registry = LangChainToolRegistry(
+            repo_root, enabled=True,
+        )
+        tools = tool_registry.list_tools()
+        artifact = {
+            "support_signal_version": (
+                LANGCHAIN_SUPPORT_SIGNAL_VERSION
+            ),
+            "advisory_only": True,
+            "canonical_precedence_note": (
+                LANGCHAIN_SUPPORT_CANONICAL_PRECEDENCE_NOTE
+            ),
+            "evaluated_at": _utc_iso_now(),
+            "prompt_payload": prompt_payload,
+            "tools_registered": tools,
+        }
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(
+            json.dumps(artifact, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        _log_note(
+            log_path,
+            (
+                f"{LANGCHAIN_SUPPORT_AUDIT_NOTE_PREFIX} eval written "
+                f"signal_version="
+                f"{LANGCHAIN_SUPPORT_SIGNAL_VERSION!r} "
+                f"tools={len(tools)}"
+            ),
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = output_path.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] langchain support evaluation written to "
+        f"{rel}; tools={len(tools)}; see "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`{LANGCHAIN_SUPPORT_AUDIT_NOTE_PREFIX}` audit notes."
+    )
+    return 0
+
+
 def cmd_distill_phase_boundary_memory(args: argparse.Namespace) -> int:
     """Phase 6I operator runtime path: distill durable memory entries
     at an approved phase boundary.
@@ -9896,6 +10311,29 @@ def build_parser() -> argparse.ArgumentParser:
             "the default off / local)."
         ),
     )
+    lc_eval = sub.add_parser(
+        "langchain-support-eval",
+        help=(
+            "Phase 6O optional LangChain support-layer evaluation "
+            "(default off, opt-in). When `--enable-langchain-support` "
+            f"is passed (or {LANGCHAIN_SUPPORT_ENV_VAR}=1 in the env), "
+            "runs the LangChainPromptHelper, lists the "
+            "LangChainToolRegistry, and writes the combined payload to "
+            f"`{LANGCHAIN_SUPPORT_OUTPUT_REL}`. The shipped local "
+            "orchestrator and the Phase 6N LangGraph runtime mirror "
+            "are untouched; this command is read-only against "
+            "canonical state."
+        ),
+    )
+    lc_eval.add_argument(
+        "--enable-langchain-support",
+        action="store_true",
+        help=(
+            "Opt in to the Phase 6O LangChain support layer for this "
+            "invocation. Default off. The CLI flag takes precedence "
+            f"over the {LANGCHAIN_SUPPORT_ENV_VAR!r} env var."
+        ),
+    )
     record_te = sub.add_parser(
         "record-token-exhaustion",
         help=(
@@ -9965,6 +10403,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
+    "langchain-support-eval": cmd_langchain_support_eval,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
