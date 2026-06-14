@@ -739,6 +739,21 @@ class RuntimeConfigReadWriteTests(_RuntimeAdapterTestCase):
             agent_loop.clear_runtime_config(self.repo_root),
         )
 
+    def test_clear_refuses_when_path_is_directory(self) -> None:
+        # Phase 6N recovery-path fix: the operator-facing clear must
+        # refuse fail-closed instead of crashing with
+        # IsADirectoryError when `.agent-loop/runtime-config.json`
+        # exists as a directory rather than a regular file.
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.mkdir()
+        self.assertTrue(self.config_path.is_dir())
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop.clear_runtime_config(self.repo_root)
+        self.assertEqual(cm.exception.status, "halted_input_missing")
+        self.assertIn("not a regular file", cm.exception.reason)
+        # The directory must NOT be removed by the refused clear.
+        self.assertTrue(self.config_path.is_dir())
+
     def test_read_refuses_non_json_file(self) -> None:
         self.config_path.parent.mkdir(parents=True, exist_ok=True)
         self.config_path.write_text("not json {", encoding="utf-8")
@@ -1160,6 +1175,22 @@ class CmdSetRuntimeConfigTests(_RuntimeAdapterTestCase):
         self._run_main(["set-runtime-config", "--clear"])
         log_text = self.log_path.read_text(encoding="utf-8")
         self.assertIn("runtime-config cleared", log_text)
+
+    def test_cli_clear_on_directory_artifact_refuses_via_halt(
+        self,
+    ) -> None:
+        # Phase 6N recovery-path fix: when the persisted artifact is
+        # a directory (the operator's malformed-recovery scenario),
+        # `set-runtime-config --clear` must refuse via _halt with
+        # rc=2 instead of crashing on an uncaught IsADirectoryError /
+        # PermissionError. The directory must remain on disk so the
+        # operator can repair it by hand.
+        self.config_path.parent.mkdir(parents=True, exist_ok=True)
+        self.config_path.mkdir()
+        self.assertTrue(self.config_path.is_dir())
+        rc = self._run_main(["set-runtime-config", "--clear"])
+        self.assertEqual(rc, 2)
+        self.assertTrue(self.config_path.is_dir())
 
 
 if __name__ == "__main__":

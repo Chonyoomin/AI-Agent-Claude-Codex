@@ -5516,14 +5516,45 @@ def write_runtime_config(repo_root: Path, selected_runtime: str) -> Path:
 
 def clear_runtime_config(repo_root: Path) -> bool:
     """Remove the persisted `runtime-config.json`. Returns True when
-    a file was removed, False when the file was already absent.
-    Restoring default off requires no file on disk; this helper is
-    the operator-facing way to do it without hand-editing.
+    a regular file was removed, False when the file was already
+    absent. Restoring default off requires no file on disk; this
+    helper is the operator-facing recovery path so it must stay
+    usable even when the persisted artifact is structurally broken.
+
+    Refuses fail-closed via `HaltError("halted_input_missing", ...)`
+    when the path exists but is NOT a regular file (e.g. a
+    directory). Operators recovering from a malformed persisted
+    config see the same structural refusal vocabulary the rest of
+    Phase 6N uses, rather than an uncaught `IsADirectoryError` /
+    `PermissionError` from `Path.unlink()`. Surface-level `OSError`
+    during the unlink itself is also routed through the same
+    `HaltError` so every recovery-path failure lands on
+    `loop-state.json` and `orchestrator.log` through `_halt(...)`.
     """
     path = repo_root / RUNTIME_CONFIG_REL
     if not path.exists():
         return False
-    path.unlink()
+    if not path.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config clear refused: {RUNTIME_CONFIG_REL!r} "
+                f"exists but is not a regular file (likely a "
+                f"directory); remove or repair it by hand before the "
+                f"operator-facing clear path can recover"
+            ),
+        )
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"runtime-config clear refused: {RUNTIME_CONFIG_REL!r} "
+                f"could not be removed "
+                f"({type(exc).__name__}: {exc})"
+            ),
+        )
     return True
 
 
