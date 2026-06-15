@@ -32,6 +32,7 @@ import agent_loop  # noqa: E402 - sys.path is set above
 
 
 REPO_ROOT = HERE.parent
+README_PATH = REPO_ROOT / "README.md"
 ARCHITECTURE_PATH = REPO_ROOT / "docs" / "architecture.md"
 USAGE_PATH = REPO_ROOT / "docs" / "usage.md"
 PHASE_8A_DOC_PATHS = (ARCHITECTURE_PATH, USAGE_PATH)
@@ -798,6 +799,71 @@ class Phase8BPlaybooksDoNotPromiseFutureBehaviorTests(unittest.TestCase):
                             f"{path.name} mentions {keyword!r} "
                             f"without a disclaiming context"
                         )
+
+
+class ReadmeDescribesStrictModeAccuratelyTests(unittest.TestCase):
+    """Phase 8B fix: README previously claimed autonomous mode
+    bypasses "four Phase 5C strict-mode human gates" and described
+    `docs/halt-and-recovery.md` as covering "the four Phase 5C
+    strict-mode gates". The shipped Phase 5C contract defines three
+    gates (`pre_claude_prompt`, `pre_fix_prompt`, `pre_codex_review`),
+    with `pre_codex_review` persisting in two halt-status flavors so
+    resume can route correctly. These tests fail closed if either
+    incorrect "four gates" wording is reintroduced in README.
+
+    The forbidden-fragment list is narrow on purpose: it targets the
+    specific wording Codex flagged ("four Phase 5C strict-mode human
+    gates" / "four Phase 5C strict-mode gates") rather than every
+    occurrence of "four ... strict". Other README passages that
+    correctly enumerate the four halt-status STRINGS (e.g. "the four
+    Phase 5C strict-mode halt vocabulary entries") describe a
+    different fact - the halt-status count, not the gate count - and
+    must not be caught by this guard.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_does_not_claim_four_strict_mode_gates(self) -> None:
+        for fragment in (
+            "four Phase 5C strict-mode human gates",
+            "four Phase 5C strict-mode gates",
+        ):
+            self.assertNotIn(
+                fragment, self.text,
+                f"README.md contains the inaccurate strict-mode "
+                f"wording {fragment!r}; the shipped Phase 5C contract "
+                f"defines three gates with two halt-status flavors on "
+                f"pre_codex_review",
+            )
+
+    def test_readme_names_three_strict_mode_gates_in_phase_5d(self) -> None:
+        # Positive assertion: after the corrected wording the Phase 5D
+        # paragraph must name three gates rather than four.
+        self.assertIn(
+            "three Phase 5C strict-mode human gates", self.text,
+            "README.md Phase 5D paragraph does not name the shipped "
+            "three-gate count (with the pre_codex_review two-flavor "
+            "note); the corrected wording from the Phase 8B fix is "
+            "missing",
+        )
+
+    def test_readme_names_both_pre_codex_review_halt_flavors(
+        self,
+    ) -> None:
+        # The corrected Phase 5D paragraph names both pre_codex_review
+        # halt-status flavors so a reader sees the load-bearing
+        # distinction (3 gates / 4 halt-status strings) explicitly.
+        for halt in (
+            "halted_awaiting_human_pre_codex_review_normal",
+            "halted_awaiting_human_pre_codex_review_fix",
+        ):
+            self.assertIn(
+                halt, self.text,
+                f"README.md does not name the pre_codex_review halt-"
+                f"status flavor {halt!r}; the corrected wording from "
+                f"the Phase 8B fix is missing",
+            )
 
 
 if __name__ == "__main__":
