@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 7 - VS Code Polish (sub-phase: Phase 7C - Status, Reset, And Recovery UX)
+Phase 8 - Documentation and Project Polish (sub-phase: Phase 8B - Safety, Approval, And Operational Playbooks)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3226,7 +3226,7 @@ orchestrator.
 
 ### Status
 
-Active. Narrow VS Code status/reset/recovery slice that builds on the shipped task-entrypoint and artifact-inspection layers to make the operator state and recovery paths easier to drive without changing the underlying runtime contract.
+Complete and approved by human to advance to Phase 8A. Phase 7C closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the read-only status reporter, the recovery-hint coverage expansion, the contract-accurate halt guidance fix, focused validation, and README alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -3274,4 +3274,108 @@ orchestrator.
 - no regression of the shipped Phase 6 memory, checkpoint, runtime-adapter, or
   LangChain support-layer behavior
 - no change to `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 8A - Architecture And Usage Docs
+
+### Status
+
+Complete and approved by human to advance to Phase 8B. Phase 8A closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the architecture and usage documentation, contract-accuracy doc fixes, focused validation coverage, and README alignment were all verified in the current repo state.
+
+### Objective
+
+Implement the Architecture And Usage Docs slice for the agent loop. This slice
+should document the real shipped workflow from a clean clone, including the
+end-to-end loop, active CLI/runtime surfaces, artifact ownership model, and
+practical operator flows, while preserving the current runtime behavior and
+avoiding any documentation that promises unshipped automation, hidden
+capabilities, or alternate sources of truth.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 8 / 8A as active
+- `.agent-loop/phase-plan.md` records Phase 7C as closed history and contains a
+  `## Phase 8A - Architecture And Usage Docs` section with concrete objective,
+  done criteria, and exclusions
+- the repository ships architecture and usage documentation that explains the
+  real end-to-end loop, runtime surfaces, artifact ownership, and operator
+  flows from a clean clone without requiring prior chat context
+- documentation distinguishes current shipped behavior from future roadmap items
+  and does not present future capabilities as if they already exist
+- operator docs remain aligned with the CLI-first workflow, approval semantics,
+  halt/recovery boundaries, and repo-artifact source-of-truth model
+- focused validation or review coverage proves the docs match the actual repo
+  state and do not claim unimplemented behavior
+- `README.md` reflects that Phase 8A is active and that architecture/usage
+  documentation is now the implementation focus
+
+### Exclusions
+
+- no new runtime, planner, activator, evidence-collection, review-routing,
+  checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code
+  feature work
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no documentation that invents behavior the repo does not currently ship
+- no collapsing of future roadmap items into present-tense product behavior
+- no MCP support, external UI, concurrent-agent operation, or fully autonomous
+  PRD-to-product mode in this slice
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 8B - Safety, Approval, And Operational Playbooks
+
+### Status
+
+Active. Second documentation/polish slice focused on operator-facing safety,
+approval, halt, recovery, and troubleshooting playbooks that explain the
+shipped behavior accurately from a clean clone without inventing unimplemented
+automation.
+
+### Objective
+
+Implement the Safety, Approval, And Operational Playbooks slice for the agent
+loop. This slice should document the shipped halt reasons, approval modes,
+recovery paths, and troubleshooting guidance in operator-facing playbooks while
+preserving the current runtime behavior and avoiding any documentation that
+promises unshipped automation, hidden capabilities, or alternate sources of
+truth.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 8 / 8B as active
+- `.agent-loop/phase-plan.md` records Phase 8A as closed history and contains a
+  `## Phase 8B - Safety, Approval, And Operational Playbooks` section with
+  concrete objective, done criteria, and exclusions
+- the repository ships operator-facing safety, approval, halt, recovery, and
+  troubleshooting playbooks that explain the shipped behavior from a clean
+  clone without requiring prior chat context
+- documentation distinguishes current shipped behavior from future roadmap items
+  and does not present future capabilities as if they already exist
+- operator docs remain aligned with the CLI-first workflow, approval semantics,
+  halt/refusal vocabulary, recovery boundaries, and repo-artifact
+  source-of-truth model
+- focused validation or review coverage proves the docs match the actual repo
+  state and do not claim unimplemented behavior
+- `README.md` reflects that Phase 8B is active and that safety / approval /
+  operational playbooks are now the implementation focus
+
+### Exclusions
+
+- no new runtime, planner, activator, evidence-collection, review-routing,
+  checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code
+  feature work
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no documentation that invents behavior the repo does not currently ship
+- no collapsing of future roadmap items into present-tense product behavior
+- no MCP support, external UI, concurrent-agent operation, or fully autonomous
+  PRD-to-product mode in this slice
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
 - no Git automation

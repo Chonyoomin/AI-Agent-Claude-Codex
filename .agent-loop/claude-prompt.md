@@ -1,41 +1,37 @@
 # Claude Code Task
 
 ## Phase
-Phase 7C - Status, Reset, And Recovery UX
+Phase 8B - Safety, Approval, And Operational Playbooks
 
 ## Objective
-Implement the VS Code status, reset, and recovery UX layer for the agent loop. This slice should add clear operator-facing run/status/reset ergonomics in VS Code, while preserving the current CLI-first runtime contract and avoiding any change to the orchestrator's ownership, halt, approval, artifact-truth, or recovery semantics.
+Implement the Safety, Approval, And Operational Playbooks slice for the agent loop. This slice should document the shipped halt reasons, approval modes, recovery paths, and troubleshooting guidance in operator-facing playbooks while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
 
 ## Context
-Implement the VS Code status, reset, and recovery UX layer for the agent loop.
-This slice should add clear operator-facing run/status/reset ergonomics in VS
-Code while keeping repo artifacts as the source of truth, preserving halt and
-approval behavior, and avoiding any IDE-owned replacement for the shipped
-orchestrator.
+Implement the Safety, Approval, And Operational Playbooks slice for the agent
+loop. This slice should document the shipped halt reasons, approval modes,
+recovery paths, and troubleshooting guidance in operator-facing playbooks while
+preserving the current runtime behavior and avoiding any documentation that
+promises unshipped automation, hidden capabilities, or alternate sources of
+truth.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 7 / 7C as active
-- `.agent-loop/phase-plan.md` records Phase 7B as closed history and contains a
-  `## Phase 7C - Status, Reset, And Recovery UX` section with concrete
-  objective, done criteria, and exclusions
-- the VS Code integration exposes clear status, reset, and recovery ergonomics
-  for the shipped agent-loop workflow without becoming a parallel source of
-  truth
-- any new VS Code entrypoints preserve canonical repo-artifact truth by
-  delegating to existing repo artifacts and shipped commands rather than
-  synthesizing alternate state or bypassing recovery rules
-- the VS Code status/reset/recovery layer preserves the shipped halt/refusal
-  vocabulary, approval-mode behavior, checkpoint/continuation behavior, and
-  artifact ownership boundaries by remaining a thin operator convenience layer
-  over the existing workflow
-- the repository remains fully usable without VS Code, and the status/reset/
-  recovery workflow does not become a VS Code-only control plane
-- focused validation covers command mapping, artifact mapping where applicable,
-  and proof that the status/reset/recovery layer does not widen runtime or
-  ownership scope
-- `README.md` reflects that Phase 7C is active and that VS Code status/reset/
-  recovery ergonomics are now the implementation focus
+  `.agent-loop/loop-state.json` identify Phase 8 / 8B as active
+- `.agent-loop/phase-plan.md` records Phase 8A as closed history and contains a
+  `## Phase 8B - Safety, Approval, And Operational Playbooks` section with
+  concrete objective, done criteria, and exclusions
+- the repository ships operator-facing safety, approval, halt, recovery, and
+  troubleshooting playbooks that explain the shipped behavior from a clean
+  clone without requiring prior chat context
+- documentation distinguishes current shipped behavior from future roadmap items
+  and does not present future capabilities as if they already exist
+- operator docs remain aligned with the CLI-first workflow, approval semantics,
+  halt/refusal vocabulary, recovery boundaries, and repo-artifact
+  source-of-truth model
+- focused validation or review coverage proves the docs match the actual repo
+  state and do not claim unimplemented behavior
+- `README.md` reflects that Phase 8B is active and that safety / approval /
+  operational playbooks are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -48,17 +44,18 @@ orchestrator.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no artifact dashboard beyond the narrow status/reset/recovery layer for this
-  slice
-- no replacement of the CLI-first workflow with a VS Code-only workflow
+- no new runtime, planner, activator, evidence-collection, review-routing,
+  checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code
+  feature work
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no documentation that invents behavior the repo does not currently ship
+- no collapsing of future roadmap items into present-tense product behavior
+- no MCP support, external UI, concurrent-agent operation, or fully autonomous
+  PRD-to-product mode in this slice
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
-- no regression of the shipped Phase 5 review, strict, autonomous,
-  reconciliation, or prompt-bootstrap runtime behavior
-- no regression of the shipped Phase 6 memory, checkpoint, runtime-adapter, or
-  LangChain support-layer behavior
-- no change to `AGENTS.md` or `CLAUDE.md`
+- no change to `scripts/run_checks.sh`
 - no Git automation
 
 ## Required output
