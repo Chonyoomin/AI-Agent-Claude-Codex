@@ -20,31 +20,31 @@ Phase 8 - Documentation and Project Polish
 
 ## Active Sub-Phase
 
-Phase 8B - Safety, Approval, And Operational Playbooks
+Phase 8C - Final README Alignment And Clean-Clone Polish
 
 ## Phase Status
 
-Phase 8A (Architecture And Usage Docs) is closed after Codex review approval and human progression. Phase 8B is now active as the second Phase 8 slice. This sub-phase should document the shipped safety model, approval semantics, halt reasons, recovery paths, and operator troubleshooting playbooks without changing runtime behavior or inventing unimplemented automation.
+Phase 8B (Safety, Approval, And Operational Playbooks) is closed after Codex review approval and human progression. Phase 8C is now active as the final Phase 8 slice. This sub-phase should make the README, examples, and clean-clone getting-started path line up exactly with the shipped behavior, current artifact boundaries, and future-roadmap limits without changing runtime behavior or inventing unimplemented automation.
 
 ## Active Task
 
-Implement the Safety, Approval, And Operational Playbooks slice for the agent loop. This slice should document the shipped halt reasons, approval modes, recovery paths, and troubleshooting guidance in operator-facing playbooks while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
+Implement the Final README Alignment And Clean-Clone Polish slice for the agent loop. This slice should ensure the README, examples, and getting-started path match the shipped CLI/runtime behavior, current artifact ownership model, and future-roadmap boundaries exactly, while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 8 / 8B as active
-- `.agent-loop/phase-plan.md` records Phase 8A as closed history and contains a `## Phase 8B - Safety, Approval, And Operational Playbooks` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository ships operator-facing safety, approval, halt, recovery, and troubleshooting playbooks that explain the shipped behavior from a clean clone without requiring prior chat context
-- documentation stays aligned with the shipped CLI-first workflow, approval semantics, halt/refusal vocabulary, recovery boundaries, and repo-artifact source-of-truth model
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 8 / 8C as active
+- `.agent-loop/phase-plan.md` records Phase 8B as closed history and contains a `## Phase 8C - Final README Alignment And Clean-Clone Polish` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the repository README, examples, and clean-clone getting-started guidance match the shipped CLI/runtime behavior and the already-delivered Phase 8A/8B docs without requiring prior chat context
+- documentation stays aligned with the shipped CLI-first workflow, approval semantics, halt/refusal vocabulary, recovery boundaries, repo-artifact source-of-truth model, and future-roadmap boundaries
 - any new docs or doc rewrites distinguish current shipped behavior from future roadmap items instead of collapsing them together
 - focused validation or review coverage proves the docs match the actual repo state and do not claim unimplemented behavior
-- `README.md` reflects that Phase 8B is active and that safety / approval / operational playbooks are now the implementation focus
+- `README.md` reflects that Phase 8C is active and that final README alignment / clean-clone polish are now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 8x sub-phase after Phase 8B until:
+Do not start the next 8x sub-phase after Phase 8C until:
 
-- this Phase 8B slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 8C slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 

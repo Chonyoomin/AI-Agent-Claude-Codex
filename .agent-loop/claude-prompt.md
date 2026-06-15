@@ -1,37 +1,37 @@
 # Claude Code Task
 
 ## Phase
-Phase 8B - Safety, Approval, And Operational Playbooks
+Phase 8C - Final README Alignment And Clean-Clone Polish
 
 ## Objective
-Implement the Safety, Approval, And Operational Playbooks slice for the agent loop. This slice should document the shipped halt reasons, approval modes, recovery paths, and troubleshooting guidance in operator-facing playbooks while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
+Implement the Final README Alignment And Clean-Clone Polish slice for the agent loop. This slice should ensure the README, examples, and getting-started path match the shipped CLI/runtime behavior, current artifact ownership model, and future-roadmap boundaries exactly, while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
 
 ## Context
-Implement the Safety, Approval, And Operational Playbooks slice for the agent
-loop. This slice should document the shipped halt reasons, approval modes,
-recovery paths, and troubleshooting guidance in operator-facing playbooks while
-preserving the current runtime behavior and avoiding any documentation that
-promises unshipped automation, hidden capabilities, or alternate sources of
-truth.
+Implement the Final README Alignment And Clean-Clone Polish slice for the
+agent loop. This slice should ensure the README, examples, and getting-started
+path match the shipped CLI/runtime behavior, current artifact ownership model,
+and future-roadmap boundaries exactly, while preserving the current runtime
+behavior and avoiding any documentation that promises unshipped automation,
+hidden capabilities, or alternate sources of truth.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 8 / 8B as active
-- `.agent-loop/phase-plan.md` records Phase 8A as closed history and contains a
-  `## Phase 8B - Safety, Approval, And Operational Playbooks` section with
+  `.agent-loop/loop-state.json` identify Phase 8 / 8C as active
+- `.agent-loop/phase-plan.md` records Phase 8B as closed history and contains a
+  `## Phase 8C - Final README Alignment And Clean-Clone Polish` section with
   concrete objective, done criteria, and exclusions
-- the repository ships operator-facing safety, approval, halt, recovery, and
-  troubleshooting playbooks that explain the shipped behavior from a clean
-  clone without requiring prior chat context
+- the repository README, examples, and clean-clone getting-started guidance
+  match the shipped CLI/runtime behavior and the already-delivered Phase 8A/8B
+  docs without requiring prior chat context
 - documentation distinguishes current shipped behavior from future roadmap items
   and does not present future capabilities as if they already exist
 - operator docs remain aligned with the CLI-first workflow, approval semantics,
-  halt/refusal vocabulary, recovery boundaries, and repo-artifact
-  source-of-truth model
+  halt/refusal vocabulary, recovery boundaries, repo-artifact source-of-truth
+  model, and future-roadmap boundaries
 - focused validation or review coverage proves the docs match the actual repo
   state and do not claim unimplemented behavior
-- `README.md` reflects that Phase 8B is active and that safety / approval /
-  operational playbooks are now the implementation focus
+- `README.md` reflects that Phase 8C is active and that final README alignment
+  / clean-clone polish are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
