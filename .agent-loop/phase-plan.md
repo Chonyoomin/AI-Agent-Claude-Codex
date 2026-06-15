@@ -2768,12 +2768,14 @@ vocabulary exactly:
   on `APPROVED_FOR_HUMAN_REVIEW` and leave it null on
   `NEEDS_FIXES` / `FAILED_REQUIRES_HUMAN`, exactly as the shipped
   Phase 5B handler does
-- `strict`: the alternate runtime MUST pause at each of the four
-  Phase 5C gates (`pre_claude_prompt`, `pre_codex_review` for the
-  normal cycle, `pre_fix_prompt`, `pre_codex_review` for the fix
-  cycle), persist the matching halt status, write the matching
-  `note:` line, and exit cleanly with code 2. Resume MUST go
-  through the shipped `resume` subcommand
+- `strict`: the alternate runtime MUST pause at each of the three
+  Phase 5C gates (`pre_claude_prompt`, `pre_fix_prompt`,
+  `pre_codex_review`; the last persists in two halt-status flavors,
+  `halted_awaiting_human_pre_codex_review_normal` and
+  `halted_awaiting_human_pre_codex_review_fix`, so resume can route to
+  the normal-cycle vs fix-cycle continuation), persist the matching
+  halt status, write the matching `note:` line, and exit cleanly with
+  code 2. Resume MUST go through the shipped `resume` subcommand
 - `autonomous`: the alternate runtime MUST log each gate bypass
   with the Phase 5D `autonomous mode: bypassing <gate> gate at
   <where>` audit note and MUST preserve every hard stop the shipped
@@ -2789,7 +2791,8 @@ a Phase 5A contract revision.
 An alternate runtime MUST use the existing halt-status vocabulary
 verbatim:
 
-- the four Phase 5C strict-gate halts:
+- the four Phase 5C strict-gate halt-status strings covering the three
+  shipped gates:
   `halted_awaiting_human_pre_claude_prompt`,
   `halted_awaiting_human_pre_fix_prompt`,
   `halted_awaiting_human_pre_codex_review_normal`,
