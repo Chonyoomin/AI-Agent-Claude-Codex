@@ -6217,6 +6217,68 @@ STATUS_RECOVERY_HINTS: dict = {
         "Halt: `.agent-loop/claude-summary.md` is malformed. Re-run "
         "the implementation cycle to regenerate the summary."
     ),
+    # Phase 7C fix: in-flight statuses an operator can observe while
+    # the orchestrator is mid-cycle. These point at `check-state` and
+    # `inspect-artifacts` rather than at a write-side command, since
+    # the orchestrator is the writer and an operator-driven action
+    # here would race the cycle.
+    "claude_implementing": (
+        "Cycle in flight: Claude implementation step is running. "
+        "Inspect with `python scripts/agent_loop.py check-state` "
+        "and `python scripts/agent_loop.py inspect-artifacts`; the "
+        "next handoff is `bash scripts/run_checks.sh` followed by "
+        "Codex review."
+    ),
+    "claude_fixing": (
+        "Cycle in flight: Claude fix step is running. Inspect with "
+        "`python scripts/agent_loop.py check-state` and `python "
+        "scripts/agent_loop.py inspect-artifacts`; the next handoff "
+        "is `bash scripts/run_checks.sh` followed by Codex review."
+    ),
+    "evidence_capture": (
+        "Cycle in flight: evidence capture is running. Inspect with "
+        "`python scripts/agent_loop.py inspect-artifacts`; when the "
+        "Phase 2A/2B evidence files are present, re-run `python "
+        "scripts/agent_loop.py run` to resume the cycle into Codex "
+        "review."
+    ),
+    # Phase 7C fix: terminal / threshold halts that name explicit
+    # operator recovery paths. Each routes at the existing CLI
+    # surface that the operator should run next.
+    "halted_evidence_incomplete": (
+        "Halt: per-cycle evidence is incomplete or stale. Run `bash "
+        "scripts/run_checks.sh` to regenerate the Phase 2A/2B "
+        "evidence files, then re-run `python scripts/agent_loop.py "
+        "run` to resume the cycle."
+    ),
+    "halted_evidence_script_unavailable": (
+        "Halt: the evidence-collection script could not be invoked. "
+        "Verify `scripts/run_checks.sh` is present and executable, "
+        "then re-run `python scripts/agent_loop.py run`."
+    ),
+    "halted_failed_requires_human": (
+        "Halt: Codex returned `FAILED_REQUIRES_HUMAN`. Human "
+        "intervention required: review `.agent-loop/codex-review.md` "
+        "and `.agent-loop/claude-summary.md` to triage the failure. "
+        "The shipped planner refuses to propose the next phase from "
+        "this halt status and from `last_verdict == "
+        "FAILED_REQUIRES_HUMAN`, so resolution is manual: the "
+        "operator addresses the failure outside the loop and a "
+        "fresh Codex-owned activation prompt (not a direct CLI "
+        "command) is needed before another cycle can run."
+    ),
+    "halted_max_cycles_reached": (
+        "Halt: `cycle_count` reached `max_cycles` without "
+        "`APPROVED_FOR_HUMAN_REVIEW`. Human intervention required: "
+        "review `.agent-loop/codex-review.md` and `.agent-loop/"
+        "claude-summary.md`. The shipped planner refuses to propose "
+        "the next phase from any `halted_*` status and from "
+        "`cycle_count >= max_cycles` on `NEEDS_FIXES`, so the path "
+        "forward is manual: the operator decides whether to raise "
+        "`max_cycles` or supersede the phase, and a fresh "
+        "Codex-owned activation prompt (not a direct CLI command) "
+        "is required to start a new cycle."
+    ),
 }
 
 STATUS_RECOVERY_FALLBACK = (

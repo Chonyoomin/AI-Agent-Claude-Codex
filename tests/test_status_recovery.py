@@ -129,6 +129,122 @@ class StatusConstantsTests(unittest.TestCase):
             f"points: {sorted(missing)}",
         )
 
+    def test_recovery_hints_cover_every_shipped_runtime_status(
+        self,
+    ) -> None:
+        # Phase 7C fix: the recovery-UX gap was that several real
+        # shipped statuses (in-flight cycle states + terminal halts)
+        # fell through to the generic fallback hint. This assertion
+        # locks in explicit coverage so any future shipped status
+        # that becomes operator-visible must also ship a hint or the
+        # test fails closed.
+        required_shipped_statuses = {
+            # In-flight cycle states the operator can observe via
+            # `status` between adapter handoffs (ORCHESTRATOR_IN_
+            # FLIGHT_STATUSES minus `awaiting_codex_review`, which
+            # is covered by its own hint).
+            "claude_implementing",
+            "claude_fixing",
+            "evidence_capture",
+            "awaiting_codex_review",
+            # Terminal / threshold halts the orchestrator persists
+            # that name explicit operator recovery paths.
+            "halted_evidence_incomplete",
+            "halted_evidence_script_unavailable",
+            "halted_failed_requires_human",
+            "halted_max_cycles_reached",
+        }
+        missing = (
+            required_shipped_statuses
+            - set(agent_loop.STATUS_RECOVERY_HINTS)
+        )
+        self.assertEqual(
+            missing, set(),
+            f"STATUS_RECOVERY_HINTS falls through to the generic "
+            f"fallback for these shipped runtime statuses: "
+            f"{sorted(missing)}",
+        )
+
+    def test_terminal_halt_hints_do_not_direct_at_blocked_planner_activate(
+        self,
+    ) -> None:
+        # Phase 7C fix-2: the shipped planner refuses to propose the
+        # next phase when `last_verdict == FAILED_REQUIRES_HUMAN`,
+        # when `status` is any `halted_*`, and when `cycle_count >=
+        # max_cycles` on `NEEDS_FIXES`. So the recovery hints for
+        # `halted_failed_requires_human` and `halted_max_cycles_
+        # reached` must NOT direct the operator at the planner /
+        # activate CLI as the immediate next step (the planner
+        # would reject that path), and MUST describe the real
+        # human-intervention recovery surface.
+        for status in (
+            "halted_failed_requires_human",
+            "halted_max_cycles_reached",
+        ):
+            hint = agent_loop.STATUS_RECOVERY_HINTS[status]
+            # Positive: the hint must describe explicit human or
+            # manual intervention as the load-bearing recovery step.
+            self.assertTrue(
+                "human" in hint.lower() or "manual" in hint.lower(),
+                f"hint for {status!r} does not describe human or "
+                f"manual intervention as the next step; got: "
+                f"{hint!r}",
+            )
+            # Negative: the hint must not direct the operator at
+            # running the planner / activate CLI as the recovery
+            # step (the planner refuses from these states).
+            forbidden_directives = (
+                "agent_loop.py activate",
+                "agent_loop.py plan",
+                "shipped planner/activate flow",
+            )
+            for fragment in forbidden_directives:
+                self.assertNotIn(
+                    fragment, hint,
+                    f"hint for {status!r} directs operator at the "
+                    f"blocked planner/activate flow via "
+                    f"{fragment!r}; the planner contractually "
+                    f"refuses from this state",
+                )
+
+    def test_no_shipped_status_silently_resolves_to_fallback(
+        self,
+    ) -> None:
+        # Each shipped status in the load-bearing recovery set must
+        # produce a distinct hint, not the generic fallback. This
+        # catches a regression where a hint is added but pointing at
+        # the same string as the fallback (a near-miss bug).
+        for status in (
+            agent_loop.HALTED_PRE_CLAUDE_PROMPT,
+            agent_loop.HALTED_PRE_FIX_PROMPT,
+            agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL,
+            agent_loop.HALTED_PRE_CODEX_REVIEW_FIX,
+            agent_loop.HALTED_TOKEN_EXHAUSTION,
+            "awaiting_claude_implementation",
+            "awaiting_codex_review",
+            "phase_complete_awaiting_human_approval",
+            "claude_implementing",
+            "claude_fixing",
+            "evidence_capture",
+            "halted_evidence_incomplete",
+            "halted_evidence_script_unavailable",
+            "halted_failed_requires_human",
+            "halted_max_cycles_reached",
+            "halted_human_stop",
+            "halted_input_missing",
+            "halted_contract_version_mismatch",
+            "halted_review_malformed",
+            "halted_review_parse_failed",
+            "halted_summary_malformed",
+        ):
+            hint = agent_loop._status_recovery_hint(status)
+            self.assertNotEqual(
+                hint, agent_loop.STATUS_RECOVERY_FALLBACK,
+                f"shipped status {status!r} resolves to the generic "
+                f"fallback hint; add an explicit "
+                f"STATUS_RECOVERY_HINTS entry",
+            )
+
     def test_recovery_fallback_is_non_empty_string(self) -> None:
         self.assertIsInstance(
             agent_loop.STATUS_RECOVERY_FALLBACK, str,
