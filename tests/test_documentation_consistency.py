@@ -36,6 +36,16 @@ ARCHITECTURE_PATH = REPO_ROOT / "docs" / "architecture.md"
 USAGE_PATH = REPO_ROOT / "docs" / "usage.md"
 PHASE_8A_DOC_PATHS = (ARCHITECTURE_PATH, USAGE_PATH)
 
+# Phase 8B operator playbooks (added by the Safety, Approval, And
+# Operational Playbooks slice).
+SAFETY_RULES_PATH = REPO_ROOT / "docs" / "safety-rules.md"
+APPROVAL_MODES_PATH = REPO_ROOT / "docs" / "approval-modes.md"
+HALT_AND_RECOVERY_PATH = REPO_ROOT / "docs" / "halt-and-recovery.md"
+PHASE_8B_DOC_PATHS = (
+    SAFETY_RULES_PATH, APPROVAL_MODES_PATH, HALT_AND_RECOVERY_PATH,
+)
+ALL_OPERATOR_DOC_PATHS = PHASE_8A_DOC_PATHS + PHASE_8B_DOC_PATHS
+
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
 # docs, with the subcommand captured. Matches either inside backticks
 # or in plain prose. The subcommand grammar matches the shipped CLI:
@@ -453,6 +463,341 @@ class UsageDocHaltRecoveryWordingTests(unittest.TestCase):
             "refuses to propose the next phase from the human-"
             "required terminal halts",
         )
+
+
+class Phase8BPlaybooksExistAndAreWellFormedTests(unittest.TestCase):
+    """Phase 8B: the three operator playbooks (safety, approval modes,
+    halt-and-recovery) ship as separate docs under `docs/`. These
+    tests guard existence, non-emptiness, and ASCII purity for each.
+    """
+
+    def test_safety_rules_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            SAFETY_RULES_PATH.is_file(),
+            f"Expected Phase 8B safety doc at {SAFETY_RULES_PATH}",
+        )
+        self.assertGreater(SAFETY_RULES_PATH.stat().st_size, 0)
+
+    def test_approval_modes_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            APPROVAL_MODES_PATH.is_file(),
+            f"Expected Phase 8B approval-modes doc at "
+            f"{APPROVAL_MODES_PATH}",
+        )
+        self.assertGreater(APPROVAL_MODES_PATH.stat().st_size, 0)
+
+    def test_halt_and_recovery_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            HALT_AND_RECOVERY_PATH.is_file(),
+            f"Expected Phase 8B halt/recovery doc at "
+            f"{HALT_AND_RECOVERY_PATH}",
+        )
+        self.assertGreater(HALT_AND_RECOVERY_PATH.stat().st_size, 0)
+
+    def test_phase_8b_docs_are_ascii_only(self) -> None:
+        for path in PHASE_8B_DOC_PATHS:
+            text = _read(path)
+            for i, line in enumerate(text.splitlines(), 1):
+                for ch in line:
+                    self.assertLessEqual(
+                        ord(ch), 127,
+                        f"non-ASCII character {ch!r} in {path.name} "
+                        f"line {i}",
+                    )
+
+
+class Phase8BPlaybooksOnlyClaimShippedCliSurfacesTests(unittest.TestCase):
+    """Phase 8B: the same anti-drift guard from Phase 8A applies to
+    each new playbook. Any `python scripts/agent_loop.py <subcommand>`
+    mention must resolve to a real `agent_loop.HANDLERS` entry.
+    """
+
+    def test_safety_rules_only_names_real_subcommands(self) -> None:
+        named = set(
+            AGENT_LOOP_INVOCATION_RE.findall(_read(SAFETY_RULES_PATH))
+        )
+        unknown = named - set(agent_loop.HANDLERS)
+        self.assertEqual(
+            unknown, set(),
+            f"docs/safety-rules.md references unknown subcommands: "
+            f"{sorted(unknown)}",
+        )
+
+    def test_approval_modes_only_names_real_subcommands(self) -> None:
+        named = set(
+            AGENT_LOOP_INVOCATION_RE.findall(_read(APPROVAL_MODES_PATH))
+        )
+        unknown = named - set(agent_loop.HANDLERS)
+        self.assertEqual(
+            unknown, set(),
+            f"docs/approval-modes.md references unknown subcommands: "
+            f"{sorted(unknown)}",
+        )
+
+    def test_halt_and_recovery_only_names_real_subcommands(self) -> None:
+        named = set(
+            AGENT_LOOP_INVOCATION_RE.findall(
+                _read(HALT_AND_RECOVERY_PATH)
+            )
+        )
+        unknown = named - set(agent_loop.HANDLERS)
+        self.assertEqual(
+            unknown, set(),
+            f"docs/halt-and-recovery.md references unknown "
+            f"subcommands: {sorted(unknown)}",
+        )
+
+
+class SafetyRulesDocContentTests(unittest.TestCase):
+    """The safety doc must name the load-bearing safety boundaries
+    so an operator reading it from a clean clone can audit the
+    constraints without cross-referencing CLAUDE.md or AGENTS.md.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(SAFETY_RULES_PATH)
+
+    def test_names_the_no_git_automation_boundary(self) -> None:
+        # The specific shipped boundary the loop never crosses.
+        for fragment in (
+            "Git automation",
+            "never invokes git",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"docs/safety-rules.md does not name the no-git-"
+                f"automation boundary via {fragment!r}",
+            )
+
+    def test_names_the_recovery_preserving_halt_pattern(self) -> None:
+        self.assertIn(
+            "Recovery-preserving halts", self.text,
+            "docs/safety-rules.md does not describe the recovery-"
+            "preserving halt pattern",
+        )
+        self.assertIn(
+            "HaltError", self.text,
+            "docs/safety-rules.md does not mention HaltError as the "
+            "shipped refusal vocabulary",
+        )
+
+    def test_names_the_approved_for_activation_token(self) -> None:
+        self.assertIn(
+            "APPROVED_FOR_ACTIVATION", self.text,
+            "docs/safety-rules.md does not name the human-authored "
+            "APPROVED_FOR_ACTIVATION token (the Phase 4C activation "
+            "gate)",
+        )
+
+    def test_names_the_artifact_ownership_partition(self) -> None:
+        # The three ownership roles plus the orchestrator-owned
+        # artifact list anchor the safety boundary.
+        for role in ("Orchestrator-owned", "Codex-owned", "Claude-owned"):
+            self.assertIn(
+                role, self.text,
+                f"docs/safety-rules.md does not name ownership role "
+                f"{role!r}",
+            )
+
+    def test_names_evidence_state_vocabulary(self) -> None:
+        # Phase 2A Evidence Collection Contract states.
+        for state in agent_loop.EVIDENCE_STATES:
+            self.assertIn(
+                state, self.text,
+                f"docs/safety-rules.md does not name Phase 2A "
+                f"evidence state {state!r}",
+            )
+
+
+class ApprovalModesDocContentTests(unittest.TestCase):
+    """The approval-modes doc must name every shipped approval mode
+    by literal name, the three Phase 5C strict-mode gates, and the
+    `claude-done.json` handoff artifact so an operator can drive any
+    of the three modes from the doc alone.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(APPROVAL_MODES_PATH)
+
+    def test_names_every_shipped_approval_mode(self) -> None:
+        for mode in (
+            agent_loop.APPROVAL_MODE_REVIEW,
+            agent_loop.APPROVAL_MODE_STRICT,
+            agent_loop.APPROVAL_MODE_AUTONOMOUS,
+        ):
+            self.assertIn(
+                f"`{mode}`", self.text,
+                f"docs/approval-modes.md does not name approval mode "
+                f"{mode!r}",
+            )
+
+    def test_names_the_three_strict_mode_gates(self) -> None:
+        for gate in (
+            "pre_claude_prompt",
+            "pre_fix_prompt",
+            "pre_codex_review",
+        ):
+            self.assertIn(
+                gate, self.text,
+                f"docs/approval-modes.md does not name strict-mode "
+                f"gate {gate!r}",
+            )
+
+    def test_names_both_pre_codex_review_halt_flavors(self) -> None:
+        for halt in (
+            "halted_awaiting_human_pre_codex_review_normal",
+            "halted_awaiting_human_pre_codex_review_fix",
+        ):
+            self.assertIn(
+                halt, self.text,
+                f"docs/approval-modes.md does not name the "
+                f"pre_codex_review halt-status flavor {halt!r}",
+            )
+
+    def test_clarifies_strict_gates_do_not_write_checkpoint_artifacts(
+        self,
+    ) -> None:
+        # The architecture doc's matching correction is mirrored here:
+        # an operator reading the approval-modes doc should not infer
+        # strict-mode halts write checkpoint artifacts. The check
+        # collapses internal whitespace so line-wrapping does not
+        # affect the assertion.
+        collapsed = " ".join(self.text.split())
+        self.assertIn(
+            "do NOT write strict-gate checkpoint", collapsed,
+            "docs/approval-modes.md does not explicitly state that "
+            "strict-mode gates do NOT write strict-gate checkpoint "
+            "artifacts",
+        )
+
+    def test_names_the_claude_done_handoff_artifact(self) -> None:
+        self.assertIn(
+            "claude-done.json", self.text,
+            "docs/approval-modes.md does not name the Phase 5B "
+            "claude-done.json handoff artifact",
+        )
+
+    def test_clarifies_autonomous_is_not_phase_9(self) -> None:
+        # The shipped autonomous mode is the narrow strict-gate-
+        # bypass slice; Phase 9 (Fully Autonomous PRD-To-Product
+        # Mode) is roadmap only. The doc must keep that distinction
+        # clear so operators do not over-trust autonomous.
+        self.assertIn(
+            "fully autonomous PRD-to-product", self.text,
+            "docs/approval-modes.md does not explicitly disclaim "
+            "that autonomous mode is NOT the Phase 9 fully autonomous "
+            "PRD-to-product mode",
+        )
+
+
+class HaltAndRecoveryDocContentTests(unittest.TestCase):
+    """The halt/recovery playbook is the operator-facing mirror of
+    `STATUS_RECOVERY_HINTS`. Every status in that canonical map must
+    appear in the doc as a dedicated section so an operator can find
+    the recovery path for any persisted status they observe.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(HALT_AND_RECOVERY_PATH)
+
+    def test_names_every_status_in_recovery_hints_map(self) -> None:
+        # The canonical map is the source of truth. If a status is in
+        # STATUS_RECOVERY_HINTS but missing from this doc, an operator
+        # who hits it gets the one-line `status` hint but no
+        # operator-facing detail; this test fails closed so the doc
+        # cannot silently lag the canonical map.
+        for status in agent_loop.STATUS_RECOVERY_HINTS:
+            self.assertIn(
+                status, self.text,
+                f"docs/halt-and-recovery.md does not have a section "
+                f"for shipped status {status!r}",
+            )
+
+    def test_names_the_phase_complete_terminal_success_status(
+        self,
+    ) -> None:
+        # The success terminal is not in STATUS_RECOVERY_HINTS (it is
+        # not a recovery point), but the operator playbook must still
+        # document it so the success path is discoverable.
+        self.assertIn(
+            "phase_complete_awaiting_human_approval", self.text,
+            "docs/halt-and-recovery.md does not name the success "
+            "terminal phase_complete_awaiting_human_approval",
+        )
+
+    def test_names_the_three_codex_verdicts(self) -> None:
+        for verdict in (
+            "APPROVED_FOR_HUMAN_REVIEW",
+            "NEEDS_FIXES",
+            "FAILED_REQUIRES_HUMAN",
+        ):
+            self.assertIn(
+                verdict, self.text,
+                f"docs/halt-and-recovery.md does not name Codex "
+                f"verdict {verdict!r}",
+            )
+
+    def test_does_not_promise_cli_recovery_for_human_required_halts(
+        self,
+    ) -> None:
+        # Mirror of the usage-doc fix: the human-required terminal
+        # halts must not be described as having a direct CLI recovery
+        # command.
+        for halt in (
+            "halted_failed_requires_human",
+            "halted_max_cycles_reached",
+        ):
+            self.assertIn(
+                halt, self.text,
+                f"halt-and-recovery doc missing section for {halt!r}",
+            )
+        self.assertIn(
+            "planner refuses", self.text,
+            "docs/halt-and-recovery.md does not explain that the "
+            "shipped planner refuses to propose the next phase from "
+            "the human-required terminal halts",
+        )
+
+
+class Phase8BPlaybooksDoNotPromiseFutureBehaviorTests(unittest.TestCase):
+    """Apply the Phase 8A no-future-claims guard to each Phase 8B
+    playbook so a docs edit cannot quietly promote roadmap behavior
+    into a present-tense product claim.
+    """
+
+    def test_phase_8b_docs_do_not_claim_autonomous_prd_to_product_mode(
+        self,
+    ) -> None:
+        # Mirror of the Phase 8A assertion: PHASE 9 is roadmap only.
+        forbidden_present_tense = (
+            "ships fully autonomous PRD",
+            "is a fully autonomous PRD",
+        )
+        for path in PHASE_8B_DOC_PATHS:
+            text = _read(path)
+            for fragment in forbidden_present_tense:
+                self.assertNotIn(
+                    fragment, text,
+                    f"{path.name} promises unshipped Phase 9 "
+                    f"behavior via {fragment!r}",
+                )
+
+    def test_phase_8b_docs_disclaim_mcp_and_external_ui(self) -> None:
+        disclaim_terms = (
+            "roadmap", "future", "deferred", "not implemented",
+            "not yet", "later phase",
+        )
+        for path in PHASE_8B_DOC_PATHS:
+            text = _read(path)
+            for keyword in ("MCP", "external UI"):
+                if keyword in text:
+                    idx = text.find(keyword)
+                    window = text[max(0, idx - 240): idx + 240]
+                    if not any(t in window for t in disclaim_terms):
+                        self.fail(
+                            f"{path.name} mentions {keyword!r} "
+                            f"without a disclaiming context"
+                        )
 
 
 if __name__ == "__main__":
