@@ -510,7 +510,7 @@ Phase 9 is delivered in sub-phases:
 - Phase 9A - Autonomous Mode Contract And Safety Policy: define what autonomy is allowed, what still requires explicit approval, and how the mode remains auditable from repo artifacts
 - Phase 9B - PRD Intake And Decomposition: accept structured PRDs or looser ideas and decompose them into bounded internal phases, tasks, risks, and acceptance criteria
 - Phase 9C - Orchestrator-Driven Prompt Handoff: remove manual prompt transfer by letting the orchestrator drive Codex and Claude handoff within the existing ownership boundary
-- Phase 9D - Autonomous Internal Review/Fix Loop: allow automatic review/fix continuation across bounded internal cycles while preserving hard-stop conditions and artifact truth
+- Phase 9D - Autonomous Internal Review/Fix Loop: allow automatic Codex review plus autonomous fix continuation across bounded internal cycles, with deterministic review harnesses, explicit Codex-owned vs Claude-owned routing, automatic fix-prompt regeneration, and preserved hard-stop conditions / artifact truth
 - Phase 9E - Long-Run Continuation And Completion Heuristics: extend checkpoint/resume, token-reset continuation, and "done enough" detection for long product-building runs
 - Phase 9F - Capacity-Halt Reprobe And Automatic Resume: treat Claude/Codex token or rate-limit exhaustion as a resumable external-capacity halt, persist retry metadata beside the existing checkpoint, wait with bounded backoff, re-probe availability, and resume the exact suspended step automatically when capacity returns without silently widening autonomy or retrying forever
 - Phase 9G - Final Human Acceptance And Polish Gate: require an explicit final human review, polish, and acceptance step before the run is treated as complete
@@ -534,7 +534,15 @@ Build:
   derived phase/task as pending, active, complete, deferred, or blocked
 - orchestrator-driven Codex/Claude handoff without manual prompt
   transfer
-- automatic review/fix continuation across multiple internal cycles
+- automatic Codex review and autonomous fix continuation across
+  multiple internal cycles
+- deterministic review harnesses that can automatically check
+  phase-contract alignment, runtime-vocabulary coverage, artifact-sync
+  freshness, command-surface parity, and ownership-boundary routing
+- automatic regeneration of `.agent-loop/fix-prompt.md` from the
+  current Claude-owned findings after each review pass
+- direct Codex execution of supported Codex-owned fixes during the same
+  autonomous review/fix loop without waiting on Claude
 - automatic activation of the next PRD-derived phase when the current
   phase reaches its terminal approved state
 - completion heuristics for determining when the product is
@@ -553,6 +561,9 @@ Design rules:
 
 - fully autonomous PRD-to-product mode must remain auditable from repo
   artifacts
+- autonomous review/fix behavior must remain deterministic and
+  contract-driven; it should rely on explicit review harnesses and
+  canonical artifacts rather than free-form agent judgment alone
 - the mode must preserve durable checkpoints and resumability rather
   than relying on one long uninterrupted session
 - the mode should continue automatically after Claude/Codex token or
@@ -582,6 +593,9 @@ Success:
 - the system can take a PRD or idea and carry the build through
   planning, implementation, review, fix cycles, and phase transitions
   without stepwise human handoff
+- the system can automatically regenerate current fix prompts, apply
+  supported Codex-owned fixes directly, and continue bounded Claude-
+  owned fix cycles without manual routing between the two agents
 - long autonomous runs can survive token exhaustion, interruptions, and
   continuation boundaries, and resume automatically when capacity
   returns within policy limits
@@ -599,7 +613,7 @@ Phase 10 is organized as future sub-phase candidates:
 - Phase 10B - External Workspace Bootstrap And Target Selection: add attach/bootstrap flows, target-folder or target-repository selection, and initialization of required `.agent-loop` artifacts for a chosen external workspace when appropriate
 - Phase 10C - Minimal External UI And Run Control: add a thin operator UI that can pick a target project, show active phase/task/status, open prompt/review/evidence artifacts, and run or resume the loop without replacing the CLI-first contract
 - Phase 10D - Artifact Dashboard And Run History: expand the external UI with review summaries, diff visualization, progress history, approval actions, cost/token tracking, and failure analytics while keeping repo artifacts as the source of truth
-- Phase 10E - Controlled Concurrent Agent Operation: allow Codex to continue Codex-owned work while Claude is implementing, with explicit overlap rules, stale-artifact detection, recovery behavior, and refusal paths when concurrency would invalidate the active task context
+- Phase 10E - Controlled Concurrent Agent Operation: allow Codex to continue Codex-owned work while Claude is implementing, with explicit overlap rules, stale-artifact detection, overlap-safe review/fix prechecks, recovery behavior, and refusal paths when concurrency would invalidate the active task context
 - Phase 10F - MCP Integration Contract And Safe Tool Boundary: add MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules that let live tools assist planning, implementation, and review without bypassing evidence review or ownership boundaries
 - Phase 10G - RAG And Knowledge Indexing Layer: add durable retrieval over repo-local or external knowledge sources so the loop can pull only the most relevant docs, decisions, standards, PRD sections, and failure/fix patterns into a run
 - Phase 10H - GitHub / Branch / Review Integrations: add branch-per-task workflow support, GitHub PR review integration, rollback-aware workflow helpers, and related release-facing workflow surfaces

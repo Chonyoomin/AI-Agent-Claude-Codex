@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 7 - VS Code Polish (sub-phase: Phase 7A - VS Code Task Entrypoints)
+Phase 7 - VS Code Polish (sub-phase: Phase 7C - Status, Reset, And Recovery UX)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3117,7 +3117,7 @@ planning state.
 
 ### Status
 
-Active. Initial VS Code entrypoint slice that adds thin task wrappers around the shipped CLI surfaces while preserving the repository's CLI-first runtime contract.
+Complete and approved by human to advance to Phase 7B. Phase 7A closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the VS Code task entrypoints, evidence-collection task, focused validation, and README alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -3155,6 +3155,116 @@ orchestrator.
 
 - no artifact dashboard, inspection workflow polish, or reset/recovery UX beyond
   the narrow task-entrypoint layer for this slice
+- no replacement of the CLI-first workflow with a VS Code-only workflow
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no regression of the shipped Phase 5 review, strict, autonomous,
+  reconciliation, or prompt-bootstrap runtime behavior
+- no regression of the shipped Phase 6 memory, checkpoint, runtime-adapter, or
+  LangChain support-layer behavior
+- no change to `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 7B - Artifact Inspection And Review Workflow
+
+### Status
+
+Complete and approved by human to advance to Phase 7C. Phase 7B closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the read-only artifact inspector, workspace settings layer, live-editor acceptance checklist, focused validation, and README alignment were all verified in the current repo state.
+
+### Objective
+
+Implement the VS Code artifact-inspection and review workflow layer for the
+agent loop. This slice should make Codex review artifacts, fix prompts, active
+task/phase artifacts, and evidence logs easy to open and inspect from VS Code
+while keeping repo artifacts as the source of truth, preserving halt and
+approval behavior, and avoiding any IDE-owned replacement for the shipped
+orchestrator.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 7 / 7B as active
+- `.agent-loop/phase-plan.md` records Phase 7A as closed history and contains a
+  `## Phase 7B - Artifact Inspection And Review Workflow` section with concrete
+  objective, done criteria, and exclusions
+- the VS Code integration exposes an inspection workflow that makes
+  `.agent-loop/codex-review.md`, `.agent-loop/fix-prompt.md`,
+  `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and the shipped
+  evidence logs easy to open and inspect from the editor
+- any new VS Code entrypoints preserve canonical repo-artifact truth by opening
+  or delegating to existing repo artifacts and shipped commands rather than
+  synthesizing alternate state
+- the VS Code inspection layer preserves the shipped halt/refusal vocabulary,
+  approval-mode behavior, checkpoint/continuation behavior, and artifact
+  ownership boundaries by remaining a thin operator convenience layer over the
+  existing workflow
+- the repository remains fully usable without VS Code, and the inspection
+  workflow does not become a VS Code-only control plane
+- focused validation covers artifact-path mapping, command mapping where
+  applicable, and proof that the inspection layer does not widen runtime or
+  ownership scope
+- `README.md` reflects that Phase 7B is active and that artifact inspection and
+  review workflow ergonomics are now the implementation focus
+
+### Exclusions
+
+- no artifact dashboard or reset/recovery UX beyond the narrow
+  artifact-inspection layer for this slice
+- no replacement of the CLI-first workflow with a VS Code-only workflow
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no regression of the shipped Phase 5 review, strict, autonomous,
+  reconciliation, or prompt-bootstrap runtime behavior
+- no regression of the shipped Phase 6 memory, checkpoint, runtime-adapter, or
+  LangChain support-layer behavior
+- no change to `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 7C - Status, Reset, And Recovery UX
+
+### Status
+
+Active. Narrow VS Code status/reset/recovery slice that builds on the shipped task-entrypoint and artifact-inspection layers to make the operator state and recovery paths easier to drive without changing the underlying runtime contract.
+
+### Objective
+
+Implement the VS Code status, reset, and recovery UX layer for the agent loop.
+This slice should add clear operator-facing run/status/reset ergonomics in VS
+Code while keeping repo artifacts as the source of truth, preserving halt and
+approval behavior, and avoiding any IDE-owned replacement for the shipped
+orchestrator.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 7 / 7C as active
+- `.agent-loop/phase-plan.md` records Phase 7B as closed history and contains a
+  `## Phase 7C - Status, Reset, And Recovery UX` section with concrete
+  objective, done criteria, and exclusions
+- the VS Code integration exposes clear status, reset, and recovery ergonomics
+  for the shipped agent-loop workflow without becoming a parallel source of
+  truth
+- any new VS Code entrypoints preserve canonical repo-artifact truth by
+  delegating to existing repo artifacts and shipped commands rather than
+  synthesizing alternate state or bypassing recovery rules
+- the VS Code status/reset/recovery layer preserves the shipped halt/refusal
+  vocabulary, approval-mode behavior, checkpoint/continuation behavior, and
+  artifact ownership boundaries by remaining a thin operator convenience layer
+  over the existing workflow
+- the repository remains fully usable without VS Code, and the status/reset/
+  recovery workflow does not become a VS Code-only control plane
+- focused validation covers command mapping, artifact mapping where applicable,
+  and proof that the status/reset/recovery layer does not widen runtime or
+  ownership scope
+- `README.md` reflects that Phase 7C is active and that VS Code status/reset/
+  recovery ergonomics are now the implementation focus
+
+### Exclusions
+
+- no artifact dashboard beyond the narrow status/reset/recovery layer for this
+  slice
 - no replacement of the CLI-first workflow with a VS Code-only workflow
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body

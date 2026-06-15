@@ -40,9 +40,20 @@ import agent_loop  # noqa: E402 - sys.path is set above
 REPO_ROOT = HERE.parent
 TASKS_JSON_PATH = REPO_ROOT / ".vscode" / "tasks.json"
 AGENT_LOOP_REL = "scripts/agent_loop.py"
+RUN_CHECKS_REL = "scripts/run_checks.sh"
 
-# The set of operator flows this Phase 7A slice promises to surface as
-# VS Code task entrypoints. Each must map to an existing HANDLERS key.
+# The task that wraps the Phase 2B evidence producer is structurally
+# different from the rest (it invokes `bash scripts/run_checks.sh`, not
+# `python scripts/agent_loop.py <subcommand>`), so it is special-cased
+# in the structural assertions and gets its own dedicated coverage
+# class below. Keeping the assertions narrow per-task-class makes the
+# guardrails on the agent_loop-wrapping tasks load-bearing.
+EVIDENCE_COLLECTION_TASK_LABEL = "Agent Loop: collect evidence"
+
+# The set of agent_loop.py subcommands this Phase 7A slice promises to
+# surface as VS Code task entrypoints. Each must map to an existing
+# HANDLERS key. (The evidence-collection task wraps scripts/run_checks.sh
+# and is asserted by the dedicated EvidenceCollectionTaskTests class.)
 EXPECTED_COMMON_OPERATOR_SUBCOMMANDS = frozenset({
     "check-state",
     "validate-artifacts",
@@ -52,7 +63,40 @@ EXPECTED_COMMON_OPERATOR_SUBCOMMANDS = frozenset({
     "plan",
     "activate",
     "bootstrap-prompt",
+    # Phase 7B: the artifact-inspection task wraps a shipped read-only
+    # CLI subcommand that prints presence/size/mtime for the active
+    # review, prompt, planning, and evidence artifacts.
+    "inspect-artifacts",
+    # Phase 7C: the status task wraps a shipped read-only CLI
+    # subcommand that prints a human-readable summary of the active
+    # loop-state plus a one-line recovery hint.
+    "status",
+    # Phase 7C: the reset-runtime-config task wraps the shipped Phase
+    # 6N `set-runtime-config --clear` recovery surface; it is already
+    # in HANDLERS and counted by the python-wrapping coverage class.
+    "set-runtime-config",
 })
+
+
+SETTINGS_JSON_PATH = REPO_ROOT / ".vscode" / "settings.json"
+
+
+def _python_tasks(tasks: list) -> list:
+    """Subset of tasks that wrap the python `scripts/agent_loop.py` CLI.
+
+    Excludes the structurally-different evidence-collection task.
+    """
+    return [
+        t for t in tasks
+        if t["label"] != EVIDENCE_COLLECTION_TASK_LABEL
+    ]
+
+
+def _evidence_task(tasks: list):
+    matches = [
+        t for t in tasks if t["label"] == EVIDENCE_COLLECTION_TASK_LABEL
+    ]
+    return matches[0] if matches else None
 
 
 class TasksJsonStructureTests(unittest.TestCase):
@@ -99,21 +143,23 @@ class TasksDelegateToShippedCliTests(unittest.TestCase):
     def test_every_task_is_process_type(self) -> None:
         # `process` avoids shell parsing: no editor-owned shell
         # expansion or pipelining can sneak in past the orchestrator.
+        # Applies to BOTH the python-wrapping tasks and the
+        # evidence-collection task.
         for task in self.tasks:
             self.assertEqual(
                 task["type"], "process",
                 f"task {task['label']!r} is not a process-type task",
             )
 
-    def test_every_task_invokes_python(self) -> None:
-        for task in self.tasks:
+    def test_every_python_task_invokes_python(self) -> None:
+        for task in _python_tasks(self.tasks):
             self.assertEqual(
                 task["command"], "python",
                 f"task {task['label']!r} does not invoke python",
             )
 
-    def test_every_task_targets_agent_loop_script(self) -> None:
-        for task in self.tasks:
+    def test_every_python_task_targets_agent_loop_script(self) -> None:
+        for task in _python_tasks(self.tasks):
             args = task["args"]
             self.assertIsInstance(args, list)
             self.assertGreaterEqual(len(args), 2)
@@ -122,12 +168,12 @@ class TasksDelegateToShippedCliTests(unittest.TestCase):
                 f"task {task['label']!r} does not target {AGENT_LOOP_REL}",
             )
 
-    def test_every_task_subcommand_is_in_HANDLERS(self) -> None:
+    def test_every_python_task_subcommand_is_in_HANDLERS(self) -> None:
         # The load-bearing assertion: a task that points at a name not in
         # HANDLERS would silently dead-link the operator. Routing through
         # HANDLERS is what guarantees the CLI surface is the source of
-        # truth.
-        for task in self.tasks:
+        # truth for the python-wrapping tasks.
+        for task in _python_tasks(self.tasks):
             subcommand = task["args"][1]
             self.assertIn(
                 subcommand, agent_loop.HANDLERS,
@@ -217,10 +263,15 @@ class TasksCoverCommonOperatorFlowsTests(unittest.TestCase):
         self.payload = json.loads(
             TASKS_JSON_PATH.read_text(encoding="utf-8"),
         )
-        self.subcommands = {t["args"][1] for t in self.payload["tasks"]}
+        self.python_tasks = _python_tasks(self.payload["tasks"])
+        self.python_subcommands = {
+            t["args"][1] for t in self.python_tasks
+        }
 
     def test_covers_all_expected_common_operator_subcommands(self) -> None:
-        missing = EXPECTED_COMMON_OPERATOR_SUBCOMMANDS - self.subcommands
+        missing = (
+            EXPECTED_COMMON_OPERATOR_SUBCOMMANDS - self.python_subcommands
+        )
         self.assertEqual(
             missing, set(),
             f"Phase 7A tasks file does not cover expected common "
@@ -228,11 +279,89 @@ class TasksCoverCommonOperatorFlowsTests(unittest.TestCase):
         )
 
     def test_does_not_introduce_unknown_subcommands(self) -> None:
-        # Every subcommand a task surfaces must exist on the shipped CLI
-        # surface. This protects against a typo silently shipping a
-        # task that always fails with argparse.
-        unknown = self.subcommands - set(agent_loop.HANDLERS)
+        # Every subcommand a python-wrapping task surfaces must exist
+        # on the shipped agent_loop CLI surface. This protects against
+        # a typo silently shipping a task that always fails with
+        # argparse.
+        unknown = self.python_subcommands - set(agent_loop.HANDLERS)
         self.assertEqual(unknown, set())
+
+    def test_evidence_collection_task_is_present(self) -> None:
+        # Phase 7A names "collecting evidence" as a common operator
+        # flow alongside "running the loop" and "opening review
+        # artifacts". The Phase 2B evidence producer
+        # (scripts/run_checks.sh) is the actual evidence surface;
+        # `validate-artifacts` only gates already-produced evidence.
+        # This assertion locks in that the slice actually ships the
+        # evidence-production wrapper, not just the gate.
+        task = _evidence_task(self.payload["tasks"])
+        self.assertIsNotNone(
+            task,
+            "Phase 7A tasks file is missing the dedicated evidence-"
+            "collection task (label: "
+            f"{EVIDENCE_COLLECTION_TASK_LABEL!r})",
+        )
+
+
+class EvidenceCollectionTaskTests(unittest.TestCase):
+    """Dedicated coverage for the Phase 2B evidence-collection task.
+
+    Structurally different from the python-wrapping tasks: invokes
+    `bash scripts/run_checks.sh` to drive the shipped Phase 2B
+    Evidence Collection Contract producer. Asserted here in
+    isolation so the python+HANDLERS guardrails on the rest of the
+    suite stay narrow.
+    """
+
+    def setUp(self) -> None:
+        self.payload = json.loads(
+            TASKS_JSON_PATH.read_text(encoding="utf-8"),
+        )
+        self.task = _evidence_task(self.payload["tasks"])
+        self.assertIsNotNone(self.task)
+
+    def test_evidence_task_is_process_type(self) -> None:
+        self.assertEqual(self.task["type"], "process")
+
+    def test_evidence_task_invokes_bash(self) -> None:
+        # bash is the documented invocation for shell scripts in this
+        # repo. On Windows hosts VS Code resolves this through Git
+        # Bash; on macOS / Linux through the system bash. No shell
+        # parsing of args happens because the task type is `process`.
+        self.assertEqual(self.task["command"], "bash")
+
+    def test_evidence_task_targets_run_checks_script(self) -> None:
+        args = self.task["args"]
+        self.assertIsInstance(args, list)
+        self.assertEqual(len(args), 1)
+        self.assertEqual(args[0], RUN_CHECKS_REL)
+
+    def test_evidence_task_run_checks_script_exists_on_disk(self) -> None:
+        # Catches a typo'd path or a renamed script before the task
+        # silently dead-links at runtime.
+        self.assertTrue(
+            (REPO_ROOT / RUN_CHECKS_REL).is_file(),
+            f"Phase 2B evidence producer {RUN_CHECKS_REL} is not "
+            f"present at the documented path",
+        )
+
+    def test_evidence_task_uses_workspace_folder_cwd(self) -> None:
+        cwd = self.task.get("options", {}).get("cwd")
+        self.assertEqual(cwd, "${workspaceFolder}")
+
+    def test_evidence_task_does_not_pass_extra_args(self) -> None:
+        # The shipped run_checks.sh reads configuration from env vars
+        # and .agent-loop/checks.json (per the Phase 2B contract).
+        # The task must NOT inject positional args that the script
+        # does not document.
+        self.assertEqual(len(self.task["args"]), 1)
+
+    def test_only_one_evidence_collection_task_is_declared(self) -> None:
+        matches = [
+            t for t in self.payload["tasks"]
+            if t["label"] == EVIDENCE_COLLECTION_TASK_LABEL
+        ]
+        self.assertEqual(len(matches), 1)
 
 
 class RepoRemainsUsableWithoutVsCodeTests(unittest.TestCase):
@@ -249,6 +378,95 @@ class RepoRemainsUsableWithoutVsCodeTests(unittest.TestCase):
         self.assertIn("check-state", agent_loop.HANDLERS)
         self.assertTrue(callable(agent_loop.HANDLERS["run"]))
         self.assertTrue(callable(agent_loop.HANDLERS["check-state"]))
+
+
+class WorkspaceSettingsJsonTests(unittest.TestCase):
+    """Phase 7B: workspace settings file improves artifact-inspection
+    ergonomics in VS Code without changing the runtime contract. Tests
+    here lock in: file existence, JSON validity, a `files.associations`
+    block (artifact viewing), and a `explorer.fileNesting.patterns`
+    block (artifact grouping). The settings layer is a pure operator
+    convenience layer; the assertions intentionally do not pin
+    settings that are unrelated to artifact inspection.
+    """
+
+    def setUp(self) -> None:
+        self.assertTrue(
+            SETTINGS_JSON_PATH.is_file(),
+            f"Expected workspace settings file at {SETTINGS_JSON_PATH}",
+        )
+        self.payload = json.loads(
+            SETTINGS_JSON_PATH.read_text(encoding="utf-8"),
+        )
+
+    def test_settings_is_an_object(self) -> None:
+        self.assertIsInstance(self.payload, dict)
+
+    def test_settings_declares_file_associations(self) -> None:
+        # `.patch` files are diffs; mapping them helps VS Code render
+        # the captured `git-diff.patch` evidence file with a diff
+        # viewer rather than as plain text. Other associations are
+        # operator preference but the slice ships at least this one.
+        associations = self.payload.get("files.associations", {})
+        self.assertIsInstance(associations, dict)
+        self.assertIn("*.patch", associations)
+        self.assertEqual(associations["*.patch"], "diff")
+
+    def test_settings_declares_file_nesting_for_review_artifacts(
+        self,
+    ) -> None:
+        # The artifact-inspection workflow benefits from grouping the
+        # related artifacts in the Explorer view. This assertion
+        # locks in the load-bearing nesting roots (prompt, planning,
+        # review, evidence) so the slice cannot silently regress to
+        # an un-nested explorer view.
+        nesting_enabled = self.payload.get(
+            "explorer.fileNesting.enabled",
+        )
+        self.assertTrue(nesting_enabled)
+        patterns = self.payload.get(
+            "explorer.fileNesting.patterns", {},
+        )
+        self.assertIsInstance(patterns, dict)
+        # At minimum: the prompt root nests fix-prompt under
+        # claude-prompt, the planning root nests current-task under
+        # current-phase, and the evidence root nests the other
+        # evidence files under git-status.log.
+        self.assertIn("claude-prompt.md", patterns)
+        self.assertIn(
+            "fix-prompt.md", patterns["claude-prompt.md"],
+        )
+        self.assertIn("current-phase.md", patterns)
+        self.assertIn(
+            "current-task.md", patterns["current-phase.md"],
+        )
+        self.assertIn("git-status.log", patterns)
+        self.assertIn(
+            "git-diff.patch", patterns["git-status.log"],
+        )
+
+    def test_settings_does_not_introduce_runtime_overrides(self) -> None:
+        # The slice promises the settings file is a thin operator
+        # convenience layer. It must NOT override Python interpreter
+        # selection, terminal shell, or any other setting that could
+        # silently change how the shipped CLI runs from VS Code.
+        forbidden = (
+            "python.defaultInterpreterPath",
+            "python.pythonPath",
+            "terminal.integrated.shell.windows",
+            "terminal.integrated.shell.osx",
+            "terminal.integrated.shell.linux",
+            "terminal.integrated.defaultProfile.windows",
+            "terminal.integrated.defaultProfile.osx",
+            "terminal.integrated.defaultProfile.linux",
+        )
+        for key in forbidden:
+            self.assertNotIn(
+                key, self.payload,
+                f"settings.json declares forbidden runtime-influencing "
+                f"key {key!r}; the inspection layer must not change "
+                f"how the shipped CLI runs",
+            )
 
 
 if __name__ == "__main__":
