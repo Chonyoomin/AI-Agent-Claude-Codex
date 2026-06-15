@@ -70,12 +70,15 @@ The orchestrator supports three approval modes (Phase 5A Contract):
 
 - `review` (default on activation): one cycle runs; Codex reviews; humans
   gate phase transition.
-- `strict`: adds four human checkpoints inside each cycle
-  (`pre_claude_prompt`, `pre_fix_prompt`, `pre_codex_review_normal`,
-  `pre_codex_review_fix`). Each pause persists a `halted_awaiting_human_*`
+- `strict`: adds three human checkpoints inside each cycle
+  (`pre_claude_prompt`, `pre_fix_prompt`, `pre_codex_review`). The
+  `pre_codex_review` gate persists in two halt-status flavors
+  (`halted_awaiting_human_pre_codex_review_normal` and
+  `halted_awaiting_human_pre_codex_review_fix`) so resume can route to
+  the correct continuation. Each pause persists a `halted_awaiting_human_*`
   status; `python scripts/agent_loop.py resume` continues from the matching
   gate.
-- `autonomous`: bypasses each of the four strict gates with auditable
+- `autonomous`: bypasses each of the three strict gates with auditable
   `autonomous mode: bypassing <gate>` notes. Every other hard stop
   (`FAILED_REQUIRES_HUMAN`, `cycle_count >= max_cycles`, structural halts,
   the `phase_complete_*` terminal) is preserved; autonomy never
@@ -141,12 +144,19 @@ distills recurring failure patterns into a flat advisory `failure` entry.
 
 ## Checkpoint layer
 
-Token-exhaustion (Phase 6F) and Phase 5C strict-mode gates write
-checkpoints under `.agent-loop/memory/checkpoint/` so the cycle can resume
+Token-exhaustion (Phase 6F) writes checkpoint artifacts under
+`.agent-loop/memory/checkpoint/` so a partially-consumed cycle can resume
 without re-running prior work. `python scripts/agent_loop.py resume`
-consumes the active checkpoint; `python scripts/agent_loop.py
+consumes the active token-exhaustion checkpoint; `python scripts/agent_loop.py
 auto-continue` chains up to four bounded token-exhaustion hops
 (`AUTO_CONTINUE_MAX_HOPS = 4`).
+
+The Phase 5C strict-mode gates do NOT write strict-gate checkpoint
+artifacts. Instead, each pause persists the matching
+`halted_awaiting_human_*` status (and the gate name in
+`awaiting_human_for`) directly in `.agent-loop/loop-state.json`; the same
+`resume` subcommand dispatches to the continuation that matches the
+persisted halt status.
 
 ## Optional context and LangChain support (advisory)
 

@@ -221,8 +221,16 @@ For an in-editor acceptance checklist on the inspection workflow see
 - Phase activation is human-gated by an explicit
   `APPROVED_FOR_ACTIVATION` token; the orchestrator refuses to
   silently advance phases.
-- Every halt persists a status that points at a specific recovery
-  command (see `status` for the per-halt hint).
+- Every halt persists a status that maps to a specific recovery path
+  (see `status` for the per-halt hint). For most halts the recovery
+  path is a single CLI command (`resume`, `auto-continue`, re-run
+  `run` after fixing the underlying issue, etc.), but for the terminal
+  human-required halts (`halted_failed_requires_human`,
+  `halted_max_cycles_reached`) the recovery path is manual operator
+  triage of `.agent-loop/codex-review.md` and `.agent-loop/
+  claude-summary.md` followed by a fresh Codex-owned activation prompt;
+  the shipped planner refuses to propose the next phase from those
+  states, so there is no direct CLI command that unblocks them.
 - The orchestrator never modifies `AGENTS.md` or `CLAUDE.md`.
 
 ## Where the shipped behavior ends and roadmap begins

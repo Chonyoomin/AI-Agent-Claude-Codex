@@ -281,5 +281,179 @@ class DocsDoNotPromiseFutureBehaviorTests(unittest.TestCase):
             )
 
 
+class DocsDescribeStrictModeAccuratelyTests(unittest.TestCase):
+    """Phase 8A fix: the architecture doc previously said strict mode
+    adds four human checkpoints; the shipped Phase 5C contract defines
+    three gates (`pre_claude_prompt`, `pre_fix_prompt`,
+    `pre_codex_review`) with two halt-status flavors for the
+    `pre_codex_review` gate so resume can route correctly. These tests
+    pin the corrected wording.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARCHITECTURE_PATH)
+
+    def test_strict_mode_section_does_not_claim_four_checkpoints(
+        self,
+    ) -> None:
+        # The shipped Phase 5C contract defines three gates, not four.
+        # Catching the literal regression phrase keeps the architecture
+        # doc honest if someone re-flattens the two halt flavors into a
+        # "four gates" claim.
+        self.assertNotIn(
+            "four human checkpoints", self.text,
+            "docs/architecture.md claims strict mode adds four human "
+            "checkpoints; the shipped Phase 5C contract defines three "
+            "gates with two halt-status flavors on pre_codex_review",
+        )
+        self.assertNotIn(
+            "four strict gates", self.text,
+            "docs/architecture.md references 'four strict gates'; the "
+            "shipped contract defines three gates (one of which has "
+            "two halt-status flavors)",
+        )
+
+    def test_strict_mode_section_names_three_gates(self) -> None:
+        self.assertIn(
+            "three human checkpoints", self.text,
+            "docs/architecture.md does not state the strict-mode gate "
+            "count matches the shipped Phase 5C contract (three "
+            "gates)",
+        )
+        # The three gate names must all appear.
+        for gate in (
+            "pre_claude_prompt",
+            "pre_fix_prompt",
+            "pre_codex_review",
+        ):
+            self.assertIn(
+                f"`{gate}`", self.text,
+                f"docs/architecture.md does not name strict-mode "
+                f"gate {gate!r}",
+            )
+
+    def test_strict_mode_section_names_two_halt_flavors_for_pre_codex_review(
+        self,
+    ) -> None:
+        # The pre_codex_review gate has two halt-status flavors so
+        # resume can route to the normal vs fix continuation. This is
+        # the load-bearing detail the original "four checkpoints"
+        # claim was conflating.
+        for halt in (
+            "halted_awaiting_human_pre_codex_review_normal",
+            "halted_awaiting_human_pre_codex_review_fix",
+        ):
+            self.assertIn(
+                halt, self.text,
+                f"docs/architecture.md does not name the "
+                f"pre_codex_review halt-status flavor {halt!r}",
+            )
+
+
+class DocsDescribeCheckpointLayerAccuratelyTests(unittest.TestCase):
+    """Phase 8A fix: the architecture doc previously said both
+    token-exhaustion AND strict-mode gates write checkpoints under
+    `.agent-loop/memory/checkpoint/`. Only token-exhaustion writes
+    checkpoint artifacts; strict-mode halts resume by persisted halt
+    status in `loop-state.json`. These tests pin the corrected wording.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARCHITECTURE_PATH)
+
+    def test_checkpoint_section_does_not_claim_strict_gates_write_checkpoints(
+        self,
+    ) -> None:
+        # Catch the literal pre-fix phrasing AND a close paraphrase
+        # ("strict-mode ... write[s] ... checkpoint[s]") so a future
+        # rewording that re-introduces the bug also trips.
+        forbidden_claims = (
+            "Phase 5C strict-mode gates write\ncheckpoints",
+            "Phase 5C strict-mode gates write checkpoints",
+            "strict-mode gates write checkpoints",
+        )
+        for fragment in forbidden_claims:
+            self.assertNotIn(
+                fragment, self.text,
+                f"docs/architecture.md claims strict-mode gates "
+                f"write checkpoints via {fragment!r}; only "
+                f"token-exhaustion writes checkpoint artifacts",
+            )
+
+    def test_checkpoint_section_states_strict_gates_use_persisted_status(
+        self,
+    ) -> None:
+        # Positive assertion: the corrected wording must explain how
+        # strict-mode halts actually resume (via persisted halt status
+        # in loop-state, not via a strict-gate checkpoint write).
+        self.assertIn(
+            "do NOT write strict-gate checkpoint", self.text,
+            "docs/architecture.md does not explicitly state that "
+            "strict-mode gates do NOT write strict-gate checkpoint "
+            "artifacts",
+        )
+
+
+class UsageDocHaltRecoveryWordingTests(unittest.TestCase):
+    """Phase 8A fix: the usage doc previously claimed every halt
+    persists a status that points at a specific recovery COMMAND, but
+    `halted_failed_requires_human` and `halted_max_cycles_reached`
+    require manual human/Codex intervention (the planner refuses to
+    propose the next phase from those states). These tests pin the
+    corrected wording.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(USAGE_PATH)
+
+    def test_safety_section_does_not_promise_a_recovery_command_for_every_halt(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            "Every halt persists a status that points at a specific "
+            "recovery\n  command",
+            self.text,
+            "docs/usage.md still promises a recovery command for "
+            "every halt; halted_failed_requires_human and "
+            "halted_max_cycles_reached require human/Codex "
+            "intervention, not a CLI command",
+        )
+        self.assertNotIn(
+            "Every halt persists a status that points at a specific "
+            "recovery command",
+            self.text,
+        )
+
+    def test_safety_section_names_the_human_required_terminal_halts(
+        self,
+    ) -> None:
+        # The corrected wording must mention the two terminal halts
+        # that require manual recovery, so an operator does not read
+        # the safety section and expect a CLI command for them.
+        for halt in (
+            "halted_failed_requires_human",
+            "halted_max_cycles_reached",
+        ):
+            self.assertIn(
+                halt, self.text,
+                f"docs/usage.md safety section does not name "
+                f"human-required terminal halt {halt!r}",
+            )
+
+    def test_safety_section_notes_planner_refuses_from_terminal_halts(
+        self,
+    ) -> None:
+        # The corrected wording must explain WHY there is no direct
+        # CLI command for the human-required halts (the planner
+        # refuses). Without that, an operator could think the doc is
+        # incomplete.
+        self.assertIn(
+            "planner refuses", self.text,
+            "docs/usage.md does not explain that the shipped planner "
+            "refuses to propose the next phase from the human-"
+            "required terminal halts",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
