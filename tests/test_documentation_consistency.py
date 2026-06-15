@@ -921,11 +921,19 @@ class ReadmeCleanCloneGettingStartedTests(unittest.TestCase):
     ) -> None:
         # Phase 3A-3E all shipped; the original Phase-1 framing said the
         # orchestrator was not yet built. Catch the specific stale
-        # phrases so a future edit that revives them fails closed.
+        # phrases so a future edit that revives them fails closed. The
+        # last fragment is the Phase 8C fix-cycle addition: the README
+        # used to describe loop-state.json as "recorded by hand" as a
+        # standalone fact, which contradicts the shipped orchestrator-
+        # owned ownership model.
         for fragment in (
             "once the orchestrator (Phase 3) is built",
             "Until then, the same loop runs by hand",
             "While the orchestrator is not yet built",
+            (
+                "records the active phase, task, cycle count, max "
+                "cycles, and last verdict by hand"
+            ),
         ):
             self.assertNotIn(
                 fragment, self.text,
@@ -933,6 +941,52 @@ class ReadmeCleanCloneGettingStartedTests(unittest.TestCase):
                 f"{fragment!r}; Phase 3A-3E all shipped and the "
                 f"orchestrator is the documented driver",
             )
+
+    def test_readme_describes_loop_state_as_orchestrator_owned(
+        self,
+    ) -> None:
+        # Phase 8C fix-cycle positive lock-in: the corrected wording
+        # must explicitly call out loop-state.json as orchestrator-
+        # owned in the shipped system so a reader sees the contract-
+        # accurate ownership boundary directly in the README. Without
+        # this, a future edit could drop both the stale phrase and the
+        # corrected framing in one go and leave the file's ownership
+        # ambiguous.
+        collapsed = " ".join(self.text.split())
+        self.assertIn(
+            ".agent-loop/loop-state.json", collapsed,
+            "README.md no longer names the loop-state.json artifact "
+            "near the manual-fallback section",
+        )
+        self.assertIn(
+            "orchestrator-owned runtime artifact", collapsed,
+            "README.md does not describe loop-state.json as an "
+            "orchestrator-owned runtime artifact; the Phase 8C fix-"
+            "cycle corrected wording is missing",
+        )
+        # The corrected wording also names the shipped writers (the
+        # activator at phase activation and scripts/agent_loop.py per
+        # cycle) so the ownership claim is concrete. The README wraps
+        # the script path in backticks; check the path and verb
+        # substrings independently so the assertion does not depend
+        # on the exact backtick layout.
+        self.assertIn(
+            "activator initializes it", collapsed,
+            "README.md does not name the activator as the artifact "
+            "initializer; the Phase 8C fix-cycle corrected wording "
+            "is incomplete",
+        )
+        self.assertIn(
+            "scripts/agent_loop.py", collapsed,
+            "README.md does not name scripts/agent_loop.py near the "
+            "loop-state.json ownership claim",
+        )
+        self.assertIn(
+            "updates the per-cycle fields", collapsed,
+            "README.md does not describe scripts/agent_loop.py as "
+            "the per-cycle field updater; the Phase 8C fix-cycle "
+            "corrected wording is incomplete",
+        )
 
     def test_readme_marks_phase_8c_as_active(self) -> None:
         self.assertIn(

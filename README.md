@@ -120,7 +120,7 @@ Phase 1 documented the manual file-based loop. The by-hand workflow below is pre
 8. If the verdict is `NEEDS_FIXES`, Codex-owned follow-up is applied first where supported, `.agent-loop/fix-prompt.md` is regenerated from the Claude-owned review issues, and the cycle repeats from step 3 within `max_cycles`.
 9. The cycle stops for human approval before any commit, and again before the next phase begins.
 
-`.agent-loop/loop-state.json` records the active phase, task, cycle count, max cycles, and last verdict by hand.
+`.agent-loop/loop-state.json` is an orchestrator-owned runtime artifact in the shipped system: the activator initializes it at phase activation and `scripts/agent_loop.py` updates the per-cycle fields (`status`, `cycle_count`, `last_verdict`, `last_verdict_phase`, `claude_version`, `codex_version`, `orchestrator_version`, `approval_mode`, `awaiting_human_for`) during a run, while the Codex- or human-owned fields (`phase`, `sub_phase`, `task`, `max_cycles`, `contract_version`) come from the Phase 4C activation step. In the manual-fallback flow above a human edits the same orchestrator-writable fields against the Phase 3A Orchestrator Contract write-ownership rules; the file is never recorded by hand as the default workflow.
 
 ## Current Status
 
