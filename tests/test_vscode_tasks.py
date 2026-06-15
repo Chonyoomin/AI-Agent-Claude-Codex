@@ -67,6 +67,14 @@ EXPECTED_COMMON_OPERATOR_SUBCOMMANDS = frozenset({
     # CLI subcommand that prints presence/size/mtime for the active
     # review, prompt, planning, and evidence artifacts.
     "inspect-artifacts",
+    # Phase 7C: the status task wraps a shipped read-only CLI
+    # subcommand that prints a human-readable summary of the active
+    # loop-state plus a one-line recovery hint.
+    "status",
+    # Phase 7C: the reset-runtime-config task wraps the shipped Phase
+    # 6N `set-runtime-config --clear` recovery surface; it is already
+    # in HANDLERS and counted by the python-wrapping coverage class.
+    "set-runtime-config",
 })
 
 

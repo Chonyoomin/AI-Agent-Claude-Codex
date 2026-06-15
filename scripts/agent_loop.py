@@ -6125,6 +6125,218 @@ def cmd_inspect_artifacts(_args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------
+# Phase 7C: Status, Reset, And Recovery UX
+#
+# Thin read-only status reporter that summarizes the active loop-state
+# in operator-friendly form and maps the current status to a one-line
+# recovery hint (the suggested CLI follow-up). The reporter is the
+# sibling of `inspect-artifacts`: 7B reports on-disk presence of the
+# artifact set; 7C reports the in-flight semantic state. Pure inspector:
+# never mutates any artifact, never writes to the orchestrator log,
+# always exits 0 even when loop-state is missing or malformed (a status
+# command that crashes on a broken workspace is the opposite of helpful).
+#
+# Reset/recovery UX in this slice is delivered via VS Code task
+# wrappers around already-shipped CLI surfaces (`set-runtime-config
+# --clear` for the Phase 6N persisted runtime selection, `resume` for
+# the strict-mode and token-exhaustion halts, `auto-continue` for
+# bounded continuation chaining). No new write-side recovery command
+# is introduced; the existing recovery vocabulary is the source of
+# truth. The 7C value-add is making the right next step visible.
+#
+# Out of scope for this slice (deferred):
+#   - artifact dashboards or wider Phase 7+ UX scope
+#   - any new write-side reset surface beyond the existing shipped CLI
+#   - any change to the halt/refusal vocabulary
+# ---------------------------------------------------------------------------
+
+STATUS_SIGNAL_VERSION = "phase-7c-v1"
+
+# Map status -> human-readable recovery hint. Unmapped statuses fall
+# through to STATUS_RECOVERY_FALLBACK. The mapping is the load-bearing
+# contract for the operator UX; adding a new status to the orchestrator
+# vocabulary should also add a hint here.
+STATUS_RECOVERY_HINTS: dict = {
+    "awaiting_claude_implementation": (
+        "Drive the next cycle: `python scripts/agent_loop.py run`."
+    ),
+    "awaiting_codex_review": (
+        "Codex review is pending. After Codex writes "
+        "`.agent-loop/codex-review.md`, re-run `python scripts/"
+        "agent_loop.py run` to consume the verdict."
+    ),
+    "phase_complete_awaiting_human_approval": (
+        "Phase complete. Human approves; then Codex activates the "
+        "next phase via `python scripts/agent_loop.py activate`."
+    ),
+    HALTED_PRE_CLAUDE_PROMPT: (
+        "Strict-mode gate (pre_claude_prompt). After human review, "
+        "run `python scripts/agent_loop.py resume`."
+    ),
+    HALTED_PRE_FIX_PROMPT: (
+        "Strict-mode gate (pre_fix_prompt). After human review, run "
+        "`python scripts/agent_loop.py resume`."
+    ),
+    HALTED_PRE_CODEX_REVIEW_NORMAL: (
+        "Strict-mode gate (pre_codex_review, normal cycle). After "
+        "human review, run `python scripts/agent_loop.py resume`."
+    ),
+    HALTED_PRE_CODEX_REVIEW_FIX: (
+        "Strict-mode gate (pre_codex_review, fix cycle). After human "
+        "review, run `python scripts/agent_loop.py resume`."
+    ),
+    HALTED_TOKEN_EXHAUSTION: (
+        "Token-exhaustion halt. Run `python scripts/agent_loop.py "
+        "auto-continue` for bounded automatic chaining, or `python "
+        "scripts/agent_loop.py resume` for a single-hop resume."
+    ),
+    "halted_human_stop": (
+        "Cycle was halted by an operator SIGINT. Inspect with "
+        "`python scripts/agent_loop.py check-state` and re-run "
+        "`python scripts/agent_loop.py run` when ready."
+    ),
+    "halted_input_missing": (
+        "Halt: required input missing. Inspect with `python scripts/"
+        "agent_loop.py inspect-artifacts` and fix the underlying "
+        "issue before retrying."
+    ),
+    "halted_contract_version_mismatch": (
+        "Halt: loop-state `contract_version` is unsupported. "
+        "Reconcile the loop-state contract version before retrying."
+    ),
+    "halted_review_malformed": (
+        "Halt: `.agent-loop/codex-review.md` is malformed. Codex "
+        "must rewrite the review per the Phase 5E contract."
+    ),
+    "halted_review_parse_failed": (
+        "Halt: `.agent-loop/codex-review.md` could not be parsed. "
+        "Codex must reissue the review."
+    ),
+    "halted_summary_malformed": (
+        "Halt: `.agent-loop/claude-summary.md` is malformed. Re-run "
+        "the implementation cycle to regenerate the summary."
+    ),
+}
+
+STATUS_RECOVERY_FALLBACK = (
+    "Status not in the Phase 7C recovery-hint map. Inspect with "
+    "`python scripts/agent_loop.py check-state` and `python scripts/"
+    "agent_loop.py inspect-artifacts`."
+)
+
+
+def _status_recovery_hint(status: Optional[str]) -> str:
+    if not status:
+        return (
+            "loop-state.json has no status set. Run `python scripts/"
+            "agent_loop.py check-state` to inspect."
+        )
+    return STATUS_RECOVERY_HINTS.get(status, STATUS_RECOVERY_FALLBACK)
+
+
+def compute_status_summary(repo_root: Path) -> dict:
+    """Return a structured Phase 7C status summary dict.
+
+    Always returns a dict; never raises. On a missing or malformed
+    `.agent-loop/loop-state.json` the dict carries a `load_error`
+    field describing what went wrong so the renderer can surface the
+    problem without crashing. The `recovery_hint` field always
+    carries an actionable next step.
+    """
+    state_path = repo_root / ".agent-loop" / "loop-state.json"
+    summary: dict = {
+        "status_signal_version": STATUS_SIGNAL_VERSION,
+        "computed_at": _utc_iso_now(),
+        "phase": None,
+        "sub_phase": None,
+        "task": None,
+        "status": None,
+        "approval_mode": None,
+        "cycle_count": None,
+        "max_cycles": None,
+        "last_verdict": None,
+        "last_verdict_phase": None,
+        "awaiting_human_for": None,
+        "active_checkpoint_present": False,
+        "load_error": None,
+        "recovery_hint": None,
+    }
+    try:
+        data = load_loop_state(state_path)
+    except HaltError as exc:
+        summary["load_error"] = f"{exc.status}: {exc.reason}"
+        summary["recovery_hint"] = _status_recovery_hint(exc.status)
+        return summary
+    except Exception as exc:
+        summary["load_error"] = f"unexpected: {exc!r}"
+        summary["recovery_hint"] = STATUS_RECOVERY_FALLBACK
+        return summary
+    for k in (
+        "phase", "sub_phase", "task", "status", "approval_mode",
+        "cycle_count", "max_cycles", "last_verdict",
+        "last_verdict_phase", "awaiting_human_for",
+    ):
+        summary[k] = data.get(k)
+    try:
+        checkpoint = _load_active_checkpoint(repo_root)
+    except Exception:
+        checkpoint = None
+    summary["active_checkpoint_present"] = checkpoint is not None
+    summary["recovery_hint"] = _status_recovery_hint(summary["status"])
+    return summary
+
+
+def _render_status_summary(summary: dict) -> str:
+    lines: list = []
+    lines.append(
+        f"Phase 7C status (signal_version="
+        f"{summary['status_signal_version']})"
+    )
+    if summary["load_error"] is not None:
+        lines.append(f"Load error:        {summary['load_error']}")
+    rows = (
+        ("Phase", summary["phase"]),
+        ("Sub-phase", summary["sub_phase"]),
+        ("Task", summary["task"]),
+        ("Status", summary["status"]),
+        ("Approval mode", summary["approval_mode"]),
+        (
+            "Cycle",
+            (
+                f"{summary['cycle_count']} / {summary['max_cycles']}"
+                if summary["cycle_count"] is not None
+                or summary["max_cycles"] is not None
+                else None
+            ),
+        ),
+        ("Last verdict", summary["last_verdict"]),
+        ("Last verdict phase", summary["last_verdict_phase"]),
+        ("Awaiting human for", summary["awaiting_human_for"]),
+        (
+            "Active checkpoint",
+            (
+                "present" if summary["active_checkpoint_present"]
+                else "none"
+            ),
+        ),
+    )
+    label_width = max(len(label) for label, _v in rows) + 1
+    for label, value in rows:
+        rendered = "(unset)" if value is None else str(value)
+        lines.append(f"{(label + ':').ljust(label_width)} {rendered}")
+    lines.append("")
+    lines.append(f"Recovery hint: {summary['recovery_hint']}")
+    return "\n".join(lines)
+
+
+def cmd_status(_args: argparse.Namespace) -> int:
+    repo_root = find_repo_root()
+    summary = compute_status_summary(repo_root)
+    print(_render_status_summary(summary))
+    return 0
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -10524,6 +10736,21 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub.add_parser(
+        "status",
+        help=(
+            "Phase 7C read-only status reporter: prints a human-"
+            "readable summary of the active loop-state (phase, sub_"
+            "phase, task, status, approval_mode, cycle / max_cycles, "
+            "last_verdict, awaiting_human_for, active-checkpoint "
+            "presence) plus a one-line recovery hint mapping the "
+            "current status to the suggested next CLI command. "
+            "Always exits 0; gracefully reports load errors instead "
+            "of crashing when loop-state is missing or malformed. "
+            "Never mutates any artifact, never writes to the "
+            "orchestrator log, never synthesizes alternate state."
+        ),
+    )
+    sub.add_parser(
         "inspect-artifacts",
         help=(
             "Phase 7B read-only artifact inspector: prints a "
@@ -10576,6 +10803,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
     "inspect-artifacts": cmd_inspect_artifacts,
+    "status": cmd_status,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
