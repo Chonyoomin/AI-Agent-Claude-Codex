@@ -1,3 +1,3 @@
 # Current Phase
 
-Phase 7 - VS Code Polish (sub-phase: Phase 7C - Status, Reset, And Recovery UX)
+Phase 8 - Documentation and Project Polish (sub-phase: Phase 8A - Architecture And Usage Docs)
