@@ -63,7 +63,14 @@ EXPECTED_COMMON_OPERATOR_SUBCOMMANDS = frozenset({
     "plan",
     "activate",
     "bootstrap-prompt",
+    # Phase 7B: the artifact-inspection task wraps a shipped read-only
+    # CLI subcommand that prints presence/size/mtime for the active
+    # review, prompt, planning, and evidence artifacts.
+    "inspect-artifacts",
 })
+
+
+SETTINGS_JSON_PATH = REPO_ROOT / ".vscode" / "settings.json"
 
 
 def _python_tasks(tasks: list) -> list:
@@ -363,6 +370,95 @@ class RepoRemainsUsableWithoutVsCodeTests(unittest.TestCase):
         self.assertIn("check-state", agent_loop.HANDLERS)
         self.assertTrue(callable(agent_loop.HANDLERS["run"]))
         self.assertTrue(callable(agent_loop.HANDLERS["check-state"]))
+
+
+class WorkspaceSettingsJsonTests(unittest.TestCase):
+    """Phase 7B: workspace settings file improves artifact-inspection
+    ergonomics in VS Code without changing the runtime contract. Tests
+    here lock in: file existence, JSON validity, a `files.associations`
+    block (artifact viewing), and a `explorer.fileNesting.patterns`
+    block (artifact grouping). The settings layer is a pure operator
+    convenience layer; the assertions intentionally do not pin
+    settings that are unrelated to artifact inspection.
+    """
+
+    def setUp(self) -> None:
+        self.assertTrue(
+            SETTINGS_JSON_PATH.is_file(),
+            f"Expected workspace settings file at {SETTINGS_JSON_PATH}",
+        )
+        self.payload = json.loads(
+            SETTINGS_JSON_PATH.read_text(encoding="utf-8"),
+        )
+
+    def test_settings_is_an_object(self) -> None:
+        self.assertIsInstance(self.payload, dict)
+
+    def test_settings_declares_file_associations(self) -> None:
+        # `.patch` files are diffs; mapping them helps VS Code render
+        # the captured `git-diff.patch` evidence file with a diff
+        # viewer rather than as plain text. Other associations are
+        # operator preference but the slice ships at least this one.
+        associations = self.payload.get("files.associations", {})
+        self.assertIsInstance(associations, dict)
+        self.assertIn("*.patch", associations)
+        self.assertEqual(associations["*.patch"], "diff")
+
+    def test_settings_declares_file_nesting_for_review_artifacts(
+        self,
+    ) -> None:
+        # The artifact-inspection workflow benefits from grouping the
+        # related artifacts in the Explorer view. This assertion
+        # locks in the load-bearing nesting roots (prompt, planning,
+        # review, evidence) so the slice cannot silently regress to
+        # an un-nested explorer view.
+        nesting_enabled = self.payload.get(
+            "explorer.fileNesting.enabled",
+        )
+        self.assertTrue(nesting_enabled)
+        patterns = self.payload.get(
+            "explorer.fileNesting.patterns", {},
+        )
+        self.assertIsInstance(patterns, dict)
+        # At minimum: the prompt root nests fix-prompt under
+        # claude-prompt, the planning root nests current-task under
+        # current-phase, and the evidence root nests the other
+        # evidence files under git-status.log.
+        self.assertIn("claude-prompt.md", patterns)
+        self.assertIn(
+            "fix-prompt.md", patterns["claude-prompt.md"],
+        )
+        self.assertIn("current-phase.md", patterns)
+        self.assertIn(
+            "current-task.md", patterns["current-phase.md"],
+        )
+        self.assertIn("git-status.log", patterns)
+        self.assertIn(
+            "git-diff.patch", patterns["git-status.log"],
+        )
+
+    def test_settings_does_not_introduce_runtime_overrides(self) -> None:
+        # The slice promises the settings file is a thin operator
+        # convenience layer. It must NOT override Python interpreter
+        # selection, terminal shell, or any other setting that could
+        # silently change how the shipped CLI runs from VS Code.
+        forbidden = (
+            "python.defaultInterpreterPath",
+            "python.pythonPath",
+            "terminal.integrated.shell.windows",
+            "terminal.integrated.shell.osx",
+            "terminal.integrated.shell.linux",
+            "terminal.integrated.defaultProfile.windows",
+            "terminal.integrated.defaultProfile.osx",
+            "terminal.integrated.defaultProfile.linux",
+        )
+        for key in forbidden:
+            self.assertNotIn(
+                key, self.payload,
+                f"settings.json declares forbidden runtime-influencing "
+                f"key {key!r}; the inspection layer must not change "
+                f"how the shipped CLI runs",
+            )
 
 
 if __name__ == "__main__":

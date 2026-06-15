@@ -5978,6 +5978,153 @@ class LangChainToolRegistry:
         )
 
 
+# ---------------------------------------------------------------------------
+# Phase 7B: Artifact Inspection And Review Workflow
+#
+# Thin operator-convenience inspector that reports the on-disk
+# presence, size, and last-modified UTC timestamp of the active review
+# artifacts (codex-review.md, claude-prompt.md, fix-prompt.md), the
+# active planning artifacts (current-task.md, current-phase.md), and
+# the shipped Phase 2A/2B evidence files (git-status.log,
+# git-diff.patch, test-output.log, lint-output.log, typecheck-output.log,
+# build-output.log). The inspector is purely read-only: it never
+# mutates any artifact, never writes to the orchestrator log, and
+# does not synthesize alternate state. Its sole purpose is to make
+# the most commonly-inspected artifacts trivially discoverable from
+# a VS Code task terminal (where VS Code auto-linkifies the printed
+# repo-relative paths).
+#
+# Out of scope for this slice (deferred):
+#   - dashboards, reset/recovery UX, or any wider Phase 7C+ surface
+#   - editor-owned orchestration; the inspector is a reporter, never
+#     a controller
+#   - any change to the canonical artifact contracts or to their
+#     write-ownership boundaries
+# ---------------------------------------------------------------------------
+
+INSPECTION_SIGNAL_VERSION = "phase-7b-v1"
+
+INSPECTION_GROUP_REVIEW = "review"
+INSPECTION_GROUP_PROMPT = "prompt"
+INSPECTION_GROUP_PLANNING = "planning"
+INSPECTION_GROUP_EVIDENCE = "evidence"
+
+# Fixed ordered tuple of (group, repo-relative-path). The order is the
+# print order; the group label is the structural classification a
+# consumer can branch on. Adding an artifact to this set requires a
+# focused test update in tests/test_artifact_inspection.py.
+INSPECTION_ARTIFACTS: tuple = (
+    (INSPECTION_GROUP_REVIEW, ".agent-loop/codex-review.md"),
+    (INSPECTION_GROUP_PROMPT, ".agent-loop/claude-prompt.md"),
+    (INSPECTION_GROUP_PROMPT, ".agent-loop/fix-prompt.md"),
+    (INSPECTION_GROUP_PLANNING, ".agent-loop/current-task.md"),
+    (INSPECTION_GROUP_PLANNING, ".agent-loop/current-phase.md"),
+    (INSPECTION_GROUP_EVIDENCE, ".agent-loop/git-status.log"),
+    (INSPECTION_GROUP_EVIDENCE, ".agent-loop/git-diff.patch"),
+    (INSPECTION_GROUP_EVIDENCE, ".agent-loop/test-output.log"),
+    (INSPECTION_GROUP_EVIDENCE, ".agent-loop/lint-output.log"),
+    (INSPECTION_GROUP_EVIDENCE, ".agent-loop/typecheck-output.log"),
+    (INSPECTION_GROUP_EVIDENCE, ".agent-loop/build-output.log"),
+)
+
+INSPECTION_GROUPS: tuple = (
+    INSPECTION_GROUP_REVIEW,
+    INSPECTION_GROUP_PROMPT,
+    INSPECTION_GROUP_PLANNING,
+    INSPECTION_GROUP_EVIDENCE,
+)
+
+
+def _inspection_mtime_utc(path: Path) -> str:
+    # Format the path's mtime as an ISO-8601 UTC string; falls back
+    # to a marker when the OS reports an unexpected stat error so the
+    # inspector never crashes on a partially-populated workspace.
+    try:
+        ts = path.stat().st_mtime
+    except OSError:
+        return "unknown"
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ts))
+
+
+def inspect_artifacts(repo_root: Path) -> list:
+    """Return one structured record per inspection-target artifact.
+
+    Each record is a dict with keys:
+      - `group`: one of INSPECTION_GROUPS
+      - `rel_path`: the repo-relative path string
+      - `present`: bool
+      - `size`: int byte size when present, else None
+      - `modified`: ISO-8601 UTC mtime string when present, else None
+
+    Pure read-only inspection. Never mutates any artifact and never
+    writes to the orchestrator log. Order matches INSPECTION_ARTIFACTS.
+    """
+    records: list = []
+    for group, rel_path in INSPECTION_ARTIFACTS:
+        path = repo_root / rel_path
+        if path.is_file():
+            try:
+                size = path.stat().st_size
+            except OSError:
+                size = None
+            records.append({
+                "group": group,
+                "rel_path": rel_path,
+                "present": True,
+                "size": size,
+                "modified": _inspection_mtime_utc(path),
+            })
+        else:
+            records.append({
+                "group": group,
+                "rel_path": rel_path,
+                "present": False,
+                "size": None,
+                "modified": None,
+            })
+    return records
+
+
+def _render_inspection_table(records: list) -> str:
+    lines: list = []
+    lines.append(
+        f"Phase 7B artifact inspection "
+        f"(signal_version={INSPECTION_SIGNAL_VERSION})"
+    )
+    rel_width = max(
+        (len(r["rel_path"]) for r in records), default=0,
+    )
+    group_width = max(
+        (len(r["group"]) for r in records), default=0,
+    )
+    for r in records:
+        group_field = f"[{r['group']}]".ljust(group_width + 2)
+        rel_field = r["rel_path"].ljust(rel_width)
+        if r["present"]:
+            lines.append(
+                f"{group_field} {rel_field}  present  "
+                f"size={r['size']} bytes  modified={r['modified']}"
+            )
+        else:
+            lines.append(
+                f"{group_field} {rel_field}  missing"
+            )
+    present_count = sum(1 for r in records if r["present"])
+    missing_count = len(records) - present_count
+    lines.append(
+        f"total={len(records)} present={present_count} "
+        f"missing={missing_count}"
+    )
+    return "\n".join(lines)
+
+
+def cmd_inspect_artifacts(_args: argparse.Namespace) -> int:
+    repo_root = find_repo_root()
+    records = inspect_artifacts(repo_root)
+    print(_render_inspection_table(records))
+    return 0
+
+
 def _halt(state_path: Path, current: dict, halt: HaltError, log_path: Optional[Path]) -> int:
     print(
         f"[orchestrator] HALT {halt.status}: {halt.reason}",
@@ -10377,6 +10524,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     sub.add_parser(
+        "inspect-artifacts",
+        help=(
+            "Phase 7B read-only artifact inspector: prints a "
+            "deterministic table of the active review artifacts "
+            "(codex-review.md, claude-prompt.md, fix-prompt.md), the "
+            "active planning artifacts (current-task.md, current-"
+            "phase.md), and the shipped evidence files. Each row "
+            "carries the artifact's group, repo-relative path, "
+            "presence, byte size, and last-modified UTC timestamp. "
+            "Never mutates any artifact, never writes to the "
+            "orchestrator log, never synthesizes alternate state. "
+            "Output paths are repo-relative so a VS Code task "
+            "terminal auto-linkifies them."
+        ),
+    )
+    sub.add_parser(
         "bootstrap-prompt",
         help=(
             "Phase 5F phase-start prompt bootstrap: synthesize "
@@ -10412,6 +10575,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
+    "inspect-artifacts": cmd_inspect_artifacts,
     "bootstrap-prompt": cmd_bootstrap_prompt,
 }
 
