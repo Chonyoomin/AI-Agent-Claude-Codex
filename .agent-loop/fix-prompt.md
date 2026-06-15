@@ -1,42 +1,39 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix the remaining Phase 8B documentation drift so the README's approval-mode
-and halt-recovery descriptions match the shipped strict-mode behavior exactly.
+Fix the remaining Phase 8B README inconsistency so every strict-mode gate-count
+reference in the README matches the shipped Phase 5C contract exactly.
 
 ## Context
-Codex reviewed the current Phase 8B implementation from repo state. The three
-new playbooks are internally consistent, `tests/test_documentation_consistency.py`
-passes, and the full test suite passes. One Claude-owned documentation defect
-remains in the touched explanatory docs:
+Codex re-reviewed the current Phase 8B fix pass from repo state. The prior
+README drift in the Phase 5D and Phase 8B paragraphs is fixed, the new focused
+README tests pass, and the full test suite passes. One Claude-owned README
+defect still remains:
 
-1. `README.md` still says autonomous mode bypasses "four Phase 5C strict-mode
-   human gates" and still describes `docs/halt-and-recovery.md` as covering
-   "the four Phase 5C strict-mode gates". That wording is inaccurate relative
-   to the shipped runtime:
+1. `README.md` still says, in the `tests/test_approval_modes.py` bullet, that
+   "Autonomous-mode coverage proves none of the four strict gates fires under
+   `autonomous`." That wording is still inaccurate relative to the shipped
+   runtime contract:
    - the shipped Phase 5C contract defines three strict-mode gates:
      `pre_claude_prompt`, `pre_fix_prompt`, and `pre_codex_review`
-   - `pre_codex_review` has two halt-status flavors
+   - `pre_codex_review` persists in two halt-status flavors
      (`halted_awaiting_human_pre_codex_review_normal` and
      `halted_awaiting_human_pre_codex_review_fix`) so resume can route
      correctly
-   - the current README wording reintroduces the same "four gates" confusion
-     Phase 8A already corrected elsewhere
+   - the README therefore still contains an internal contradiction even after
+     the last fix cycle
 
-The remaining related drift in `.agent-loop/phase-plan.md` is Codex-owned and
-is NOT part of this Claude fix task.
+The remaining `.agent-loop/phase-plan.md` wording drift is Codex-owned and is
+NOT part of this Claude fix task.
 
 ## Required fixes
-- Correct the Phase 5D paragraph in `README.md` so it describes autonomous mode
-  as bypassing the three strict-mode gates, with `pre_codex_review` having two
-  halt-status flavors rather than being counted as a fourth gate.
-- Correct the Phase 8B paragraph in `README.md` so the halt-and-recovery
-  playbook description no longer says "four Phase 5C strict-mode gates" and
-  instead uses wording aligned with the shipped strict-mode contract.
-- Add or update focused documentation-consistency coverage so this exact README
-  drift fails closed on regression. The current suite protects
-  `docs/architecture.md` and the Phase 8B playbooks, but it does not currently
-  fail if README reintroduces the incorrect "four strict gates" wording.
+- Correct the `tests/test_approval_modes.py` bullet in `README.md` so it no
+  longer says "four strict gates" and instead describes the shipped behavior in
+  a way that is consistent with the corrected Phase 5D and Phase 8B paragraphs.
+- Extend the focused documentation-consistency coverage so this remaining README
+  variant also fails closed on regression. The current README guard only blocks
+  two specific phrases and does not catch the still-present "four strict gates"
+  wording in the test-description bullet.
 - Update `.agent-loop/claude-summary.md` so it accurately describes the final
   fix and the exact validation commands run.
 
@@ -51,8 +48,8 @@ is NOT part of this Claude fix task.
 - Do not broaden into new runtime, approval-mode, halt, or checkpoint behavior.
 - Preserve the shipped contracts and describe only behavior that already exists
   in the repo.
-- Prefer the smallest safe documentation/test fix that makes the README truthful
-  relative to the current runtime.
+- Prefer the smallest safe documentation/test fix that makes the README
+  internally consistent relative to the current runtime.
 
 ## Required output
 After implementing the fix, update `.agent-loop/claude-summary.md` with the

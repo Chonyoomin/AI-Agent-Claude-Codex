@@ -828,6 +828,13 @@ class ReadmeDescribesStrictModeAccuratelyTests(unittest.TestCase):
         for fragment in (
             "four Phase 5C strict-mode human gates",
             "four Phase 5C strict-mode gates",
+            # Phase 8B fix-2: the test-description bullet for
+            # tests/test_approval_modes.py still used the generic
+            # "four strict gates" phrasing. Catch that variant too so
+            # any README section (paragraph or bullet) that
+            # reintroduces the gate / halt-status conflation fails
+            # closed.
+            "four strict gates",
         ):
             self.assertNotIn(
                 fragment, self.text,
