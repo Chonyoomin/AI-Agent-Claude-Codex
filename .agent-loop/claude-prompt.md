@@ -1,37 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 8C - Final README Alignment And Clean-Clone Polish
+Phase 9A - Autonomous Mode Contract And Safety Policy
 
 ## Objective
-Implement the Final README Alignment And Clean-Clone Polish slice for the agent loop. This slice should ensure the README, examples, and getting-started path match the shipped CLI/runtime behavior, current artifact ownership model, and future-roadmap boundaries exactly, while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
+Implement the Autonomous Mode Contract And Safety Policy slice for the agent loop. This slice should define what the future fully autonomous PRD-to-product mode is allowed to do, what still requires explicit human approval, how the mode remains auditable from repo artifacts, and which safety boundaries and hard stops are preserved, without yet implementing orchestrator-driven autonomous PRD execution.
 
 ## Context
-Implement the Final README Alignment And Clean-Clone Polish slice for the
-agent loop. This slice should ensure the README, examples, and getting-started
-path match the shipped CLI/runtime behavior, current artifact ownership model,
-and future-roadmap boundaries exactly, while preserving the current runtime
-behavior and avoiding any documentation that promises unshipped automation,
-hidden capabilities, or alternate sources of truth.
+Implement the Autonomous Mode Contract And Safety Policy slice for the agent
+loop. This slice should define what the future fully autonomous PRD-to-product
+mode is allowed to do, what still requires explicit human approval, how the
+mode remains auditable from repo artifacts, and which safety boundaries and
+hard stops are preserved, without yet implementing orchestrator-driven
+autonomous PRD execution.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 8 / 8C as active
-- `.agent-loop/phase-plan.md` records Phase 8B as closed history and contains a
-  `## Phase 8C - Final README Alignment And Clean-Clone Polish` section with
+  `.agent-loop/loop-state.json` identify Phase 9 / 9A as active
+- `.agent-loop/phase-plan.md` records Phase 8C as closed history and contains a
+  `## Phase 9A - Autonomous Mode Contract And Safety Policy` section with
   concrete objective, done criteria, and exclusions
-- the repository README, examples, and clean-clone getting-started guidance
-  match the shipped CLI/runtime behavior and the already-delivered Phase 8A/8B
-  docs without requiring prior chat context
+- the repository defines a concrete contract for the future fully autonomous
+  PRD-to-product mode, including allowed actions, preserved hard stops, audit
+  expectations, and explicit human-approval boundaries
 - documentation distinguishes current shipped behavior from future roadmap items
   and does not present future capabilities as if they already exist
-- operator docs remain aligned with the CLI-first workflow, approval semantics,
-  halt/refusal vocabulary, recovery boundaries, repo-artifact source-of-truth
-  model, and future-roadmap boundaries
+- the contract stays aligned with the shipped CLI-first workflow, artifact
+  ownership model, halt/refusal vocabulary, checkpoint/resume behavior, and
+  repo-artifact source-of-truth model
+- the contract distinguishes future autonomous-mode behavior from currently
+  shipped Phase 5 bounded `autonomous` behavior instead of collapsing them
+  together
 - focused validation or review coverage proves the docs match the actual repo
-  state and do not claim unimplemented behavior
-- `README.md` reflects that Phase 8C is active and that final README alignment
-  / clean-clone polish are now the implementation focus
+  state and do not claim unimplemented autonomous execution behavior
+- `README.md` reflects that Phase 9A is active and that the autonomy contract /
+  safety-policy definition is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -44,14 +47,15 @@ hidden capabilities, or alternate sources of truth.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
+- no implementation of orchestrator-driven fully autonomous PRD execution
 - no new runtime, planner, activator, evidence-collection, review-routing,
   checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code
-  feature work
+  feature work beyond the narrow contract/planning slice
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no documentation that invents behavior the repo does not currently ship
 - no collapsing of future roadmap items into present-tense product behavior
-- no MCP support, external UI, concurrent-agent operation, or fully autonomous
-  PRD-to-product mode in this slice
+- no MCP support, external UI, concurrent-agent operation, or implementation of
+  fully autonomous PRD-to-product execution in this slice
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body

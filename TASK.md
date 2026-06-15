@@ -16,46 +16,46 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Phase 8 - Documentation and Project Polish
+Phase 9 - Fully Autonomous PRD-To-Product Mode
 
 ## Active Sub-Phase
 
-Phase 8C - Final README Alignment And Clean-Clone Polish
+Phase 9A - Autonomous Mode Contract And Safety Policy
 
 ## Phase Status
 
-Phase 8B (Safety, Approval, And Operational Playbooks) is closed after Codex review approval and human progression. Phase 8C is now active as the final Phase 8 slice. This sub-phase should make the README, examples, and clean-clone getting-started path line up exactly with the shipped behavior, current artifact boundaries, and future-roadmap limits without changing runtime behavior or inventing unimplemented automation.
+Phase 8C (Final README Alignment And Clean-Clone Polish) is closed after Codex review approval and human progression. Phase 9A is now active as the first Phase 9 slice. This sub-phase should define the contract and safety policy for a future selectable fully autonomous PRD-to-product mode while preserving the shipped runtime behavior and avoiding any premature autonomous execution implementation.
 
 ## Active Task
 
-Implement the Final README Alignment And Clean-Clone Polish slice for the agent loop. This slice should ensure the README, examples, and getting-started path match the shipped CLI/runtime behavior, current artifact ownership model, and future-roadmap boundaries exactly, while preserving the current runtime behavior and avoiding any documentation that promises unshipped automation, hidden capabilities, or alternate sources of truth.
+Implement the Autonomous Mode Contract And Safety Policy slice for the agent loop. This slice should define what the future fully autonomous PRD-to-product mode is allowed to do, what still requires explicit human approval, how the mode remains auditable from repo artifacts, and which safety boundaries and hard stops are preserved, without yet implementing orchestrator-driven autonomous PRD execution.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 8 / 8C as active
-- `.agent-loop/phase-plan.md` records Phase 8B as closed history and contains a `## Phase 8C - Final README Alignment And Clean-Clone Polish` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository README, examples, and clean-clone getting-started guidance match the shipped CLI/runtime behavior and the already-delivered Phase 8A/8B docs without requiring prior chat context
-- documentation stays aligned with the shipped CLI-first workflow, approval semantics, halt/refusal vocabulary, recovery boundaries, repo-artifact source-of-truth model, and future-roadmap boundaries
-- any new docs or doc rewrites distinguish current shipped behavior from future roadmap items instead of collapsing them together
-- focused validation or review coverage proves the docs match the actual repo state and do not claim unimplemented behavior
-- `README.md` reflects that Phase 8C is active and that final README alignment / clean-clone polish are now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 9 / 9A as active
+- `.agent-loop/phase-plan.md` records Phase 8C as closed history and contains a `## Phase 9A - Autonomous Mode Contract And Safety Policy` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the repository defines a concrete contract for the future fully autonomous PRD-to-product mode, including allowed actions, preserved hard stops, audit expectations, and explicit human-approval boundaries
+- the contract stays aligned with the shipped CLI-first workflow, artifact ownership model, halt/refusal vocabulary, checkpoint/resume behavior, and repo-artifact source-of-truth model
+- the contract distinguishes future autonomous-mode behavior from currently shipped Phase 5 bounded `autonomous` behavior instead of collapsing them together
+- focused validation or review coverage proves the new contract/docs match the actual repo state and do not claim unimplemented autonomous execution behavior
+- `README.md` reflects that Phase 9A is active and that the autonomy contract / safety-policy definition is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 8x sub-phase after Phase 8C until:
+Do not start the next 9x sub-phase after Phase 9A until:
 
-- this Phase 8C slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- this Phase 9A slice receives `APPROVED_FOR_HUMAN_REVIEW`
 - the human explicitly approves moving to the next sub-phase
 - Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
 
 ## Out Of Scope For Current Phase
 
-- any broader autonomy model than the current shipped Phase 5 runtime behavior
-- any new runtime, planner, activator, evidence-collection, review-routing, checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code feature work
+- any implementation of orchestrator-driven fully autonomous PRD execution before the contract is approved
+- any new runtime, planner, activator, evidence-collection, review-routing, checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code feature work beyond the narrow contract/planning slice
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
 - inventing behavior the repo does not currently ship just to simplify the docs
 - collapsing future roadmap items into present-tense product behavior
-- MCP support, external UI, concurrent-agent operation, or fully autonomous PRD-to-product mode (future phases)
+- MCP support, external UI, concurrent-agent operation, or implementation of fully autonomous PRD-to-product execution (future phases)
 - recursive invocation of the locally installed `claude` CLI
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - any change to the Phase 2A Evidence Collection Contract
