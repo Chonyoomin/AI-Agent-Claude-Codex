@@ -38,6 +38,7 @@ from tempfile import TemporaryDirectory
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
+DOCS_CHECKLIST_PATH = HERE.parent / "docs" / "vscode-artifact-inspection-checklist.md"
 
 import agent_loop  # noqa: E402 - sys.path is set above
 
@@ -120,6 +121,32 @@ class InspectionConstantsTests(unittest.TestCase):
             self.assertIn(
                 grp, known,
                 f"row {rel!r} uses unknown group {grp!r}",
+            )
+
+
+class VscodeAcceptanceChecklistTests(unittest.TestCase):
+
+    def test_checklist_exists(self) -> None:
+        self.assertTrue(
+            DOCS_CHECKLIST_PATH.is_file(),
+            f"Expected Phase 7B checklist at {DOCS_CHECKLIST_PATH}",
+        )
+
+    def test_checklist_mentions_live_editor_checks(self) -> None:
+        text = DOCS_CHECKLIST_PATH.read_text(encoding="utf-8")
+        for required_snippet in (
+            "Agent Loop: inspect artifacts",
+            "clickable",
+            "git-diff.patch",
+            "current-task.md",
+            "fix-prompt.md",
+            "diff viewer",
+            "file nesting",
+        ):
+            self.assertIn(
+                required_snippet, text,
+                f"checklist missing required live-editor check "
+                f"{required_snippet!r}",
             )
 
 
