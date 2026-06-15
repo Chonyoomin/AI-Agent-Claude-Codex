@@ -873,5 +873,126 @@ class ReadmeDescribesStrictModeAccuratelyTests(unittest.TestCase):
             )
 
 
+class ReadmeOnlyNamesRealSubcommandsTests(unittest.TestCase):
+    """Phase 8C: mirror the Phase 8A/8B CLI-surface guard onto README.
+    Any `python scripts/agent_loop.py <subcommand>` mention in README
+    must resolve to a real `agent_loop.HANDLERS` entry so the project
+    front page cannot drift into claiming non-existent commands.
+    """
+
+    def test_readme_only_names_real_subcommands(self) -> None:
+        named = set(AGENT_LOOP_INVOCATION_RE.findall(_read(README_PATH)))
+        unknown = named - set(agent_loop.HANDLERS)
+        self.assertEqual(
+            unknown, set(),
+            f"README.md references unknown subcommands: "
+            f"{sorted(unknown)}",
+        )
+
+
+class ReadmeCleanCloneGettingStartedTests(unittest.TestCase):
+    """Phase 8C: README must route a clean-clone reader at the shipped
+    Phase 8A/8B operator docs and must not carry stale Phase-1 framing
+    implying the orchestrator is not yet built. These tests pin the
+    Phase 8C alignment so a later README edit cannot silently drop the
+    operator-doc pointers or reintroduce the stale wording.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_names_every_operator_doc(self) -> None:
+        for rel_path in (
+            "docs/usage.md",
+            "docs/architecture.md",
+            "docs/safety-rules.md",
+            "docs/approval-modes.md",
+            "docs/halt-and-recovery.md",
+        ):
+            self.assertIn(
+                rel_path, self.text,
+                f"README.md does not name operator doc {rel_path!r}; "
+                f"a clean-clone reader has no pointer at the shipped "
+                f"Phase 8A/8B documentation set",
+            )
+
+    def test_readme_does_not_carry_stale_phase_1_workflow_framing(
+        self,
+    ) -> None:
+        # Phase 3A-3E all shipped; the original Phase-1 framing said the
+        # orchestrator was not yet built. Catch the specific stale
+        # phrases so a future edit that revives them fails closed.
+        for fragment in (
+            "once the orchestrator (Phase 3) is built",
+            "Until then, the same loop runs by hand",
+            "While the orchestrator is not yet built",
+        ):
+            self.assertNotIn(
+                fragment, self.text,
+                f"README.md still carries stale Phase-1 framing "
+                f"{fragment!r}; Phase 3A-3E all shipped and the "
+                f"orchestrator is the documented driver",
+            )
+
+    def test_readme_marks_phase_8c_as_active(self) -> None:
+        self.assertIn(
+            "Phase 8C", self.text,
+            "README.md does not name Phase 8C as a current focus",
+        )
+        self.assertIn(
+            "Final README Alignment", self.text,
+            "README.md does not name the Phase 8C sub-phase title",
+        )
+
+
+class ReadmeDoesNotPromiseFutureBehaviorTests(unittest.TestCase):
+    """Phase 8C: apply the Phase 8A no-future-claims guard to README.
+    README mentions Phase 9 / MCP / external UI as disclaiming framing
+    today; this guard fails closed if a future edit collapses those
+    roadmap items into a present-tense product claim.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_does_not_claim_phase_9_as_shipped(self) -> None:
+        for fragment in (
+            "ships fully autonomous PRD",
+            "is a fully autonomous PRD",
+        ):
+            self.assertNotIn(
+                fragment, self.text,
+                f"README.md promises unshipped Phase 9 behavior via "
+                f"{fragment!r}",
+            )
+
+    def test_readme_disclaims_mcp_and_external_ui(self) -> None:
+        # Mirror of the Phase 8A check: the first README occurrence of
+        # each roadmap keyword must appear adjacent to a disclaiming
+        # term so a new operator cannot read the front-of-README
+        # mention as a current shipped capability. The README has many
+        # legitimate later references (e.g. test-description prose that
+        # itself documents the no-future-claims guard); checking the
+        # first occurrence matches the Phase 8A precedent and avoids
+        # false positives on self-referential meta-text.
+        disclaim_terms = (
+            "roadmap", "future", "deferred", "not implemented",
+            "not yet", "later phase",
+        )
+        for keyword in ("MCP", "external UI"):
+            idx = self.text.find(keyword)
+            if idx < 0:
+                continue
+            window = self.text[max(0, idx - 240): idx + 240]
+            if not any(t in window for t in disclaim_terms):
+                self.fail(
+                    f"README.md's first mention of {keyword!r} (offset "
+                    f"{idx}) lacks a disclaiming context (roadmap / "
+                    f"future / deferred / not implemented / later "
+                    f"phase); a new operator could read it as a "
+                    f"current shipped capability"
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

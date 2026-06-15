@@ -25,7 +25,7 @@ The first version focuses on a small local loop:
 
 ## Workflow
 
-This section describes the intended end-to-end workflow once the orchestrator (Phase 3) is built. Until then, the same loop runs by hand - see `## Running The Loop Manually (Phase 1)` below.
+This section describes the end-to-end workflow the shipped orchestrator at `scripts/agent_loop.py` (Phase 3A-3E) drives on a clean clone. New operators should start with [docs/usage.md](docs/usage.md) for the clean-clone walkthrough; the `## Running The Loop Manually (Phase 1)` section below is preserved as a hand-driven fallback against the same artifact formats.
 
 1. Human provides the project objective or updates the desired outcome.
 2. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
@@ -41,6 +41,18 @@ This section describes the intended end-to-end workflow once the orchestrator (P
 9. The loop repeats until the phase is approved, escalated, or reaches max cycles.
 10. When a phase is approved, the system stops until the human starts the next phase.
 11. The system never commits without separate human approval.
+
+## Clean-Clone Getting Started
+
+New operators on a clean clone should start with the shipped operator docs under `docs/`:
+
+- [docs/usage.md](docs/usage.md): clean-clone setup, first cycle, common operator flows, halt recovery, and VS Code task entrypoints (Phase 8A)
+- [docs/architecture.md](docs/architecture.md): three-actor agent model, per-cycle loop lifecycle, phase model, approval modes, halt vocabulary, runtime adapters, memory/checkpoint layers, and artifact-ownership boundaries (Phase 8A)
+- [docs/safety-rules.md](docs/safety-rules.md): safety boundaries the loop never crosses, repo-artifact source-of-truth model, recovery-preserving halt pattern, and the artifact-ownership partition (Phase 8B)
+- [docs/approval-modes.md](docs/approval-modes.md): per-mode operator playbook for `review`, `strict`, and `autonomous` (Phase 8B)
+- [docs/halt-and-recovery.md](docs/halt-and-recovery.md): operator-facing mirror of `STATUS_RECOVERY_HINTS` covering every shipped status and its recovery path (Phase 8B)
+
+The shipped CLI surface (`python scripts/agent_loop.py --help`) is the canonical authority on subcommand availability; the operator docs describe how to drive each subcommand and how to recover from each persisted halt status. Future capabilities tracked in `ROADMAP.md` (Phase 9 Fully Autonomous PRD-To-Product Mode, Phase 10 Future Product Features, MCP support, external UI) are explicitly roadmap-only and are not part of the current shipped behavior.
 
 ## Repository Files
 
@@ -93,7 +105,7 @@ Loop artifacts:
 
 ## Running The Loop Manually (Phase 1)
 
-While the orchestrator is not yet built, the loop runs by hand against the artifact formats defined in `AGENTS.md`. One full manual cycle:
+Phase 1 documented the manual file-based loop. The by-hand workflow below is preserved as a fallback even though the shipped orchestrator (Phase 3A-3E) is now the canonical driver and is documented in [docs/usage.md](docs/usage.md). Run the manual loop against the artifact formats defined in `AGENTS.md` when the orchestrator cannot be invoked (hand-driven cycle reproduction, audit walk-throughs). One full manual cycle:
 
 1. Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the active phase.
 2. Codex writes the implementation prompt to `.agent-loop/claude-prompt.md` using the required Claude task format.
