@@ -674,5 +674,303 @@ class IntakeCliTests(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+class IntakeOutputBoundaryTests(unittest.TestCase):
+    """Phase 9B fix-cycle: the advisory intake artifact must NEVER
+    overwrite a canonical runtime/planning artifact, the orchestrator
+    log, the Phase 6 durable-memory subtree, or the source input
+    file. The boundary is enforced in the library function so direct
+    callers cannot bypass it via `output_path=...`.
+    """
+
+    def _setup_repo(self, td: str) -> tuple[Path, Path]:
+        repo = _make_repo(Path(td))
+        src = repo / "prd.json"
+        src.write_text(
+            json.dumps(_structured_prd()), encoding="utf-8",
+        )
+        return repo, src
+
+    def test_library_refuses_output_outside_agent_loop_dir(self) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            # TASK.md is under the repo root but outside .agent-loop/.
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.intake_and_decompose_prd(
+                    repo, input_path=src,
+                    output_path=repo / "TASK.md",
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "must be under .agent-loop/",
+                str(ctx.exception),
+            )
+            # The pre-existing TASK.md scaffold must NOT have been
+            # overwritten.
+            self.assertEqual(
+                (repo / "TASK.md").read_text(encoding="utf-8"),
+                "test\n",
+            )
+
+    def test_library_refuses_output_matching_source_input_path(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            before = src.read_bytes()
+            with self.assertRaises(HaltError) as ctx:
+                # Even though the source lives outside .agent-loop/,
+                # the "outside .agent-loop/" rule fires before the
+                # input-equals-output rule does; the boundary still
+                # protects the source from being clobbered.
+                agent_loop.intake_and_decompose_prd(
+                    repo, input_path=src, output_path=src,
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            # Source bytes preserved either way.
+            self.assertEqual(src.read_bytes(), before)
+
+    def test_library_refuses_output_matching_source_input_inside_agent_loop(
+        self,
+    ) -> None:
+        # Place source under .agent-loop/ so the "outside dir" rule
+        # does not fire first and the input-equals-output rule is the
+        # one that catches the overwrite attempt.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            src = repo / ".agent-loop" / "input.json"
+            src.write_text(
+                json.dumps(_structured_prd()), encoding="utf-8",
+            )
+            before = src.read_bytes()
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.intake_and_decompose_prd(
+                    repo, input_path=src, output_path=src,
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "must differ from the source input path",
+                str(ctx.exception),
+            )
+            self.assertEqual(src.read_bytes(), before)
+
+    def test_library_refuses_each_protected_output_target(self) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            for rel in sorted(
+                agent_loop.PRD_INTAKE_PROTECTED_OUTPUT_PATHS,
+            ):
+                with self.subTest(rel=rel):
+                    with self.assertRaises(HaltError) as ctx:
+                        agent_loop.intake_and_decompose_prd(
+                            repo, input_path=src,
+                            output_path=repo / rel,
+                        )
+                    self.assertEqual(
+                        ctx.exception.status, "halted_input_missing",
+                    )
+                    self.assertIn(
+                        "protected runtime / planning artifact",
+                        str(ctx.exception),
+                    )
+
+    def test_library_refuses_output_under_memory_subtree(self) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.intake_and_decompose_prd(
+                    repo, input_path=src,
+                    output_path=(
+                        repo / ".agent-loop" / "memory" / "x.json"
+                    ),
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "memory/", str(ctx.exception),
+            )
+
+    def test_library_refuses_output_is_directory(self) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            target = repo / ".agent-loop" / "intake-dir"
+            target.mkdir()
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.intake_and_decompose_prd(
+                    repo, input_path=src, output_path=target,
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn("directory", str(ctx.exception))
+
+    def test_library_accepts_default_output(self) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            written = agent_loop.intake_and_decompose_prd(
+                repo, input_path=src,
+            )
+            self.assertEqual(
+                written.relative_to(repo).as_posix(),
+                agent_loop.PRD_INTAKE_OUTPUT_REL,
+            )
+
+    def test_library_accepts_safe_override_under_agent_loop(self) -> None:
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            target = repo / ".agent-loop" / "custom-intake.json"
+            written = agent_loop.intake_and_decompose_prd(
+                repo, input_path=src, output_path=target,
+            )
+            self.assertEqual(written, target)
+            self.assertTrue(target.is_file())
+
+    def test_library_accepts_safe_nested_override_under_agent_loop(
+        self,
+    ) -> None:
+        # An advisory subdirectory under `.agent-loop/intake/` is
+        # still safe (not protected, not memory) and is auto-created
+        # by parents=True / exist_ok=True.
+        with TemporaryDirectory() as td:
+            repo, src = self._setup_repo(td)
+            target = repo / ".agent-loop" / "intake" / "v1.json"
+            written = agent_loop.intake_and_decompose_prd(
+                repo, input_path=src, output_path=target,
+            )
+            self.assertEqual(written, target)
+            self.assertTrue(target.is_file())
+
+
+class IntakeCliOutputBoundaryTests(unittest.TestCase):
+    """Phase 9B fix-cycle CLI surface coverage: the same boundary
+    must fire when the operator passes an unsafe `--output`.
+    """
+
+    def setUp(self) -> None:
+        self.td = TemporaryDirectory()
+        self.repo = Path(self.td.name)
+        _make_repo(self.repo)
+        _plant_loop_state(self.repo)
+        self.src = self.repo / "prd.json"
+        self.src.write_text(
+            json.dumps(_structured_prd()), encoding="utf-8",
+        )
+        import os
+        self._prev_cwd = os.getcwd()
+        os.chdir(self.repo)
+
+    def tearDown(self) -> None:
+        import os
+        os.chdir(self._prev_cwd)
+        self.td.cleanup()
+
+    def test_cli_refuses_output_task_md(self) -> None:
+        before = (self.repo / "TASK.md").read_bytes()
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+            "--output", "TASK.md",
+        ])
+        self.assertEqual(rc, 2)
+        # TASK.md must not have been overwritten.
+        self.assertEqual(
+            (self.repo / "TASK.md").read_bytes(), before,
+        )
+
+    def test_cli_refuses_output_loop_state_json(self) -> None:
+        # `_halt` correctly persists the halt status into loop-state
+        # on a CLI refusal, so the file bytes legitimately change.
+        # The load-bearing assertion is that loop-state was NOT
+        # overwritten with the advisory PRD intake content. We verify
+        # by re-loading and confirming the file still carries the
+        # loop-state shape (phase / sub_phase keys + halt status)
+        # rather than the intake artifact shape
+        # (intake_signal_version / source_input_kind).
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+            "--output", ".agent-loop/loop-state.json",
+        ])
+        self.assertEqual(rc, 2)
+        post = json.loads(
+            (
+                self.repo / ".agent-loop" / "loop-state.json"
+            ).read_text(encoding="utf-8"),
+        )
+        self.assertIn("phase", post)
+        self.assertIn("sub_phase", post)
+        self.assertNotIn("intake_signal_version", post)
+        self.assertNotIn("source_input_kind", post)
+        # The halt was persisted (this is `_halt`'s shipped behavior).
+        self.assertEqual(post.get("status"), "halted_input_missing")
+
+    def test_cli_refuses_output_matching_source_input(self) -> None:
+        before = self.src.read_bytes()
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+            "--output", "prd.json",
+        ])
+        self.assertEqual(rc, 2)
+        self.assertEqual(self.src.read_bytes(), before)
+
+    def test_cli_refuses_output_under_memory_subtree(self) -> None:
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+            "--output", ".agent-loop/memory/x.json",
+        ])
+        self.assertEqual(rc, 2)
+        self.assertFalse(
+            (self.repo / ".agent-loop" / "memory" / "x.json").exists(),
+        )
+
+    def test_cli_refuses_output_planning_artifact(self) -> None:
+        # Plant a stand-in for current-task.md so we can assert
+        # bytes-preservation across the refusal.
+        ct = self.repo / ".agent-loop" / "current-task.md"
+        ct.write_text("planning bytes\n", encoding="utf-8")
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+            "--output", ".agent-loop/current-task.md",
+        ])
+        self.assertEqual(rc, 2)
+        self.assertEqual(
+            ct.read_text(encoding="utf-8"), "planning bytes\n",
+        )
+
+    def test_cli_default_output_still_succeeds(self) -> None:
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            (self.repo / ".agent-loop" / "prd-intake.json").is_file(),
+        )
+
+    def test_cli_safe_override_under_agent_loop_still_succeeds(
+        self,
+    ) -> None:
+        rc = agent_loop.main([
+            "intake-prd",
+            "--input", "prd.json",
+            "--output", ".agent-loop/custom-intake.json",
+        ])
+        self.assertEqual(rc, 0)
+        self.assertTrue(
+            (
+                self.repo / ".agent-loop" / "custom-intake.json"
+            ).is_file(),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

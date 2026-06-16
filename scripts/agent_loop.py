@@ -6024,6 +6024,36 @@ PRD_INTAKE_CANONICAL_PRECEDENCE_NOTE = (
     "intake is decomposition input, not activation."
 )
 
+# Phase 9B fix-cycle: the advisory intake artifact must NEVER overwrite
+# a canonical runtime or planning artifact, the orchestrator log, the
+# Phase 6 durable-memory subtree, or the source input file. The output
+# write boundary is enforced inside the library function so direct
+# Python callers cannot bypass it. The protected-name set mirrors the
+# orchestrator-owned and Codex-owned artifact lists in CLAUDE.md plus
+# the Phase 4 planner artifacts and the Phase 5B claude-done.json
+# routing signal.
+PRD_INTAKE_PROTECTED_OUTPUT_PATHS = frozenset({
+    ".agent-loop/loop-state.json",
+    ".agent-loop/orchestrator.log",
+    ".agent-loop/phase-plan.md",
+    ".agent-loop/current-task.md",
+    ".agent-loop/current-phase.md",
+    ".agent-loop/claude-prompt.md",
+    ".agent-loop/claude-summary.md",
+    ".agent-loop/codex-review.md",
+    ".agent-loop/fix-prompt.md",
+    ".agent-loop/git-status.log",
+    ".agent-loop/git-diff.patch",
+    ".agent-loop/test-output.log",
+    ".agent-loop/lint-output.log",
+    ".agent-loop/typecheck-output.log",
+    ".agent-loop/build-output.log",
+    ".agent-loop/proposed-phase.md",
+    ".agent-loop/planner.log",
+    ".agent-loop/claude-done.json",
+    ".agent-loop/runtime-config.json",
+})
+
 
 def _validate_prd_intake_max_phases(value) -> None:
     """Refuse fail-closed on an out-of-bounds `max_phases`."""
@@ -6130,6 +6160,80 @@ def _resolve_prd_intake_path(repo_root: Path, rel: str, *, label: str) -> Path:
             ),
         )
     return resolved
+
+
+def _validate_prd_intake_output_target(
+    repo_root: Path, output_path: Path, input_path: Path,
+) -> None:
+    """Refuse fail-closed when `output_path` is not a safe advisory
+    target.
+
+    The Phase 9B intake artifact is advisory and MUST NEVER overwrite
+    a canonical runtime or planning artifact, the orchestrator log,
+    the Phase 6 durable-memory subtree, or the source input file. Safe
+    advisory targets are file paths under `.agent-loop/` that are NOT
+    in `PRD_INTAKE_PROTECTED_OUTPUT_PATHS`, NOT under
+    `.agent-loop/memory/`, NOT a directory, and NOT the same resolved
+    path as the source input file.
+
+    The boundary is enforced inside the library function so direct
+    Python callers cannot bypass the safety contract by skipping the
+    CLI wrapper.
+    """
+    repo_resolved = repo_root.resolve()
+    out_resolved = output_path.resolve()
+    agent_loop_dir = (repo_resolved / ".agent-loop").resolve()
+    try:
+        out_resolved.relative_to(agent_loop_dir)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path must be under "
+                f".agent-loop/; got {output_path} which resolves "
+                f"outside that directory"
+            ),
+        )
+    if out_resolved == input_path.resolve():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path must differ from the source "
+                f"input path; both resolve to {out_resolved}"
+            ),
+        )
+    try:
+        rel = out_resolved.relative_to(repo_resolved).as_posix()
+    except ValueError:
+        rel = str(out_resolved)
+    if rel in PRD_INTAKE_PROTECTED_OUTPUT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path {rel!r} is a protected "
+                f"runtime / planning artifact and may not be "
+                f"overwritten by an advisory intake write"
+            ),
+        )
+    memory_dir = (agent_loop_dir / "memory").resolve()
+    try:
+        out_resolved.relative_to(memory_dir)
+    except ValueError:
+        pass
+    else:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path {rel!r} is under "
+                f".agent-loop/memory/; that subtree is owned by the "
+                f"Phase 6 durable-memory writers"
+            ),
+        )
+    if out_resolved.exists() and out_resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake output path is a directory: {output_path}",
+        )
 
 
 def _load_prd_intake_input(path: Path) -> dict:
@@ -6541,6 +6645,7 @@ def intake_and_decompose_prd(
         output_path if output_path is not None
         else repo_root / PRD_INTAKE_OUTPUT_REL
     )
+    _validate_prd_intake_output_target(repo_root, out, input_path)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8",
