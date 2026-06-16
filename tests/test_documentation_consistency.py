@@ -45,7 +45,15 @@ HALT_AND_RECOVERY_PATH = REPO_ROOT / "docs" / "halt-and-recovery.md"
 PHASE_8B_DOC_PATHS = (
     SAFETY_RULES_PATH, APPROVAL_MODES_PATH, HALT_AND_RECOVERY_PATH,
 )
-ALL_OPERATOR_DOC_PATHS = PHASE_8A_DOC_PATHS + PHASE_8B_DOC_PATHS
+
+# Phase 9A autonomy contract doc (Autonomous Mode Contract And Safety
+# Policy slice; documentation-only contract for the future Phase 9
+# fully autonomous PRD-to-product mode).
+AUTONOMY_CONTRACT_PATH = REPO_ROOT / "docs" / "autonomy-contract.md"
+PHASE_9A_DOC_PATHS = (AUTONOMY_CONTRACT_PATH,)
+ALL_OPERATOR_DOC_PATHS = (
+    PHASE_8A_DOC_PATHS + PHASE_8B_DOC_PATHS + PHASE_9A_DOC_PATHS
+)
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
 # docs, with the subcommand captured. Matches either inside backticks
@@ -1046,6 +1054,260 @@ class ReadmeDoesNotPromiseFutureBehaviorTests(unittest.TestCase):
                     f"phase); a new operator could read it as a "
                     f"current shipped capability"
                 )
+
+
+class Phase9AAutonomyContractExistsAndIsWellFormedTests(unittest.TestCase):
+    """Phase 9A: the autonomy contract doc must exist at the repo root,
+    be ASCII-only, and be non-empty. Mirrors the Phase 8A/8B existence
+    guards.
+    """
+
+    def test_autonomy_contract_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            AUTONOMY_CONTRACT_PATH.is_file(),
+            f"Expected Phase 9A autonomy contract doc at "
+            f"{AUTONOMY_CONTRACT_PATH}",
+        )
+        self.assertGreater(AUTONOMY_CONTRACT_PATH.stat().st_size, 0)
+
+    def test_autonomy_contract_doc_is_ascii_only(self) -> None:
+        text = _read(AUTONOMY_CONTRACT_PATH)
+        for i, line in enumerate(text.splitlines(), 1):
+            for ch in line:
+                self.assertLessEqual(
+                    ord(ch), 127,
+                    f"non-ASCII character {ch!r} in "
+                    f"{AUTONOMY_CONTRACT_PATH.name} line {i}",
+                )
+
+
+class Phase9AAutonomyContractOnlyClaimsShippedCliSurfacesTests(
+    unittest.TestCase,
+):
+    """Phase 9A: the same anti-drift CLI guard the Phase 8A/8B docs
+    have. The autonomy contract is a forward-looking doc, but any
+    subcommand it mentions still must resolve to a real shipped
+    handler so the doc cannot drift into claiming non-existent CLI.
+    """
+
+    def test_autonomy_contract_only_names_real_subcommands(self) -> None:
+        named = set(AGENT_LOOP_INVOCATION_RE.findall(
+            _read(AUTONOMY_CONTRACT_PATH)
+        ))
+        unknown = named - set(agent_loop.HANDLERS)
+        self.assertEqual(
+            unknown, set(),
+            f"docs/autonomy-contract.md references unknown "
+            f"subcommands: {sorted(unknown)}",
+        )
+
+
+class Phase9AAutonomyContractDoesNotPromiseUnshippedRuntimeTests(
+    unittest.TestCase,
+):
+    """The Phase 9A doc is a contract for a FUTURE mode. It must NOT
+    claim the runtime is already implemented; a clean-clone reader
+    must be able to tell from the doc itself that the mode is not yet
+    shipped.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(AUTONOMY_CONTRACT_PATH)
+
+    def test_autonomy_contract_states_runtime_not_yet_implemented(
+        self,
+    ) -> None:
+        # Defense in depth: the doc must explicitly say the runtime is
+        # not yet built so a clean-clone reader cannot mistake the
+        # contract for an as-shipped behavior reference. The literal
+        # "NOT yet implemented" wording is pinned to make the drift
+        # signal precise.
+        self.assertIn(
+            "NOT yet implemented", self.text,
+            "docs/autonomy-contract.md does not state the runtime is "
+            "not yet implemented; a reader could mistake the contract "
+            "for shipped behavior",
+        )
+
+    def test_autonomy_contract_does_not_claim_shipped_phase_9_runtime(
+        self,
+    ) -> None:
+        # Mirror of the Phase 8A/8C present-tense forbidden-fragment
+        # guard.
+        for fragment in (
+            "ships fully autonomous PRD",
+            "is a fully autonomous PRD",
+        ):
+            self.assertNotIn(
+                fragment, self.text,
+                f"docs/autonomy-contract.md promises unshipped Phase 9 "
+                f"behavior via {fragment!r}",
+            )
+
+
+class Phase9AAutonomyContractDistinguishesFromShippedAutonomousModeTests(
+    unittest.TestCase,
+):
+    """The shipped Phase 5D `autonomous` approval mode is a narrow
+    intra-phase strict-gate bypass. The Phase 9 fully autonomous PRD-
+    to-product mode is a different cross-phase mode. The contract MUST
+    keep the distinction explicit so the two are not collapsed into
+    one mode name.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(AUTONOMY_CONTRACT_PATH)
+
+    def test_autonomy_contract_names_phase_5d_as_shipped(self) -> None:
+        self.assertIn(
+            "Phase 5D", self.text,
+            "docs/autonomy-contract.md does not name the shipped "
+            "Phase 5D autonomous mode it must be distinguished from",
+        )
+
+    def test_autonomy_contract_names_phase_5c_strict_gate_set(
+        self,
+    ) -> None:
+        # Naming the three Phase 5C gates makes the distinction
+        # concrete: a reader sees exactly what the shipped narrow
+        # `autonomous` mode bypasses.
+        for gate in (
+            "pre_claude_prompt",
+            "pre_fix_prompt",
+            "pre_codex_review",
+        ):
+            self.assertIn(
+                gate, self.text,
+                f"docs/autonomy-contract.md does not name the Phase "
+                f"5C strict-mode gate {gate!r}",
+            )
+
+    def test_autonomy_contract_names_phase_9_subphases(self) -> None:
+        # The contract must locate the future runtime work in the
+        # right sub-phases so a reader knows which slices implement
+        # which piece. ROADMAP.md defines Phase 9B-9G.
+        for sub_phase in (
+            "Phase 9B", "Phase 9D", "Phase 9F", "Phase 9G",
+        ):
+            self.assertIn(
+                sub_phase, self.text,
+                f"docs/autonomy-contract.md does not name "
+                f"{sub_phase!r} as the locus for the corresponding "
+                f"future runtime work",
+            )
+
+
+class Phase9AAutonomyContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The contract MUST preserve the shipped hard stops (no Git
+    automation, the human-authored `APPROVED_FOR_ACTIVATION` gate, the
+    two human-required terminal halts, the final human acceptance
+    gate). Operators read this section to verify the contract does
+    not weaken the shipped safety boundaries.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(AUTONOMY_CONTRACT_PATH)
+
+    def test_autonomy_contract_preserves_no_git_automation(self) -> None:
+        # The repo-wide no-Git-automation boundary must hold for the
+        # future autonomous mode too.
+        for fragment in (
+            "never commits to Git",
+            "never pushes",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"docs/autonomy-contract.md does not preserve the "
+                f"no-Git-automation boundary via {fragment!r}",
+            )
+
+    def test_autonomy_contract_preserves_approved_for_activation(
+        self,
+    ) -> None:
+        self.assertIn(
+            "APPROVED_FOR_ACTIVATION", self.text,
+            "docs/autonomy-contract.md does not preserve the "
+            "APPROVED_FOR_ACTIVATION gate semantics",
+        )
+
+    def test_autonomy_contract_names_terminal_halt_vocabulary(
+        self,
+    ) -> None:
+        for halt in (
+            "halted_failed_requires_human",
+            "halted_max_cycles_reached",
+        ):
+            self.assertIn(
+                halt, self.text,
+                f"docs/autonomy-contract.md does not name preserved "
+                f"terminal halt {halt!r}",
+            )
+
+    def test_autonomy_contract_names_final_human_acceptance(
+        self,
+    ) -> None:
+        # The Phase 9G final acceptance gate is the load-bearing
+        # human-approval boundary the autonomous mode never bypasses.
+        self.assertIn(
+            "final human acceptance", self.text,
+            "docs/autonomy-contract.md does not preserve the final "
+            "human acceptance / polish gate (Phase 9G)",
+        )
+
+
+class ReadmePointsAtAutonomyContractDocTests(unittest.TestCase):
+    """Phase 9A: the README must route a reader at the new contract
+    doc and mark Phase 9A as the current active sub-phase.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_names_autonomy_contract_doc(self) -> None:
+        # A clean-clone reader looking for the Phase 9A scope must be
+        # routed at the new doc by repo-relative path.
+        self.assertIn(
+            "docs/autonomy-contract.md", self.text,
+            "README.md does not name the new Phase 9A docs/autonomy-"
+            "contract.md doc; a clean-clone reader has no pointer to "
+            "the shipped contract",
+        )
+
+    def test_readme_marks_phase_9a_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9A", self.text,
+            "README.md does not name Phase 9A as a current focus",
+        )
+        self.assertIn(
+            "Autonomous Mode Contract", self.text,
+            "README.md does not name the Phase 9A sub-phase title",
+        )
+
+    def test_readme_does_not_still_mark_phase_8c_as_active(self) -> None:
+        # Phase 8C is closed; the README must not still say it's "now
+        # active" anywhere. The first fragment catches the original
+        # "Phase 8C ... is now active" sentence the Phase 9A initial
+        # slice already removed. The second fragment catches the
+        # historical-summary stale wording that the Phase 9A fix cycle
+        # uncovered ("the active Phase 8C ..."). The second substring
+        # is precise enough not to false-positive on the legitimate
+        # Phase 9A paragraph wording "previously-active Phase 8C"
+        # because that surrounding text contains "the previously-
+        # active Phase 8C" rather than "the active Phase 8C".
+        for fragment in (
+            "Phase 8C final README alignment and clean-clone polish "
+            "is now active",
+            "the active Phase 8C",
+        ):
+            self.assertNotIn(
+                fragment, self.text,
+                f"README.md still describes Phase 8C as active via "
+                f"{fragment!r}; Phase 9A is the current active "
+                f"sub-phase and every active-phase reference must "
+                f"match the shipped 9A state",
+            )
 
 
 if __name__ == "__main__":
