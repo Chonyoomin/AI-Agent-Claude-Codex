@@ -1,40 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 9A - Autonomous Mode Contract And Safety Policy
+Phase 9B - PRD Intake And Decomposition
 
 ## Objective
-Implement the Autonomous Mode Contract And Safety Policy slice for the agent loop. This slice should define what the future fully autonomous PRD-to-product mode is allowed to do, what still requires explicit human approval, how the mode remains auditable from repo artifacts, and which safety boundaries and hard stops are preserved, without yet implementing orchestrator-driven autonomous PRD execution.
+Implement the PRD Intake And Decomposition slice for the agent loop. This slice should accept a structured PRD or looser product brief, normalize it into a canonical autonomous-run intake surface, and decompose it into bounded internal phases, tasks, risks, and acceptance criteria while preserving the existing planner, activation, approval, and artifact-truth boundaries.
 
 ## Context
-Implement the Autonomous Mode Contract And Safety Policy slice for the agent
-loop. This slice should define what the future fully autonomous PRD-to-product
-mode is allowed to do, what still requires explicit human approval, how the
-mode remains auditable from repo artifacts, and which safety boundaries and
-hard stops are preserved, without yet implementing orchestrator-driven
-autonomous PRD execution.
+Implement the PRD Intake And Decomposition slice for the agent loop. This slice
+should accept a structured PRD or looser product brief, normalize it into a
+canonical autonomous-run intake surface, and decompose it into bounded
+internal phases, tasks, risks, and acceptance criteria while preserving the
+existing planner, activation, approval, and artifact-truth boundaries.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 9 / 9A as active
-- `.agent-loop/phase-plan.md` records Phase 8C as closed history and contains a
-  `## Phase 9A - Autonomous Mode Contract And Safety Policy` section with
-  concrete objective, done criteria, and exclusions
-- the repository defines a concrete contract for the future fully autonomous
-  PRD-to-product mode, including allowed actions, preserved hard stops, audit
-  expectations, and explicit human-approval boundaries
-- documentation distinguishes current shipped behavior from future roadmap items
-  and does not present future capabilities as if they already exist
-- the contract stays aligned with the shipped CLI-first workflow, artifact
-  ownership model, halt/refusal vocabulary, checkpoint/resume behavior, and
+  `.agent-loop/loop-state.json` identify Phase 9 / 9B as active
+- `.agent-loop/phase-plan.md` records Phase 9A as closed history and contains a
+  `## Phase 9B - PRD Intake And Decomposition` section with concrete
+  objective, done criteria, and exclusions
+- the repository ships a canonical PRD-intake and decomposition surface that
+  accepts both structured PRDs and looser product briefs without requiring
+  prior chat context
+- the intake/decomposition layer emits bounded internal phases, tasks, risks,
+  and acceptance criteria that fit the shipped phase/task model rather than
+  inventing a parallel control plane
+- valid decomposition output remains auditable from repo artifacts and preserves
+  the shipped CLI-first workflow, planner/activation boundaries, approval
+  semantics, halt/refusal vocabulary, checkpoint/resume behavior, and
   repo-artifact source-of-truth model
-- the contract distinguishes future autonomous-mode behavior from currently
-  shipped Phase 5 bounded `autonomous` behavior instead of collapsing them
-  together
-- focused validation or review coverage proves the docs match the actual repo
-  state and do not claim unimplemented autonomous execution behavior
-- `README.md` reflects that Phase 9A is active and that the autonomy contract /
-  safety-policy definition is now the implementation focus
+- malformed or underspecified PRD input is refused cleanly rather than
+  producing vague or unbounded decomposition output
+- focused validation covers valid input normalization, bounded decomposition
+  output, and refusal behavior on malformed or underspecified intake
+- `README.md` reflects that Phase 9B is active and that PRD intake /
+  decomposition are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,19 +47,20 @@ autonomous PRD execution.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no implementation of orchestrator-driven fully autonomous PRD execution
-- no new runtime, planner, activator, evidence-collection, review-routing,
-  checkpoint, continuation, memory, runtime-adapter, LangChain, or VS Code
-  feature work beyond the narrow contract/planning slice
+- no orchestrator-driven prompt handoff, autonomous review/fix execution,
+  automatic next-phase activation, long-run completion heuristics,
+  capacity-halt re-probe, or final acceptance automation (Phases 9C-9G)
+- no replacement of the shipped Phase 4 planner / activator boundary with an
+  unreviewable parallel control plane
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
-- no documentation that invents behavior the repo does not currently ship
-- no collapsing of future roadmap items into present-tense product behavior
-- no MCP support, external UI, concurrent-agent operation, or implementation of
-  fully autonomous PRD-to-product execution in this slice
+- no MCP support, external UI, or concurrent-agent operation in this slice
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
-- no change to `scripts/run_checks.sh`
 - no Git automation
 
 ## Required output
