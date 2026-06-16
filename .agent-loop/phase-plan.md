@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9B - PRD Intake And Decomposition)
+Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9C - Orchestrator-Driven Prompt Handoff)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3499,9 +3499,10 @@ autonomous PRD execution.
 
 ### Status
 
-Active. First implementation slice under the approved Phase 9 autonomy
-contract, focused on accepting a PRD or looser product brief and decomposing it
-into bounded internal work without yet automating cross-phase execution.
+Complete and approved by human to advance to Phase 9C. Phase 9B closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the PRD intake surface,
+bounded decomposition behavior, write-boundary fix, focused validation, and
+README alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -3542,6 +3543,66 @@ planner, activation, approval, and artifact-truth boundaries.
   capacity-halt re-probe, or final acceptance automation (Phases 9C-9G)
 - no replacement of the shipped Phase 4 planner / activator boundary with an
   unreviewable parallel control plane
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no MCP support, external UI, or concurrent-agent operation in this slice
+- no Git automation
+
+## Phase 9C - Orchestrator-Driven Prompt Handoff
+
+### Status
+
+Active. Next implementation slice under the approved Phase 9 autonomy
+contract, focused on removing manual prompt transfer by letting the
+orchestrator drive Codex/Claude handoff from canonical repo artifacts without
+yet widening into autonomous review/fix or cross-phase execution.
+
+### Objective
+
+Implement the Orchestrator-Driven Prompt Handoff slice for the agent loop. This
+slice should let the orchestrator dispatch the active Codex/Claude prompt
+handoff from canonical prompt artifacts and capture the resulting handoff audit
+trail without requiring manual copy/paste, while preserving the shipped
+planner/activation boundary, review ownership model, and per-phase human gate.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 9 / 9C as active
+- `.agent-loop/phase-plan.md` records Phase 9B as closed history and contains a
+  `## Phase 9C - Orchestrator-Driven Prompt Handoff` section with concrete
+  objective, done criteria, and exclusions
+- the repository ships an orchestrator-driven prompt-handoff surface that can
+  dispatch the active Codex/Claude prompt cycle from canonical prompt artifacts
+  without manual copy/paste
+- the handoff layer preserves the shipped prompt/source-of-truth boundary:
+  canonical prompt artifacts remain on disk, `.agent-loop/claude-done.json`
+  remains a routing signal, and the handoff does not replace the review/fix
+  artifact model with transient runtime-only state
+- the new surface preserves the shipped CLI-first workflow,
+  planner/activation boundaries, approval semantics, halt/refusal vocabulary,
+  checkpoint/resume behavior, and repo-artifact source-of-truth model
+- missing or malformed prompt artifacts are refused cleanly rather than
+  producing an ambiguous or partial handoff
+- focused validation covers successful handoff dispatch, refusal behavior, and
+  audit-trail capture from repo artifacts and logs
+- `README.md` reflects that Phase 9C is active and that orchestrator-driven
+  prompt handoff is now the implementation focus
+
+### Exclusions
+
+- no autonomous review/fix execution, automatic next-phase activation,
+  long-run completion heuristics, capacity-halt re-probe, or final acceptance
+  automation (Phases 9D-9G)
+- no prompt-handoff behavior that bypasses or rewrites the shipped Phase 4
+  planner / activation separation, or that replaces canonical prompt artifacts
+  with transient runtime-only state
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,

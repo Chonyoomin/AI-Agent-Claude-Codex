@@ -1,40 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 9B - PRD Intake And Decomposition
+Phase 9C - Orchestrator-Driven Prompt Handoff
 
 ## Objective
-Implement the PRD Intake And Decomposition slice for the agent loop. This slice should accept a structured PRD or looser product brief, normalize it into a canonical autonomous-run intake surface, and decompose it into bounded internal phases, tasks, risks, and acceptance criteria while preserving the existing planner, activation, approval, and artifact-truth boundaries.
+Implement the Orchestrator-Driven Prompt Handoff slice for the agent loop. This slice should let the orchestrator dispatch the active Codex/Claude prompt handoff from canonical prompt artifacts and capture the resulting handoff audit trail without requiring manual copy/paste, while preserving the shipped planner/activation boundary, review ownership model, and per-phase human gate.
 
 ## Context
-Implement the PRD Intake And Decomposition slice for the agent loop. This slice
-should accept a structured PRD or looser product brief, normalize it into a
-canonical autonomous-run intake surface, and decompose it into bounded
-internal phases, tasks, risks, and acceptance criteria while preserving the
-existing planner, activation, approval, and artifact-truth boundaries.
+Implement the Orchestrator-Driven Prompt Handoff slice for the agent loop. This
+slice should let the orchestrator dispatch the active Codex/Claude prompt
+handoff from canonical prompt artifacts and capture the resulting handoff audit
+trail without requiring manual copy/paste, while preserving the shipped
+planner/activation boundary, review ownership model, and per-phase human gate.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 9 / 9B as active
-- `.agent-loop/phase-plan.md` records Phase 9A as closed history and contains a
-  `## Phase 9B - PRD Intake And Decomposition` section with concrete
+  `.agent-loop/loop-state.json` identify Phase 9 / 9C as active
+- `.agent-loop/phase-plan.md` records Phase 9B as closed history and contains a
+  `## Phase 9C - Orchestrator-Driven Prompt Handoff` section with concrete
   objective, done criteria, and exclusions
-- the repository ships a canonical PRD-intake and decomposition surface that
-  accepts both structured PRDs and looser product briefs without requiring
-  prior chat context
-- the intake/decomposition layer emits bounded internal phases, tasks, risks,
-  and acceptance criteria that fit the shipped phase/task model rather than
-  inventing a parallel control plane
-- valid decomposition output remains auditable from repo artifacts and preserves
-  the shipped CLI-first workflow, planner/activation boundaries, approval
-  semantics, halt/refusal vocabulary, checkpoint/resume behavior, and
-  repo-artifact source-of-truth model
-- malformed or underspecified PRD input is refused cleanly rather than
-  producing vague or unbounded decomposition output
-- focused validation covers valid input normalization, bounded decomposition
-  output, and refusal behavior on malformed or underspecified intake
-- `README.md` reflects that Phase 9B is active and that PRD intake /
-  decomposition are now the implementation focus
+- the repository ships an orchestrator-driven prompt-handoff surface that can
+  dispatch the active Codex/Claude prompt cycle from canonical prompt artifacts
+  without manual copy/paste
+- the handoff layer preserves the shipped prompt/source-of-truth boundary:
+  canonical prompt artifacts remain on disk, `.agent-loop/claude-done.json`
+  remains a routing signal, and the handoff does not replace the review/fix
+  artifact model with transient runtime-only state
+- the new surface preserves the shipped CLI-first workflow,
+  planner/activation boundaries, approval semantics, halt/refusal vocabulary,
+  checkpoint/resume behavior, and repo-artifact source-of-truth model
+- missing or malformed prompt artifacts are refused cleanly rather than
+  producing an ambiguous or partial handoff
+- focused validation covers successful handoff dispatch, refusal behavior, and
+  audit-trail capture from repo artifacts and logs
+- `README.md` reflects that Phase 9C is active and that orchestrator-driven
+  prompt handoff is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,11 +47,12 @@ existing planner, activation, approval, and artifact-truth boundaries.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no orchestrator-driven prompt handoff, autonomous review/fix execution,
-  automatic next-phase activation, long-run completion heuristics,
-  capacity-halt re-probe, or final acceptance automation (Phases 9C-9G)
-- no replacement of the shipped Phase 4 planner / activator boundary with an
-  unreviewable parallel control plane
+- no autonomous review/fix execution, automatic next-phase activation,
+  long-run completion heuristics, capacity-halt re-probe, or final acceptance
+  automation (Phases 9D-9G)
+- no prompt-handoff behavior that bypasses or rewrites the shipped Phase 4
+  planner / activation separation, or that replaces canonical prompt artifacts
+  with transient runtime-only state
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,
