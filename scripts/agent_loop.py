@@ -5979,6 +5979,693 @@ class LangChainToolRegistry:
 
 
 # ---------------------------------------------------------------------------
+# Phase 9B: PRD Intake And Decomposition Initial Slice
+#
+# Accept a structured PRD or a looser product brief from disk, normalize
+# the inputs into a canonical intake artifact, and decompose into bounded
+# internal phases / tasks / risks / acceptance criteria. The slice writes
+# only `.agent-loop/prd-intake.json` (an advisory artifact regenerable
+# from the source input file) and an audit note line, and never writes
+# to canonical phase / task / loop-state artifacts. The Phase 4 planner
+# and Phase 4C activator remain the only writers of canonical phase
+# activation artifacts; this intake is decomposition input, not
+# activation.
+#
+# Out of scope for this initial slice (deferred per the 9B prompt to
+# Phases 9C-9G):
+#   - orchestrator-driven prompt handoff (Phase 9C)
+#   - autonomous review/fix execution (Phase 9D)
+#   - automatic next-phase activation (Phase 9D / 9E)
+#   - long-run completion heuristics (Phase 9E)
+#   - capacity-halt re-probe and resume (Phase 9F)
+#   - final human acceptance automation (Phase 9G)
+#   - replacement of the shipped Phase 4 planner / activator boundary
+#   - any widening of Phase 5 approval-mode semantics
+
+PRD_INTAKE_SIGNAL_VERSION = "phase-9b-v1"
+PRD_INTAKE_OUTPUT_REL = ".agent-loop/prd-intake.json"
+PRD_INTAKE_AUDIT_NOTE_PREFIX = "prd intake:"
+PRD_INTAKE_KIND_STRUCTURED = "structured_prd"
+PRD_INTAKE_KIND_BRIEF = "product_brief"
+PRD_INTAKE_KINDS = frozenset({
+    PRD_INTAKE_KIND_STRUCTURED,
+    PRD_INTAKE_KIND_BRIEF,
+})
+PRD_INTAKE_DEFAULT_MAX_PHASES = 8
+PRD_INTAKE_MAX_MAX_PHASES = 32
+PRD_INTAKE_DEFAULT_MAX_TASKS_PER_PHASE = 8
+PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE = 16
+PRD_INTAKE_CANONICAL_PRECEDENCE_NOTE = (
+    "PRD intake artifacts written by Phase 9B are advisory only. The "
+    "shipped Phase 4 planner and Phase 4C activator remain the only "
+    "writers of canonical phase activation artifacts (TASK.md, "
+    ".agent-loop/current-task.md, .agent-loop/current-phase.md, "
+    ".agent-loop/phase-plan.md, .agent-loop/loop-state.json). This "
+    "intake is decomposition input, not activation."
+)
+
+# Phase 9B fix-cycle: the advisory intake artifact must NEVER overwrite
+# a canonical runtime or planning artifact, the orchestrator log, the
+# Phase 6 durable-memory subtree, or the source input file. The output
+# write boundary is enforced inside the library function so direct
+# Python callers cannot bypass it. The protected-name set mirrors the
+# orchestrator-owned and Codex-owned artifact lists in CLAUDE.md plus
+# the Phase 4 planner artifacts and the Phase 5B claude-done.json
+# routing signal.
+PRD_INTAKE_PROTECTED_OUTPUT_PATHS = frozenset({
+    ".agent-loop/loop-state.json",
+    ".agent-loop/orchestrator.log",
+    ".agent-loop/phase-plan.md",
+    ".agent-loop/current-task.md",
+    ".agent-loop/current-phase.md",
+    ".agent-loop/claude-prompt.md",
+    ".agent-loop/claude-summary.md",
+    ".agent-loop/codex-review.md",
+    ".agent-loop/fix-prompt.md",
+    ".agent-loop/git-status.log",
+    ".agent-loop/git-diff.patch",
+    ".agent-loop/test-output.log",
+    ".agent-loop/lint-output.log",
+    ".agent-loop/typecheck-output.log",
+    ".agent-loop/build-output.log",
+    ".agent-loop/proposed-phase.md",
+    ".agent-loop/planner.log",
+    ".agent-loop/claude-done.json",
+    ".agent-loop/runtime-config.json",
+})
+
+
+def _validate_prd_intake_max_phases(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_phases`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_phases must be a positive int, not "
+                f"bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_phases must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 1:
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake max_phases must be >= 1; got {value!r}",
+        )
+    if value > PRD_INTAKE_MAX_MAX_PHASES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_phases {value!r} exceeds "
+                f"PRD_INTAKE_MAX_MAX_PHASES="
+                f"{PRD_INTAKE_MAX_MAX_PHASES}; the safety cap "
+                f"prevents an unbounded decomposition"
+            ),
+        )
+
+
+def _validate_prd_intake_max_tasks_per_phase(value) -> None:
+    """Refuse fail-closed on an out-of-bounds `max_tasks_per_phase`."""
+    if isinstance(value, bool):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_tasks_per_phase must be a positive "
+                f"int, not bool; got {value!r}"
+            ),
+        )
+    if not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_tasks_per_phase must be an int; got "
+                f"{type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 1:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_tasks_per_phase must be >= 1; got "
+                f"{value!r}"
+            ),
+        )
+    if value > PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake max_tasks_per_phase {value!r} exceeds "
+                f"PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE="
+                f"{PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE}"
+            ),
+        )
+
+
+def _resolve_prd_intake_path(repo_root: Path, rel: str, *, label: str) -> Path:
+    """Resolve an operator-provided repo-relative path safely.
+
+    Refuses absolute paths and paths that escape the repo root (via `..`).
+    Mirrors the path-validation pattern from the Phase 6J/6K loaders.
+    """
+    if not isinstance(rel, str) or not rel:
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake {label} path must be a non-empty string; "
+            f"got {rel!r}",
+        )
+    candidate = Path(rel)
+    if candidate.is_absolute():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake {label} path must be repo-relative; "
+                f"absolute path {rel!r} refused"
+            ),
+        )
+    resolved = (repo_root / candidate).resolve()
+    try:
+        resolved.relative_to(repo_root.resolve())
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake {label} path {rel!r} resolves outside "
+                f"the repository root"
+            ),
+        )
+    return resolved
+
+
+def _validate_prd_intake_output_target(
+    repo_root: Path, output_path: Path, input_path: Path,
+) -> None:
+    """Refuse fail-closed when `output_path` is not a safe advisory
+    target.
+
+    The Phase 9B intake artifact is advisory and MUST NEVER overwrite
+    a canonical runtime or planning artifact, the orchestrator log,
+    the Phase 6 durable-memory subtree, or the source input file. Safe
+    advisory targets are file paths under `.agent-loop/` that are NOT
+    in `PRD_INTAKE_PROTECTED_OUTPUT_PATHS`, NOT under
+    `.agent-loop/memory/`, NOT a directory, and NOT the same resolved
+    path as the source input file.
+
+    The boundary is enforced inside the library function so direct
+    Python callers cannot bypass the safety contract by skipping the
+    CLI wrapper.
+    """
+    repo_resolved = repo_root.resolve()
+    out_resolved = output_path.resolve()
+    agent_loop_dir = (repo_resolved / ".agent-loop").resolve()
+    try:
+        out_resolved.relative_to(agent_loop_dir)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path must be under "
+                f".agent-loop/; got {output_path} which resolves "
+                f"outside that directory"
+            ),
+        )
+    if out_resolved == input_path.resolve():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path must differ from the source "
+                f"input path; both resolve to {out_resolved}"
+            ),
+        )
+    try:
+        rel = out_resolved.relative_to(repo_resolved).as_posix()
+    except ValueError:
+        rel = str(out_resolved)
+    if rel in PRD_INTAKE_PROTECTED_OUTPUT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path {rel!r} is a protected "
+                f"runtime / planning artifact and may not be "
+                f"overwritten by an advisory intake write"
+            ),
+        )
+    memory_dir = (agent_loop_dir / "memory").resolve()
+    try:
+        out_resolved.relative_to(memory_dir)
+    except ValueError:
+        pass
+    else:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake output path {rel!r} is under "
+                f".agent-loop/memory/; that subtree is owned by the "
+                f"Phase 6 durable-memory writers"
+            ),
+        )
+    if out_resolved.exists() and out_resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake output path is a directory: {output_path}",
+        )
+
+
+def _load_prd_intake_input(path: Path) -> dict:
+    """Read and JSON-parse the operator-provided PRD/brief file.
+
+    Refuses fail-closed on every missing / unreadable / malformed shape
+    so the caller can route the refusal through `_halt`.
+    """
+    if not path.exists():
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake source file does not exist: {path}",
+        )
+    if not path.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake source path is not a regular file: {path}",
+        )
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake source file unreadable ({path}): {exc}",
+        )
+    try:
+        loaded = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            f"prd intake source file is not valid JSON ({path}): {exc}",
+        )
+    if not isinstance(loaded, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake source file top-level must be a JSON "
+                f"object (dict); got {type(loaded).__name__}"
+            ),
+        )
+    return loaded
+
+
+def _validate_prd_intake_common(loaded: dict) -> tuple[str, str, str]:
+    """Validate the three required common fields and return them."""
+    kind = loaded.get("prd_kind")
+    if not isinstance(kind, str) or kind not in PRD_INTAKE_KINDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake source missing or unknown 'prd_kind'; "
+                f"expected one of {sorted(PRD_INTAKE_KINDS)}, got "
+                f"{kind!r}"
+            ),
+        )
+    title = loaded.get("title")
+    if not isinstance(title, str) or not title.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake source missing or empty 'title'; got "
+                f"{title!r}"
+            ),
+        )
+    summary = loaded.get("summary")
+    if not isinstance(summary, str) or not summary.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake source missing or empty 'summary'; got "
+                f"{summary!r}"
+            ),
+        )
+    return kind, title.strip(), summary.strip()
+
+
+def _decompose_structured_prd(
+    loaded: dict, *, max_phases: int, max_tasks_per_phase: int,
+) -> list[dict]:
+    """Decompose a structured PRD into bounded internal phases.
+
+    Each requirement becomes one phase. Refuses on missing required
+    requirement fields or when the requirement list exceeds the
+    `max_phases` cap (silently truncating would hide work from the
+    operator).
+    """
+    reqs = loaded.get("requirements")
+    if not isinstance(reqs, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake structured_prd 'requirements' must be a "
+                f"list; got {type(reqs).__name__}"
+            ),
+        )
+    if not reqs:
+        raise HaltError(
+            "halted_input_missing",
+            "prd intake structured_prd 'requirements' list is empty",
+        )
+    if len(reqs) > max_phases:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake structured_prd has {len(reqs)} "
+                f"requirements but max_phases={max_phases}; raise "
+                f"--max-phases or split the PRD"
+            ),
+        )
+    phases: list[dict] = []
+    for i, req in enumerate(reqs):
+        if not isinstance(req, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"prd intake structured_prd requirement at "
+                    f"index {i} must be a dict; got "
+                    f"{type(req).__name__}"
+                ),
+            )
+        req_id = req.get("id")
+        if not isinstance(req_id, str) or not req_id.strip():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"prd intake structured_prd requirement at index "
+                    f"{i} missing or empty 'id'; got {req_id!r}"
+                ),
+            )
+        req_title = req.get("title")
+        if not isinstance(req_title, str) or not req_title.strip():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"prd intake structured_prd requirement {req_id!r} "
+                    f"missing or empty 'title'; got {req_title!r}"
+                ),
+            )
+        req_desc = req.get("description")
+        if not isinstance(req_desc, str) or not req_desc.strip():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"prd intake structured_prd requirement {req_id!r} "
+                    f"missing or empty 'description'; got {req_desc!r}"
+                ),
+            )
+        tasks_raw = req.get("tasks")
+        if tasks_raw is None:
+            tasks = _split_into_bounded_tasks(
+                req_desc, max_tasks_per_phase,
+            )
+        else:
+            tasks = _validate_string_list(
+                tasks_raw,
+                label=f"structured_prd requirement {req_id!r} 'tasks'",
+            )
+            if len(tasks) > max_tasks_per_phase:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"prd intake structured_prd requirement "
+                        f"{req_id!r} has {len(tasks)} tasks but "
+                        f"max_tasks_per_phase={max_tasks_per_phase}"
+                    ),
+                )
+        risks_raw = req.get("risks")
+        risks = (
+            _validate_string_list(
+                risks_raw,
+                label=(
+                    f"structured_prd requirement {req_id!r} 'risks'"
+                ),
+            )
+            if risks_raw is not None else []
+        )
+        acc_raw = req.get("acceptance_criteria")
+        if acc_raw is None:
+            acceptance = [
+                f"meets the requirement: {req_title.strip()}",
+            ]
+        else:
+            acceptance = _validate_string_list(
+                acc_raw,
+                label=(
+                    f"structured_prd requirement {req_id!r} "
+                    f"'acceptance_criteria'"
+                ),
+            )
+            if not acceptance:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"prd intake structured_prd requirement "
+                        f"{req_id!r} has empty 'acceptance_criteria' "
+                        f"list; provide at least one criterion or "
+                        f"omit the field entirely"
+                    ),
+                )
+        phases.append({
+            "label": req_id.strip(),
+            "objective": (
+                f"{req_title.strip()}: {req_desc.strip()}"
+            ),
+            "tasks": tasks,
+            "risks": risks,
+            "acceptance_criteria": acceptance,
+        })
+    return phases
+
+
+def _decompose_product_brief(
+    loaded: dict, *, max_phases: int, max_tasks_per_phase: int,
+) -> list[dict]:
+    """Decompose a looser product brief into bounded internal phases.
+
+    Splits the narrative on blank-line boundaries into sections; each
+    section becomes one phase with a synthesized label, objective,
+    bounded task list, and a single synthesized acceptance criterion.
+    """
+    narrative = loaded.get("narrative")
+    if not isinstance(narrative, str) or not narrative.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake product_brief missing or empty "
+                f"'narrative'; got {narrative!r}"
+            ),
+        )
+    sections = [
+        s.strip() for s in narrative.split("\n\n") if s.strip()
+    ]
+    if not sections:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "prd intake product_brief narrative produced no "
+                "non-empty sections after splitting on blank lines"
+            ),
+        )
+    if len(sections) > max_phases:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake product_brief narrative produced "
+                f"{len(sections)} sections but max_phases="
+                f"{max_phases}; raise --max-phases or restructure "
+                f"the brief"
+            ),
+        )
+    phases: list[dict] = []
+    for i, section in enumerate(sections):
+        sentences = _split_sentences(section)
+        if not sentences:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"prd intake product_brief section {i+1} produced "
+                    f"no sentences; refusing to synthesize an empty "
+                    f"phase"
+                ),
+            )
+        objective = sentences[0]
+        if len(sentences) == 1:
+            tasks = [sentences[0]]
+        else:
+            tasks = sentences[1:]
+        if len(tasks) > max_tasks_per_phase:
+            tasks = tasks[:max_tasks_per_phase]
+        short = objective[:60].rstrip()
+        if len(objective) > 60:
+            short = short + "..."
+        phases.append({
+            "label": f"P{i+1}",
+            "objective": objective,
+            "tasks": tasks,
+            "risks": [],
+            "acceptance_criteria": [
+                f"section delivered: {short}",
+            ],
+        })
+    return phases
+
+
+def _split_into_bounded_tasks(text: str, cap: int) -> list[str]:
+    """Split a description into a bounded task list."""
+    sentences = _split_sentences(text)
+    if not sentences:
+        return [text.strip()]
+    return sentences[:cap]
+
+
+def _split_sentences(text: str) -> list[str]:
+    """Lightweight sentence splitter on `.`, `!`, `?` boundaries.
+
+    Returns a list of non-empty stripped sentences. Does not rely on
+    nltk or any third-party library; the splitter is stdlib-only and
+    deterministic.
+    """
+    pieces: list[str] = []
+    buf: list[str] = []
+    for ch in text:
+        buf.append(ch)
+        if ch in ".!?":
+            joined = "".join(buf).strip()
+            if joined:
+                pieces.append(joined)
+            buf = []
+    tail = "".join(buf).strip()
+    if tail:
+        pieces.append(tail)
+    return pieces
+
+
+def _validate_string_list(value, *, label: str) -> list[str]:
+    """Refuse fail-closed when `value` is not a list of non-empty strs."""
+    if not isinstance(value, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prd intake {label} must be a list of non-empty "
+                f"strings; got {type(value).__name__}"
+            ),
+        )
+    out: list[str] = []
+    for i, item in enumerate(value):
+        if not isinstance(item, str) or not item.strip():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"prd intake {label}[{i}] must be a non-empty "
+                    f"string; got {item!r}"
+                ),
+            )
+        out.append(item.strip())
+    return out
+
+
+def intake_and_decompose_prd(
+    repo_root: Path,
+    *,
+    input_path: Path,
+    output_path: Optional[Path] = None,
+    max_phases: Optional[int] = None,
+    max_tasks_per_phase: Optional[int] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Phase 9B: accept and decompose a PRD or product brief.
+
+    Reads the operator-provided JSON file at `input_path`, validates
+    its required fields, decomposes the requirements (or brief
+    narrative) into bounded internal phases, writes the canonical
+    advisory intake artifact to `output_path` (defaults to
+    `.agent-loop/prd-intake.json`), optionally appends an audit note
+    to `log_path`, and returns the output path on success.
+
+    Raises `HaltError("halted_input_missing", ...)` on every refusal
+    mode documented in the block comment above.
+    """
+    max_p = (
+        max_phases if max_phases is not None
+        else PRD_INTAKE_DEFAULT_MAX_PHASES
+    )
+    _validate_prd_intake_max_phases(max_p)
+    max_t = (
+        max_tasks_per_phase if max_tasks_per_phase is not None
+        else PRD_INTAKE_DEFAULT_MAX_TASKS_PER_PHASE
+    )
+    _validate_prd_intake_max_tasks_per_phase(max_t)
+
+    loaded = _load_prd_intake_input(input_path)
+    kind, title, summary = _validate_prd_intake_common(loaded)
+    if kind == PRD_INTAKE_KIND_STRUCTURED:
+        phases = _decompose_structured_prd(
+            loaded, max_phases=max_p, max_tasks_per_phase=max_t,
+        )
+    else:
+        phases = _decompose_product_brief(
+            loaded, max_phases=max_p, max_tasks_per_phase=max_t,
+        )
+
+    try:
+        rel_input = input_path.resolve().relative_to(
+            repo_root.resolve(),
+        ).as_posix()
+    except ValueError:
+        rel_input = input_path.as_posix()
+
+    payload = {
+        "intake_signal_version": PRD_INTAKE_SIGNAL_VERSION,
+        "created_at": _utc_iso_now(),
+        "source_input_kind": kind,
+        "source_input_path": rel_input,
+        "normalized_title": title,
+        "normalized_summary": summary,
+        "decomposition": {
+            "phases": phases,
+            "total_phases": len(phases),
+            "max_phases_applied": max_p,
+            "max_tasks_per_phase_applied": max_t,
+        },
+        "advisory_only": True,
+        "canonical_precedence_note": (
+            PRD_INTAKE_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+
+    out = (
+        output_path if output_path is not None
+        else repo_root / PRD_INTAKE_OUTPUT_REL
+    )
+    _validate_prd_intake_output_target(repo_root, out, input_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{PRD_INTAKE_AUDIT_NOTE_PREFIX} "
+                f"signal_version={PRD_INTAKE_SIGNAL_VERSION} "
+                f"kind={kind} phases={len(phases)} "
+                f"max_phases_applied={max_p} "
+                f"max_tasks_per_phase_applied={max_t} "
+                f"source={rel_input}\n"
+            )
+    return out
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -9434,6 +10121,57 @@ def cmd_synthesize_repeated_failures(
     return 0
 
 
+def cmd_intake_prd(args: argparse.Namespace) -> int:
+    """Phase 9B operator runtime path: accept and decompose a PRD or
+    product brief.
+
+    Resolves the operator-provided `--input` / `--output` paths against
+    the repo root (refusing absolute paths and paths that escape via
+    `..`), calls `intake_and_decompose_prd(...)` with the parsed
+    bounds, routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection, and on
+    success prints the path of the newly written intake artifact plus
+    a pointer to the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        input_path = _resolve_prd_intake_path(
+            repo_root, args.input, label="input",
+        )
+        if args.output is not None:
+            output_path = _resolve_prd_intake_path(
+                repo_root, args.output, label="output",
+            )
+        else:
+            output_path = None
+        kwargs: dict = {
+            "input_path": input_path,
+            "output_path": output_path,
+            "log_path": log_path,
+        }
+        if args.max_phases is not None:
+            kwargs["max_phases"] = args.max_phases
+        if args.max_tasks_per_phase is not None:
+            kwargs["max_tasks_per_phase"] = args.max_tasks_per_phase
+        written = intake_and_decompose_prd(repo_root, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] prd intake wrote {rel}; see "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`prd intake:` audit note."
+    )
+    return 0
+
+
 def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
     """Phase 6N operator runtime path: evaluate the selected runtime
     adapter against the shipped Phase 6M contract.
@@ -10608,6 +11346,68 @@ def build_parser() -> argparse.ArgumentParser:
             "created_at) are kept."
         ),
     )
+    intake = sub.add_parser(
+        "intake-prd",
+        help=(
+            "Phase 9B PRD intake and decomposition: accept a "
+            "structured PRD or product brief from disk, normalize it, "
+            "and decompose into bounded internal phases / tasks / "
+            "risks / acceptance criteria. Writes only "
+            "`.agent-loop/prd-intake.json` (an advisory artifact "
+            "regenerable from the source input) and a `prd intake:` "
+            "audit-log line. Refuses fail-closed on missing / "
+            "unreadable / malformed input, unknown `prd_kind`, empty "
+            "required fields, out-of-bound phase / task limits, and "
+            "input/output paths that resolve outside the repo root. "
+            "The intake is advisory: the shipped Phase 4 planner and "
+            "Phase 4C activator remain the only writers of canonical "
+            "phase activation artifacts."
+        ),
+    )
+    intake.add_argument(
+        "--input",
+        type=str,
+        required=True,
+        help=(
+            "Repo-relative path to the source PRD or product brief "
+            "JSON file. Required."
+        ),
+    )
+    intake.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help=(
+            "Repo-relative path for the intake artifact. Defaults to "
+            f"{PRD_INTAKE_OUTPUT_REL!r}. Absolute paths and paths "
+            "that escape the repo root are refused."
+        ),
+    )
+    intake.add_argument(
+        "--max-phases",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of internal phases the decomposition may "
+            f"emit. Defaults to PRD_INTAKE_DEFAULT_MAX_PHASES="
+            f"{PRD_INTAKE_DEFAULT_MAX_PHASES}; capped at "
+            f"PRD_INTAKE_MAX_MAX_PHASES={PRD_INTAKE_MAX_MAX_PHASES}. "
+            "Refuses fail-closed when the source would produce more "
+            "phases than the cap (silent truncation would hide work)."
+        ),
+    )
+    intake.add_argument(
+        "--max-tasks-per-phase",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of tasks per derived phase. Defaults to "
+            f"PRD_INTAKE_DEFAULT_MAX_TASKS_PER_PHASE="
+            f"{PRD_INTAKE_DEFAULT_MAX_TASKS_PER_PHASE}; capped at "
+            f"PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE="
+            f"{PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE}."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -10861,6 +11661,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "load-optional-context": cmd_load_optional_context,
     "integrate-optional-context": cmd_integrate_optional_context_prompt,
     "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
+    "intake-prd": cmd_intake_prd,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

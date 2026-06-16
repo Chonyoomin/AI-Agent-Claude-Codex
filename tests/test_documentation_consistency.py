@@ -1310,5 +1310,88 @@ class ReadmePointsAtAutonomyContractDocTests(unittest.TestCase):
             )
 
 
+class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
+    """Phase 9B: the README must name Phase 9B as the current active
+    sub-phase, describe the new shipped intake surface (the
+    `intake-prd` CLI subcommand and the `.agent-loop/prd-intake.json`
+    advisory artifact), and not promise the deferred Phase 9C-9G
+    runtime work as shipped.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_9b_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9B", self.text,
+            "README.md does not name Phase 9B as a current focus",
+        )
+        self.assertIn(
+            "PRD Intake And Decomposition", self.text,
+            "README.md does not name the Phase 9B sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_intake_surface(self) -> None:
+        # The new CLI subcommand and output artifact must be
+        # discoverable from README so a clean-clone reader can
+        # connect the Phase 9B paragraph to the shipped surface.
+        for fragment in (
+            "intake-prd",
+            ".agent-loop/prd-intake.json",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9B paragraph does not name shipped "
+                f"surface {fragment!r}",
+            )
+
+    def test_readme_does_not_claim_phase_9c_through_9g_shipped(
+        self,
+    ) -> None:
+        # Phase 9C-9G runtime work is explicitly deferred per the
+        # Phase 9A contract. The README must not claim any of those
+        # sub-phases is shipped or active.
+        # The Phase 9B paragraph names Phase 9C-9G in a single
+        # deferred clause that ends with "remain deferred"; the
+        # window must be wide enough to cover the whole paragraph.
+        # 500 chars on each side of the keyword is enough to span the
+        # densest Phase 9 paragraph in the README without becoming
+        # so wide it stops being a useful proximity signal.
+        for sub_phase in (
+            "Phase 9C", "Phase 9D", "Phase 9E", "Phase 9F", "Phase 9G",
+        ):
+            if sub_phase in self.text:
+                idx = self.text.find(sub_phase)
+                window = self.text[max(0, idx - 500): idx + 500]
+                disclaim_terms = (
+                    "deferred", "future", "roadmap", "not yet",
+                    "remain deferred", "later phase",
+                )
+                if not any(t in window for t in disclaim_terms):
+                    self.fail(
+                        f"README.md mentions {sub_phase!r} (offset "
+                        f"{idx}) without a deferred / future / "
+                        f"roadmap context within 500 chars; Phase "
+                        f"9C-9G runtime work is not shipped"
+                    )
+
+    def test_readme_prd_intake_paragraph_names_canonical_precedence(
+        self,
+    ) -> None:
+        # The Phase 9B paragraph must reference the canonical-
+        # precedence preservation explicitly so a reader sees that
+        # the intake artifact does NOT replace the Phase 4 planner /
+        # activator boundary.
+        for fragment in (
+            "Phase 4 planner",
+            "Phase 4C activator",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9B paragraph does not name the "
+                f"preserved {fragment!r} boundary",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
