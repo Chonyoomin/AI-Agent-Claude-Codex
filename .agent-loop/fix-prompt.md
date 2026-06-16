@@ -1,59 +1,55 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix the remaining Phase 8C README drift so the public project overview does not
-describe orchestrator-owned loop state as something recorded "by hand."
+Fix the remaining Phase 9A README drift so the active-phase references in the
+public project overview no longer contradict the current 9A repo state.
 
 ## Context
-Codex reviewed the current Phase 8C implementation from repo state. The new
-clean-clone section is in place, the focused README validation coverage passes,
-and the full test suite passes. One Claude-owned README defect still remains:
+Codex reviewed the current Phase 9A implementation from repo state. The new
+autonomy contract doc exists, the focused documentation-consistency suite
+passes, and the full test suite passes. One Claude-owned README defect still
+remains:
 
-1. `README.md` still says, immediately after the top-level `## Workflow`
-   section, that:
+1. `README.md` still contains stale Phase 8C active-state wording in the
+   later historical summary prose. In particular, the deferred/future-work
+   sentence still says:
 
-   `.agent-loop/loop-state.json` records the active phase, task, cycle count,
-   max cycles, and last verdict by hand.`
+   `post-Phase-8 roadmap work after the active Phase 8C final README alignment
+   / clean-clone polish slice is complete`
 
-   That wording is no longer accurate relative to the shipped system. In the
-   current repo state:
-   - `.agent-loop/loop-state.json` is an orchestrator-owned runtime artifact
-   - the shipped activator and orchestrator write and update it during normal
-     operation
-   - the manual-by-hand workflow is preserved only as a fallback in
-     `## Running The Loop Manually (Phase 1)`, not as the default meaning of
-     the top-level workflow / repository overview
+   even though the same README already says Phase 9A is the current active
+   sub-phase. This leaves the README internally contradictory about which phase
+   is active.
 
-   So the README still contains a stale Phase-1-era framing point that
-   contradicts the shipped ownership/runtime model described elsewhere in the
-   same file and in the Phase 8A/8B docs.
+The existing `ReadmePointsAtAutonomyContractDocTests` coverage only blocks the
+specific stale sentence `"Phase 8C final README alignment and clean-clone
+polish is now active"` and therefore missed this different stale-active-8C
+phrase.
 
 ## Required fixes
-- Correct the `README.md` sentence about `.agent-loop/loop-state.json` so it
-  describes the shipped ownership/runtime model accurately instead of saying the
-  file is recorded "by hand."
-- Extend the focused documentation-consistency coverage so this specific README
-  drift fails closed on regression. The current Phase 8C tests catch stale
-  orchestrator-not-built wording and missing operator-doc pointers, but they do
-  not currently fail if the README reintroduces this stale loop-state sentence.
+- Correct the stale active-phase wording in `README.md` so every active-phase
+  reference is consistent with Phase 9A being the current active sub-phase.
+- Extend the focused documentation-consistency coverage so this broader stale
+  Phase 8C active-state wording also fails closed on regression. The current
+  README guard is too narrow.
 - Update `.agent-loop/claude-summary.md` so it accurately describes the final
   fix and the exact validation commands run.
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay within Phase 8C scope.
+- Stay within Phase 9A scope.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
 - Do not edit Codex-owned planning artifacts such as `.agent-loop/phase-plan.md`,
   `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, or
   `.agent-loop/codex-review.md`.
-- Do not broaden into new runtime, planner, activator, evidence-collection,
-  review-routing, checkpoint, continuation, memory, runtime-adapter, LangChain,
-  or VS Code behavior.
+- Do not broaden into runtime implementation, planner work, activator changes,
+  evidence-collection changes, checkpoint changes, continuation changes, or any
+  other non-documentation Phase 9 runtime work.
 - Preserve the shipped contracts and describe only behavior that already exists
   in the repo.
-- Prefer the smallest safe documentation/test fix that makes the README
-  contract-accurate relative to the current runtime and ownership model.
+- Prefer the smallest safe README/test fix that removes the active-phase
+  contradiction.
 
 ## Required output
 After implementing the fix, update `.agent-loop/claude-summary.md` with the

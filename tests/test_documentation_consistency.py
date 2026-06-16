@@ -1287,14 +1287,27 @@ class ReadmePointsAtAutonomyContractDocTests(unittest.TestCase):
 
     def test_readme_does_not_still_mark_phase_8c_as_active(self) -> None:
         # Phase 8C is closed; the README must not still say it's "now
-        # active". Catch the specific stale phrasing so a future edit
-        # that revives it fails closed.
-        self.assertNotIn(
+        # active" anywhere. The first fragment catches the original
+        # "Phase 8C ... is now active" sentence the Phase 9A initial
+        # slice already removed. The second fragment catches the
+        # historical-summary stale wording that the Phase 9A fix cycle
+        # uncovered ("the active Phase 8C ..."). The second substring
+        # is precise enough not to false-positive on the legitimate
+        # Phase 9A paragraph wording "previously-active Phase 8C"
+        # because that surrounding text contains "the previously-
+        # active Phase 8C" rather than "the active Phase 8C".
+        for fragment in (
             "Phase 8C final README alignment and clean-clone polish "
-            "is now active", self.text,
-            "README.md still says Phase 8C is active; Phase 9A is the "
-            "current active sub-phase",
-        )
+            "is now active",
+            "the active Phase 8C",
+        ):
+            self.assertNotIn(
+                fragment, self.text,
+                f"README.md still describes Phase 8C as active via "
+                f"{fragment!r}; Phase 9A is the current active "
+                f"sub-phase and every active-phase reference must "
+                f"match the shipped 9A state",
+            )
 
 
 if __name__ == "__main__":
