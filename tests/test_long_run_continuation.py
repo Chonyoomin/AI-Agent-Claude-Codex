@@ -897,6 +897,318 @@ class LongRunCliTests(unittest.TestCase):
         self.assertEqual(rc, 2)
 
 
+class LongRunTokenExhaustionIntegrationTests(unittest.TestCase):
+    """Phase 9E fix-cycle: the long-run continuation must integrate
+    the shipped Phase 6F token-exhaustion resume primitive instead
+    of stopping when a hop ends in
+    `halted_awaiting_token_exhaustion_continuation`.
+    """
+
+    def _plant_token_exhausted_state(self, repo: Path) -> Path:
+        """Plant loop-state at the Phase 6F suspension halt."""
+        return _plant_loop_state(
+            repo,
+            status="halted_awaiting_token_exhaustion_continuation",
+        )
+
+    def test_pre_hop_token_exhaustion_invokes_phase_6f_resume(
+        self,
+    ) -> None:
+        # When loop-state is at HALTED_TOKEN_EXHAUSTION at hop entry,
+        # the slice MUST call run_token_exhaustion_resume rather than
+        # treating the halt as a terminal completion_halted stop.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = self._plant_token_exhausted_state(repo)
+
+            resume_calls: list[Path] = []
+
+            def fake_resume(repo_root: Path) -> int:
+                resume_calls.append(repo_root)
+                # Simulate a successful resume: rewrite loop-state
+                # back to an active state (the real primitive
+                # restores the checkpoint's pre-suspension status).
+                _plant_loop_state(
+                    repo,
+                    status="phase_complete_awaiting_human_approval",
+                    last_verdict="APPROVED_FOR_HUMAN_REVIEW",
+                )
+                return 0
+
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                side_effect=fake_resume,
+            ):
+                written = agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=3,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(
+                len(resume_calls), 1,
+                "Phase 9E must dispatch run_token_exhaustion_resume "
+                "when the pre-hop state is HALTED_TOKEN_EXHAUSTION",
+            )
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["hops"][0]["action_taken"],
+                "token_exhaustion_resume",
+            )
+            self.assertEqual(
+                payload["hops"][0]["token_exhaustion_resume_rc"], 0,
+            )
+            # The post-resume state is APPROVED, so hop 1 should see
+            # completion_detected_at_entry and stop.
+            self.assertEqual(
+                payload["completion"]["completion_signal"],
+                "completion_approved",
+            )
+
+    def test_phase_6f_resume_refusal_stops_loop_cleanly(self) -> None:
+        # When run_token_exhaustion_resume returns rc != 0 (budget
+        # exhausted, malformed checkpoint, etc.) the loop MUST stop
+        # without silently widening autonomy. The descriptor records
+        # the refusal.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            self._plant_token_exhausted_state(repo)
+
+            resume_calls: list[Path] = []
+
+            def fake_resume(repo_root: Path) -> int:
+                resume_calls.append(repo_root)
+                # Leave loop-state unchanged - the real primitive
+                # leaves the saved HALTED_TOKEN_EXHAUSTION intact
+                # when it refuses fail-closed.
+                return 2
+
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                side_effect=fake_resume,
+            ):
+                written = agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=3,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(len(resume_calls), 1)
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(payload["hops_run"], 1)
+            self.assertEqual(
+                payload["hops"][0]["action_taken"],
+                "token_exhaustion_resume",
+            )
+            self.assertEqual(
+                payload["hops"][0]["token_exhaustion_resume_rc"], 2,
+            )
+            # The post-resume state is still HALTED_TOKEN_EXHAUSTION,
+            # so the completion signal reflects that.
+            self.assertEqual(
+                payload["completion"]["terminal_status"],
+                "halted_awaiting_token_exhaustion_continuation",
+            )
+
+    def test_bounded_resume_budget_respects_max_hops(self) -> None:
+        # If every hop lands at HALTED_TOKEN_EXHAUSTION (resume
+        # consumed one unit but state immediately re-suspended), the
+        # per-hop counter is the upper bound - the loop must NOT run
+        # an unbounded resume chain.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            self._plant_token_exhausted_state(repo)
+
+            resume_calls: list[Path] = []
+
+            def fake_resume(repo_root: Path) -> int:
+                resume_calls.append(repo_root)
+                # Simulate immediate re-suspension after the resume.
+                _plant_loop_state(
+                    repo,
+                    status="halted_awaiting_token_exhaustion_continuation",
+                )
+                return 0
+
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                side_effect=fake_resume,
+            ):
+                written = agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=3,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            # The loop ran exactly max_hops resumes - no more.
+            self.assertEqual(len(resume_calls), 3)
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(payload["hops_run"], 3)
+            for hop in payload["hops"]:
+                self.assertEqual(
+                    hop["action_taken"], "token_exhaustion_resume",
+                )
+
+    def test_audit_log_records_resume_seam(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            self._plant_token_exhausted_state(repo)
+            log = repo / ".agent-loop" / "orchestrator.log"
+
+            def fake_resume(repo_root: Path) -> int:
+                _plant_loop_state(
+                    repo,
+                    status="phase_complete_awaiting_human_approval",
+                    last_verdict="APPROVED_FOR_HUMAN_REVIEW",
+                )
+                return 0
+
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                side_effect=fake_resume,
+            ):
+                agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=3,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                    log_path=log,
+                )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn(
+                "long-run continuation: token_exhaustion_resume",
+                audit,
+            )
+
+    def test_refusal_audit_records_stop(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            self._plant_token_exhausted_state(repo)
+            log = repo / ".agent-loop" / "orchestrator.log"
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                return_value=2,
+            ):
+                agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=2,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                    log_path=log,
+                )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn(
+                "long-run continuation: "
+                "stop_after_token_exhaustion_resume_refusal",
+                audit,
+            )
+
+    def test_existing_terminal_signals_still_intact(self) -> None:
+        # Regression-guard: a non-token-exhaustion halt
+        # (halted_max_cycles_reached) MUST still be treated as a
+        # terminal completion_halted stop, NOT routed through the
+        # Phase 6F resume seam.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo, status="halted_max_cycles_reached",
+            )
+
+            resume_calls: list = []
+
+            def spy_resume(repo_root: Path) -> int:
+                resume_calls.append(repo_root)
+                return 0
+
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                side_effect=spy_resume,
+            ):
+                written = agent_loop.run_long_run_continuation(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(
+                len(resume_calls), 0,
+                "non-token-exhaustion halts must not invoke the "
+                "Phase 6F resume primitive",
+            )
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["completion"]["completion_signal"],
+                "completion_halted",
+            )
+
+    def test_approved_terminal_still_short_circuits_resume(self) -> None:
+        # Regression-guard: an APPROVED terminal at hop entry must
+        # take the noop_already_complete branch, NOT the Phase 6F
+        # resume branch.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo,
+                status="phase_complete_awaiting_human_approval",
+                last_verdict="APPROVED_FOR_HUMAN_REVIEW",
+            )
+
+            resume_calls: list = []
+
+            with mock.patch.object(
+                agent_loop, "run_token_exhaustion_resume",
+                side_effect=lambda r: (
+                    resume_calls.append(r) or 0
+                ),
+            ):
+                written = agent_loop.run_long_run_continuation(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(len(resume_calls), 0)
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["hops"][0]["action_taken"],
+                "noop_already_complete",
+            )
+
+    def test_phase_6f_internal_refusal_remains_fail_closed(
+        self,
+    ) -> None:
+        # Run against a real `run_token_exhaustion_resume` call (no
+        # mock): no checkpoint on disk, so the shipped primitive
+        # MUST refuse fail-closed with rc=2. Phase 9E captures the
+        # refusal in the hop record and stops cleanly.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            self._plant_token_exhausted_state(repo)
+            # No checkpoint planted under .agent-loop/memory/checkpoint/
+            # so the real Phase 6F primitive will refuse.
+            written = agent_loop.run_long_run_continuation(
+                repo,
+                max_hops=2,
+                capture_evidence=False,
+                invoke_codex_adapter=False,
+                invoke_claude_adapter=False,
+            )
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(payload["hops_run"], 1)
+            self.assertEqual(
+                payload["hops"][0]["action_taken"],
+                "token_exhaustion_resume",
+            )
+            self.assertNotEqual(
+                payload["hops"][0]["token_exhaustion_resume_rc"], 0,
+            )
+
+
 class LongRunHelpTextTests(unittest.TestCase):
 
     def _help_text(self) -> str:

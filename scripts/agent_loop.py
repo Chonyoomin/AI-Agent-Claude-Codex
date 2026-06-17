@@ -7862,6 +7862,22 @@ def run_long_run_continuation(
     happened. This is the contract: Phase 9E never silently widens
     autonomy past a Phase 9D halt; it stops and surfaces the halt
     in its descriptor + audit log so the operator can decide.
+
+    Phase 6F token-exhaustion integration: when a hop entry (or a
+    Phase 9D hop's post-completion check) finds loop-state at
+    `HALTED_TOKEN_EXHAUSTION`, Phase 9E dispatches the shipped
+    `run_token_exhaustion_resume(repo_root)` primitive (the same
+    seam the `resume` / `auto-continue` CLI commands use) instead
+    of treating the halt as a terminal stop. On rc=0 the resume
+    restored loop-state and consumed one continuation-budget unit;
+    the long-run loop continues to the next hop. On rc!=0 the
+    resume refused fail-closed (budget exhausted, malformed
+    checkpoint, mismatching cycle identity, unsupported
+    suspension reason) and Phase 9E stops cleanly with the
+    refusal captured in the hop record. Phase 9E never silently
+    widens autonomy past a `run_token_exhaustion_resume` refusal;
+    the per-hop counter remains the upper bound on Phase 6F
+    resume attempts.
     """
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
@@ -7907,11 +7923,48 @@ def run_long_run_continuation(
             "phase_9d_descriptor": None,
             "halt_status": None,
             "halt_reason": None,
+            "token_exhaustion_resume_rc": None,
             "post_hop_completion": None,
         }
 
         pre_completion = evaluate_phase_completion(repo_root)
         hop["pre_hop_completion"] = pre_completion
+
+        # Phase 9E fix-cycle: integrate the shipped Phase 6F
+        # token-exhaustion resume primitive into the long-run flow.
+        # When loop-state is at HALTED_TOKEN_EXHAUSTION, the hop
+        # invokes `run_token_exhaustion_resume(repo_root)` (the
+        # shipped Phase 6F entry that the `resume` /
+        # `auto-continue` CLI commands already dispatch) instead of
+        # treating the halt as a terminal stop. On rc=0 the resume
+        # restored loop-state and consumed one continuation-budget
+        # unit; the loop continues to the next hop. On rc!=0 the
+        # resume refused fail-closed (budget exhausted, malformed
+        # checkpoint, mismatching cycle identity, etc.); Phase 9E
+        # records the refusal and stops cleanly. The Phase 6F
+        # primitive itself is unchanged.
+        if pre_completion.get("terminal_status") == HALTED_TOKEN_EXHAUSTION:
+            rc = run_token_exhaustion_resume(repo_root)
+            hop["action_taken"] = "token_exhaustion_resume"
+            hop["token_exhaustion_resume_rc"] = rc
+            post_resume = evaluate_phase_completion(repo_root)
+            hop["post_hop_completion"] = post_resume
+            hops.append(hop)
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"token_exhaustion_resume hop={hop_index} rc={rc} "
+                f"new_status={post_resume.get('terminal_status')!r}\n"
+            )
+            if rc != 0:
+                final_completion = post_resume
+                _audit(
+                    f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                    f"stop_after_token_exhaustion_resume_refusal "
+                    f"hop={hop_index} rc={rc}\n"
+                )
+                hop_loop_completed = True
+                break
+            continue
 
         if pre_completion["completion_signal"] is not None:
             hop["action_taken"] = "noop_already_complete"
@@ -7959,6 +8012,23 @@ def run_long_run_continuation(
             f"post_completion_signal="
             f"{post_completion['completion_signal']}\n"
         )
+
+        # Phase 9E fix-cycle: if Phase 9D (or its underlying Codex /
+        # Claude adapter) left the state in HALTED_TOKEN_EXHAUSTION,
+        # do NOT stop the long-run loop on this halted signal.
+        # Continue to the next hop, where branch A above will
+        # dispatch the shipped Phase 6F resume primitive against
+        # the canonical checkpoint.
+        if (
+            post_completion.get("terminal_status")
+            == HALTED_TOKEN_EXHAUSTION
+        ):
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"phase_9d_left_token_exhaustion_halt hop={hop_index}; "
+                f"next hop will dispatch Phase 6F resume\n"
+            )
+            continue
 
         if (
             post_completion["completion_signal"] is not None
