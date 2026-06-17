@@ -6831,9 +6831,10 @@ def dispatch_prompt_handoff(
     mode: Optional[str] = None,
     output_path: Optional[Path] = None,
     log_path: Optional[Path] = None,
+    invoke_adapter: bool = True,
 ) -> Path:
     """Phase 9C: dispatch the active prompt handoff from canonical
-    repo artifacts and write a structured handoff descriptor.
+    repo artifacts.
 
     Reads `.agent-loop/loop-state.json` (validated via the shipped
     validators), selects the active prompt artifact from `mode`
@@ -6841,10 +6842,25 @@ def dispatch_prompt_handoff(
     `.agent-loop/fix-prompt.md`; `None` -> auto-detect from
     `last_verdict`), validates the selected prompt artifact is
     present and non-empty (via the shipped
-    `validate_claude_prompt_present`), writes the structured handoff
+    `validate_claude_prompt_present`), writes a structured handoff
     descriptor to `output_path` (defaults to
-    `.agent-loop/prompt-handoff.json`), and optionally appends an
-    audit-log line. Returns the handoff descriptor path.
+    `.agent-loop/prompt-handoff.json`), and unless
+    `invoke_adapter=False` ACTUALLY invokes the shipped Claude
+    adapter (`make_claude_adapter().invoke(prompt_path, summary_path)`)
+    so the orchestrator drives the dispatch rather than only emitting
+    an advisory descriptor. The adapter outcome (`exit_code`,
+    `model_id`, `duration_seconds`) is captured into the descriptor's
+    `adapter_invocation` block and audited to `orchestrator.log`.
+    Returns the handoff descriptor path.
+
+    Boundary preservation: the canonical prompt artifacts remain on
+    disk as the source of truth (the slice never modifies them); the
+    Claude-summary path is the same shipped artifact `cmd_run` writes
+    to. The slice does NOT run evidence collection, does NOT wait for
+    Codex review, does NOT update cycle_count or any other loop-state
+    field, and does NOT widen autonomous review/fix continuation
+    (Phase 9D), automatic next-phase activation (Phase 9D / 9E), or
+    final acceptance automation (Phase 9G).
 
     Refusal modes (all fail-closed via `HaltError(...)`):
       - missing or malformed `loop-state.json`
@@ -6856,11 +6872,21 @@ def dispatch_prompt_handoff(
         path in `PROMPT_HANDOFF_PROTECTED_OUTPUT_PATHS`, is under
         `.agent-loop/memory/`, or resolves to an existing directory
 
+    A non-zero adapter exit code is recorded into the descriptor and
+    audit log but does NOT raise; the operator inspects the
+    descriptor + summary file + audit log to determine the dispatch
+    outcome. This matches the shipped `cmd_run` pattern where the
+    adapter's exit code is a signal that subsequent validators
+    (`validate_claude_summary`) act on.
+
     Canonical-precedence preservation: the call never writes to
     `loop-state.json`, never modifies the canonical prompt artifacts,
-    and only writes to the named output path plus a single audit-log
-    line when `log_path` is supplied (no log file is created when
-    `log_path` is omitted).
+    and only writes to the named output path, `.agent-loop/claude-`
+    `summary.md` (via the shipped Claude adapter when
+    `invoke_adapter=True`), plus audit-log lines when `log_path` is
+    supplied. The Claude-summary write path is the shipped one used
+    by `cmd_run`; the slice does not introduce a parallel summary
+    artifact.
     """
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
@@ -6901,23 +6927,57 @@ def dispatch_prompt_handoff(
         "canonical_precedence_note": (
             PROMPT_HANDOFF_CANONICAL_PRECEDENCE_NOTE
         ),
+        "adapter_invoked": False,
+        "adapter_invocation": None,
     }
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8",
     )
 
-    if log_path is not None:
+    def _audit(line: str) -> None:
+        if log_path is None:
+            return
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as fh:
-            fh.write(
-                f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} "
-                f"signal_version={PROMPT_HANDOFF_SIGNAL_VERSION} "
-                f"mode={resolved_mode} source={prompt_rel} "
-                f"phase={data.get('phase')!r} "
-                f"sub_phase={data.get('sub_phase')!r} "
-                f"cycle_count={data.get('cycle_count')}\n"
-            )
+            fh.write(line)
+
+    _audit(
+        f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} dispatched "
+        f"signal_version={PROMPT_HANDOFF_SIGNAL_VERSION} "
+        f"mode={resolved_mode} source={prompt_rel} "
+        f"phase={data.get('phase')!r} "
+        f"sub_phase={data.get('sub_phase')!r} "
+        f"cycle_count={data.get('cycle_count')}\n"
+    )
+
+    if not invoke_adapter:
+        _audit(
+            f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} skipped adapter "
+            f"invocation (invoke_adapter=False)\n"
+        )
+        return out
+
+    summary_path = al / "claude-summary.md"
+    adapter = make_claude_adapter()
+    result = adapter.invoke(prompt_path, summary_path)
+    payload["adapter_invoked"] = True
+    payload["adapter_invocation"] = {
+        "exit_code": result.exit_code,
+        "model_id": result.model_id,
+        "duration_seconds": result.duration_seconds,
+        "summary_path": ".agent-loop/claude-summary.md",
+    }
+    out.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    _audit(
+        f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} invoked "
+        f"signal_version={PROMPT_HANDOFF_SIGNAL_VERSION} "
+        f"mode={resolved_mode} exit_code={result.exit_code} "
+        f"model_id={result.model_id!r} "
+        f"duration_seconds={result.duration_seconds}\n"
+    )
     return out
 
 
@@ -10450,6 +10510,7 @@ def cmd_dispatch_prompt_handoff(args: argparse.Namespace) -> int:
         kwargs: dict = {
             "output_path": output_path,
             "log_path": log_path,
+            "invoke_adapter": not getattr(args, "no_invoke", False),
         }
         if args.mode is not None:
             kwargs["mode"] = args.mode
@@ -11748,6 +11809,17 @@ def build_parser() -> argparse.ArgumentParser:
             "library function additionally refuses paths outside "
             "`.agent-loop/`, paths in the protected set, paths "
             "under `.agent-loop/memory/`, and directory targets."
+        ),
+    )
+    handoff.add_argument(
+        "--no-invoke",
+        action="store_true",
+        help=(
+            "Skip the shipped Claude adapter invocation and only "
+            "write the descriptor + audit-log lines (dry-run / "
+            "planning mode). Default is to dispatch the active "
+            "prompt to the configured Claude adapter and capture "
+            "the outcome into the descriptor."
         ),
     )
     distill = sub.add_parser(

@@ -1,58 +1,63 @@
 # Claude Code Fix Task
 
 ## Phase
-Phase 9B - PRD Intake And Decomposition
+Phase 9C - Orchestrator-Driven Prompt Handoff
 
 ## Objective
-Fix the remaining Phase 9B write-boundary bug in the PRD intake surface so the new advisory intake artifact cannot overwrite canonical repo-state artifacts or the source input file via `--output` / `output_path`.
+Fix the remaining Phase 9C implementation gap so the slice actually removes
+manual prompt transfer by dispatching the active Claude handoff path, instead of
+only writing an advisory handoff descriptor.
 
 ## Context
-Codex review found that the Phase 9B implementation currently enforces only an
-"inside the repo" boundary for output overrides, not a safe advisory-artifact
-boundary. In [`scripts/agent_loop.py`](scripts/agent_loop.py), the CLI handler
-resolves `--output` through `_resolve_prd_intake_path(...)`, which rejects
-absolute paths and `..` escapes but still accepts protected in-repo targets
-such as `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-`.agent-loop/phase-plan.md`, `.agent-loop/loop-state.json`, or even the source
-input file itself. The library function `intake_and_decompose_prd(...)` then
-writes directly to that caller-supplied path with no second write-boundary
-check. That means a normal operator invocation like
-`python scripts/agent_loop.py intake-prd --input prd.json --output TASK.md`
-would overwrite a canonical planning artifact with advisory JSON, and
-`--output prd.json` would overwrite the source input file after it is read.
+Codex review found that the current Phase 9C implementation stops at writing
+`.agent-loop/prompt-handoff.json` plus a `prompt handoff:` audit note. The
+library function [`dispatch_prompt_handoff(...)`](scripts/agent_loop.py) writes
+an advisory descriptor, and the CLI handler
+[`cmd_dispatch_prompt_handoff(...)`](scripts/agent_loop.py) only prints the
+descriptor path. The code's own block comment explicitly says it "never invokes
+the Claude adapter directly" and that actual adapter invocation still lives in
+the shipped cycle drivers.
 
-This violates the shipped Phase 9B contract and README wording that the slice
-writes a single advisory artifact (`.agent-loop/prd-intake.json` by default,
-or a safe override) while preserving repo-artifact source-of-truth boundaries
-and never mutating the source input file.
+That means the slice still requires manual copy/paste or some outside actor to
+take the prompt and give it to Claude. In other words, the shipped behavior does
+NOT yet satisfy the Phase 9C objective:
+
+- "let the orchestrator dispatch the active Codex/Claude prompt handoff from
+  canonical prompt artifacts"
+- "remove manual prompt transfer"
+
+Right now it only records which prompt WOULD be handed off.
 
 ## Required fixes
-- tighten the Phase 9B output write boundary so the advisory intake artifact can
-  only be written to a safe advisory location under `.agent-loop/`
-- refuse fail-closed when `--output` / `output_path` targets canonical planning
-  artifacts, protected runtime-state artifacts, or the same path as the source
-  input file
-- enforce the same boundary in the library function, not only in the CLI
-  wrapper, so direct Python callers cannot bypass the safety contract
+- extend Phase 9C so the orchestrator actually dispatches the active Claude
+  prompt handoff from the canonical prompt artifact rather than only emitting an
+  advisory descriptor
+- keep the canonical prompt artifacts on disk as the source of truth; do not
+  replace them with transient runtime-only state
+- preserve the shipped ownership boundary:
+  - no changes to the Phase 4 planner / activation separation
+  - no widening into autonomous review/fix continuation (Phase 9D)
+  - no automatic next-phase activation (Phase 9D / 9E)
+- preserve the shipped Phase 5 approval semantics and Phase 6 continuation /
+  checkpoint behavior
+- keep the handoff auditable from repo artifacts and logs
 - add focused tests proving:
-  - CLI refusal when `--output TASK.md`
-  - CLI refusal when `--output .agent-loop/loop-state.json`
-  - CLI refusal when `--output` matches the source input path
-  - direct `intake_and_decompose_prd(...)` refusal on the same classes of bad
-    output targets
-  - the normal `.agent-loop/prd-intake.json` path and safe in-scope advisory
-    overrides still succeed
-- update README wording only if needed to keep the shipped boundary description
-  exact after the fix
+  - the real handoff path reaches the Claude adapter or adapter seam
+  - the dispatched prompt comes from the correct canonical prompt file for both
+    implementation and fix modes
+  - missing or malformed prompt artifacts still refuse cleanly
+  - the handoff audit trail remains on disk
+  - the implementation does not regress the existing review / strict / bounded
+    autonomous behavior
 
 ## Constraints
 - follow `CLAUDE.md`
-- stay within Phase 9B scope only
+- stay within Phase 9C scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
-- do not widen the slice into Phase 9C-9G behavior
-- do not alter the Phase 4 planner / Phase 4C activator ownership boundary
-- do not route this through Codex-owned planning artifacts
-- prefer the smallest safe fix
+- do not collapse the handoff layer into autonomous review/fix or cross-phase
+  execution
+- prefer the smallest safe runtime fix that makes the slice satisfy its actual
+  objective
 
 ## Required output
 After applying the fix, update `.agent-loop/claude-summary.md` in the required

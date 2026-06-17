@@ -171,7 +171,7 @@ class HandoffHappyPathTests(unittest.TestCase):
             _plant_loop_state(repo)
             claude_prompt, _ = _plant_prompts(repo)
             written = agent_loop.dispatch_prompt_handoff(
-                repo, mode="implementation",
+                repo, mode="implementation", invoke_adapter=False,
             )
             payload = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(
@@ -201,7 +201,7 @@ class HandoffHappyPathTests(unittest.TestCase):
             _plant_loop_state(repo, last_verdict="NEEDS_FIXES")
             _, fix_prompt = _plant_prompts(repo)
             written = agent_loop.dispatch_prompt_handoff(
-                repo, mode="fix",
+                repo, mode="fix", invoke_adapter=False,
             )
             payload = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(payload["mode"], "fix")
@@ -222,6 +222,7 @@ class HandoffHappyPathTests(unittest.TestCase):
             log = repo / ".agent-loop" / "orchestrator.log"
             agent_loop.dispatch_prompt_handoff(
                 repo, mode="implementation", log_path=log,
+                invoke_adapter=False,
             )
             text = log.read_text(encoding="utf-8")
             self.assertIn("prompt handoff:", text)
@@ -237,7 +238,7 @@ class HandoffHappyPathTests(unittest.TestCase):
             _plant_loop_state(repo)
             _plant_prompts(repo)
             agent_loop.dispatch_prompt_handoff(
-                repo, mode="implementation",
+                repo, mode="implementation", invoke_adapter=False,
             )
             self.assertFalse(
                 (repo / ".agent-loop" / "orchestrator.log").exists(),
@@ -251,6 +252,7 @@ class HandoffHappyPathTests(unittest.TestCase):
             target = repo / ".agent-loop" / "custom-handoff.json"
             written = agent_loop.dispatch_prompt_handoff(
                 repo, mode="implementation", output_path=target,
+                invoke_adapter=False,
             )
             self.assertEqual(written, target)
             self.assertTrue(target.is_file())
@@ -263,7 +265,9 @@ class HandoffAutoModeDetectionTests(unittest.TestCase):
             repo = _make_repo(Path(td))
             _plant_loop_state(repo, last_verdict=None)
             _plant_prompts(repo)
-            written = agent_loop.dispatch_prompt_handoff(repo)
+            written = agent_loop.dispatch_prompt_handoff(
+                repo, invoke_adapter=False,
+            )
             payload = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(payload["mode"], "implementation")
 
@@ -272,7 +276,9 @@ class HandoffAutoModeDetectionTests(unittest.TestCase):
             repo = _make_repo(Path(td))
             _plant_loop_state(repo, last_verdict="NEEDS_FIXES")
             _plant_prompts(repo)
-            written = agent_loop.dispatch_prompt_handoff(repo)
+            written = agent_loop.dispatch_prompt_handoff(
+                repo, invoke_adapter=False,
+            )
             payload = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(payload["mode"], "fix")
 
@@ -285,7 +291,9 @@ class HandoffAutoModeDetectionTests(unittest.TestCase):
                 repo, last_verdict="APPROVED_FOR_HUMAN_REVIEW",
             )
             _plant_prompts(repo)
-            written = agent_loop.dispatch_prompt_handoff(repo)
+            written = agent_loop.dispatch_prompt_handoff(
+                repo, invoke_adapter=False,
+            )
             payload = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(payload["mode"], "implementation")
 
@@ -495,7 +503,7 @@ class HandoffCanonicalPrecedenceTests(unittest.TestCase):
             _plant_prompts(repo)
             before = state_path.read_bytes()
             agent_loop.dispatch_prompt_handoff(
-                repo, mode="implementation",
+                repo, mode="implementation", invoke_adapter=False,
             )
             after = state_path.read_bytes()
             self.assertEqual(before, after)
@@ -508,9 +516,11 @@ class HandoffCanonicalPrecedenceTests(unittest.TestCase):
             cp_before = cp.read_bytes()
             fp_before = fp.read_bytes()
             agent_loop.dispatch_prompt_handoff(
-                repo, mode="implementation",
+                repo, mode="implementation", invoke_adapter=False,
             )
-            agent_loop.dispatch_prompt_handoff(repo, mode="fix")
+            agent_loop.dispatch_prompt_handoff(
+                repo, mode="fix", invoke_adapter=False,
+            )
             self.assertEqual(cp.read_bytes(), cp_before)
             self.assertEqual(fp.read_bytes(), fp_before)
 
@@ -533,7 +543,9 @@ class HandoffCliTests(unittest.TestCase):
         self.td.cleanup()
 
     def test_cli_dispatch_success_default_mode(self) -> None:
-        rc = agent_loop.main(["dispatch-prompt-handoff"])
+        rc = agent_loop.main([
+            "dispatch-prompt-handoff", "--no-invoke",
+        ])
         self.assertEqual(rc, 0)
         out = self.repo / ".agent-loop" / "prompt-handoff.json"
         self.assertTrue(out.is_file())
@@ -543,6 +555,7 @@ class HandoffCliTests(unittest.TestCase):
     def test_cli_dispatch_success_explicit_fix_mode(self) -> None:
         rc = agent_loop.main([
             "dispatch-prompt-handoff", "--mode", "fix",
+            "--no-invoke",
         ])
         self.assertEqual(rc, 0)
         out = self.repo / ".agent-loop" / "prompt-handoff.json"
@@ -585,6 +598,7 @@ class HandoffCliTests(unittest.TestCase):
         rc = agent_loop.main([
             "dispatch-prompt-handoff",
             "--output", ".agent-loop/custom-handoff.json",
+            "--no-invoke",
         ])
         self.assertEqual(rc, 0)
         self.assertTrue(
@@ -592,6 +606,323 @@ class HandoffCliTests(unittest.TestCase):
                 self.repo / ".agent-loop" / "custom-handoff.json"
             ).is_file(),
         )
+
+
+class HandoffAdapterInvocationTests(unittest.TestCase):
+    """Phase 9C fix-cycle: the slice MUST actually dispatch the
+    active prompt to the Claude adapter rather than only emitting an
+    advisory descriptor. The tests monkey-patch `make_claude_adapter`
+    with a spy and prove the real handoff path reaches the adapter
+    seam, the dispatched prompt path matches the active mode, the
+    adapter outcome is captured into the descriptor, and the audit
+    log records both the dispatch and the invocation.
+    """
+
+    def _spy_adapter(self, *, exit_code: int = 0, model_id: str = "stub"):
+        """Build a stand-in Claude adapter that records every call.
+
+        Returns the adapter instance; inspect `.calls` after the
+        invocation to assert the seam was reached with the expected
+        prompt path / summary path.
+        """
+        from unittest import mock as _mock
+        adapter = _mock.Mock()
+        adapter.calls = []
+
+        def _invoke(prompt_path, summary_path):
+            adapter.calls.append({
+                "prompt_path": Path(prompt_path),
+                "summary_path": Path(summary_path),
+            })
+            summary_path.write_text(
+                "# Claude Implementation Summary\nstub\n",
+                encoding="utf-8",
+            )
+            return agent_loop.ExecutionResult(
+                exit_code=exit_code,
+                model_id=model_id,
+                duration_seconds=0.0,
+            )
+
+        adapter.invoke = _invoke
+        return adapter
+
+    def test_default_dispatch_invokes_claude_adapter(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                )
+            # The spy was called exactly once.
+            self.assertEqual(len(adapter.calls), 1)
+
+    def test_implementation_mode_dispatches_claude_prompt(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                )
+            call = adapter.calls[0]
+            self.assertEqual(
+                call["prompt_path"].name, "claude-prompt.md",
+            )
+            self.assertEqual(
+                call["prompt_path"].parent.name, ".agent-loop",
+            )
+
+    def test_fix_mode_dispatches_fix_prompt(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, last_verdict="NEEDS_FIXES")
+            _plant_prompts(repo)
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(repo, mode="fix")
+            call = adapter.calls[0]
+            self.assertEqual(call["prompt_path"].name, "fix-prompt.md")
+
+    def test_dispatch_passes_canonical_summary_path(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                )
+            call = adapter.calls[0]
+            self.assertEqual(
+                call["summary_path"].name, "claude-summary.md",
+            )
+            self.assertEqual(
+                call["summary_path"].parent.name, ".agent-loop",
+            )
+
+    def test_descriptor_records_adapter_invocation_block(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter(
+                exit_code=0, model_id="opus-stub",
+            )
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                written = agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                )
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertIs(payload["adapter_invoked"], True)
+            self.assertEqual(
+                payload["adapter_invocation"]["exit_code"], 0,
+            )
+            self.assertEqual(
+                payload["adapter_invocation"]["model_id"], "opus-stub",
+            )
+            self.assertEqual(
+                payload["adapter_invocation"]["summary_path"],
+                ".agent-loop/claude-summary.md",
+            )
+
+    def test_audit_log_records_dispatch_and_invocation(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter(
+                exit_code=0, model_id="opus-stub",
+            )
+            log = repo / ".agent-loop" / "orchestrator.log"
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation", log_path=log,
+                )
+            text = log.read_text(encoding="utf-8")
+            self.assertIn(
+                "prompt handoff: dispatched", text,
+            )
+            self.assertIn(
+                "prompt handoff: invoked", text,
+            )
+            self.assertIn("exit_code=0", text)
+            self.assertIn("model_id='opus-stub'", text)
+
+    def test_nonzero_adapter_exit_is_recorded_not_raised(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter(
+                exit_code=1, model_id=None,
+            )
+            log = repo / ".agent-loop" / "orchestrator.log"
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                # Must NOT raise even though the adapter returned a
+                # failure exit code. The descriptor + audit log
+                # record the failure for the operator to inspect.
+                written = agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation", log_path=log,
+                )
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertIs(payload["adapter_invoked"], True)
+            self.assertEqual(
+                payload["adapter_invocation"]["exit_code"], 1,
+            )
+            self.assertIn(
+                "prompt handoff: invoked", log.read_text(
+                    encoding="utf-8",
+                ),
+            )
+
+    def test_no_invoke_skips_adapter_entirely(self) -> None:
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                written = agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                    invoke_adapter=False,
+                )
+            # The adapter spy was NOT called.
+            self.assertEqual(len(adapter.calls), 0)
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertIs(payload["adapter_invoked"], False)
+            self.assertIsNone(payload["adapter_invocation"])
+
+    def test_canonical_prompt_artifacts_preserved_across_dispatch(
+        self,
+    ) -> None:
+        # Even after the adapter is invoked, the canonical prompt
+        # artifacts on disk are NOT mutated by the handoff.
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            cp, fp = _plant_prompts(repo)
+            cp_before = cp.read_bytes()
+            fp_before = fp.read_bytes()
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                )
+            self.assertEqual(cp.read_bytes(), cp_before)
+            self.assertEqual(fp.read_bytes(), fp_before)
+
+    def test_loop_state_not_mutated_across_dispatch(self) -> None:
+        # The handoff slice must NOT advance cycle_count, change
+        # status, write last_verdict, or otherwise mutate loop-state
+        # (those are Phase 9D / shipped cycle-driver concerns).
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(repo)
+            _plant_prompts(repo)
+            before = state_path.read_bytes()
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                agent_loop.dispatch_prompt_handoff(
+                    repo, mode="implementation",
+                )
+            self.assertEqual(state_path.read_bytes(), before)
+
+    def test_cli_default_dispatches_through_adapter(self) -> None:
+        # End-to-end CLI: `dispatch-prompt-handoff` without
+        # `--no-invoke` reaches the adapter seam.
+        from unittest import mock
+        import os
+        with TemporaryDirectory() as td:
+            repo = Path(td)
+            _make_repo(repo)
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            adapter = self._spy_adapter()
+            prev_cwd = os.getcwd()
+            os.chdir(repo)
+            try:
+                with mock.patch.object(
+                    agent_loop, "make_claude_adapter",
+                    return_value=adapter,
+                ):
+                    rc = agent_loop.main(["dispatch-prompt-handoff"])
+            finally:
+                os.chdir(prev_cwd)
+            self.assertEqual(rc, 0)
+            self.assertEqual(len(adapter.calls), 1)
+
+    def test_missing_prompt_refuses_before_adapter_invocation(
+        self,
+    ) -> None:
+        # The refusal-mode contract is preserved: a missing prompt
+        # artifact halts BEFORE the adapter seam is reached, so a
+        # later autonomous slice cannot ship a broken dispatch.
+        from unittest import mock
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            # No prompt artifacts.
+            adapter = self._spy_adapter()
+            with mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=adapter,
+            ):
+                with self.assertRaises(HaltError) as ctx:
+                    agent_loop.dispatch_prompt_handoff(
+                        repo, mode="implementation",
+                    )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            # The adapter spy was NOT called.
+            self.assertEqual(len(adapter.calls), 0)
 
 
 if __name__ == "__main__":
