@@ -1,40 +1,45 @@
 # Claude Code Task
 
 ## Phase
-Phase 9C - Orchestrator-Driven Prompt Handoff
+Phase 9D - Autonomous Internal Review/Fix Loop
 
 ## Objective
-Implement the Orchestrator-Driven Prompt Handoff slice for the agent loop. This slice should let the orchestrator dispatch the active Codex/Claude prompt handoff from canonical prompt artifacts and capture the resulting handoff audit trail without requiring manual copy/paste, while preserving the shipped planner/activation boundary, review ownership model, and per-phase human gate.
+Implement the Autonomous Internal Review/Fix Loop slice for the agent loop. This slice should let the orchestrator consume the Phase 9B/9C handoff artifacts, trigger Codex review automatically, route findings by owner, regenerate `.agent-loop/fix-prompt.md` when Claude-owned fixes are required, and continue bounded internal review/fix cycles without manual routing between agents, while preserving the shipped planner/activation boundary, artifact source-of-truth model, and hard-stop behavior.
 
 ## Context
-Implement the Orchestrator-Driven Prompt Handoff slice for the agent loop. This
-slice should let the orchestrator dispatch the active Codex/Claude prompt
-handoff from canonical prompt artifacts and capture the resulting handoff audit
-trail without requiring manual copy/paste, while preserving the shipped
-planner/activation boundary, review ownership model, and per-phase human gate.
+Implement the Autonomous Internal Review/Fix Loop slice for the agent loop.
+This slice should let the orchestrator consume the Phase 9B/9C handoff
+artifacts, trigger Codex review automatically, route findings by owner,
+regenerate `.agent-loop/fix-prompt.md` when Claude-owned fixes are required,
+and continue bounded internal review/fix cycles without manual routing between
+agents, while preserving the shipped planner/activation boundary, artifact
+source-of-truth model, and hard-stop behavior.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 9 / 9C as active
-- `.agent-loop/phase-plan.md` records Phase 9B as closed history and contains a
-  `## Phase 9C - Orchestrator-Driven Prompt Handoff` section with concrete
+  `.agent-loop/loop-state.json` identify Phase 9 / 9D as active
+- `.agent-loop/phase-plan.md` records Phase 9C as closed history and contains a
+  `## Phase 9D - Autonomous Internal Review/Fix Loop` section with concrete
   objective, done criteria, and exclusions
-- the repository ships an orchestrator-driven prompt-handoff surface that can
-  dispatch the active Codex/Claude prompt cycle from canonical prompt artifacts
-  without manual copy/paste
-- the handoff layer preserves the shipped prompt/source-of-truth boundary:
-  canonical prompt artifacts remain on disk, `.agent-loop/claude-done.json`
-  remains a routing signal, and the handoff does not replace the review/fix
-  artifact model with transient runtime-only state
+- the repository ships a bounded autonomous internal review/fix loop that can,
+  from canonical repo artifacts, run Codex review after Claude completion,
+  classify findings by owner, and continue Claude fix cycles without manual
+  prompt passing
+- the loop preserves the shipped artifact/source-of-truth boundary: canonical
+  prompt, summary, review, and fix artifacts remain on disk;
+  `.agent-loop/claude-done.json` and `.agent-loop/prompt-handoff.json` remain
+  routing/timing artifacts rather than substitutes for review evidence
+- the runtime makes Codex-owned versus Claude-owned routing explicit and
+  deterministic, including automatic `.agent-loop/fix-prompt.md` refresh only
+  when Claude-owned fixes are required
 - the new surface preserves the shipped CLI-first workflow,
   planner/activation boundaries, approval semantics, halt/refusal vocabulary,
-  checkpoint/resume behavior, and repo-artifact source-of-truth model
-- missing or malformed prompt artifacts are refused cleanly rather than
-  producing an ambiguous or partial handoff
-- focused validation covers successful handoff dispatch, refusal behavior, and
-  audit-trail capture from repo artifacts and logs
-- `README.md` reflects that Phase 9C is active and that orchestrator-driven
-  prompt handoff is now the implementation focus
+  checkpoint/resume behavior, cycle thresholds, and repo-artifact
+  source-of-truth model
+- focused validation proves bounded autonomous review/fix continuation, refusal
+  behavior, and hard-stop preservation from repo artifacts and logs
+- `README.md` reflects that Phase 9D is active and that autonomous internal
+  review/fix continuation is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,12 +52,11 @@ planner/activation boundary, review ownership model, and per-phase human gate.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no autonomous review/fix execution, automatic next-phase activation,
-  long-run completion heuristics, capacity-halt re-probe, or final acceptance
-  automation (Phases 9D-9G)
-- no prompt-handoff behavior that bypasses or rewrites the shipped Phase 4
-  planner / activation separation, or that replaces canonical prompt artifacts
-  with transient runtime-only state
+- no automatic next-phase activation, long-run completion heuristics,
+  capacity-halt re-probe, or final acceptance automation (Phases 9E-9G)
+- no autonomous review/fix behavior that bypasses or rewrites the shipped
+  Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review artifacts with transient runtime-only state
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,
