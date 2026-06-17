@@ -1357,11 +1357,11 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
         # 500 chars on each side of the keyword is enough to span the
         # densest Phase 9 paragraph in the README without becoming
         # so wide it stops being a useful proximity signal.
-        # Phase 9C shipped in its own implementation slice; the
-        # must-be-deferred set covers only the still-unshipped
-        # Phase 9D-9G runtime work.
+        # Phase 9C and 9D shipped in their own implementation slices;
+        # the must-be-deferred set covers only the still-unshipped
+        # Phase 9E-9G runtime work.
         for sub_phase in (
-            "Phase 9D", "Phase 9E", "Phase 9F", "Phase 9G",
+            "Phase 9E", "Phase 9F", "Phase 9G",
         ):
             if sub_phase in self.text:
                 idx = self.text.find(sub_phase)
@@ -1444,6 +1444,73 @@ class ReadmeMarksPhase9cAsActiveTests(unittest.TestCase):
                 fragment, self.text,
                 f"README.md Phase 9C paragraph does not name the "
                 f"preserved {fragment!r} boundary",
+            )
+
+
+class ReadmeMarksPhase9dAsActiveTests(unittest.TestCase):
+    """Phase 9D: README must name Phase 9D as the current active
+    sub-phase, describe the new shipped autonomous-review/fix surface
+    (the `run-internal-review-fix-cycle` CLI subcommand and the
+    `.agent-loop/review-fix-loop.json` advisory descriptor), and not
+    promise the deferred Phase 9E-9G runtime work as shipped.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_9d_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9D", self.text,
+            "README.md does not name Phase 9D as a current focus",
+        )
+        self.assertIn(
+            "Autonomous Internal Review/Fix Loop", self.text,
+            "README.md does not name the Phase 9D sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_review_fix_loop_surface(
+        self,
+    ) -> None:
+        for fragment in (
+            "run-internal-review-fix-cycle",
+            ".agent-loop/review-fix-loop.json",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9D paragraph does not name shipped "
+                f"surface {fragment!r}",
+            )
+
+    def test_readme_preserves_review_fix_loop_canonical_boundary(
+        self,
+    ) -> None:
+        # The Phase 9D paragraph must explicitly state that the
+        # canonical review and fix-prompt artifacts remain the source
+        # of truth and that the new descriptor is advisory.
+        for fragment in (
+            "canonical",
+            "source of truth",
+            "routing signal",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9D paragraph does not name the "
+                f"preserved {fragment!r} boundary",
+            )
+
+    def test_readme_documents_dry_run_escape_hatches(self) -> None:
+        # Operators must be able to discover all three escape hatches
+        # from README so they can preview the loop without invoking
+        # real evidence / Codex / Claude work.
+        for fragment in (
+            "--skip-evidence",
+            "--no-invoke-codex",
+            "--no-invoke-claude",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9D paragraph does not document "
+                f"escape hatch {fragment!r}",
             )
 
 

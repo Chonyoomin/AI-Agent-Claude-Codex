@@ -6058,6 +6058,11 @@ PRD_INTAKE_PROTECTED_OUTPUT_PATHS = frozenset({
     # 9C boundary set adds `.agent-loop/prd-intake.json` so the
     # protection is symmetric.
     ".agent-loop/prompt-handoff.json",
+    # Phase 9D autonomous internal review/fix loop descriptor: same
+    # symmetric protection applies. The Phase 9D boundary set adds
+    # the Phase 9B / 9C self-defaults so that no slice can overwrite
+    # another's advisory descriptor through its own output flag.
+    ".agent-loop/review-fix-loop.json",
 })
 
 
@@ -6977,6 +6982,480 @@ def dispatch_prompt_handoff(
         f"mode={resolved_mode} exit_code={result.exit_code} "
         f"model_id={result.model_id!r} "
         f"duration_seconds={result.duration_seconds}\n"
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Phase 9D: Autonomous Internal Review/Fix Loop
+#
+# Consumes the Phase 9B/9C handoff artifacts (`.agent-loop/prompt-
+# handoff.json` and the canonical `.agent-loop/claude-summary.md` Claude
+# has just produced), triggers Codex review automatically through the
+# shipped `make_codex_adapter()` factory, classifies findings by owner
+# via the shipped `parse_codex_review` + `_prepare_needs_fixes_follow_up`
+# helpers (which also write `.agent-loop/fix-prompt.md` ONLY when
+# Claude-owned fixes remain after Codex auto-fixes), and continues
+# bounded internal review/fix cycles by re-entering Phase 9C's
+# `dispatch_prompt_handoff(mode="fix", ...)` for the next Claude
+# invocation - all without manual routing between agents.
+#
+# The slice writes a single advisory descriptor at
+# `.agent-loop/review-fix-loop.json` capturing each iteration's
+# verdict, owner classification, fix-prompt refresh, and (when
+# applicable) the next-handoff dispatch. The descriptor is a
+# routing/timing artifact only; the canonical `.agent-loop/codex-
+# review.md` and `.agent-loop/fix-prompt.md` remain on disk as the
+# source of truth for review and repair work.
+#
+# Boundary preservation (out of scope, deferred):
+#   - automatic next-phase activation (Phase 9E)
+#   - long-run completion heuristics (Phase 9E)
+#   - capacity-halt re-probe (Phase 9F)
+#   - final human-acceptance automation (Phase 9G)
+#   - any change to the Phase 2A evidence contract, the Phase 3A
+#     orchestrator contract body, or the Phase 4A planning contract
+#   - any replacement of canonical prompt / review artifacts with
+#     transient runtime state
+#   - any widening of Phase 5 review / strict / autonomous semantics
+# ---------------------------------------------------------------------------
+
+INTERNAL_REVIEW_FIX_LOOP_SIGNAL_VERSION = "phase-9d-v1"
+INTERNAL_REVIEW_FIX_LOOP_OUTPUT_REL = ".agent-loop/review-fix-loop.json"
+INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX = "review/fix loop:"
+INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES = 1
+INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES = 5
+INTERNAL_REVIEW_FIX_LOOP_CANONICAL_PRECEDENCE_NOTE = (
+    "Phase 9D review-fix-loop descriptors are advisory routing "
+    "signals. The canonical review and fix-prompt artifacts "
+    "(.agent-loop/codex-review.md and .agent-loop/fix-prompt.md) "
+    "remain on disk as the source of truth for review findings and "
+    "repair work. The Phase 9B / 9C handoff descriptors remain "
+    "routing/timing artifacts; this descriptor records WHICH "
+    "review/fix iterations ran WHEN, not the review content. The "
+    "shipped Phase 4 planner / activator and the shipped Phase 5 "
+    "review / strict / autonomous semantics remain unchanged."
+)
+
+# Phase 9D output-write boundary: shares the Phase 9C protected set,
+# swaps the self-protection target so the Phase 9D descriptor path is
+# writable while the Phase 9B intake / Phase 9C handoff artifacts stay
+# protected from a Phase 9D write.
+INTERNAL_REVIEW_FIX_LOOP_PROTECTED_OUTPUT_PATHS = frozenset(
+    (PROMPT_HANDOFF_PROTECTED_OUTPUT_PATHS - {
+        ".agent-loop/review-fix-loop.json",
+    }) | {
+        ".agent-loop/prompt-handoff.json",
+    }
+)
+
+
+def _validate_review_fix_loop_max_inner_cycles(value) -> int:
+    if value is None:
+        return INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop max_inner_cycles must be a positive "
+                f"int; got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 1:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop max_inner_cycles must be >= 1; got "
+                f"{value}"
+            ),
+        )
+    if value > INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop max_inner_cycles {value} exceeds "
+                f"INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES="
+                f"{INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES}"
+            ),
+        )
+    return value
+
+
+def _validate_review_fix_loop_output_target(
+    repo_root: Path, output_path: Path,
+) -> None:
+    """Mirror of the Phase 9B/9C output boundary helpers, using
+    `INTERNAL_REVIEW_FIX_LOOP_PROTECTED_OUTPUT_PATHS`.
+    """
+    repo_resolved = repo_root.resolve()
+    out_resolved = output_path.resolve()
+    agent_loop_dir = (repo_resolved / ".agent-loop").resolve()
+    try:
+        out_resolved.relative_to(agent_loop_dir)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop output path must be under "
+                f".agent-loop/; got {output_path} which resolves "
+                f"outside that directory"
+            ),
+        )
+    try:
+        rel = out_resolved.relative_to(repo_resolved).as_posix()
+    except ValueError:
+        rel = str(out_resolved)
+    if rel in INTERNAL_REVIEW_FIX_LOOP_PROTECTED_OUTPUT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop output path {rel!r} is a protected "
+                f"runtime / planning artifact and may not be "
+                f"overwritten by an advisory review/fix-loop write"
+            ),
+        )
+    memory_dir = (agent_loop_dir / "memory").resolve()
+    try:
+        out_resolved.relative_to(memory_dir)
+    except ValueError:
+        pass
+    else:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop output path {rel!r} is under "
+                f".agent-loop/memory/; that subtree is owned by the "
+                f"Phase 6 durable-memory writers"
+            ),
+        )
+    if out_resolved.exists() and out_resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"review/fix loop output path is a directory: "
+                f"{output_path}"
+            ),
+        )
+
+
+def run_internal_review_fix_cycle(
+    repo_root: Path,
+    *,
+    max_inner_cycles: Optional[int] = None,
+    invoke_codex_adapter: bool = True,
+    invoke_claude_adapter: bool = True,
+    capture_evidence: bool = True,
+    output_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Phase 9D: drive bounded autonomous internal review/fix
+    continuation from canonical repo artifacts.
+
+    Reads `.agent-loop/loop-state.json` (validated via the shipped
+    validators), confirms the Phase 9C handoff descriptor exists at
+    `.agent-loop/prompt-handoff.json` (Phase 9D presupposes a prior
+    Phase 9C dispatch), validates `.agent-loop/claude-summary.md`
+    against the active phase / sub-phase, then runs up to
+    `max_inner_cycles` review/fix iterations. Each iteration:
+
+      1. (when `capture_evidence=True`) invokes `bash scripts/
+         run_checks.sh` via the shipped `invoke_run_checks` helper and
+         validates the six evidence files via the shipped
+         `validate_evidence_files` helper.
+      2. (when `invoke_codex_adapter=True`) invokes the shipped
+         `make_codex_adapter().wait_for_review(...)` so the Codex
+         review is produced through the same adapter seam `cmd_run`
+         uses; otherwise the function assumes a fresh
+         `.agent-loop/codex-review.md` is already on disk.
+      3. Parses the review via the shipped `parse_codex_review`
+         (which itself classifies issues by owner via the shipped
+         `_parse_review_issue_block`).
+      4. Persists `last_verdict` / `last_verdict_phase` into
+         loop-state.json (orchestrator-writable fields only).
+      5. Branches on the verdict:
+         - APPROVED_FOR_HUMAN_REVIEW: sets
+           `status=phase_complete_awaiting_human_approval` and
+           returns the descriptor path. No next phase is activated
+           (deferred to Phase 9E).
+         - FAILED_REQUIRES_HUMAN: halts
+           `halted_failed_requires_human`.
+         - NEEDS_FIXES: runs `_prepare_needs_fixes_follow_up` (the
+           shipped owner-routing helper) which applies any supported
+           Codex-owned auto-fix actions and rewrites
+           `.agent-loop/fix-prompt.md` ONLY when Claude-owned issues
+           remain. If `cycle_count + 1 > max_cycles`, halts
+           `halted_max_cycles_reached`. Otherwise increments
+           `cycle_count` (per the Phase 3A contract: cycle_count
+           increments at the start of each Claude invocation),
+           dispatches the next prompt via the shipped
+           `dispatch_prompt_handoff(mode="fix", invoke_adapter=
+           invoke_claude_adapter)`, and continues to the next
+           iteration.
+
+    The function writes one advisory descriptor at
+    `.agent-loop/review-fix-loop.json` (or `output_path` when
+    provided) capturing every iteration's verdict, owner
+    classification, fix-prompt refresh, and next-handoff dispatch.
+    Audit lines are appended to `log_path` when supplied.
+
+    Boundary preservation: the canonical `codex-review.md`,
+    `fix-prompt.md`, `claude-summary.md`, and `claude-prompt.md`
+    artifacts remain on disk as the source of truth. The slice never
+    authors `codex-review.md` (that is the Codex adapter's job) and
+    never authors `fix-prompt.md` itself (that is
+    `_prepare_needs_fixes_follow_up`'s job, which only fires when
+    Claude-owned issues remain). The slice never writes any planning
+    artifact (`current-task.md`, `current-phase.md`, `phase-plan.md`,
+    `TASK.md`).
+
+    Refusal modes (all fail-closed via `HaltError(...)`):
+      - missing or malformed `loop-state.json`
+      - unsupported `contract_version`
+      - missing Phase 9C handoff descriptor at
+        `.agent-loop/prompt-handoff.json`
+      - missing or malformed `.agent-loop/claude-summary.md`
+      - `max_inner_cycles` not a positive int <=
+        `INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES`
+      - output path resolves outside `.agent-loop/`, targets any
+        path in `INTERNAL_REVIEW_FIX_LOOP_PROTECTED_OUTPUT_PATHS`,
+        is under `.agent-loop/memory/`, or resolves to an existing
+        directory
+      - (per iteration) any halt path raised by the shipped review,
+        evidence, fix-prompt, or owner-routing helpers
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    inner_cap = _validate_review_fix_loop_max_inner_cycles(max_inner_cycles)
+
+    handoff_path = repo_root / PROMPT_HANDOFF_OUTPUT_REL
+    if (
+        not handoff_path.exists()
+        or not handoff_path.read_text(encoding="utf-8").strip()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"Phase 9D requires a prior Phase 9C handoff descriptor "
+                f"at {PROMPT_HANDOFF_OUTPUT_REL}; run "
+                f"`dispatch-prompt-handoff` before entering the "
+                f"autonomous internal review/fix loop."
+            ),
+        )
+
+    summary_path = al / "claude-summary.md"
+    expected_phase = str(data.get("phase") or "")
+    expected_sub_phase = data.get("sub_phase")
+    validate_claude_summary(summary_path, expected_phase, expected_sub_phase)
+
+    out = (
+        output_path if output_path is not None
+        else repo_root / INTERNAL_REVIEW_FIX_LOOP_OUTPUT_REL
+    )
+    _validate_review_fix_loop_output_target(repo_root, out)
+
+    review_path = al / "codex-review.md"
+
+    def _audit(line: str) -> None:
+        if log_path is None:
+            return
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    iterations: list[dict] = []
+    terminal_verdict: Optional[str] = None
+    terminal_status: Optional[str] = None
+    started_at = _utc_iso_now()
+
+    _audit(
+        f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} started "
+        f"signal_version={INTERNAL_REVIEW_FIX_LOOP_SIGNAL_VERSION} "
+        f"max_inner_cycles={inner_cap} "
+        f"capture_evidence={capture_evidence} "
+        f"invoke_codex_adapter={invoke_codex_adapter} "
+        f"invoke_claude_adapter={invoke_claude_adapter}\n"
+    )
+
+    for i in range(inner_cap):
+        iteration: dict = {
+            "index": i,
+            "started_at": _utc_iso_now(),
+            "evidence": None,
+            "codex_invocation": None,
+            "verdict": None,
+            "issues": [],
+            "fix_prompt_refreshed": False,
+            "next_handoff_path": None,
+        }
+
+        if capture_evidence:
+            evidence_exit_code = invoke_run_checks(repo_root)
+            validate_evidence_files(repo_root)
+            iteration["evidence"] = {"exit_code": evidence_exit_code}
+
+        if invoke_codex_adapter:
+            codex_adapter = make_codex_adapter()
+            review_result = codex_adapter.wait_for_review(review_path)
+            iteration["codex_invocation"] = {
+                "exit_code": review_result.exit_code,
+                "model_id": review_result.model_id,
+                "duration_seconds": review_result.duration_seconds,
+            }
+            if review_result.model_id is not None:
+                data = save_loop_state(state_path, data, {
+                    "codex_version": review_result.model_id,
+                })
+
+        review = parse_codex_review(review_path)
+        verdict = review.verdict
+        terminal_verdict = verdict
+        iteration["verdict"] = verdict
+        iteration["issues"] = [
+            {
+                "title": iss.title,
+                "owner": iss.owner,
+                "severity": iss.severity,
+                "category": iss.category,
+                "codex_action": iss.codex_action,
+            }
+            for iss in review.issues
+        ]
+
+        data = save_loop_state(state_path, data, {
+            "last_verdict": verdict,
+            "last_verdict_phase": (
+                expected_sub_phase or expected_phase
+            ),
+        })
+
+        _audit(
+            f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} iteration={i} "
+            f"verdict={verdict} "
+            f"issues={len(review.issues)}\n"
+        )
+
+        if verdict == "APPROVED_FOR_HUMAN_REVIEW":
+            terminal_status = "phase_complete_awaiting_human_approval"
+            data = save_loop_state(state_path, data, {
+                "status": terminal_status,
+            })
+            iterations.append(iteration)
+            _audit(
+                f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} approved "
+                f"phase={expected_phase!r} "
+                f"sub_phase={expected_sub_phase!r}\n"
+            )
+            break
+
+        if verdict == "FAILED_REQUIRES_HUMAN":
+            iterations.append(iteration)
+            _audit(
+                f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} "
+                f"failed_requires_human\n"
+            )
+            raise HaltError(
+                "halted_failed_requires_human",
+                (
+                    "Codex review returned FAILED_REQUIRES_HUMAN during "
+                    "the autonomous internal review/fix loop; human "
+                    "intervention required."
+                ),
+            )
+
+        # NEEDS_FIXES path. Apply owner-routing + Codex auto-fixes +
+        # Claude-only fix-prompt regeneration via the shipped helper.
+        data = _prepare_needs_fixes_follow_up(repo_root, review, log_path)
+        fix_prompt_path = al / "fix-prompt.md"
+        iteration["fix_prompt_refreshed"] = fix_prompt_path.exists()
+
+        # Cycle-threshold gate. Honors the Phase 3A contract: the
+        # orchestrator never auto-continues past the threshold; raising
+        # max_cycles is a Codex/human action.
+        if data.get("cycle_count", 0) + 1 > data.get("max_cycles", 0):
+            iterations.append(iteration)
+            _audit(
+                f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} "
+                f"threshold_reached cycle_count="
+                f"{data.get('cycle_count')} "
+                f"max_cycles={data.get('max_cycles')}\n"
+            )
+            raise HaltError(
+                "halted_max_cycles_reached",
+                (
+                    f"cycle_count+1 ({data.get('cycle_count', 0) + 1}) "
+                    f"would exceed max_cycles ("
+                    f"{data.get('max_cycles', 0)}) on a NEEDS_FIXES "
+                    f"verdict in the autonomous internal review/fix "
+                    f"loop; the orchestrator does not auto-continue. "
+                    f"Raise max_cycles (Codex/human action) or "
+                    f"activate a new sub-phase to proceed."
+                ),
+            )
+
+        data = save_loop_state(state_path, data, {
+            "cycle_count": data["cycle_count"] + 1,
+            "status": "claude_fixing",
+        })
+
+        next_handoff_out = al / "prompt-handoff.json"
+        dispatch_prompt_handoff(
+            repo_root,
+            mode=PROMPT_HANDOFF_MODE_FIX,
+            output_path=next_handoff_out,
+            log_path=log_path,
+            invoke_adapter=invoke_claude_adapter,
+        )
+        iteration["next_handoff_path"] = (
+            next_handoff_out.relative_to(repo_root).as_posix()
+        )
+        iterations.append(iteration)
+
+        _audit(
+            f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} "
+            f"dispatched_next_fix cycle_count="
+            f"{data.get('cycle_count')}\n"
+        )
+
+        data = load_loop_state(state_path)
+
+    if terminal_status is None:
+        terminal_status = (
+            "bounded_inner_cycle_limit_reached"
+            if iterations and iterations[-1].get("verdict") == "NEEDS_FIXES"
+            else terminal_status
+        )
+
+    payload = {
+        "signal_version": INTERNAL_REVIEW_FIX_LOOP_SIGNAL_VERSION,
+        "started_at": started_at,
+        "finished_at": _utc_iso_now(),
+        "phase": data.get("phase"),
+        "sub_phase": data.get("sub_phase"),
+        "task": data.get("task"),
+        "iterations": iterations,
+        "terminal_verdict": terminal_verdict,
+        "terminal_status": terminal_status,
+        "max_inner_cycles": inner_cap,
+        "capture_evidence": capture_evidence,
+        "invoke_codex_adapter": invoke_codex_adapter,
+        "invoke_claude_adapter": invoke_claude_adapter,
+        "advisory_only": True,
+        "canonical_precedence_note": (
+            INTERNAL_REVIEW_FIX_LOOP_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    _audit(
+        f"{INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX} finished "
+        f"terminal_verdict={terminal_verdict} "
+        f"terminal_status={terminal_status} "
+        f"iterations={len(iterations)}\n"
     )
     return out
 
@@ -10530,6 +11009,50 @@ def cmd_dispatch_prompt_handoff(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_internal_review_fix_cycle(args: argparse.Namespace) -> int:
+    """Phase 9D operator runtime path: drive bounded autonomous
+    internal review/fix continuation from canonical repo artifacts.
+
+    Routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands on disk for human inspection. On success prints
+    the written descriptor path plus a pointer to the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        if args.output is not None:
+            output_path = _resolve_prd_intake_path(
+                repo_root, args.output, label="output",
+            )
+        else:
+            output_path = None
+        kwargs: dict = {
+            "output_path": output_path,
+            "log_path": log_path,
+            "invoke_codex_adapter": not getattr(args, "no_invoke_codex", False),
+            "invoke_claude_adapter": not getattr(args, "no_invoke_claude", False),
+            "capture_evidence": not getattr(args, "skip_evidence", False),
+        }
+        if args.max_inner_cycles is not None:
+            kwargs["max_inner_cycles"] = args.max_inner_cycles
+        written = run_internal_review_fix_cycle(repo_root, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] internal review/fix loop wrote {rel}; see "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`review/fix loop:` audit notes."
+    )
+    return 0
+
+
 def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
     """Phase 6N operator runtime path: evaluate the selected runtime
     adapter against the shipped Phase 6M contract.
@@ -11829,6 +12352,118 @@ def build_parser() -> argparse.ArgumentParser:
             "the outcome into the descriptor."
         ),
     )
+    review_fix = sub.add_parser(
+        "run-internal-review-fix-cycle",
+        help=(
+            "Phase 9D autonomous internal review/fix loop: drive "
+            "bounded review/fix continuation from canonical repo "
+            "artifacts. Reads the Phase 9C prompt-handoff "
+            "descriptor at `.agent-loop/prompt-handoff.json` and "
+            "the canonical `.agent-loop/claude-summary.md` Claude "
+            "has just produced; invokes `bash scripts/run_checks.sh` "
+            "(unless `--skip-evidence`) and validates the six "
+            "evidence files; invokes the shipped Codex adapter (via "
+            "`make_codex_adapter()`) unless `--no-invoke-codex` to "
+            "produce `.agent-loop/codex-review.md`; parses + "
+            "classifies findings by owner via the shipped "
+            "`parse_codex_review` + `_prepare_needs_fixes_follow_up` "
+            "helpers (the latter writes `.agent-loop/fix-prompt.md` "
+            "ONLY when Claude-owned issues remain after Codex "
+            "auto-fixes); on NEEDS_FIXES dispatches the next fix "
+            "prompt via the shipped Phase 9C "
+            "`dispatch_prompt_handoff(mode='fix', ...)` (unless "
+            "`--no-invoke-claude`) and continues up to "
+            "`--max-inner-cycles` iterations. Writes a single "
+            "advisory descriptor at "
+            f"`{INTERNAL_REVIEW_FIX_LOOP_OUTPUT_REL}` capturing "
+            "every iteration's verdict, owner classification, "
+            "fix-prompt refresh, and next-handoff dispatch, plus "
+            "`review/fix loop:` audit lines. Refuses fail-closed on "
+            "missing / malformed loop-state, unsupported "
+            "`contract_version`, missing Phase 9C handoff "
+            "descriptor, missing or malformed claude-summary.md, "
+            "out-of-bound `--max-inner-cycles`, output-boundary "
+            "violations (path outside `.agent-loop/`, protected "
+            "path, memory subtree, directory), or any shipped halt "
+            "raised by the underlying review / evidence / fix-prompt "
+            "/ owner-routing helpers. Honors the Phase 3A cycle "
+            "threshold: halts `halted_max_cycles_reached` when "
+            "`cycle_count + 1 > max_cycles` on a NEEDS_FIXES "
+            "verdict. APPROVED_FOR_HUMAN_REVIEW sets "
+            "`status=phase_complete_awaiting_human_approval` and "
+            "stops; this slice does NOT activate the next phase "
+            "(deferred to Phase 9E)."
+        ),
+    )
+    review_fix.add_argument(
+        "--max-inner-cycles",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of review/fix iterations to run within "
+            "a single command invocation. Defaults to "
+            f"INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES="
+            f"{INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES}; "
+            f"capped at INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES="
+            f"{INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES}."
+        ),
+    )
+    review_fix.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help=(
+            "Repo-relative path for the review-fix-loop descriptor. "
+            f"Defaults to {INTERNAL_REVIEW_FIX_LOOP_OUTPUT_REL!r}. "
+            "Absolute paths and paths that escape the repo root are "
+            "refused; the library function additionally refuses "
+            "paths outside `.agent-loop/`, paths in the protected "
+            "set (including `.agent-loop/prompt-handoff.json` and "
+            "`.agent-loop/prd-intake.json`), paths under "
+            "`.agent-loop/memory/`, and directory targets."
+        ),
+    )
+    review_fix.add_argument(
+        "--skip-evidence",
+        action="store_true",
+        help=(
+            "Skip the `bash scripts/run_checks.sh` invocation and "
+            "the shipped `validate_evidence_files` check before "
+            "Codex review. Operator-grade escape hatch: by default "
+            "the slice runs evidence capture and validation to "
+            "honor the Phase 3A contract (review must follow "
+            "evidence). Use this only when evidence has already "
+            "been captured by `cmd_run` or a separate "
+            "`scripts/run_checks.sh` invocation in the same "
+            "session, or when running a dry-rehearsal that does "
+            "not need real evidence."
+        ),
+    )
+    review_fix.add_argument(
+        "--no-invoke-codex",
+        action="store_true",
+        help=(
+            "Skip the shipped Codex adapter invocation and use the "
+            "existing `.agent-loop/codex-review.md` on disk as-is. "
+            "Operator-grade escape hatch: by default the slice "
+            "invokes `make_codex_adapter().wait_for_review(...)` so "
+            "Codex review is produced through the same adapter "
+            "seam `cmd_run` uses."
+        ),
+    )
+    review_fix.add_argument(
+        "--no-invoke-claude",
+        action="store_true",
+        help=(
+            "Skip the Claude adapter invocation inside the Phase 9C "
+            "dispatch the slice calls on NEEDS_FIXES (descriptor + "
+            "audit lines still written; the next iteration's "
+            "Claude work does not happen). Operator-grade escape "
+            "hatch: by default the slice dispatches the next fix "
+            "prompt through the shipped Claude adapter so the loop "
+            "is truly autonomous between iterations."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -12084,6 +12719,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
     "intake-prd": cmd_intake_prd,
     "dispatch-prompt-handoff": cmd_dispatch_prompt_handoff,
+    "run-internal-review-fix-cycle": cmd_run_internal_review_fix_cycle,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
