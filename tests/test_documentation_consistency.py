@@ -1357,8 +1357,11 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
         # 500 chars on each side of the keyword is enough to span the
         # densest Phase 9 paragraph in the README without becoming
         # so wide it stops being a useful proximity signal.
+        # Phase 9C shipped in its own implementation slice; the
+        # must-be-deferred set covers only the still-unshipped
+        # Phase 9D-9G runtime work.
         for sub_phase in (
-            "Phase 9C", "Phase 9D", "Phase 9E", "Phase 9F", "Phase 9G",
+            "Phase 9D", "Phase 9E", "Phase 9F", "Phase 9G",
         ):
             if sub_phase in self.text:
                 idx = self.text.find(sub_phase)
@@ -1389,6 +1392,57 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
             self.assertIn(
                 fragment, self.text,
                 f"README.md Phase 9B paragraph does not name the "
+                f"preserved {fragment!r} boundary",
+            )
+
+
+class ReadmeMarksPhase9cAsActiveTests(unittest.TestCase):
+    """Phase 9C: README must name Phase 9C as the current active
+    sub-phase, describe the new shipped handoff surface (the
+    `dispatch-prompt-handoff` CLI subcommand and the
+    `.agent-loop/prompt-handoff.json` advisory descriptor), and not
+    promise the deferred Phase 9D-9G runtime work as shipped.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_9c_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9C", self.text,
+            "README.md does not name Phase 9C as a current focus",
+        )
+        self.assertIn(
+            "Orchestrator-Driven Prompt Handoff", self.text,
+            "README.md does not name the Phase 9C sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_handoff_surface(self) -> None:
+        for fragment in (
+            "dispatch-prompt-handoff",
+            ".agent-loop/prompt-handoff.json",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9C paragraph does not name shipped "
+                f"surface {fragment!r}",
+            )
+
+    def test_readme_preserves_handoff_canonical_boundary_language(
+        self,
+    ) -> None:
+        # The Phase 9C paragraph must explicitly state the handoff
+        # descriptor is a routing signal, not a replacement for the
+        # canonical prompt artifacts or for `claude-done.json`. This
+        # is the load-bearing safety distinction.
+        for fragment in (
+            "routing signal",
+            "claude-done.json",
+            "canonical prompt artifacts",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9C paragraph does not name the "
                 f"preserved {fragment!r} boundary",
             )
 

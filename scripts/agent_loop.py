@@ -6052,6 +6052,12 @@ PRD_INTAKE_PROTECTED_OUTPUT_PATHS = frozenset({
     ".agent-loop/planner.log",
     ".agent-loop/claude-done.json",
     ".agent-loop/runtime-config.json",
+    # Phase 9C fix-cycle for the Phase 9B protected set: the Phase 9C
+    # prompt-handoff descriptor is also an advisory artifact and must
+    # not be overwritten by a Phase 9B intake write. The sibling Phase
+    # 9C boundary set adds `.agent-loop/prd-intake.json` so the
+    # protection is symmetric.
+    ".agent-loop/prompt-handoff.json",
 })
 
 
@@ -6662,6 +6668,316 @@ def intake_and_decompose_prd(
                 f"max_tasks_per_phase_applied={max_t} "
                 f"source={rel_input}\n"
             )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Phase 9C: Orchestrator-Driven Prompt Handoff Initial Slice
+#
+# Let the orchestrator dispatch the active Codex / Claude prompt
+# handoff from canonical prompt artifacts on disk and capture the
+# resulting handoff audit trail without requiring manual copy/paste.
+# The slice writes only `.agent-loop/prompt-handoff.json` (an advisory
+# descriptor regenerable from canonical loop-state plus the active
+# prompt artifact) and an audit-log note line. It never writes to
+# loop-state.json, never modifies the canonical prompt artifacts, and
+# never invokes the Claude adapter directly; the actual adapter
+# invocation continues to live in the shipped `cmd_run` / `cmd_resume`
+# / `cmd_auto_continue` cycle drivers. The handoff descriptor is the
+# auditable signal a downstream orchestrator-driven autonomous-mode
+# slice (Phase 9D) will consume.
+#
+# Out of scope for this initial slice (deferred per the 9C prompt to
+# Phases 9D-9G):
+#   - autonomous review/fix execution (Phase 9D)
+#   - automatic next-phase activation (Phase 9D / 9E)
+#   - long-run completion heuristics (Phase 9E)
+#   - capacity-halt re-probe (Phase 9F)
+#   - final human acceptance automation (Phase 9G)
+#   - replacement of canonical prompt artifacts with transient state
+#   - any widening of Phase 5 approval-mode semantics
+
+PROMPT_HANDOFF_SIGNAL_VERSION = "phase-9c-v1"
+PROMPT_HANDOFF_OUTPUT_REL = ".agent-loop/prompt-handoff.json"
+PROMPT_HANDOFF_AUDIT_NOTE_PREFIX = "prompt handoff:"
+PROMPT_HANDOFF_MODE_IMPLEMENTATION = "implementation"
+PROMPT_HANDOFF_MODE_FIX = "fix"
+PROMPT_HANDOFF_MODES = frozenset({
+    PROMPT_HANDOFF_MODE_IMPLEMENTATION,
+    PROMPT_HANDOFF_MODE_FIX,
+})
+PROMPT_HANDOFF_CANONICAL_PRECEDENCE_NOTE = (
+    "Phase 9C prompt-handoff descriptors are advisory routing "
+    "signals. The canonical prompt artifacts "
+    "(.agent-loop/claude-prompt.md and .agent-loop/fix-prompt.md) "
+    "remain on disk and remain the source of truth for what Claude "
+    "is asked to implement. The handoff descriptor records WHICH "
+    "prompt was dispatched WHEN; it does NOT replace the prompt "
+    "content. The shipped Phase 4 planner / Phase 4C activator and "
+    "the shipped Phase 5 review / strict / autonomous semantics "
+    "remain unchanged."
+)
+# Phase 9C output-write boundary: mirror of the Phase 9B intake
+# boundary, swapping the self-protection target (the handoff is
+# allowed to write to .agent-loop/prompt-handoff.json; it is NOT
+# allowed to overwrite the Phase 9B intake artifact).
+PROMPT_HANDOFF_PROTECTED_OUTPUT_PATHS = frozenset(
+    (PRD_INTAKE_PROTECTED_OUTPUT_PATHS - {
+        ".agent-loop/prompt-handoff.json",
+    }) | {
+        ".agent-loop/prd-intake.json",
+    }
+)
+
+
+def _validate_prompt_handoff_mode(mode) -> str:
+    """Refuse fail-closed on an out-of-vocabulary `mode`."""
+    if mode is None:
+        return ""  # auto-detect path
+    if not isinstance(mode, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prompt handoff mode must be a string; got "
+                f"{type(mode).__name__}={mode!r}"
+            ),
+        )
+    if mode not in PROMPT_HANDOFF_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prompt handoff mode {mode!r} not in shipped "
+                f"vocabulary {sorted(PROMPT_HANDOFF_MODES)}"
+            ),
+        )
+    return mode
+
+
+def _infer_prompt_handoff_mode(loop_state: dict) -> str:
+    """Auto-detect the active mode from loop-state.
+
+    When `last_verdict == NEEDS_FIXES`, the next dispatch is a fix
+    cycle. Otherwise (no prior verdict, APPROVED, or a halt) the
+    next dispatch is an implementation cycle. The auto-detection
+    matches the shipped `cmd_run` branching pattern.
+    """
+    last_verdict = loop_state.get("last_verdict")
+    if last_verdict == "NEEDS_FIXES":
+        return PROMPT_HANDOFF_MODE_FIX
+    return PROMPT_HANDOFF_MODE_IMPLEMENTATION
+
+
+def _validate_prompt_handoff_output_target(
+    repo_root: Path, output_path: Path,
+) -> None:
+    """Refuse fail-closed when `output_path` is not a safe advisory
+    handoff target. Mirrors the Phase 9B intake boundary helper but
+    uses `PROMPT_HANDOFF_PROTECTED_OUTPUT_PATHS`.
+    """
+    repo_resolved = repo_root.resolve()
+    out_resolved = output_path.resolve()
+    agent_loop_dir = (repo_resolved / ".agent-loop").resolve()
+    try:
+        out_resolved.relative_to(agent_loop_dir)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prompt handoff output path must be under "
+                f".agent-loop/; got {output_path} which resolves "
+                f"outside that directory"
+            ),
+        )
+    try:
+        rel = out_resolved.relative_to(repo_resolved).as_posix()
+    except ValueError:
+        rel = str(out_resolved)
+    if rel in PROMPT_HANDOFF_PROTECTED_OUTPUT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prompt handoff output path {rel!r} is a protected "
+                f"runtime / planning artifact and may not be "
+                f"overwritten by an advisory handoff write"
+            ),
+        )
+    memory_dir = (agent_loop_dir / "memory").resolve()
+    try:
+        out_resolved.relative_to(memory_dir)
+    except ValueError:
+        pass
+    else:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prompt handoff output path {rel!r} is under "
+                f".agent-loop/memory/; that subtree is owned by the "
+                f"Phase 6 durable-memory writers"
+            ),
+        )
+    if out_resolved.exists() and out_resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"prompt handoff output path is a directory: "
+                f"{output_path}"
+            ),
+        )
+
+
+def dispatch_prompt_handoff(
+    repo_root: Path,
+    *,
+    mode: Optional[str] = None,
+    output_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+    invoke_adapter: bool = True,
+) -> Path:
+    """Phase 9C: dispatch the active prompt handoff from canonical
+    repo artifacts.
+
+    Reads `.agent-loop/loop-state.json` (validated via the shipped
+    validators), selects the active prompt artifact from `mode`
+    (`"implementation"` -> `.agent-loop/claude-prompt.md`; `"fix"` ->
+    `.agent-loop/fix-prompt.md`; `None` -> auto-detect from
+    `last_verdict`), validates the selected prompt artifact is
+    present and non-empty (via the shipped
+    `validate_claude_prompt_present`), writes a structured handoff
+    descriptor to `output_path` (defaults to
+    `.agent-loop/prompt-handoff.json`), and unless
+    `invoke_adapter=False` ACTUALLY invokes the shipped Claude
+    adapter (`make_claude_adapter().invoke(prompt_path, summary_path)`)
+    so the orchestrator drives the dispatch rather than only emitting
+    an advisory descriptor. The adapter outcome (`exit_code`,
+    `model_id`, `duration_seconds`) is captured into the descriptor's
+    `adapter_invocation` block and audited to `orchestrator.log`.
+    Returns the handoff descriptor path.
+
+    Boundary preservation: the canonical prompt artifacts remain on
+    disk as the source of truth (the slice never modifies them); the
+    Claude-summary path is the same shipped artifact `cmd_run` writes
+    to. The slice does NOT run evidence collection, does NOT wait for
+    Codex review, does NOT update cycle_count or any other loop-state
+    field, and does NOT widen autonomous review/fix continuation
+    (Phase 9D), automatic next-phase activation (Phase 9D / 9E), or
+    final acceptance automation (Phase 9G).
+
+    Refusal modes (all fail-closed via `HaltError(...)`):
+      - missing or malformed `loop-state.json`
+      - unsupported `contract_version`
+      - `mode` not in `PROMPT_HANDOFF_MODES` (when explicitly
+        provided)
+      - selected prompt artifact missing or empty
+      - output path resolves outside `.agent-loop/`, targets any
+        path in `PROMPT_HANDOFF_PROTECTED_OUTPUT_PATHS`, is under
+        `.agent-loop/memory/`, or resolves to an existing directory
+
+    A non-zero adapter exit code is recorded into the descriptor and
+    audit log but does NOT raise; the operator inspects the
+    descriptor + summary file + audit log to determine the dispatch
+    outcome. This matches the shipped `cmd_run` pattern where the
+    adapter's exit code is a signal that subsequent validators
+    (`validate_claude_summary`) act on.
+
+    Canonical-precedence preservation: the call never writes to
+    `loop-state.json`, never modifies the canonical prompt artifacts,
+    and only writes to the named output path, `.agent-loop/claude-`
+    `summary.md` (via the shipped Claude adapter when
+    `invoke_adapter=True`), plus audit-log lines when `log_path` is
+    supplied. The Claude-summary write path is the shipped one used
+    by `cmd_run`; the slice does not introduce a parallel summary
+    artifact.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    resolved_mode = _validate_prompt_handoff_mode(mode)
+    if not resolved_mode:
+        resolved_mode = _infer_prompt_handoff_mode(data)
+
+    if resolved_mode == PROMPT_HANDOFF_MODE_IMPLEMENTATION:
+        prompt_rel = ".agent-loop/claude-prompt.md"
+    else:
+        prompt_rel = ".agent-loop/fix-prompt.md"
+    prompt_path = repo_root / prompt_rel
+    validate_claude_prompt_present(prompt_path)
+
+    out = (
+        output_path if output_path is not None
+        else repo_root / PROMPT_HANDOFF_OUTPUT_REL
+    )
+    _validate_prompt_handoff_output_target(repo_root, out)
+
+    payload = {
+        "handoff_signal_version": PROMPT_HANDOFF_SIGNAL_VERSION,
+        "dispatched_at": _utc_iso_now(),
+        "mode": resolved_mode,
+        "source_prompt_path": prompt_rel,
+        "source_prompt_byte_size": prompt_path.stat().st_size,
+        "phase": data.get("phase"),
+        "sub_phase": data.get("sub_phase"),
+        "task": data.get("task"),
+        "cycle_count": data.get("cycle_count"),
+        "approval_mode": data.get("approval_mode"),
+        "last_verdict": data.get("last_verdict"),
+        "advisory_only": True,
+        "canonical_precedence_note": (
+            PROMPT_HANDOFF_CANONICAL_PRECEDENCE_NOTE
+        ),
+        "adapter_invoked": False,
+        "adapter_invocation": None,
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+
+    def _audit(line: str) -> None:
+        if log_path is None:
+            return
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    _audit(
+        f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} dispatched "
+        f"signal_version={PROMPT_HANDOFF_SIGNAL_VERSION} "
+        f"mode={resolved_mode} source={prompt_rel} "
+        f"phase={data.get('phase')!r} "
+        f"sub_phase={data.get('sub_phase')!r} "
+        f"cycle_count={data.get('cycle_count')}\n"
+    )
+
+    if not invoke_adapter:
+        _audit(
+            f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} skipped adapter "
+            f"invocation (invoke_adapter=False)\n"
+        )
+        return out
+
+    summary_path = al / "claude-summary.md"
+    adapter = make_claude_adapter()
+    result = adapter.invoke(prompt_path, summary_path)
+    payload["adapter_invoked"] = True
+    payload["adapter_invocation"] = {
+        "exit_code": result.exit_code,
+        "model_id": result.model_id,
+        "duration_seconds": result.duration_seconds,
+        "summary_path": ".agent-loop/claude-summary.md",
+    }
+    out.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+    _audit(
+        f"{PROMPT_HANDOFF_AUDIT_NOTE_PREFIX} invoked "
+        f"signal_version={PROMPT_HANDOFF_SIGNAL_VERSION} "
+        f"mode={resolved_mode} exit_code={result.exit_code} "
+        f"model_id={result.model_id!r} "
+        f"duration_seconds={result.duration_seconds}\n"
+    )
     return out
 
 
@@ -10172,6 +10488,48 @@ def cmd_intake_prd(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_dispatch_prompt_handoff(args: argparse.Namespace) -> int:
+    """Phase 9C operator runtime path: dispatch the active prompt
+    handoff from canonical artifacts and write the handoff descriptor.
+
+    Routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands on disk for human inspection. On success prints
+    the written descriptor path plus a pointer to the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        if args.output is not None:
+            output_path = _resolve_prd_intake_path(
+                repo_root, args.output, label="output",
+            )
+        else:
+            output_path = None
+        kwargs: dict = {
+            "output_path": output_path,
+            "log_path": log_path,
+            "invoke_adapter": not getattr(args, "no_invoke", False),
+        }
+        if args.mode is not None:
+            kwargs["mode"] = args.mode
+        written = dispatch_prompt_handoff(repo_root, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] prompt handoff wrote {rel}; see "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`prompt handoff:` audit note."
+    )
+    return 0
+
+
 def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
     """Phase 6N operator runtime path: evaluate the selected runtime
     adapter against the shipped Phase 6M contract.
@@ -11408,6 +11766,69 @@ def build_parser() -> argparse.ArgumentParser:
             f"{PRD_INTAKE_MAX_MAX_TASKS_PER_PHASE}."
         ),
     )
+    handoff = sub.add_parser(
+        "dispatch-prompt-handoff",
+        help=(
+            "Phase 9C orchestrator-driven prompt handoff: dispatch "
+            "the active Codex/Claude prompt cycle from canonical "
+            "repo artifacts directly to the shipped Claude adapter "
+            "(via `make_claude_adapter()`) by default, capture the "
+            "adapter outcome (`exit_code`, `model_id`, "
+            "`duration_seconds`, `summary_path`) into the handoff "
+            "descriptor at `.agent-loop/prompt-handoff.json`, and "
+            "emit two `prompt handoff:` audit-log lines (one for "
+            "`dispatched`, one for `invoked`). Pass `--no-invoke` "
+            "for the explicit descriptor-only / dry-run path: it "
+            "writes the descriptor and the `dispatched` audit line "
+            "but skips the adapter invocation. Either path captures "
+            "which prompt was dispatched, when, in which mode, plus "
+            "the active phase / sub-phase / cycle / approval-mode "
+            "context; never modifies the canonical prompt "
+            "artifacts, loop-state, or any other protected artifact. "
+            "Refuses fail-closed before reaching the adapter on "
+            "missing / malformed loop-state, unsupported "
+            "`contract_version`, out-of-vocabulary `--mode`, missing "
+            "or empty prompt artifact, and output-boundary "
+            "violations (path outside `.agent-loop/`, protected "
+            "path, memory subtree, directory)."
+        ),
+    )
+    handoff.add_argument(
+        "--mode",
+        type=str,
+        choices=sorted(PROMPT_HANDOFF_MODES),
+        default=None,
+        help=(
+            "Explicit dispatch mode. Defaults to auto-detect from "
+            "loop-state.json's `last_verdict` (NEEDS_FIXES -> "
+            f"{PROMPT_HANDOFF_MODE_FIX}; otherwise -> "
+            f"{PROMPT_HANDOFF_MODE_IMPLEMENTATION})."
+        ),
+    )
+    handoff.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help=(
+            "Repo-relative path for the handoff descriptor. Defaults "
+            f"to {PROMPT_HANDOFF_OUTPUT_REL!r}. Absolute paths and "
+            "paths that escape the repo root are refused; the "
+            "library function additionally refuses paths outside "
+            "`.agent-loop/`, paths in the protected set, paths "
+            "under `.agent-loop/memory/`, and directory targets."
+        ),
+    )
+    handoff.add_argument(
+        "--no-invoke",
+        action="store_true",
+        help=(
+            "Skip the shipped Claude adapter invocation and only "
+            "write the descriptor + audit-log lines (dry-run / "
+            "planning mode). Default is to dispatch the active "
+            "prompt to the configured Claude adapter and capture "
+            "the outcome into the descriptor."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -11662,6 +12083,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "integrate-optional-context": cmd_integrate_optional_context_prompt,
     "synthesize-repeated-failures": cmd_synthesize_repeated_failures,
     "intake-prd": cmd_intake_prd,
+    "dispatch-prompt-handoff": cmd_dispatch_prompt_handoff,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
