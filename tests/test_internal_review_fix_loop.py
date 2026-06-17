@@ -192,18 +192,26 @@ def _plant_canonical_artifacts(repo_root: Path) -> None:
     )
 
 
-def _plant_phase_9c_handoff(repo_root: Path) -> Path:
+def _plant_phase_9c_handoff(
+    repo_root: Path,
+    *,
+    cycle_count: int = 0,
+    phase: str = ACTIVE_PHASE,
+    sub_phase: str = ACTIVE_SUB_PHASE,
+    task: str = "review-fix-test",
+    handoff_signal_version: str = "phase-9c-v1",
+) -> Path:
     handoff = repo_root / ".agent-loop" / "prompt-handoff.json"
     handoff.write_text(json.dumps({
-        "handoff_signal_version": "phase-9c-v1",
+        "handoff_signal_version": handoff_signal_version,
         "dispatched_at": "2026-06-16T00:00:00Z",
         "mode": "implementation",
         "source_prompt_path": ".agent-loop/claude-prompt.md",
         "source_prompt_byte_size": 100,
-        "phase": ACTIVE_PHASE,
-        "sub_phase": ACTIVE_SUB_PHASE,
-        "task": "review-fix-test",
-        "cycle_count": 0,
+        "phase": phase,
+        "sub_phase": sub_phase,
+        "task": task,
+        "cycle_count": cycle_count,
         "approval_mode": "review",
         "last_verdict": None,
         "advisory_only": True,
@@ -239,9 +247,18 @@ class ReviewFixConstantsTests(unittest.TestCase):
         )
 
     def test_default_and_max_inner_cycles(self) -> None:
+        # Phase 9D fix-cycle: default must be >= 2 so the autonomous
+        # path actually continues past the first NEEDS_FIXES dispatch
+        # (review -> dispatch fix -> review next, at minimum). 3
+        # leaves headroom for one more iteration while staying
+        # bounded by the shipped Phase 3A cycle_count threshold.
+        self.assertGreaterEqual(
+            agent_loop.INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES,
+            2,
+        )
         self.assertEqual(
             agent_loop.INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES,
-            1,
+            3,
         )
         self.assertEqual(
             agent_loop.INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES,
@@ -352,6 +369,11 @@ class ReviewFixNeedsFixesBranchTests(unittest.TestCase):
             )
             written = agent_loop.run_internal_review_fix_cycle(
                 repo,
+                # Force single-iteration so the assertion targets the
+                # first NEEDS_FIXES dispatch in isolation; the
+                # default (>=2) is exercised by
+                # ReviewFixDefaultContinuationTests.
+                max_inner_cycles=1,
                 capture_evidence=False,
                 invoke_codex_adapter=False,
                 invoke_claude_adapter=False,
@@ -381,7 +403,10 @@ class ReviewFixNeedsFixesBranchTests(unittest.TestCase):
             repo = _make_repo(Path(td))
             _plant_loop_state(repo, cycle_count=3, max_cycles=3)
             _plant_canonical_artifacts(repo)
-            _plant_phase_9c_handoff(repo)
+            # The Phase 9D fix-cycle adds a strict descriptor /
+            # loop-state match check, so the handoff must carry the
+            # same cycle_count as loop-state.
+            _plant_phase_9c_handoff(repo, cycle_count=3)
             _plant_review(
                 repo, "NEEDS_FIXES",
                 issues=(_claude_owned_issue_block(),),
@@ -685,6 +710,11 @@ class ReviewFixAdapterSeamTests(unittest.TestCase):
             ):
                 agent_loop.run_internal_review_fix_cycle(
                     repo,
+                    # Pin to single iteration so the assertion targets
+                    # the first dispatch in isolation; the default
+                    # multi-iteration path is covered by
+                    # ReviewFixDefaultContinuationTests.
+                    max_inner_cycles=1,
                     capture_evidence=False,
                     invoke_codex_adapter=True,
                     invoke_claude_adapter=True,
@@ -870,6 +900,228 @@ class ReviewFixHelpTextTests(unittest.TestCase):
     def test_help_documents_descriptor_path(self) -> None:
         text = self._help_text()
         self.assertIn(".agent-loop/review-fix-loop.json", text)
+
+
+class ReviewFixStaleHandoffTests(unittest.TestCase):
+    """Phase 9D fix-cycle: structural validation of the Phase 9C
+    handoff descriptor refuses stale or mismatched descriptors
+    fail-closed BEFORE the loop runs any review/dispatch work.
+    """
+
+    def _common_setup(self, td: Path) -> Path:
+        repo = _make_repo(td)
+        _plant_loop_state(repo)
+        _plant_canonical_artifacts(repo)
+        _plant_review(repo, "APPROVED_FOR_HUMAN_REVIEW")
+        return repo
+
+    def test_wrong_signal_version_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            _plant_phase_9c_handoff(
+                repo, handoff_signal_version="phase-9b-v1",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("handoff_signal_version", str(ctx.exception))
+
+    def test_phase_mismatch_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            _plant_phase_9c_handoff(repo, phase="Phase 1 - Stale")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("phase=", str(ctx.exception))
+
+    def test_sub_phase_mismatch_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            _plant_phase_9c_handoff(repo, sub_phase="Phase 9X - Stale")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("sub_phase=", str(ctx.exception))
+
+    def test_task_mismatch_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            _plant_phase_9c_handoff(repo, task="stale-task")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("task=", str(ctx.exception))
+
+    def test_cycle_count_mismatch_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            _plant_phase_9c_handoff(repo, cycle_count=99)
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("cycle_count=", str(ctx.exception))
+
+    def test_malformed_json_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            (repo / ".agent-loop" / "prompt-handoff.json").write_text(
+                "not json {", encoding="utf-8",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("not valid JSON", str(ctx.exception))
+
+    def test_non_dict_top_level_refuses(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            (repo / ".agent-loop" / "prompt-handoff.json").write_text(
+                "[]", encoding="utf-8",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            self.assertEqual(ctx.exception.status, "halted_input_missing")
+            self.assertIn("JSON object", str(ctx.exception))
+
+    def test_valid_current_descriptor_succeeds(self) -> None:
+        # Regression-guard: a properly-aligned descriptor (matching
+        # signal version + phase + sub_phase + task + cycle_count)
+        # must still pass the new validator unchanged.
+        with TemporaryDirectory() as td:
+            repo = self._common_setup(Path(td))
+            _plant_phase_9c_handoff(repo)
+            written = agent_loop.run_internal_review_fix_cycle(
+                repo,
+                capture_evidence=False,
+                invoke_codex_adapter=False,
+                invoke_claude_adapter=False,
+            )
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["terminal_verdict"],
+                "APPROVED_FOR_HUMAN_REVIEW",
+            )
+
+
+class ReviewFixDefaultContinuationTests(unittest.TestCase):
+    """Phase 9D fix-cycle: the default `max_inner_cycles` must allow
+    the loop to actually continue past the first NEEDS_FIXES
+    dispatch (review -> dispatch fix -> review next, at minimum).
+    """
+
+    def test_default_runs_more_than_one_iteration_on_needs_fixes(
+        self,
+    ) -> None:
+        # Cycler: first review = NEEDS_FIXES, second review = APPROVED.
+        # If the default `max_inner_cycles` were 1, the loop would
+        # stop after the first dispatch and never invoke the Codex
+        # adapter a second time. The test proves the default actually
+        # iterates.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, cycle_count=0, max_cycles=5)
+            _plant_canonical_artifacts(repo)
+            _plant_phase_9c_handoff(repo)
+
+            class Cycler:
+                def __init__(self_):
+                    self_.calls = 0
+                def wait_for_review(self_, review_path: Path):
+                    self_.calls += 1
+                    if self_.calls == 1:
+                        review_path.write_text(
+                            _review_md(
+                                "NEEDS_FIXES",
+                                issues=(_claude_owned_issue_block(),),
+                            ),
+                            encoding="utf-8",
+                        )
+                    else:
+                        review_path.write_text(
+                            _review_md("APPROVED_FOR_HUMAN_REVIEW"),
+                            encoding="utf-8",
+                        )
+                    return agent_loop.ExecutionResult(
+                        exit_code=0,
+                        model_id="codex-test",
+                        duration_seconds=0.0,
+                    )
+
+            class ClaudeSpy:
+                def __init__(self_):
+                    self_.calls = 0
+                def invoke(self_, prompt_path: Path, summary_path: Path):
+                    self_.calls += 1
+                    return agent_loop.ExecutionResult(
+                        exit_code=0,
+                        model_id="claude-test",
+                        duration_seconds=0.0,
+                    )
+
+            cycler = Cycler()
+            claude = ClaudeSpy()
+            with mock.patch.object(
+                agent_loop, "make_codex_adapter",
+                return_value=cycler,
+            ), mock.patch.object(
+                agent_loop, "make_claude_adapter",
+                return_value=claude,
+            ):
+                # NO explicit max_inner_cycles - exercises the default.
+                written = agent_loop.run_internal_review_fix_cycle(
+                    repo,
+                    capture_evidence=False,
+                    invoke_codex_adapter=True,
+                    invoke_claude_adapter=True,
+                )
+            self.assertGreaterEqual(
+                cycler.calls, 2,
+                "default max_inner_cycles must let the loop continue "
+                "past the first NEEDS_FIXES dispatch",
+            )
+            self.assertGreaterEqual(claude.calls, 1)
+            payload = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                payload["terminal_verdict"],
+                "APPROVED_FOR_HUMAN_REVIEW",
+            )
+            self.assertGreaterEqual(len(payload["iterations"]), 2)
 
 
 if __name__ == "__main__":

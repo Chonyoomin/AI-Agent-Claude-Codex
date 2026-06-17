@@ -1,48 +1,61 @@
 # Claude Code Fix Task
 
 ## Phase
-Phase 9C - Orchestrator-Driven Prompt Handoff
+Phase 9D - Autonomous Internal Review/Fix Loop
 
 ## Objective
-Fix the remaining Phase 9C operator-surface mismatch so the
-`dispatch-prompt-handoff` CLI help text accurately describes the shipped runtime
-behavior.
+Fix the remaining Phase 9D runtime gaps so the autonomous internal review/fix
+loop actually behaves like a bounded autonomous continuation by default and
+refuses stale or mismatched Phase 9C handoff descriptors instead of accepting
+any non-empty file.
 
 ## Context
-The Phase 9C runtime gap is fixed in code: `dispatch_prompt_handoff(...)` now
-actually invokes `make_claude_adapter().invoke(...)` by default, records the
-adapter outcome in `.agent-loop/prompt-handoff.json`, and the focused tests pass.
+Codex re-reviewed the Phase 9D implementation from current repo state and found
+two remaining runtime bugs:
 
-But the CLI help text for `dispatch-prompt-handoff` in
-[`scripts/agent_loop.py`](scripts/agent_loop.py) is still stale. It currently
-claims the command "Writes only the descriptor and a `prompt handoff:` audit-log
-line", which is no longer true for the default path. The default path now
-dispatches through the Claude adapter unless the operator opts out with
-`--no-invoke`.
+1. The loop's default `max_inner_cycles = 1` does not complete one full
+   autonomous review/fix continuation on the common `NEEDS_FIXES` path. The
+   implementation performs one Codex review, dispatches one Claude fix prompt,
+   then exits because the `for i in range(inner_cap)` loop is exhausted. With
+   the shipped default, the command stops immediately after the first fix
+   dispatch instead of autonomously reviewing the result of that fix. That means
+   the default path does not satisfy the slice's claimed bounded autonomous
+   continuation behavior.
 
-That means an operator reading `python scripts/agent_loop.py
-dispatch-prompt-handoff --help` still gets pre-fix behavior described back to
-them even though the runtime has changed.
+2. Phase 9D only checks that `.agent-loop/prompt-handoff.json` exists and is
+   non-empty. It does not validate the descriptor's signal version or confirm
+   that the handoff matches the active loop-state phase / sub-phase / task /
+   cycle context. A stale or hand-edited Phase 9C descriptor can therefore be
+   consumed as if it were the current handoff, which weakens the canonical
+   artifact routing contract Phase 9D claims to preserve.
 
 ## Required fixes
-- update the `dispatch-prompt-handoff` argparse help text so it accurately
-  describes the shipped default behavior:
-  - the command dispatches the active canonical prompt through the Claude
-    adapter by default
-  - it writes `.agent-loop/prompt-handoff.json`
-  - it records `prompt handoff:` audit lines
-  - `--no-invoke` is the explicit descriptor-only / dry-run path
-- keep the Phase 9C scope narrow; do not widen into Phase 9D autonomy
-- preserve the existing runtime behavior exactly; this is an operator-surface
-  and documentation-alignment fix, not a new behavior change
-- add or update focused tests if needed so the operator-facing help surface is
-  covered and cannot drift silently again
+- make the default autonomous path complete a meaningful bounded review/fix
+  continuation on the common `NEEDS_FIXES` path rather than stopping
+  immediately after the first fix dispatch
+- keep the Phase 9D scope narrow:
+  - no Phase 9E automatic next-phase activation
+  - no Phase 9F capacity re-probe
+  - no Phase 9G final acceptance automation
+- validate the Phase 9C handoff descriptor structurally before entering Phase
+  9D:
+  - require the expected signal version
+  - require the active phase / sub-phase alignment with loop-state
+  - require the task / cycle context to be consistent enough that stale
+    descriptors are refused fail-closed
+- preserve the existing canonical artifact model and ownership boundaries
+- add focused tests proving:
+  - the default 9D path does not stop prematurely after the first
+    `NEEDS_FIXES` dispatch
+  - stale or mismatched handoff descriptors are refused
+  - the valid current-descriptor path still succeeds
 
 ## Constraints
 - follow `CLAUDE.md`
-- stay within Phase 9C scope
+- stay within Phase 9D scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
-- do not change the runtime semantics that were just fixed
+- do not widen into automatic next-phase activation or broader Phase 9E+ work
+- prefer the smallest safe runtime fix that resolves the two bugs
 
 ## Required output
 After applying the fix, update `.agent-loop/claude-summary.md` in the required

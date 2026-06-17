@@ -7023,7 +7023,7 @@ def dispatch_prompt_handoff(
 INTERNAL_REVIEW_FIX_LOOP_SIGNAL_VERSION = "phase-9d-v1"
 INTERNAL_REVIEW_FIX_LOOP_OUTPUT_REL = ".agent-loop/review-fix-loop.json"
 INTERNAL_REVIEW_FIX_LOOP_AUDIT_NOTE_PREFIX = "review/fix loop:"
-INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES = 1
+INTERNAL_REVIEW_FIX_LOOP_DEFAULT_MAX_INNER_CYCLES = 3
 INTERNAL_REVIEW_FIX_LOOP_MAX_MAX_INNER_CYCLES = 5
 INTERNAL_REVIEW_FIX_LOOP_CANONICAL_PRECEDENCE_NOTE = (
     "Phase 9D review-fix-loop descriptors are advisory routing "
@@ -7079,6 +7079,88 @@ def _validate_review_fix_loop_max_inner_cycles(value) -> int:
             ),
         )
     return value
+
+
+def _validate_phase_9c_handoff_descriptor(
+    handoff_path: Path, loop_state: dict,
+) -> dict:
+    """Phase 9D fix-cycle: structurally validate the Phase 9C handoff
+    descriptor before entering the autonomous review/fix loop.
+
+    Refuses fail-closed when the descriptor is missing/empty, not
+    JSON, not a dict, missing the expected
+    `handoff_signal_version`, carries a signal version other than
+    `PROMPT_HANDOFF_SIGNAL_VERSION`, or whose `phase` / `sub_phase`
+    / `task` / `cycle_count` does not match the current loop-state.
+    The match-against-loop-state check prevents a stale or
+    hand-edited handoff descriptor from being consumed as if it
+    were the current handoff.
+    """
+    if not handoff_path.exists():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"Phase 9D requires a prior Phase 9C handoff descriptor "
+                f"at {PROMPT_HANDOFF_OUTPUT_REL}; run "
+                f"`dispatch-prompt-handoff` before entering the "
+                f"autonomous internal review/fix loop."
+            ),
+        )
+    raw = handoff_path.read_text(encoding="utf-8").strip()
+    if not raw:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"Phase 9C handoff descriptor at "
+                f"{PROMPT_HANDOFF_OUTPUT_REL} is empty"
+            ),
+        )
+    try:
+        descriptor = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"Phase 9C handoff descriptor at "
+                f"{PROMPT_HANDOFF_OUTPUT_REL} is not valid JSON: {exc}"
+            ),
+        ) from exc
+    if not isinstance(descriptor, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"Phase 9C handoff descriptor at "
+                f"{PROMPT_HANDOFF_OUTPUT_REL} must be a JSON object; "
+                f"got {type(descriptor).__name__}"
+            ),
+        )
+    actual_version = descriptor.get("handoff_signal_version")
+    if actual_version != PROMPT_HANDOFF_SIGNAL_VERSION:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"Phase 9C handoff descriptor at "
+                f"{PROMPT_HANDOFF_OUTPUT_REL} carries "
+                f"handoff_signal_version={actual_version!r}; expected "
+                f"{PROMPT_HANDOFF_SIGNAL_VERSION!r}. Refusing as stale."
+            ),
+        )
+    for key in ("phase", "sub_phase", "task", "cycle_count"):
+        expected = loop_state.get(key)
+        actual = descriptor.get(key)
+        if actual != expected:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"Phase 9C handoff descriptor at "
+                    f"{PROMPT_HANDOFF_OUTPUT_REL} is stale or "
+                    f"mismatched: {key}={actual!r} in descriptor but "
+                    f"{expected!r} in loop-state. Re-run "
+                    f"`dispatch-prompt-handoff` against the current "
+                    f"loop-state."
+                ),
+            )
+    return descriptor
 
 
 def _validate_review_fix_loop_output_target(
@@ -7232,19 +7314,7 @@ def run_internal_review_fix_cycle(
     inner_cap = _validate_review_fix_loop_max_inner_cycles(max_inner_cycles)
 
     handoff_path = repo_root / PROMPT_HANDOFF_OUTPUT_REL
-    if (
-        not handoff_path.exists()
-        or not handoff_path.read_text(encoding="utf-8").strip()
-    ):
-        raise HaltError(
-            "halted_input_missing",
-            (
-                f"Phase 9D requires a prior Phase 9C handoff descriptor "
-                f"at {PROMPT_HANDOFF_OUTPUT_REL}; run "
-                f"`dispatch-prompt-handoff` before entering the "
-                f"autonomous internal review/fix loop."
-            ),
-        )
+    _validate_phase_9c_handoff_descriptor(handoff_path, data)
 
     summary_path = al / "claude-summary.md"
     expected_phase = str(data.get("phase") or "")
