@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9C - Orchestrator-Driven Prompt Handoff)
+Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9D - Autonomous Internal Review/Fix Loop)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3558,10 +3558,11 @@ planner, activation, approval, and artifact-truth boundaries.
 
 ### Status
 
-Active. Next implementation slice under the approved Phase 9 autonomy
-contract, focused on removing manual prompt transfer by letting the
-orchestrator drive Codex/Claude handoff from canonical repo artifacts without
-yet widening into autonomous review/fix or cross-phase execution.
+Complete and approved by human to advance to Phase 9D. Phase 9C closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the orchestrator-driven
+prompt-handoff runtime, adapter-dispatch fix, help-surface alignment follow-up,
+focused validation, and README alignment were all verified in the current repo
+state.
 
 ### Objective
 
@@ -3603,6 +3604,71 @@ planner/activation boundary, review ownership model, and per-phase human gate.
 - no prompt-handoff behavior that bypasses or rewrites the shipped Phase 4
   planner / activation separation, or that replaces canonical prompt artifacts
   with transient runtime-only state
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no MCP support, external UI, or concurrent-agent operation in this slice
+- no Git automation
+
+## Phase 9D - Autonomous Internal Review/Fix Loop
+
+### Status
+
+Active. Next implementation slice under the approved Phase 9 autonomy
+contract, focused on letting the orchestrator run the internal Codex review and
+Claude fix loop across bounded cycles without manual routing between agents,
+while preserving the shipped hard stops, ownership boundaries, and canonical
+artifact truth.
+
+### Objective
+
+Implement the Autonomous Internal Review/Fix Loop slice for the agent loop.
+This slice should let the orchestrator consume the Phase 9B/9C handoff
+artifacts, trigger Codex review automatically, route findings by owner,
+regenerate `.agent-loop/fix-prompt.md` when Claude-owned fixes are required,
+and continue bounded internal review/fix cycles without manual routing between
+agents, while preserving the shipped planner/activation boundary, artifact
+source-of-truth model, and hard-stop behavior.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 9 / 9D as active
+- `.agent-loop/phase-plan.md` records Phase 9C as closed history and contains a
+  `## Phase 9D - Autonomous Internal Review/Fix Loop` section with concrete
+  objective, done criteria, and exclusions
+- the repository ships a bounded autonomous internal review/fix loop that can,
+  from canonical repo artifacts, run Codex review after Claude completion,
+  classify findings by owner, and continue Claude fix cycles without manual
+  prompt passing
+- the loop preserves the shipped artifact/source-of-truth boundary: canonical
+  prompt, summary, review, and fix artifacts remain on disk;
+  `.agent-loop/claude-done.json` and `.agent-loop/prompt-handoff.json` remain
+  routing/timing artifacts rather than substitutes for review evidence
+- the runtime makes Codex-owned versus Claude-owned routing explicit and
+  deterministic, including automatic `.agent-loop/fix-prompt.md` refresh only
+  when Claude-owned fixes are required
+- the new surface preserves the shipped CLI-first workflow,
+  planner/activation boundaries, approval semantics, halt/refusal vocabulary,
+  checkpoint/resume behavior, cycle thresholds, and repo-artifact
+  source-of-truth model
+- focused validation proves bounded autonomous review/fix continuation, refusal
+  behavior, and hard-stop preservation from repo artifacts and logs
+- `README.md` reflects that Phase 9D is active and that autonomous internal
+  review/fix continuation is now the implementation focus
+
+### Exclusions
+
+- no automatic next-phase activation, long-run completion heuristics,
+  capacity-halt re-probe, or final acceptance automation (Phases 9E-9G)
+- no autonomous review/fix behavior that bypasses or rewrites the shipped
+  Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review artifacts with transient runtime-only state
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,
