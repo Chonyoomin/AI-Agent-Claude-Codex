@@ -4,60 +4,45 @@
 Phase 9C - Orchestrator-Driven Prompt Handoff
 
 ## Objective
-Fix the remaining Phase 9C implementation gap so the slice actually removes
-manual prompt transfer by dispatching the active Claude handoff path, instead of
-only writing an advisory handoff descriptor.
+Fix the remaining Phase 9C operator-surface mismatch so the
+`dispatch-prompt-handoff` CLI help text accurately describes the shipped runtime
+behavior.
 
 ## Context
-Codex review found that the current Phase 9C implementation stops at writing
-`.agent-loop/prompt-handoff.json` plus a `prompt handoff:` audit note. The
-library function [`dispatch_prompt_handoff(...)`](scripts/agent_loop.py) writes
-an advisory descriptor, and the CLI handler
-[`cmd_dispatch_prompt_handoff(...)`](scripts/agent_loop.py) only prints the
-descriptor path. The code's own block comment explicitly says it "never invokes
-the Claude adapter directly" and that actual adapter invocation still lives in
-the shipped cycle drivers.
+The Phase 9C runtime gap is fixed in code: `dispatch_prompt_handoff(...)` now
+actually invokes `make_claude_adapter().invoke(...)` by default, records the
+adapter outcome in `.agent-loop/prompt-handoff.json`, and the focused tests pass.
 
-That means the slice still requires manual copy/paste or some outside actor to
-take the prompt and give it to Claude. In other words, the shipped behavior does
-NOT yet satisfy the Phase 9C objective:
+But the CLI help text for `dispatch-prompt-handoff` in
+[`scripts/agent_loop.py`](scripts/agent_loop.py) is still stale. It currently
+claims the command "Writes only the descriptor and a `prompt handoff:` audit-log
+line", which is no longer true for the default path. The default path now
+dispatches through the Claude adapter unless the operator opts out with
+`--no-invoke`.
 
-- "let the orchestrator dispatch the active Codex/Claude prompt handoff from
-  canonical prompt artifacts"
-- "remove manual prompt transfer"
-
-Right now it only records which prompt WOULD be handed off.
+That means an operator reading `python scripts/agent_loop.py
+dispatch-prompt-handoff --help` still gets pre-fix behavior described back to
+them even though the runtime has changed.
 
 ## Required fixes
-- extend Phase 9C so the orchestrator actually dispatches the active Claude
-  prompt handoff from the canonical prompt artifact rather than only emitting an
-  advisory descriptor
-- keep the canonical prompt artifacts on disk as the source of truth; do not
-  replace them with transient runtime-only state
-- preserve the shipped ownership boundary:
-  - no changes to the Phase 4 planner / activation separation
-  - no widening into autonomous review/fix continuation (Phase 9D)
-  - no automatic next-phase activation (Phase 9D / 9E)
-- preserve the shipped Phase 5 approval semantics and Phase 6 continuation /
-  checkpoint behavior
-- keep the handoff auditable from repo artifacts and logs
-- add focused tests proving:
-  - the real handoff path reaches the Claude adapter or adapter seam
-  - the dispatched prompt comes from the correct canonical prompt file for both
-    implementation and fix modes
-  - missing or malformed prompt artifacts still refuse cleanly
-  - the handoff audit trail remains on disk
-  - the implementation does not regress the existing review / strict / bounded
-    autonomous behavior
+- update the `dispatch-prompt-handoff` argparse help text so it accurately
+  describes the shipped default behavior:
+  - the command dispatches the active canonical prompt through the Claude
+    adapter by default
+  - it writes `.agent-loop/prompt-handoff.json`
+  - it records `prompt handoff:` audit lines
+  - `--no-invoke` is the explicit descriptor-only / dry-run path
+- keep the Phase 9C scope narrow; do not widen into Phase 9D autonomy
+- preserve the existing runtime behavior exactly; this is an operator-surface
+  and documentation-alignment fix, not a new behavior change
+- add or update focused tests if needed so the operator-facing help surface is
+  covered and cannot drift silently again
 
 ## Constraints
 - follow `CLAUDE.md`
 - stay within Phase 9C scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
-- do not collapse the handoff layer into autonomous review/fix or cross-phase
-  execution
-- prefer the smallest safe runtime fix that makes the slice satisfy its actual
-  objective
+- do not change the runtime semantics that were just fixed
 
 ## Required output
 After applying the fix, update `.agent-loop/claude-summary.md` in the required

@@ -22,6 +22,7 @@ Scope (Phase 9C, narrow):
 
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 import unittest
@@ -923,6 +924,95 @@ class HandoffAdapterInvocationTests(unittest.TestCase):
             )
             # The adapter spy was NOT called.
             self.assertEqual(len(adapter.calls), 0)
+
+
+class HandoffCliHelpTextTests(unittest.TestCase):
+    """Phase 9C fix-cycle: the `dispatch-prompt-handoff` argparse help
+    text MUST describe the shipped runtime (adapter dispatch is the
+    default; `--no-invoke` is the dry-run path). This guards the
+    operator surface against silent drift away from the runtime.
+    """
+
+    def _handoff_help(self) -> str:
+        parser = agent_loop.build_parser()
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                handoff = action.choices.get("dispatch-prompt-handoff")
+                self.assertIsNotNone(handoff)
+                return handoff.format_help()
+        self.fail("subparsers action not found")
+        return ""
+
+    def _handoff_top_help(self) -> str:
+        parser = agent_loop.build_parser()
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for choice_action in action._choices_actions:
+                    if choice_action.dest == "dispatch-prompt-handoff":
+                        return choice_action.help or ""
+        self.fail("dispatch-prompt-handoff subparser help not found")
+        return ""
+
+    def test_top_level_help_describes_adapter_dispatch_default(
+        self,
+    ) -> None:
+        help_text = self._handoff_top_help()
+        self.assertIn("make_claude_adapter", help_text)
+        self.assertIn("adapter", help_text)
+        self.assertIn("default", help_text)
+
+    def test_top_level_help_documents_no_invoke_dry_run(self) -> None:
+        help_text = self._handoff_top_help()
+        self.assertIn("--no-invoke", help_text)
+        self.assertIn("dry-run", help_text)
+
+    def test_top_level_help_documents_descriptor_path(self) -> None:
+        help_text = self._handoff_top_help()
+        self.assertIn(".agent-loop/prompt-handoff.json", help_text)
+
+    def test_top_level_help_documents_audit_lines(self) -> None:
+        help_text = self._handoff_top_help()
+        self.assertIn("prompt handoff:", help_text)
+        self.assertIn("dispatched", help_text)
+        self.assertIn("invoked", help_text)
+
+    def test_top_level_help_captures_adapter_outcome_fields(
+        self,
+    ) -> None:
+        help_text = self._handoff_top_help()
+        self.assertIn("exit_code", help_text)
+        self.assertIn("model_id", help_text)
+        self.assertIn("duration_seconds", help_text)
+
+    def test_top_level_help_no_longer_claims_descriptor_only(
+        self,
+    ) -> None:
+        help_text = self._handoff_top_help()
+        self.assertNotIn(
+            "Writes only the descriptor and a `prompt handoff:` "
+            "audit-log line",
+            help_text,
+        )
+
+    def test_subparser_help_renders_with_all_flags(self) -> None:
+        rendered = self._handoff_help()
+        self.assertIn("--mode", rendered)
+        self.assertIn("--output", rendered)
+        self.assertIn("--no-invoke", rendered)
+
+    def test_no_invoke_flag_help_documents_dry_run_role(self) -> None:
+        parser = agent_loop.build_parser()
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                handoff = action.choices.get("dispatch-prompt-handoff")
+                self.assertIsNotNone(handoff)
+                for opt in handoff._actions:
+                    if "--no-invoke" in opt.option_strings:
+                        self.assertIn("dry-run", (opt.help or ""))
+                        self.assertIn("adapter", (opt.help or ""))
+                        return
+                self.fail("--no-invoke flag not found on subparser")
+        self.fail("subparsers action not found")
 
 
 if __name__ == "__main__":
