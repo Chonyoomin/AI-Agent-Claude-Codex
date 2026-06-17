@@ -6063,6 +6063,10 @@ PRD_INTAKE_PROTECTED_OUTPUT_PATHS = frozenset({
     # the Phase 9B / 9C self-defaults so that no slice can overwrite
     # another's advisory descriptor through its own output flag.
     ".agent-loop/review-fix-loop.json",
+    # Phase 9E long-run continuation descriptor: symmetric
+    # protection so no Phase 9B / 9C / 9D write can overwrite the
+    # Phase 9E advisory descriptor.
+    ".agent-loop/long-run-continuation.json",
 })
 
 
@@ -7526,6 +7530,490 @@ def run_internal_review_fix_cycle(
         f"terminal_verdict={terminal_verdict} "
         f"terminal_status={terminal_status} "
         f"iterations={len(iterations)}\n"
+    )
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Phase 9E: Long-Run Continuation And Completion Heuristics
+#
+# Bounded multi-hop wrapper that orchestrates Phase 9D review/fix
+# iterations across longer product-building runs and detects bounded
+# "done enough" completion states from canonical artifacts. Each hop
+# re-evaluates completion from canonical loop-state.json before doing
+# any work; when completion is detected at hop entry the loop stops
+# WITHOUT invoking Phase 9D. Otherwise the hop calls
+# `run_internal_review_fix_cycle(...)` with `max_inner_cycles=1` (so
+# Phase 9E owns the hop counter rather than nesting two bounded
+# loops), captures the outcome (including any HaltError) into the
+# hop record, and re-evaluates completion before continuing.
+#
+# Completion detection is canonical-artifact-only: the slice never
+# parses transcripts, never reads chat state, and never invents
+# completion signals from anything other than loop-state.json
+# (`status` + `last_verdict`). The three explicit completion signals
+# are: APPROVED (the Phase 5A success terminal), FAILED (Codex
+# returned FAILED_REQUIRES_HUMAN), and HALTED (any `halted_*`
+# status). Other states ("not yet done") drive another hop until
+# `max_hops` is reached.
+#
+# The slice writes a single advisory descriptor at
+# `.agent-loop/long-run-continuation.json` capturing every hop's
+# pre-hop completion check, action taken, halt status (if any), and
+# final completion determination. The descriptor is a routing/timing
+# artifact only; canonical loop-state.json / codex-review.md /
+# claude-summary.md / claude-prompt.md / fix-prompt.md / checkpoint
+# artifacts remain the source of truth.
+#
+# Boundary preservation (out of scope, deferred):
+#   - capacity-halt re-probe (Phase 9F)
+#   - final human-acceptance automation (Phase 9G)
+#   - automatic next-phase activation (still gated by Phase 4C
+#     activator + APPROVED_FOR_ACTIVATION human approval)
+#   - any change to the Phase 2A evidence contract, the Phase 3A
+#     orchestrator contract body, or the Phase 4A planning contract
+#   - any replacement of canonical prompt/review/checkpoint
+#     artifacts with transient runtime state
+#   - any widening of Phase 5 review/strict/autonomous semantics
+# ---------------------------------------------------------------------------
+
+LONG_RUN_CONTINUATION_SIGNAL_VERSION = "phase-9e-v1"
+LONG_RUN_CONTINUATION_OUTPUT_REL = ".agent-loop/long-run-continuation.json"
+LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX = "long-run continuation:"
+LONG_RUN_CONTINUATION_DEFAULT_MAX_HOPS = 2
+LONG_RUN_CONTINUATION_MAX_MAX_HOPS = 8
+LONG_RUN_CONTINUATION_COMPLETION_APPROVED = "completion_approved"
+LONG_RUN_CONTINUATION_COMPLETION_FAILED = "completion_failed"
+LONG_RUN_CONTINUATION_COMPLETION_HALTED = "completion_halted"
+LONG_RUN_CONTINUATION_COMPLETION_SIGNALS = frozenset({
+    LONG_RUN_CONTINUATION_COMPLETION_APPROVED,
+    LONG_RUN_CONTINUATION_COMPLETION_FAILED,
+    LONG_RUN_CONTINUATION_COMPLETION_HALTED,
+})
+LONG_RUN_CONTINUATION_CANONICAL_PRECEDENCE_NOTE = (
+    "Phase 9E long-run-continuation descriptors are advisory "
+    "routing signals. The canonical loop-state, prompt, summary, "
+    "review, fix, and checkpoint artifacts on disk remain the "
+    "source of truth for what the autonomous runtime actually "
+    "produced and decided. The completion determination is derived "
+    "entirely from canonical loop-state (`status` + "
+    "`last_verdict`); no transcript-only or chat-state signal is "
+    "consulted. The shipped Phase 4 planner / activator, the "
+    "shipped Phase 5 review / strict / autonomous semantics, and "
+    "the shipped Phase 6 checkpoint / continuation primitives "
+    "remain unchanged."
+)
+
+# Phase 9E output-write boundary: shares the Phase 9D protected set,
+# swaps the self-protection target so the Phase 9E descriptor path
+# is writable while the Phase 9B intake / Phase 9C handoff / Phase
+# 9D review-fix-loop descriptors stay protected from a Phase 9E
+# write.
+LONG_RUN_CONTINUATION_PROTECTED_OUTPUT_PATHS = frozenset(
+    (INTERNAL_REVIEW_FIX_LOOP_PROTECTED_OUTPUT_PATHS - {
+        ".agent-loop/long-run-continuation.json",
+    }) | {
+        ".agent-loop/review-fix-loop.json",
+    }
+)
+
+
+def _validate_long_run_max_hops(value) -> int:
+    if value is None:
+        return LONG_RUN_CONTINUATION_DEFAULT_MAX_HOPS
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation max_hops must be a positive "
+                f"int; got {type(value).__name__}={value!r}"
+            ),
+        )
+    if value < 1:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation max_hops must be >= 1; got "
+                f"{value}"
+            ),
+        )
+    if value > LONG_RUN_CONTINUATION_MAX_MAX_HOPS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation max_hops {value} exceeds "
+                f"LONG_RUN_CONTINUATION_MAX_MAX_HOPS="
+                f"{LONG_RUN_CONTINUATION_MAX_MAX_HOPS}"
+            ),
+        )
+    return value
+
+
+def _validate_long_run_output_target(
+    repo_root: Path, output_path: Path,
+) -> None:
+    """Mirror of the Phase 9B/9C/9D output boundary helpers, using
+    `LONG_RUN_CONTINUATION_PROTECTED_OUTPUT_PATHS`.
+    """
+    repo_resolved = repo_root.resolve()
+    out_resolved = output_path.resolve()
+    agent_loop_dir = (repo_resolved / ".agent-loop").resolve()
+    try:
+        out_resolved.relative_to(agent_loop_dir)
+    except ValueError:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation output path must be under "
+                f".agent-loop/; got {output_path} which resolves "
+                f"outside that directory"
+            ),
+        )
+    try:
+        rel = out_resolved.relative_to(repo_resolved).as_posix()
+    except ValueError:
+        rel = str(out_resolved)
+    if rel in LONG_RUN_CONTINUATION_PROTECTED_OUTPUT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation output path {rel!r} is a "
+                f"protected runtime / planning artifact and may not "
+                f"be overwritten by an advisory long-run write"
+            ),
+        )
+    memory_dir = (agent_loop_dir / "memory").resolve()
+    try:
+        out_resolved.relative_to(memory_dir)
+    except ValueError:
+        pass
+    else:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation output path {rel!r} is under "
+                f".agent-loop/memory/; that subtree is owned by the "
+                f"Phase 6 durable-memory writers"
+            ),
+        )
+    if out_resolved.exists() and out_resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"long-run continuation output path is a directory: "
+                f"{output_path}"
+            ),
+        )
+
+
+def evaluate_phase_completion(repo_root: Path) -> dict:
+    """Phase 9E: compute a bounded "done enough" determination from
+    canonical artifacts only.
+
+    Returns a dict carrying:
+      - `completion_signal`: one of
+        `LONG_RUN_CONTINUATION_COMPLETION_APPROVED` / `_FAILED` /
+        `_HALTED`, or `None` when the phase is not yet at a
+        terminal state.
+      - `terminal_status`: the loop-state `status` that drove the
+        determination, or `None` when not terminal.
+      - `last_verdict`: the loop-state `last_verdict` at evaluation
+        time (which may be `None`).
+      - `reason`: a short human-readable explanation of the
+        determination.
+
+    The function reads loop-state.json through the shipped
+    validators and consults only `status` + `last_verdict`. No
+    transcript, chat state, or alternate runtime artifact is
+    examined. This is the canonical "done enough" probe Phase 9E's
+    long-run continuation uses between hops.
+    """
+    state_path = repo_root / ".agent-loop" / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    status = str(data.get("status") or "")
+    last_verdict = data.get("last_verdict")
+
+    if (
+        status == "phase_complete_awaiting_human_approval"
+        and last_verdict == "APPROVED_FOR_HUMAN_REVIEW"
+    ):
+        return {
+            "completion_signal": (
+                LONG_RUN_CONTINUATION_COMPLETION_APPROVED
+            ),
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "reason": (
+                "Codex returned APPROVED_FOR_HUMAN_REVIEW and "
+                "loop-state.status is "
+                "phase_complete_awaiting_human_approval; the "
+                "sub-phase is complete and awaiting human approval. "
+                "Phase 9E stops here (Phase 4C activator + "
+                "APPROVED_FOR_ACTIVATION human approval remain "
+                "the only path to the next phase)."
+            ),
+        }
+    if (
+        status == "halted_failed_requires_human"
+        or last_verdict == "FAILED_REQUIRES_HUMAN"
+    ):
+        return {
+            "completion_signal": (
+                LONG_RUN_CONTINUATION_COMPLETION_FAILED
+            ),
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "reason": (
+                "Codex returned FAILED_REQUIRES_HUMAN or "
+                "loop-state.status is halted_failed_requires_human; "
+                "human intervention required."
+            ),
+        }
+    if status.startswith("halted_"):
+        return {
+            "completion_signal": (
+                LONG_RUN_CONTINUATION_COMPLETION_HALTED
+            ),
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "reason": (
+                f"Cycle halted with status {status!r}; "
+                f"human intervention required."
+            ),
+        }
+    return {
+        "completion_signal": None,
+        "terminal_status": None,
+        "last_verdict": last_verdict,
+        "reason": (
+            f"loop-state.status={status!r} indicates further work "
+            f"is required."
+        ),
+    }
+
+
+def run_long_run_continuation(
+    repo_root: Path,
+    *,
+    max_hops: Optional[int] = None,
+    invoke_codex_adapter: bool = True,
+    invoke_claude_adapter: bool = True,
+    capture_evidence: bool = True,
+    output_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Phase 9E: run a bounded long-run continuation across multiple
+    Phase 9D review/fix hops, stopping at any explicit completion
+    signal from canonical artifacts.
+
+    Reads `.agent-loop/loop-state.json` (validated via the shipped
+    validators), validates `max_hops` and the output path, then
+    runs up to `max_hops` hops. Each hop:
+
+      1. Re-evaluates completion via `evaluate_phase_completion`.
+         If the completion signal is set, the hop is a no-op and
+         the loop stops.
+      2. Otherwise invokes
+         `run_internal_review_fix_cycle(repo_root,
+         max_inner_cycles=1, invoke_codex_adapter=...,
+         invoke_claude_adapter=..., capture_evidence=...,
+         log_path=...)`. Phase 9E owns the hop counter so we pass
+         `max_inner_cycles=1` to avoid nesting two bounded loops.
+      3. Captures the Phase 9D descriptor path (on success) or the
+         `HaltError.status` + message (on a halt) into the hop
+         record. A halt does NOT propagate out of the long-run
+         function; it is recorded in the advisory descriptor and
+         drives the loop stop, but loop-state.json is NOT updated
+         by Phase 9E with the halt status (the underlying Phase 9D
+         library function may or may not have updated loop-state
+         before raising; Phase 9E preserves whatever state is on
+         disk).
+      4. Re-evaluates completion after the hop. If the completion
+         signal is now set (because Phase 9D wrote
+         `status=phase_complete_awaiting_human_approval` on
+         APPROVED), the loop stops with that signal.
+
+    Writes a single advisory descriptor at
+    `.agent-loop/long-run-continuation.json` (or `output_path`
+    when provided) capturing every hop's pre-hop completion check,
+    Phase 9D descriptor path (when written), halt status (when
+    raised), and the final completion determination. Audit lines
+    (`long-run continuation: started ...`, `hop=N ...`,
+    `completion_detected ...`, `halted_in_hop ...`, `finished ...`)
+    are appended to `log_path` when supplied.
+
+    Refusal modes (all fail-closed via `HaltError(...)`):
+      - missing or malformed `loop-state.json`
+      - unsupported `contract_version`
+      - `max_hops` not a positive int <=
+        `LONG_RUN_CONTINUATION_MAX_MAX_HOPS`
+      - output path resolves outside `.agent-loop/`, targets any
+        path in `LONG_RUN_CONTINUATION_PROTECTED_OUTPUT_PATHS`,
+        is under `.agent-loop/memory/`, or resolves to an existing
+        directory
+
+    A Phase 9D halt inside a hop is recorded in the advisory
+    descriptor but does NOT raise from this function; the operator
+    inspects the descriptor (and the Phase 9D
+    `review-fix-loop.json` from prior hops) to determine what
+    happened. This is the contract: Phase 9E never silently widens
+    autonomy past a Phase 9D halt; it stops and surfaces the halt
+    in its descriptor + audit log so the operator can decide.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    cap = _validate_long_run_max_hops(max_hops)
+
+    out = (
+        output_path if output_path is not None
+        else repo_root / LONG_RUN_CONTINUATION_OUTPUT_REL
+    )
+    _validate_long_run_output_target(repo_root, out)
+
+    def _audit(line: str) -> None:
+        if log_path is None:
+            return
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(line)
+
+    started_at = _utc_iso_now()
+    hops: list[dict] = []
+    final_completion: dict = {}
+
+    _audit(
+        f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} started "
+        f"signal_version={LONG_RUN_CONTINUATION_SIGNAL_VERSION} "
+        f"max_hops={cap} "
+        f"capture_evidence={capture_evidence} "
+        f"invoke_codex_adapter={invoke_codex_adapter} "
+        f"invoke_claude_adapter={invoke_claude_adapter}\n"
+    )
+
+    hop_loop_completed = False
+    for hop_index in range(cap):
+        hop: dict = {
+            "index": hop_index,
+            "started_at": _utc_iso_now(),
+            "pre_hop_completion": None,
+            "action_taken": None,
+            "phase_9d_descriptor": None,
+            "halt_status": None,
+            "halt_reason": None,
+            "post_hop_completion": None,
+        }
+
+        pre_completion = evaluate_phase_completion(repo_root)
+        hop["pre_hop_completion"] = pre_completion
+
+        if pre_completion["completion_signal"] is not None:
+            hop["action_taken"] = "noop_already_complete"
+            hop["post_hop_completion"] = pre_completion
+            hops.append(hop)
+            final_completion = pre_completion
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"completion_detected_at_entry hop={hop_index} "
+                f"signal={pre_completion['completion_signal']}\n"
+            )
+            hop_loop_completed = True
+            break
+
+        try:
+            phase9d_out = run_internal_review_fix_cycle(
+                repo_root,
+                max_inner_cycles=1,
+                invoke_codex_adapter=invoke_codex_adapter,
+                invoke_claude_adapter=invoke_claude_adapter,
+                capture_evidence=capture_evidence,
+                log_path=log_path,
+            )
+            hop["phase_9d_descriptor"] = (
+                phase9d_out.relative_to(repo_root).as_posix()
+            )
+            hop["action_taken"] = "review_fix_iteration"
+        except HaltError as halt:
+            hop["action_taken"] = "review_fix_iteration"
+            hop["halt_status"] = halt.status
+            hop["halt_reason"] = str(halt)
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"halted_in_hop hop={hop_index} status={halt.status}\n"
+            )
+
+        post_completion = evaluate_phase_completion(repo_root)
+        hop["post_hop_completion"] = post_completion
+        hops.append(hop)
+
+        _audit(
+            f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} hop={hop_index} "
+            f"action={hop['action_taken']} "
+            f"halt_status={hop['halt_status']} "
+            f"post_completion_signal="
+            f"{post_completion['completion_signal']}\n"
+        )
+
+        if (
+            post_completion["completion_signal"] is not None
+            or hop["halt_status"] is not None
+        ):
+            final_completion = post_completion
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"stop_after_hop hop={hop_index} "
+                f"signal={post_completion['completion_signal']} "
+                f"halt_status={hop['halt_status']}\n"
+            )
+            hop_loop_completed = True
+            break
+
+    if not hop_loop_completed:
+        final_completion = {
+            "completion_signal": None,
+            "terminal_status": None,
+            "last_verdict": (
+                hops[-1]["post_hop_completion"].get("last_verdict")
+                if hops else None
+            ),
+            "reason": (
+                f"Reached max_hops={cap} without an explicit "
+                f"completion signal; further hops would be required."
+            ),
+        }
+
+    payload = {
+        "signal_version": LONG_RUN_CONTINUATION_SIGNAL_VERSION,
+        "started_at": started_at,
+        "finished_at": _utc_iso_now(),
+        "phase": data.get("phase"),
+        "sub_phase": data.get("sub_phase"),
+        "task": data.get("task"),
+        "hops": hops,
+        "hops_run": len(hops),
+        "max_hops": cap,
+        "completion": final_completion,
+        "capture_evidence": capture_evidence,
+        "invoke_codex_adapter": invoke_codex_adapter,
+        "invoke_claude_adapter": invoke_claude_adapter,
+        "advisory_only": True,
+        "canonical_precedence_note": (
+            LONG_RUN_CONTINUATION_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+    _audit(
+        f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} finished "
+        f"completion_signal={final_completion['completion_signal']} "
+        f"hops_run={len(hops)}\n"
     )
     return out
 
@@ -11123,6 +11611,61 @@ def cmd_run_internal_review_fix_cycle(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_run_long_run_continuation(args: argparse.Namespace) -> int:
+    """Phase 9E operator runtime path: drive a bounded long-run
+    continuation across multiple Phase 9D review/fix hops with
+    explicit completion detection from canonical artifacts.
+
+    Routes any `HaltError` from input validation through `_halt` so
+    the structural refusal vocabulary lands on disk for human
+    inspection. A Phase 9D halt INSIDE a hop is captured into the
+    advisory descriptor (NOT propagated to `_halt`) so the
+    operator can review the per-hop outcome without the long-run
+    layer silently mutating loop-state. On success prints the
+    written descriptor path plus a pointer to the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        if args.output is not None:
+            output_path = _resolve_prd_intake_path(
+                repo_root, args.output, label="output",
+            )
+        else:
+            output_path = None
+        kwargs: dict = {
+            "output_path": output_path,
+            "log_path": log_path,
+            "invoke_codex_adapter": not getattr(
+                args, "no_invoke_codex", False,
+            ),
+            "invoke_claude_adapter": not getattr(
+                args, "no_invoke_claude", False,
+            ),
+            "capture_evidence": not getattr(
+                args, "skip_evidence", False,
+            ),
+        }
+        if args.max_hops is not None:
+            kwargs["max_hops"] = args.max_hops
+        written = run_long_run_continuation(repo_root, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] long-run continuation wrote {rel}; see "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`long-run continuation:` audit notes."
+    )
+    return 0
+
+
 def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
     """Phase 6N operator runtime path: evaluate the selected runtime
     adapter against the shipped Phase 6M contract.
@@ -12534,6 +13077,101 @@ def build_parser() -> argparse.ArgumentParser:
             "is truly autonomous between iterations."
         ),
     )
+    long_run = sub.add_parser(
+        "run-long-run-continuation",
+        help=(
+            "Phase 9E bounded long-run continuation: drive multiple "
+            "Phase 9D review/fix hops across longer product-building "
+            "runs, with explicit canonical-artifact completion "
+            "detection between hops. Each hop re-evaluates "
+            "completion from `loop-state.json` "
+            "(`status` + `last_verdict`) before doing any work; on "
+            "a terminal signal (APPROVED, FAILED, or any `halted_*` "
+            "status) the loop stops without invoking Phase 9D. "
+            "Otherwise the hop runs one "
+            "`run_internal_review_fix_cycle(max_inner_cycles=1, ...)` "
+            "iteration (Phase 9E owns the hop counter; Phase 9D "
+            "owns the per-iteration review/route/dispatch). "
+            "Captures every hop's pre/post completion check, "
+            "Phase 9D descriptor path (on success), and halt status "
+            "(on a Phase 9D halt; the halt is recorded but does "
+            "NOT propagate so the operator can inspect the "
+            "advisory descriptor). Writes a single advisory "
+            "descriptor at "
+            f"`{LONG_RUN_CONTINUATION_OUTPUT_REL}` plus "
+            "`long-run continuation:` audit lines. Refuses "
+            "fail-closed on missing / malformed loop-state, "
+            "unsupported `contract_version`, out-of-bound "
+            "`--max-hops`, and output-boundary violations (path "
+            "outside `.agent-loop/`, protected path, memory "
+            "subtree, directory). Honors all shipped hard stops by "
+            "passing them through Phase 9D unchanged; Phase 9E "
+            "never silently widens autonomy past a halt. "
+            "Operator escape hatches: `--skip-evidence`, "
+            "`--no-invoke-codex`, and `--no-invoke-claude` "
+            "forward into each Phase 9D hop for dry-run / "
+            "preview operation."
+        ),
+    )
+    long_run.add_argument(
+        "--max-hops",
+        type=int,
+        default=None,
+        help=(
+            "Maximum number of Phase 9D hops to run within a single "
+            f"command invocation. Defaults to "
+            f"LONG_RUN_CONTINUATION_DEFAULT_MAX_HOPS="
+            f"{LONG_RUN_CONTINUATION_DEFAULT_MAX_HOPS}; capped at "
+            f"LONG_RUN_CONTINUATION_MAX_MAX_HOPS="
+            f"{LONG_RUN_CONTINUATION_MAX_MAX_HOPS}."
+        ),
+    )
+    long_run.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help=(
+            "Repo-relative path for the long-run continuation "
+            f"descriptor. Defaults to "
+            f"{LONG_RUN_CONTINUATION_OUTPUT_REL!r}. Absolute paths "
+            "and paths that escape the repo root are refused; the "
+            "library function additionally refuses paths outside "
+            "`.agent-loop/`, paths in the protected set (including "
+            "`.agent-loop/review-fix-loop.json`, "
+            "`.agent-loop/prompt-handoff.json`, and "
+            "`.agent-loop/prd-intake.json`), paths under "
+            "`.agent-loop/memory/`, and directory targets."
+        ),
+    )
+    long_run.add_argument(
+        "--skip-evidence",
+        action="store_true",
+        help=(
+            "Forward to each Phase 9D hop's `capture_evidence=False` "
+            "escape hatch. By default each hop runs evidence "
+            "capture to honor the Phase 3A contract; use this for "
+            "dry-rehearsal runs or when evidence was already "
+            "captured in the same session."
+        ),
+    )
+    long_run.add_argument(
+        "--no-invoke-codex",
+        action="store_true",
+        help=(
+            "Forward to each Phase 9D hop's `invoke_codex_adapter="
+            "False` escape hatch. Each hop will rely on the "
+            "existing `.agent-loop/codex-review.md` on disk."
+        ),
+    )
+    long_run.add_argument(
+        "--no-invoke-claude",
+        action="store_true",
+        help=(
+            "Forward to each Phase 9D hop's `invoke_claude_adapter="
+            "False` escape hatch. Each hop will dispatch the next "
+            "fix prompt via Phase 9C in descriptor-only mode."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -12790,6 +13428,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "intake-prd": cmd_intake_prd,
     "dispatch-prompt-handoff": cmd_dispatch_prompt_handoff,
     "run-internal-review-fix-cycle": cmd_run_internal_review_fix_cycle,
+    "run-long-run-continuation": cmd_run_long_run_continuation,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

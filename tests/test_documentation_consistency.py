@@ -1357,11 +1357,11 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
         # 500 chars on each side of the keyword is enough to span the
         # densest Phase 9 paragraph in the README without becoming
         # so wide it stops being a useful proximity signal.
-        # Phase 9C and 9D shipped in their own implementation slices;
-        # the must-be-deferred set covers only the still-unshipped
-        # Phase 9E-9G runtime work.
+        # Phase 9C, 9D, and 9E shipped in their own implementation
+        # slices; the must-be-deferred set covers only the
+        # still-unshipped Phase 9F-9G runtime work.
         for sub_phase in (
-            "Phase 9E", "Phase 9F", "Phase 9G",
+            "Phase 9F", "Phase 9G",
         ):
             if sub_phase in self.text:
                 idx = self.text.find(sub_phase)
@@ -1511,6 +1511,69 @@ class ReadmeMarksPhase9dAsActiveTests(unittest.TestCase):
                 fragment, self.text,
                 f"README.md Phase 9D paragraph does not document "
                 f"escape hatch {fragment!r}",
+            )
+
+
+class ReadmeMarksPhase9eAsActiveTests(unittest.TestCase):
+    """Phase 9E: README must name Phase 9E as the current active
+    sub-phase, describe the new shipped long-run-continuation
+    surface (the `run-long-run-continuation` CLI subcommand and the
+    `.agent-loop/long-run-continuation.json` advisory descriptor),
+    and not promise the deferred Phase 9F-9G runtime work as
+    shipped.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_9e_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9E", self.text,
+            "README.md does not name Phase 9E as a current focus",
+        )
+        self.assertIn(
+            "Long-Run Continuation And Completion Heuristics",
+            self.text,
+            "README.md does not name the Phase 9E sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_long_run_surface(self) -> None:
+        for fragment in (
+            "run-long-run-continuation",
+            ".agent-loop/long-run-continuation.json",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9E paragraph does not name shipped "
+                f"surface {fragment!r}",
+            )
+
+    def test_readme_preserves_long_run_canonical_boundary(self) -> None:
+        # The Phase 9E paragraph must explicitly state that
+        # completion detection is canonical-artifact-only and that
+        # canonical loop-state / review / fix artifacts remain the
+        # source of truth.
+        for fragment in (
+            "canonical",
+            "source of truth",
+            "advisory",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9E paragraph does not name the "
+                f"preserved {fragment!r} boundary",
+            )
+
+    def test_readme_documents_completion_signals(self) -> None:
+        for fragment in (
+            "completion_approved",
+            "completion_failed",
+            "completion_halted",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9E paragraph does not document "
+                f"completion signal {fragment!r}",
             )
 
 
