@@ -7964,6 +7964,27 @@ def run_long_run_continuation(
                 )
                 hop_loop_completed = True
                 break
+            # Phase 9E fix-cycle: if the successful resume restored
+            # an already-terminal state (APPROVED, FAILED, or any
+            # non-token-exhaustion halt), recognize the completion
+            # signal on THIS hop instead of requiring another hop.
+            # A successful resume on the final allowed hop would
+            # otherwise drop the terminal signal entirely as the
+            # for-loop exits through "max_hops exhausted".
+            if (
+                post_resume["completion_signal"] is not None
+                and post_resume.get("terminal_status")
+                != HALTED_TOKEN_EXHAUSTION
+            ):
+                final_completion = post_resume
+                _audit(
+                    f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                    f"stop_after_token_exhaustion_resume_terminal "
+                    f"hop={hop_index} "
+                    f"signal={post_resume['completion_signal']}\n"
+                )
+                hop_loop_completed = True
+                break
             continue
 
         if pre_completion["completion_signal"] is not None:

@@ -4,38 +4,35 @@
 Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9E - Long-Run Continuation And Completion Heuristics)
 
 ## Objective
-Fix the remaining Phase 9E runtime gap so the shipped long-run continuation layer actually extends the existing Phase 6 continuation primitives instead of stopping at a captured halt and requiring a separate manual resume or auto-continue step.
+Fix the remaining Phase 9E completion-accounting bug in the new token-exhaustion integration path so a successful Phase 6F resume that lands in a terminal completion state is recognized immediately, even when it happens on the final available hop.
 
 ## Context
-Codex re-reviewed the current Phase 9E repo state and found one remaining implementation bug:
+Codex re-reviewed the current Phase 9E repo state and found one remaining runtime bug:
 
-1. `run_long_run_continuation(...)` only wraps Phase 9D hops. When a hop encounters a token-exhaustion-style Phase 6 continuation halt, Phase 9E records the halt in `.agent-loop/long-run-continuation.json` and stops, but it does not invoke or integrate the shipped Phase 6 continuation path. That conflicts with the active Phase 9E task and definition of done, which explicitly say this slice should extend the shipped Phase 6 continuation primitives and preserve checkpoint/resume behavior as part of the long-run continuation surface. The current behavior leaves the Phase 6 seam outside the Phase 9E runtime and still requires a separate operator action to continue the run.
+1. In `run_long_run_continuation(...)`, the new pre-hop `HALTED_TOKEN_EXHAUSTION` branch calls `run_token_exhaustion_resume(repo_root)`, stores `post_resume = evaluate_phase_completion(repo_root)`, and then always `continue`s on `rc == 0` instead of checking whether the restored state is already terminal. That means a successful resume that restores `phase_complete_awaiting_human_approval` + `APPROVED_FOR_HUMAN_REVIEW` (or another explicit terminal outcome) is only recognized on the next hop. If the successful resume happens on the last allowed hop, the loop exits through the generic "max hops exhausted" path and drops the terminal completion signal entirely. The current tests only cover the multi-hop case (`max_hops=3`) where a later hop catches the terminal state, so this edge case is currently untested.
 
 ## Required fixes
-- integrate the shipped Phase 6 continuation primitives into the Phase 9E long-run continuation flow in a bounded, explicit way
-- preserve the existing hard-stop model:
+- update the pre-hop token-exhaustion resume branch so Phase 9E evaluates the post-resume state immediately
+- if `run_token_exhaustion_resume(...)` returns `0` and the restored state is already terminal, set the final completion from that same hop and stop cleanly instead of requiring another hop
+- preserve the existing bounded behavior:
   - no automatic next-phase activation
-  - no Phase 9F capacity re-probe logic
+  - no Phase 9F capacity re-probe
   - no Phase 9G final acceptance automation
+  - no widening beyond the shipped Phase 6F primitive
 - keep canonical artifacts authoritative:
-  - `loop-state.json`, checkpoints, prompt artifacts, review artifacts, and evidence remain the source of truth
+  - `loop-state.json`, checkpoints, review artifacts, and evidence remain the source of truth
   - `.agent-loop/long-run-continuation.json` remains advisory
-- do not silently widen autonomy:
-  - only continue through already-shipped, bounded Phase 6 continuation behavior
-  - refuse or stop cleanly on malformed state, exhausted continuation budgets, or unsupported halt states
 - add focused tests proving:
-  - a long-run hop that lands in the shipped token-exhaustion continuation halt can continue through the existing Phase 6 continuation path without requiring a separate manual command
-  - bounded continuation still stops cleanly when continuation budget or hop budget is exhausted
-  - malformed or unsupported continuation state is still refused fail-closed
-  - the existing approved / failed / halted completion detection behavior remains intact
+  - a successful token-exhaustion resume on the final allowed hop still produces `completion_approved` immediately when the restored loop-state is already approved
+  - the same immediate-terminal handling works for the failed/halted terminal path if applicable
+  - non-terminal successful resumes still continue to a later hop exactly as before
 
 ## Constraints
 - follow `CLAUDE.md`
 - stay within Phase 9E scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
 - do not rewrite the Phase 4 planner / activation boundary
-- do not replace canonical checkpoint / loop-state behavior with transcript-only or runtime-only state
-- prefer the smallest safe runtime change that closes the contract gap
+- prefer the smallest safe runtime change that fixes the hop-accounting bug without disturbing the new Phase 6F seam
 
 ## Required output
 After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include the new validation results.
