@@ -1357,11 +1357,11 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
         # 500 chars on each side of the keyword is enough to span the
         # densest Phase 9 paragraph in the README without becoming
         # so wide it stops being a useful proximity signal.
-        # Phase 9C, 9D, and 9E shipped in their own implementation
-        # slices; the must-be-deferred set covers only the
-        # still-unshipped Phase 9F-9G runtime work.
+        # Phase 9C, 9D, 9E, and 9F shipped in their own
+        # implementation slices; the must-be-deferred set covers
+        # only the still-unshipped Phase 9G runtime work.
         for sub_phase in (
-            "Phase 9F", "Phase 9G",
+            "Phase 9G",
         ):
             if sub_phase in self.text:
                 idx = self.text.find(sub_phase)
@@ -1574,6 +1574,74 @@ class ReadmeMarksPhase9eAsActiveTests(unittest.TestCase):
                 fragment, self.text,
                 f"README.md Phase 9E paragraph does not document "
                 f"completion signal {fragment!r}",
+            )
+
+
+class ReadmeMarksPhase9fAsActiveTests(unittest.TestCase):
+    """Phase 9F: README must name Phase 9F as the current active
+    sub-phase, describe the new shipped capacity-halt re-probe
+    surface (the `run-capacity-reprobe` CLI subcommand, the
+    `.agent-loop/capacity-retry-state.json` retry-state artifact,
+    and the `halted_capacity_unavailable` halt vocabulary), and
+    not promise the deferred Phase 9G runtime work as shipped.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_9f_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9F", self.text,
+            "README.md does not name Phase 9F as a current focus",
+        )
+        self.assertIn(
+            "Capacity-Halt Reprobe And Automatic Resume",
+            self.text,
+            "README.md does not name the Phase 9F sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_capacity_surface(self) -> None:
+        for fragment in (
+            "run-capacity-reprobe",
+            ".agent-loop/capacity-retry-state.json",
+            "halted_capacity_unavailable",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9F paragraph does not name "
+                f"shipped surface {fragment!r}",
+            )
+
+    def test_readme_documents_bounded_retry_semantics(self) -> None:
+        # The Phase 9F paragraph must document the bounded retry
+        # contract so an operator can predict the behavior.
+        for fragment in (
+            "bounded",
+            "backoff",
+            "budget",
+            "cumulative",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9F paragraph does not document "
+                f"bounded retry semantics fragment {fragment!r}",
+            )
+
+    def test_readme_preserves_capacity_retry_canonical_boundary(
+        self,
+    ) -> None:
+        # The Phase 9F paragraph must explicitly state that the
+        # canonical loop-state on disk is the source of truth and
+        # that the retry-state artifact tracks the budget.
+        for fragment in (
+            "canonical",
+            "source of truth",
+            "advisory" if "advisory" in self.text else "retry-state",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9F paragraph does not name "
+                f"the preserved {fragment!r} boundary",
             )
 
 
