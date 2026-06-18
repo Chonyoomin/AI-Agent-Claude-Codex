@@ -724,21 +724,52 @@ class CapacityReprobeCliTests(unittest.TestCase):
         os.chdir(self._prev_cwd)
         self.td.cleanup()
 
-    def test_cli_default_success_with_patched_sleep(self) -> None:
-        with mock.patch("agent_loop.time.sleep", lambda s: None):
-            rc = agent_loop.main([
-                "run-capacity-reprobe",
-                "--max-attempts", "1",
-                "--initial-backoff-seconds", "0.001",
-                "--max-backoff-seconds", "0.001",
-            ])
-        self.assertEqual(rc, 0)
-        state = json.loads(
-            (self.repo / ".agent-loop" / "loop-state.json").read_text(
-                encoding="utf-8",
-            ),
-        )
-        self.assertEqual(state["status"], "claude_implementing")
+    def test_cli_default_refuses_without_env_var(self) -> None:
+        # Phase 9F fix-cycle: the default probe is env-var-gated.
+        # Without AGENT_LOOP_CAPACITY_PROBE set, the bounded
+        # budget exhausts and the CLI returns 2.
+        import os
+        prev = os.environ.pop(agent_loop.CAPACITY_PROBE_ENV_VAR, None)
+        try:
+            with mock.patch("agent_loop.time.sleep", lambda s: None):
+                rc = agent_loop.main([
+                    "run-capacity-reprobe",
+                    "--max-attempts", "1",
+                    "--initial-backoff-seconds", "0.001",
+                    "--max-backoff-seconds", "0.001",
+                ])
+            self.assertEqual(rc, 2)
+        finally:
+            if prev is not None:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_cli_default_succeeds_with_env_var_available(self) -> None:
+        # With AGENT_LOOP_CAPACITY_PROBE=available the default
+        # probe returns True and the CLI restores loop-state on
+        # the first attempt.
+        import os
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with mock.patch("agent_loop.time.sleep", lambda s: None):
+                rc = agent_loop.main([
+                    "run-capacity-reprobe",
+                    "--max-attempts", "1",
+                    "--initial-backoff-seconds", "0.001",
+                    "--max-backoff-seconds", "0.001",
+                ])
+            self.assertEqual(rc, 0)
+            state = json.loads(
+                (
+                    self.repo / ".agent-loop" / "loop-state.json"
+                ).read_text(encoding="utf-8"),
+            )
+            self.assertEqual(state["status"], "claude_implementing")
+        finally:
+            if prev is None:
+                os.environ.pop(agent_loop.CAPACITY_PROBE_ENV_VAR, None)
+            else:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
 
     def test_cli_refuses_bad_output(self) -> None:
         rc = agent_loop.main([
@@ -753,6 +784,401 @@ class CapacityReprobeCliTests(unittest.TestCase):
             "--max-attempts", "99",
         ])
         self.assertEqual(rc, 2)
+
+
+class DefaultProbeBehaviorTests(unittest.TestCase):
+    """Phase 9F fix-cycle: the default probe is env-var-gated.
+    Without `AGENT_LOOP_CAPACITY_PROBE` set to an "available"
+    value, the probe returns False so the bounded retry budget
+    exhausts rather than silently auto-succeeding.
+    """
+
+    def setUp(self) -> None:
+        import os
+        self._prev = os.environ.pop(
+            agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+        )
+
+    def tearDown(self) -> None:
+        import os
+        if self._prev is None:
+            os.environ.pop(
+                agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+            )
+        else:
+            os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = self._prev
+
+    def test_default_probe_refuses_with_no_env_var(self) -> None:
+        with TemporaryDirectory() as td:
+            self.assertFalse(
+                agent_loop._default_capacity_probe(Path(td)),
+            )
+
+    def test_default_probe_returns_true_with_available(self) -> None:
+        import os
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        with TemporaryDirectory() as td:
+            self.assertTrue(
+                agent_loop._default_capacity_probe(Path(td)),
+            )
+
+    def test_default_probe_accepts_truthy_aliases(self) -> None:
+        import os
+        for value in ("1", "true", "yes", "ok", "AVAILABLE", "True"):
+            with self.subTest(value=value):
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = value
+                with TemporaryDirectory() as td:
+                    self.assertTrue(
+                        agent_loop._default_capacity_probe(Path(td)),
+                        f"probe should accept {value!r}",
+                    )
+
+    def test_default_probe_rejects_other_values(self) -> None:
+        import os
+        for value in ("unavailable", "0", "false", "no", "maybe", " "):
+            with self.subTest(value=value):
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = value
+                with TemporaryDirectory() as td:
+                    self.assertFalse(
+                        agent_loop._default_capacity_probe(Path(td)),
+                        f"probe should reject {value!r}",
+                    )
+
+    def test_default_probe_used_by_reprobe_without_explicit_arg(
+        self,
+    ) -> None:
+        # Integration: calling reprobe without injecting `probe`
+        # uses the env-var-gated default. With no env var set the
+        # bounded budget exhausts.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    max_attempts=2,
+                    initial_backoff_seconds=0.001,
+                    sleep=_noop_sleep,
+                    # probe=None -> use default
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn("budget exhausted", str(ctx.exception))
+
+
+class RecordCapacityHaltTests(unittest.TestCase):
+    """Phase 9F fix-cycle: production-path entry via
+    `record_capacity_halt(...)`.
+    """
+
+    def test_transitions_status_and_plants_retry_state(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(
+                repo, status="claude_implementing",
+            )
+            written = agent_loop.record_capacity_halt(
+                repo, reason="rate-limit-429",
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["status"], "halted_capacity_unavailable",
+            )
+            self.assertTrue(written.is_file())
+            retry_state = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                retry_state["retry_signal_version"], "phase-9f-v1",
+            )
+            self.assertEqual(retry_state["attempt_count"], 0)
+            self.assertEqual(retry_state["history"], [])
+            # Default suspended_status captures CURRENT loop-state
+            # status (claude_implementing in this setup).
+            self.assertEqual(
+                retry_state["suspended_status"], "claude_implementing",
+            )
+            self.assertEqual(
+                retry_state["recorded_reason"], "rate-limit-429",
+            )
+
+    def test_custom_suspended_status_override(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_fixing")
+            written = agent_loop.record_capacity_halt(
+                repo, suspended_status="awaiting_codex_review",
+            )
+            retry_state = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                retry_state["suspended_status"],
+                "awaiting_codex_review",
+            )
+
+    def test_refuses_when_already_capacity_halted(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo, status="halted_capacity_unavailable",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_capacity_halt(repo)
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn("already", str(ctx.exception))
+
+    def test_refuses_when_other_halt_active(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo, status="halted_max_cycles_reached",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_capacity_halt(repo)
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn("already a halt", str(ctx.exception))
+
+    def test_refuses_when_retry_state_already_exists(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            # Plant a stale retry-state.
+            retry_path = (
+                repo / ".agent-loop" / "capacity-retry-state.json"
+            )
+            retry_path.write_text("{}", encoding="utf-8")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_capacity_halt(repo)
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn("already exists", str(ctx.exception))
+
+    def test_audit_log_records_event(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            log = repo / ".agent-loop" / "orchestrator.log"
+            agent_loop.record_capacity_halt(
+                repo, reason="test-event", log_path=log,
+            )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn(
+                "capacity reprobe: recorded", audit,
+            )
+            self.assertIn("test-event", audit)
+
+    def test_cli_records_capacity_halt(self) -> None:
+        import os
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(
+                repo, status="claude_implementing",
+            )
+            prev_cwd = os.getcwd()
+            os.chdir(repo)
+            try:
+                rc = agent_loop.main([
+                    "record-capacity-halt",
+                    "--reason", "manual-rate-limit",
+                ])
+            finally:
+                os.chdir(prev_cwd)
+            self.assertEqual(rc, 0)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["status"], "halted_capacity_unavailable",
+            )
+
+
+class Phase9EAndPhase9FIntegrationTests(unittest.TestCase):
+    """Phase 9F fix-cycle: the Phase 9E long-run loop integrates
+    the Phase 9F reprobe seam. A long-run hop that lands in
+    `halted_capacity_unavailable` dispatches
+    `reprobe_capacity_and_resume(...)` via the new pre-hop branch
+    rather than terminating on a generic `completion_halted`.
+    """
+
+    def test_long_run_dispatches_reprobe_on_capacity_halt(
+        self,
+    ) -> None:
+        import os
+        # Plant the halt + retry-state via the production path.
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                state_path = _plant_loop_state(
+                    repo, status="claude_implementing",
+                )
+                agent_loop.record_capacity_halt(repo)
+                # Now run the long-run loop; the pre-hop branch
+                # should detect halted_capacity_unavailable and
+                # dispatch reprobe, which succeeds (env var is set)
+                # and restores loop-state.
+                with mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    written = agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=2,
+                        capture_evidence=False,
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=False,
+                    )
+                payload = json.loads(
+                    written.read_text(encoding="utf-8"),
+                )
+                # Hop 0 should be the capacity reprobe.
+                self.assertEqual(
+                    payload["hops"][0]["action_taken"],
+                    "capacity_reprobe",
+                )
+                self.assertEqual(
+                    payload["hops"][0]["capacity_reprobe_rc"], 0,
+                )
+                # Loop-state restored to suspended_status.
+                state = json.loads(
+                    state_path.read_text(encoding="utf-8"),
+                )
+                self.assertEqual(
+                    state["status"], "claude_implementing",
+                )
+        finally:
+            if prev is None:
+                os.environ.pop(
+                    agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+                )
+            else:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_long_run_stops_on_reprobe_refusal(self) -> None:
+        # No env var set: default probe returns False; the hop's
+        # reprobe call runs through its full persisted budget
+        # (default 5 attempts), all fail, and refuses on budget
+        # exhaustion. Phase 9E catches the refusal and stops.
+        import os
+        prev = os.environ.pop(agent_loop.CAPACITY_PROBE_ENV_VAR, None)
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(repo, status="claude_implementing")
+                agent_loop.record_capacity_halt(repo)
+                with mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    written = agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=3,
+                        capture_evidence=False,
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=False,
+                    )
+                payload = json.loads(
+                    written.read_text(encoding="utf-8"),
+                )
+                # Hop 0's reprobe call exhausts the cumulative
+                # budget in one call (5 failed attempts against the
+                # default-False probe); the refusal halts the
+                # long-run loop.
+                self.assertEqual(payload["hops_run"], 1)
+                self.assertEqual(
+                    payload["hops"][0]["action_taken"],
+                    "capacity_reprobe",
+                )
+                self.assertNotEqual(
+                    payload["hops"][0]["capacity_reprobe_rc"], 0,
+                )
+                self.assertIn(
+                    "budget exhausted",
+                    payload["hops"][0]["capacity_reprobe_halt_reason"],
+                )
+        finally:
+            if prev is not None:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_long_run_capacity_reprobe_budget_exhausted_stops(
+        self,
+    ) -> None:
+        # With max_attempts=1 on the retry-state, the hop's
+        # reprobe call runs 1 attempt against the default-False
+        # probe, fails, and refuses on budget exhaustion in the
+        # same call. hops_run = 1.
+        import os
+        prev = os.environ.pop(agent_loop.CAPACITY_PROBE_ENV_VAR, None)
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(repo, status="claude_implementing")
+                agent_loop.record_capacity_halt(repo)
+                retry_path = (
+                    repo / ".agent-loop"
+                    / "capacity-retry-state.json"
+                )
+                retry_state = json.loads(
+                    retry_path.read_text(encoding="utf-8"),
+                )
+                retry_state["max_attempts"] = 1
+                retry_path.write_text(
+                    json.dumps(retry_state), encoding="utf-8",
+                )
+                with mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    written = agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=3,
+                        capture_evidence=False,
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=False,
+                    )
+                payload = json.loads(
+                    written.read_text(encoding="utf-8"),
+                )
+                self.assertEqual(payload["hops_run"], 1)
+                self.assertEqual(
+                    payload["hops"][0]["action_taken"],
+                    "capacity_reprobe",
+                )
+                self.assertNotEqual(
+                    payload["hops"][0]["capacity_reprobe_rc"], 0,
+                )
+        finally:
+            if prev is not None:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_audit_log_records_capacity_reprobe_in_long_run(
+        self,
+    ) -> None:
+        import os
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(repo, status="claude_implementing")
+                agent_loop.record_capacity_halt(repo)
+                log = repo / ".agent-loop" / "orchestrator.log"
+                with mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=2,
+                        capture_evidence=False,
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=False,
+                        log_path=log,
+                    )
+                audit = log.read_text(encoding="utf-8")
+                self.assertIn(
+                    "long-run continuation: capacity_reprobe",
+                    audit,
+                )
+        finally:
+            os.environ.pop(agent_loop.CAPACITY_PROBE_ENV_VAR, None)
 
 
 class CapacityReprobeHelpTextTests(unittest.TestCase):

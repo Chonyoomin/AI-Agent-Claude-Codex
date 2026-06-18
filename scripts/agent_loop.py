@@ -7979,6 +7979,8 @@ def run_long_run_continuation(
                 post_resume["completion_signal"] is not None
                 and post_resume.get("terminal_status")
                 != HALTED_TOKEN_EXHAUSTION
+                and post_resume.get("terminal_status")
+                != HALTED_CAPACITY_UNAVAILABLE
             ):
                 final_completion = post_resume
                 _audit(
@@ -7986,6 +7988,82 @@ def run_long_run_continuation(
                     f"stop_after_token_exhaustion_resume_terminal "
                     f"hop={hop_index} "
                     f"signal={post_resume['completion_signal']}\n"
+                )
+                hop_loop_completed = True
+                break
+            continue
+
+        # Phase 9F fix-cycle: integrate the Phase 9F capacity-halt
+        # re-probe seam into the long-run flow. When loop-state is
+        # at `halted_capacity_unavailable`, the hop dispatches
+        # `reprobe_capacity_and_resume(...)` with a bounded
+        # per-call attempt count (`max_attempts=1`) so the Phase
+        # 9E hop counter remains the outer bound. The Phase 9F
+        # primitive's own cumulative `attempt_count` (persisted in
+        # the retry-state) is an INDEPENDENT bound: the long-run
+        # loop stops at `min(max_hops, retry-state.max_attempts)`
+        # reprobes when capacity stays unavailable. On a successful
+        # reprobe the loop continues to the next hop with the
+        # restored loop-state; on a refusal (budget exhausted,
+        # malformed retry-state, stale retry-state) the long-run
+        # loop stops cleanly with the refusal captured in the hop
+        # record.
+        if (
+            pre_completion.get("terminal_status")
+            == HALTED_CAPACITY_UNAVAILABLE
+        ):
+            hop["action_taken"] = "capacity_reprobe"
+            try:
+                # Use the persisted cumulative max_attempts from
+                # the retry-state on disk; this hop call runs
+                # however many attempts the persisted budget
+                # allows. The Phase 9E hop counter still bounds
+                # the OUTER loop, but each hop's reprobe call
+                # honors the Phase 9F primitive's own cumulative
+                # contract.
+                reprobe_capacity_and_resume(
+                    repo_root,
+                    log_path=log_path,
+                )
+                hop["capacity_reprobe_rc"] = 0
+            except HaltError as halt:
+                hop["capacity_reprobe_rc"] = 2
+                hop["capacity_reprobe_halt_reason"] = str(halt)
+            post_reprobe = evaluate_phase_completion(repo_root)
+            hop["post_hop_completion"] = post_reprobe
+            hops.append(hop)
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"capacity_reprobe hop={hop_index} "
+                f"rc={hop['capacity_reprobe_rc']} "
+                f"new_status={post_reprobe.get('terminal_status')!r}\n"
+            )
+            if hop["capacity_reprobe_rc"] != 0:
+                final_completion = post_reprobe
+                _audit(
+                    f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                    f"stop_after_capacity_reprobe_refusal "
+                    f"hop={hop_index}\n"
+                )
+                hop_loop_completed = True
+                break
+            # Same final-hop terminal short-circuit as the Phase 6F
+            # branch: if the successful reprobe restored an
+            # already-terminal state (APPROVED, FAILED, or another
+            # non-continuation halt), recognize it on THIS hop.
+            if (
+                post_reprobe["completion_signal"] is not None
+                and post_reprobe.get("terminal_status")
+                != HALTED_TOKEN_EXHAUSTION
+                and post_reprobe.get("terminal_status")
+                != HALTED_CAPACITY_UNAVAILABLE
+            ):
+                final_completion = post_reprobe
+                _audit(
+                    f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                    f"stop_after_capacity_reprobe_terminal "
+                    f"hop={hop_index} "
+                    f"signal={post_reprobe['completion_signal']}\n"
                 )
                 hop_loop_completed = True
                 break
@@ -8052,6 +8130,21 @@ def run_long_run_continuation(
                 f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
                 f"phase_9d_left_token_exhaustion_halt hop={hop_index}; "
                 f"next hop will dispatch Phase 6F resume\n"
+            )
+            continue
+
+        # Phase 9F fix-cycle: same skip-and-continue rule for
+        # halted_capacity_unavailable. The next hop will dispatch
+        # the Phase 9F reprobe via the pre-hop branch above.
+        if (
+            post_completion.get("terminal_status")
+            == HALTED_CAPACITY_UNAVAILABLE
+        ):
+            _audit(
+                f"{LONG_RUN_CONTINUATION_AUDIT_NOTE_PREFIX} "
+                f"phase_9d_left_capacity_unavailable_halt "
+                f"hop={hop_index}; "
+                f"next hop will dispatch Phase 9F reprobe\n"
             )
             continue
 
@@ -8310,18 +8403,174 @@ def _validate_capacity_retry_output_target(
         )
 
 
-def _default_capacity_probe(repo_root: Path) -> bool:
-    """Default Phase 9F capacity probe: always returns True.
+CAPACITY_PROBE_ENV_VAR = "AGENT_LOOP_CAPACITY_PROBE"
+CAPACITY_PROBE_AVAILABLE_VALUES = frozenset({
+    "available", "1", "true", "yes", "ok",
+})
 
-    The default assumes the external capacity has returned after
-    the bounded wait. Operators with a real capacity check (e.g.
-    a small token-budget API ping) should inject a custom
-    `probe` callable into `reprobe_capacity_and_resume(...)` or
-    extend this default. The Phase 9F seam does NOT mandate a
-    specific probe; it only mandates that whatever probe is used
-    returns a bounded bool within the bounded backoff window.
+
+def _default_capacity_probe(repo_root: Path) -> bool:
+    """Default Phase 9F capacity probe: refuses unless the operator
+    has explicitly indicated capacity is back via the
+    `AGENT_LOOP_CAPACITY_PROBE` environment variable.
+
+    Refusal (return False) is the safe default; an always-True
+    default would let the shipped CLI / runtime path silently
+    auto-succeed without actually checking whether the external
+    Claude/Codex capacity has returned. With this env-var-gated
+    default, the bounded retry budget gets EXHAUSTED on
+    repeated False results until the operator explicitly signals
+    capacity availability by exporting the env var.
+
+    Operators with a real capacity check (e.g. a small
+    token-budget API ping) should still inject a custom `probe`
+    callable into `reprobe_capacity_and_resume(...)` via the
+    library entry point. The env-var path is the minimal
+    operator-facing "capacity is back, proceed" signal that the
+    CLI surface supports.
+
+    Recognized "capacity available" values (case-insensitive):
+    "available", "1", "true", "yes", "ok". Any other value (or
+    an unset env var) means "still unavailable".
     """
-    return True
+    value = os.environ.get(CAPACITY_PROBE_ENV_VAR, "").strip().lower()
+    return value in CAPACITY_PROBE_AVAILABLE_VALUES
+
+
+def record_capacity_halt(
+    repo_root: Path,
+    *,
+    suspended_status: Optional[str] = None,
+    reason: Optional[str] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Phase 9F production path: transition loop-state into
+    `HALTED_CAPACITY_UNAVAILABLE` and plant a fresh retry-state
+    file in a single explicit move.
+
+    This is the seam a Claude/Codex adapter or any runtime
+    component that detects a capacity-exhaustion event calls to
+    enter the Phase 9F halt without hand-editing
+    `loop-state.json`. The function is also the operator surface
+    behind the new `record-capacity-halt` CLI subcommand for
+    cases where the operator observes a capacity event out of
+    band (manual rate-limit notice from the provider, planned
+    quota window, etc.) and wants to switch the orchestrator
+    into the Phase 9F resume seam explicitly.
+
+    On success: saves the CURRENT loop-state `status` as the
+    retry-state's `suspended_status` (so a later
+    `reprobe_capacity_and_resume(...)` can restore the exact
+    pre-suspension step) unless explicitly overridden, writes
+    the retry-state JSON to `.agent-loop/capacity-retry-state.json`
+    with `attempt_count = 0` and an empty `history`, transitions
+    loop-state `status` to `HALTED_CAPACITY_UNAVAILABLE`, and
+    emits a `capacity reprobe: recorded ...` audit line.
+    Returns the retry-state path.
+
+    Refusal modes (all fail-closed via `HaltError(...)`):
+      - missing or malformed `loop-state.json`
+      - unsupported `contract_version`
+      - loop-state is already at `HALTED_CAPACITY_UNAVAILABLE`
+        (operators must resume via
+        `reprobe_capacity_and_resume`; re-planting on top of an
+        existing capacity halt would mask the retry history)
+      - loop-state is at any other `halted_*` status (re-planting
+        capacity halt on top of another halt would silently
+        upgrade a different halt into the resumable
+        capacity-halt path)
+      - a retry-state file already exists on disk (must be
+        consumed via reprobe or deleted as an explicit operator
+        reset before a new halt can be recorded)
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    current_status = str(data.get("status") or "")
+    if current_status == HALTED_CAPACITY_UNAVAILABLE:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "record-capacity-halt refused: loop-state is "
+                f"already at {HALTED_CAPACITY_UNAVAILABLE!r}; "
+                "resume via run-capacity-reprobe instead of "
+                "re-planting."
+            ),
+        )
+    if current_status.startswith("halted_"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"record-capacity-halt refused: loop-state.status="
+                f"{current_status!r} is already a halt; re-planting "
+                f"capacity halt on top of another halt would mask "
+                f"the underlying halt."
+            ),
+        )
+
+    retry_state_path = repo_root / CAPACITY_RETRY_STATE_OUTPUT_REL
+    if retry_state_path.exists():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"record-capacity-halt refused: retry-state already "
+                f"exists at "
+                f"{retry_state_path.relative_to(repo_root).as_posix()}; "
+                f"consume via run-capacity-reprobe or delete it "
+                f"first."
+            ),
+        )
+
+    resolved_suspended = (
+        suspended_status
+        if suspended_status is not None
+        else current_status or CAPACITY_RETRY_DEFAULT_SUSPENDED_STATUS
+    )
+    retry_state = {
+        "retry_signal_version": CAPACITY_RETRY_SIGNAL_VERSION,
+        "created_at": _utc_iso_now(),
+        "phase": data.get("phase"),
+        "sub_phase": data.get("sub_phase"),
+        "task": data.get("task"),
+        "cycle_count": data.get("cycle_count"),
+        "attempt_count": 0,
+        "max_attempts": CAPACITY_RETRY_DEFAULT_MAX_ATTEMPTS,
+        "initial_backoff_seconds": (
+            CAPACITY_RETRY_DEFAULT_INITIAL_BACKOFF_SECONDS
+        ),
+        "max_backoff_seconds": (
+            CAPACITY_RETRY_DEFAULT_MAX_BACKOFF_SECONDS
+        ),
+        "suspended_status": resolved_suspended,
+        "recorded_reason": reason,
+        "history": [],
+        "last_outcome": None,
+        "canonical_precedence_note": (
+            CAPACITY_RETRY_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+    retry_state_path.parent.mkdir(parents=True, exist_ok=True)
+    retry_state_path.write_text(
+        json.dumps(retry_state, indent=2) + "\n", encoding="utf-8",
+    )
+    save_loop_state(
+        state_path, data,
+        {"status": HALTED_CAPACITY_UNAVAILABLE},
+    )
+
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{CAPACITY_RETRY_AUDIT_NOTE_PREFIX} recorded "
+                f"suspended_status={resolved_suspended!r} "
+                f"reason={reason!r}\n"
+            )
+
+    return retry_state_path
 
 
 def _validate_capacity_retry_state(
@@ -12323,6 +12572,44 @@ def cmd_run_long_run_continuation(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_record_capacity_halt(args: argparse.Namespace) -> int:
+    """Phase 9F operator runtime path: transition loop-state into
+    `halted_capacity_unavailable` and plant a fresh retry-state
+    file via `record_capacity_halt(...)`.
+
+    Routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection. On
+    success prints the written retry-state path plus a pointer to
+    the audit log.
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        kwargs: dict = {"log_path": log_path}
+        if args.suspended_status is not None:
+            kwargs["suspended_status"] = args.suspended_status
+        if args.reason is not None:
+            kwargs["reason"] = args.reason
+        written = record_capacity_halt(repo_root, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] capacity halt recorded; retry-state at "
+        f"{rel}. See "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`capacity reprobe: recorded ...` audit note. Resume "
+        f"via run-capacity-reprobe."
+    )
+    return 0
+
+
 def cmd_reprobe_capacity_and_resume(args: argparse.Namespace) -> int:
     """Phase 9F operator runtime path: bounded capacity-halt
     re-probe + automatic resume.
@@ -13881,6 +14168,59 @@ def build_parser() -> argparse.ArgumentParser:
             "fix prompt via Phase 9C in descriptor-only mode."
         ),
     )
+    record_halt = sub.add_parser(
+        "record-capacity-halt",
+        help=(
+            "Phase 9F production-path entry: transition loop-state "
+            "into `halted_capacity_unavailable` and plant a fresh "
+            "retry-state file at "
+            f"`{CAPACITY_RETRY_STATE_OUTPUT_REL}` in a single "
+            "explicit move. This is the seam a Claude/Codex "
+            "adapter or any runtime component that detects a "
+            "capacity-exhaustion event calls to enter the Phase 9F "
+            "halt without hand-editing `loop-state.json`. Also the "
+            "operator surface for cases where the operator "
+            "observes a capacity event out of band (manual "
+            "rate-limit notice, planned quota window) and wants to "
+            "switch the orchestrator into the Phase 9F resume seam "
+            "explicitly. The retry-state captures the CURRENT "
+            "loop-state.status as the `suspended_status` (unless "
+            "overridden via `--suspended-status`) so a later "
+            "`run-capacity-reprobe` can restore the exact "
+            "pre-suspension step. Refuses fail-closed on missing / "
+            "malformed loop-state, unsupported `contract_version`, "
+            "loop-state already at `halted_capacity_unavailable` "
+            "(operator must resume instead of re-planting), "
+            "loop-state at any other `halted_*` status (re-planting "
+            "on top of another halt would mask the underlying "
+            "halt), and an existing retry-state file on disk "
+            "(must be consumed via reprobe or deleted as an "
+            "explicit operator reset)."
+        ),
+    )
+    record_halt.add_argument(
+        "--suspended-status",
+        type=str,
+        default=None,
+        help=(
+            "Loop-state `status` to save as the retry-state's "
+            "`suspended_status`. Defaults to the CURRENT "
+            "loop-state.status at the time of the call. The saved "
+            "value is what `run-capacity-reprobe` restores on a "
+            "successful probe."
+        ),
+    )
+    record_halt.add_argument(
+        "--reason",
+        type=str,
+        default=None,
+        help=(
+            "Optional free-text reason recorded into the "
+            "retry-state's `recorded_reason` field (e.g. "
+            "'observed-rate-limit-429', 'planned-quota-window', "
+            "'claude-cli-exit-code-2')."
+        ),
+    )
     reprobe = sub.add_parser(
         "run-capacity-reprobe",
         help=(
@@ -14248,6 +14588,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "run-internal-review-fix-cycle": cmd_run_internal_review_fix_cycle,
     "run-long-run-continuation": cmd_run_long_run_continuation,
     "run-capacity-reprobe": cmd_reprobe_capacity_and_resume,
+    "record-capacity-halt": cmd_record_capacity_halt,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
