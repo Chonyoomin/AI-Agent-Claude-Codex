@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9D - Autonomous Internal Review/Fix Loop)
+Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9E - Long-Run Continuation And Completion Heuristics)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3619,11 +3619,11 @@ planner/activation boundary, review ownership model, and per-phase human gate.
 
 ### Status
 
-Active. Next implementation slice under the approved Phase 9 autonomy
-contract, focused on letting the orchestrator run the internal Codex review and
-Claude fix loop across bounded cycles without manual routing between agents,
-while preserving the shipped hard stops, ownership boundaries, and canonical
-artifact truth.
+Complete and approved by human to advance to Phase 9E. Phase 9D closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded autonomous
+internal review/fix loop, default-continuation follow-up fix, handoff-staleness
+validation, focused validation, and README alignment were all verified in the
+current repo state.
 
 ### Objective
 
@@ -3669,6 +3669,71 @@ source-of-truth model, and hard-stop behavior.
 - no autonomous review/fix behavior that bypasses or rewrites the shipped
   Phase 4 planner / activation separation, or that replaces canonical
   prompt/review artifacts with transient runtime-only state
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no MCP support, external UI, or concurrent-agent operation in this slice
+- no Git automation
+
+## Phase 9E - Long-Run Continuation And Completion Heuristics
+
+### Status
+
+Active. Next implementation slice under the approved Phase 9 autonomy
+contract, focused on extending the autonomous runtime across longer-running
+product-building sessions with bounded continuation heuristics and explicit
+completion detection, while preserving the shipped hard stops, ownership
+boundaries, and canonical artifact truth.
+
+### Objective
+
+Implement the Long-Run Continuation And Completion Heuristics slice for the
+agent loop. This slice should extend the shipped Phase 6 continuation
+primitives and the Phase 9B/9C/9D autonomous runtime so the orchestrator can
+continue across longer product-building runs, detect bounded “done enough”
+completion states from canonical artifacts, and stop or continue
+deterministically without silently widening autonomy, while preserving the
+shipped planner/activation boundary, artifact source-of-truth model, and
+hard-stop behavior.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 9 / 9E as active
+- `.agent-loop/phase-plan.md` records Phase 9D as closed history and contains a
+  `## Phase 9E - Long-Run Continuation And Completion Heuristics` section with
+  concrete objective, done criteria, and exclusions
+- the repository ships a bounded long-run continuation layer that can extend
+  the autonomous Phase 9 runtime across multiple continuation hops using
+  canonical repo artifacts and the shipped Phase 6 continuation primitives
+- the runtime can detect bounded completion / “done enough” terminal states
+  from canonical artifacts and explicit review signals rather than relying on
+  transcript-only judgment
+- the new surface preserves the shipped artifact/source-of-truth boundary:
+  canonical prompt, summary, review, fix, checkpoint, and loop-state artifacts
+  remain authoritative; advisory descriptors remain routing/timing artifacts
+  only
+- the new surface preserves the shipped CLI-first workflow,
+  planner/activation boundaries, approval semantics, halt/refusal vocabulary,
+  checkpoint/resume behavior, cycle thresholds, and repo-artifact
+  source-of-truth model
+- focused validation proves bounded long-run continuation behavior,
+  completion-detection behavior, refusal behavior, and hard-stop preservation
+  from repo artifacts and logs
+- `README.md` reflects that Phase 9E is active and that long-run continuation /
+  completion heuristics are now the implementation focus
+
+### Exclusions
+
+- no capacity-halt re-probe or final acceptance automation (Phases 9F-9G)
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,

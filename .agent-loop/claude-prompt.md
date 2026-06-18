@@ -1,45 +1,46 @@
 # Claude Code Task
 
 ## Phase
-Phase 9D - Autonomous Internal Review/Fix Loop
+Phase 9E - Long-Run Continuation And Completion Heuristics
 
 ## Objective
-Implement the Autonomous Internal Review/Fix Loop slice for the agent loop. This slice should let the orchestrator consume the Phase 9B/9C handoff artifacts, trigger Codex review automatically, route findings by owner, regenerate `.agent-loop/fix-prompt.md` when Claude-owned fixes are required, and continue bounded internal review/fix cycles without manual routing between agents, while preserving the shipped planner/activation boundary, artifact source-of-truth model, and hard-stop behavior.
+Implement the Long-Run Continuation And Completion Heuristics slice for the agent loop. This slice should extend the shipped Phase 6 continuation primitives and the Phase 9B/9C/9D autonomous runtime so the orchestrator can continue across longer product-building runs, detect bounded “done enough” completion states from canonical artifacts, and stop or continue deterministically without silently widening autonomy, while preserving the shipped planner/activation boundary, artifact source-of-truth model, and hard-stop behavior.
 
 ## Context
-Implement the Autonomous Internal Review/Fix Loop slice for the agent loop.
-This slice should let the orchestrator consume the Phase 9B/9C handoff
-artifacts, trigger Codex review automatically, route findings by owner,
-regenerate `.agent-loop/fix-prompt.md` when Claude-owned fixes are required,
-and continue bounded internal review/fix cycles without manual routing between
-agents, while preserving the shipped planner/activation boundary, artifact
-source-of-truth model, and hard-stop behavior.
+Implement the Long-Run Continuation And Completion Heuristics slice for the
+agent loop. This slice should extend the shipped Phase 6 continuation
+primitives and the Phase 9B/9C/9D autonomous runtime so the orchestrator can
+continue across longer product-building runs, detect bounded “done enough”
+completion states from canonical artifacts, and stop or continue
+deterministically without silently widening autonomy, while preserving the
+shipped planner/activation boundary, artifact source-of-truth model, and
+hard-stop behavior.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 9 / 9D as active
-- `.agent-loop/phase-plan.md` records Phase 9C as closed history and contains a
-  `## Phase 9D - Autonomous Internal Review/Fix Loop` section with concrete
-  objective, done criteria, and exclusions
-- the repository ships a bounded autonomous internal review/fix loop that can,
-  from canonical repo artifacts, run Codex review after Claude completion,
-  classify findings by owner, and continue Claude fix cycles without manual
-  prompt passing
-- the loop preserves the shipped artifact/source-of-truth boundary: canonical
-  prompt, summary, review, and fix artifacts remain on disk;
-  `.agent-loop/claude-done.json` and `.agent-loop/prompt-handoff.json` remain
-  routing/timing artifacts rather than substitutes for review evidence
-- the runtime makes Codex-owned versus Claude-owned routing explicit and
-  deterministic, including automatic `.agent-loop/fix-prompt.md` refresh only
-  when Claude-owned fixes are required
+  `.agent-loop/loop-state.json` identify Phase 9 / 9E as active
+- `.agent-loop/phase-plan.md` records Phase 9D as closed history and contains a
+  `## Phase 9E - Long-Run Continuation And Completion Heuristics` section with
+  concrete objective, done criteria, and exclusions
+- the repository ships a bounded long-run continuation layer that can extend
+  the autonomous Phase 9 runtime across multiple continuation hops using
+  canonical repo artifacts and the shipped Phase 6 continuation primitives
+- the runtime can detect bounded completion / “done enough” terminal states
+  from canonical artifacts and explicit review signals rather than relying on
+  transcript-only judgment
+- the new surface preserves the shipped artifact/source-of-truth boundary:
+  canonical prompt, summary, review, fix, checkpoint, and loop-state artifacts
+  remain authoritative; advisory descriptors remain routing/timing artifacts
+  only
 - the new surface preserves the shipped CLI-first workflow,
   planner/activation boundaries, approval semantics, halt/refusal vocabulary,
   checkpoint/resume behavior, cycle thresholds, and repo-artifact
   source-of-truth model
-- focused validation proves bounded autonomous review/fix continuation, refusal
-  behavior, and hard-stop preservation from repo artifacts and logs
-- `README.md` reflects that Phase 9D is active and that autonomous internal
-  review/fix continuation is now the implementation focus
+- focused validation proves bounded long-run continuation behavior,
+  completion-detection behavior, refusal behavior, and hard-stop preservation
+  from repo artifacts and logs
+- `README.md` reflects that Phase 9E is active and that long-run continuation /
+  completion heuristics are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -52,11 +53,10 @@ source-of-truth model, and hard-stop behavior.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no automatic next-phase activation, long-run completion heuristics,
-  capacity-halt re-probe, or final acceptance automation (Phases 9E-9G)
-- no autonomous review/fix behavior that bypasses or rewrites the shipped
-  Phase 4 planner / activation separation, or that replaces canonical
-  prompt/review artifacts with transient runtime-only state
+- no capacity-halt re-probe or final acceptance automation (Phases 9F-9G)
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,
