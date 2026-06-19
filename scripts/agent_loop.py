@@ -8020,10 +8020,18 @@ def run_long_run_continuation(
                 # allows. The Phase 9E hop counter still bounds
                 # the OUTER loop, but each hop's reprobe call
                 # honors the Phase 9F primitive's own cumulative
-                # contract.
+                # contract. `invoke_adapter` is wired to the
+                # long-run loop's `invoke_claude_adapter` so a
+                # successful reprobe dispatches the matching
+                # Claude prompt handoff (Phase 9F fix-cycle:
+                # resumes the actual suspended step rather than
+                # only restoring loop-state.status), while
+                # `invoke_claude_adapter=False` keeps the dispatch
+                # to a descriptor-only write for dry runs.
                 reprobe_capacity_and_resume(
                     repo_root,
                     log_path=log_path,
+                    invoke_adapter=invoke_claude_adapter,
                 )
                 hop["capacity_reprobe_rc"] = 0
             except HaltError as halt:
@@ -8261,6 +8269,17 @@ CAPACITY_RETRY_DEFAULT_INITIAL_BACKOFF_SECONDS = 1.0
 CAPACITY_RETRY_DEFAULT_MAX_BACKOFF_SECONDS = 30.0
 CAPACITY_RETRY_MAX_MAX_BACKOFF_SECONDS = 600.0
 CAPACITY_RETRY_DEFAULT_SUSPENDED_STATUS = "claude_implementing"
+# Phase 9F fix-cycle: only Claude-side step statuses can be auto-resumed
+# by the Phase 9F seam. A successful re-probe restores
+# loop-state.status to the saved suspended_status AND dispatches the
+# matching Claude prompt handoff so the original suspended step
+# actually runs. Status values outside this allowlist have no resume
+# continuation routing and must refuse fail-closed at record-time
+# (record_capacity_halt) and at resume-time (the retry-state
+# validator), rather than silently routing to the wrong step.
+CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES = frozenset({
+    "claude_implementing", "claude_fixing",
+})
 CAPACITY_RETRY_CANONICAL_PRECEDENCE_NOTE = (
     "Phase 9F capacity-retry-state artifacts are auditable retry "
     "metadata. The canonical loop-state.json on disk remains the "
@@ -8529,6 +8548,27 @@ def record_capacity_halt(
         if suspended_status is not None
         else current_status or CAPACITY_RETRY_DEFAULT_SUSPENDED_STATUS
     )
+    # Phase 9F fix-cycle: only Claude-side step statuses have a known
+    # resume continuation. Refuse fail-closed on anything else so a
+    # successful re-probe is never silently misrouted to a generic
+    # review/fix path that does not match the original suspended step.
+    if (
+        resolved_suspended
+        not in CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"record-capacity-halt refused: suspended_status="
+                f"{resolved_suspended!r} is not a Phase 9F supported "
+                f"resume target. Supported statuses: "
+                f"{sorted(CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES)!r}"
+                f". Capacity halts only support resuming Claude-side "
+                f"work steps; record the halt against the correct "
+                f"in-flight Claude status or use a different halt "
+                f"vocabulary."
+            ),
+        )
     retry_state = {
         "retry_signal_version": CAPACITY_RETRY_SIGNAL_VERSION,
         "created_at": _utc_iso_now(),
@@ -8642,6 +8682,26 @@ def _validate_capacity_retry_state(
                 f"got {type(retry_state['history']).__name__}"
             ),
         )
+    # Phase 9F fix-cycle: refuse a persisted retry-state that names
+    # an unsupported suspended_status. A successful re-probe must be
+    # able to dispatch the matching Claude prompt handoff; a status
+    # outside the supported set has no continuation routing.
+    if (
+        retry_state["suspended_status"]
+        not in CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"capacity retry-state at "
+                f"{retry_state_path.name} carries suspended_status="
+                f"{retry_state['suspended_status']!r}; not a Phase 9F "
+                f"supported resume target. Supported statuses: "
+                f"{sorted(CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES)!r}"
+                f". Delete the retry-state and re-plant via "
+                f"record-capacity-halt against a supported status."
+            ),
+        )
 
 
 def reprobe_capacity_and_resume(
@@ -8655,6 +8715,7 @@ def reprobe_capacity_and_resume(
     sleep: Optional[Callable[[float], None]] = None,
     output_path: Optional[Path] = None,
     log_path: Optional[Path] = None,
+    invoke_adapter: bool = True,
 ) -> Path:
     """Phase 9F: bounded capacity-halt re-probe + automatic resume.
 
@@ -8674,9 +8735,21 @@ def reprobe_capacity_and_resume(
       4. On `True`: restores loop-state `status` to the
          retry-state's `suspended_status`, deletes the retry-state
          file, writes a `capacity reprobe: succeeded ...` audit
-         line, and returns the retry-state path (which no longer
-         exists on disk; the return value is the path the
-         operator can re-run reprobe against later).
+         line, then DISPATCHES the matching Claude prompt handoff
+         (via the shipped `dispatch_prompt_handoff(...)`) so the
+         original suspended step actually runs:
+           - `claude_implementing` -> `mode=implementation`
+             (replays `.agent-loop/claude-prompt.md`)
+           - `claude_fixing` -> `mode=fix`
+             (replays `.agent-loop/fix-prompt.md`)
+         `invoke_adapter` is forwarded to
+         `dispatch_prompt_handoff(...)` so callers can write the
+         handoff descriptor without actually invoking the Claude
+         adapter (tests and dry-run operators). Writes a
+         `capacity reprobe: resumed ...` audit line and returns
+         the retry-state path (which no longer exists on disk; the
+         return value is the path the operator can re-run reprobe
+         against later).
       5. On `False`: persists the updated retry-state with the
          attempt history, writes a `capacity reprobe: attempt
          failed ...` audit line, and continues to the next
@@ -8713,9 +8786,10 @@ def reprobe_capacity_and_resume(
         well-behaved)
 
     On success the function returns the retry-state path (which
-    has been deleted from disk). The next orchestrator
-    invocation picks up loop-state at the restored
-    `suspended_status` and continues the suspended step.
+    has been deleted from disk). The matching Claude prompt
+    handoff has been dispatched in the same call so the original
+    suspended step actually runs (instead of leaving loop-state
+    at a restored non-terminal status with no continuation).
     """
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"
@@ -8868,9 +8942,10 @@ def reprobe_capacity_and_resume(
         if probe_result:
             # Restore loop-state status to the saved
             # suspended_status; delete the retry-state on success.
+            restored_status = retry_state["suspended_status"]
             data = save_loop_state(
                 state_path, data,
-                {"status": retry_state["suspended_status"]},
+                {"status": restored_status},
             )
             try:
                 out.unlink()
@@ -8884,7 +8959,34 @@ def reprobe_capacity_and_resume(
                 f"attempt_index={attempt_index} "
                 f"backoff_seconds={backoff} "
                 f"restored_status="
-                f"{retry_state['suspended_status']!r}\n"
+                f"{restored_status!r}\n"
+            )
+            # Phase 9F fix-cycle: actually resume the suspended step
+            # by dispatching the matching Claude prompt handoff.
+            # Restoring loop-state.status alone leaves the next
+            # orchestrator step ambiguous (the Phase 9E long-run
+            # loop would otherwise fall straight into the generic
+            # review/fix iteration without the suspended Claude
+            # invocation ever running). The suspended_status was
+            # already validated against the supported allowlist at
+            # record-time and at retry-state-load-time, so the
+            # mapping below is total over reachable values.
+            handoff_mode = (
+                PROMPT_HANDOFF_MODE_IMPLEMENTATION
+                if restored_status == "claude_implementing"
+                else PROMPT_HANDOFF_MODE_FIX
+            )
+            dispatch_prompt_handoff(
+                repo_root,
+                mode=handoff_mode,
+                log_path=log_path,
+                invoke_adapter=invoke_adapter,
+            )
+            _audit(
+                f"{CAPACITY_RETRY_AUDIT_NOTE_PREFIX} resumed "
+                f"suspended_status={restored_status!r} "
+                f"handoff_mode={handoff_mode!r} "
+                f"invoke_adapter={invoke_adapter}\n"
             )
             return out
         # Persist the failed-attempt state so the next operator
@@ -12645,6 +12747,8 @@ def cmd_reprobe_capacity_and_resume(args: argparse.Namespace) -> int:
             kwargs["max_backoff_seconds"] = args.max_backoff_seconds
         if args.suspended_status is not None:
             kwargs["suspended_status"] = args.suspended_status
+        if getattr(args, "no_invoke_adapter", False):
+            kwargs["invoke_adapter"] = False
         written = reprobe_capacity_and_resume(repo_root, **kwargs)
     except HaltError as halt:
         try:
@@ -14328,6 +14432,21 @@ def build_parser() -> argparse.ArgumentParser:
             "handoff / review-fix-loop / long-run-continuation), "
             "paths under `.agent-loop/memory/`, and directory "
             "targets."
+        ),
+    )
+    reprobe.add_argument(
+        "--no-invoke-adapter",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase 9F fix-cycle: on a successful probe, write the "
+            "prompt-handoff descriptor for the resumed suspended "
+            "step (implementation or fix) but do NOT actually "
+            "invoke the Claude adapter. Use for dry-run dispatch "
+            "or to inspect the descriptor without consuming "
+            "Claude capacity. Default behavior on success is to "
+            "dispatch the matching Claude prompt handoff so the "
+            "suspended step actually runs."
         ),
     )
     distill = sub.add_parser(

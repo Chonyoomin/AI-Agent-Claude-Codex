@@ -90,6 +90,22 @@ def _plant_loop_state(
     return state_path
 
 
+def _plant_prompts(repo_root: Path) -> None:
+    """Phase 9F fix-cycle: a successful reprobe dispatches the
+    matching Claude prompt handoff (implementation or fix), which
+    validates the prompt artifact is present. Tests that exercise
+    the success path plant both prompts so either suspended_status
+    resolves cleanly.
+    """
+    al = repo_root / ".agent-loop"
+    (al / "claude-prompt.md").write_text(
+        "# Claude Implementation Prompt\n\nbody\n", encoding="utf-8",
+    )
+    (al / "fix-prompt.md").write_text(
+        "# Claude Fix Prompt\n\nbody\n", encoding="utf-8",
+    )
+
+
 def _noop_sleep(seconds: float) -> None:
     return None
 
@@ -345,12 +361,14 @@ class CapacityReprobeOutputBoundaryTests(unittest.TestCase):
     def test_safe_override_succeeds(self) -> None:
         with TemporaryDirectory() as td:
             repo = self._setup(Path(td))
+            _plant_prompts(repo)
             written = agent_loop.reprobe_capacity_and_resume(
                 repo,
                 output_path=(
                     repo / ".agent-loop" / "custom-retry.json"
                 ),
                 sleep=_noop_sleep, probe=_always_true_probe,
+                invoke_adapter=False,
             )
             # On success, the retry-state file is deleted.
             self.assertEqual(written.name, "custom-retry.json")
@@ -363,10 +381,12 @@ class CapacityReprobeSuccessTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             state_path = _plant_loop_state(repo)
+            _plant_prompts(repo)
             agent_loop.reprobe_capacity_and_resume(
                 repo,
                 suspended_status="claude_implementing",
                 sleep=_noop_sleep, probe=_always_true_probe,
+                invoke_adapter=False,
             )
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "claude_implementing")
@@ -382,8 +402,10 @@ class CapacityReprobeSuccessTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             state_path = _plant_loop_state(repo)
+            _plant_prompts(repo)
             agent_loop.reprobe_capacity_and_resume(
                 repo, sleep=_noop_sleep, probe=_always_true_probe,
+                invoke_adapter=False,
             )
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "claude_implementing")
@@ -392,10 +414,12 @@ class CapacityReprobeSuccessTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             state_path = _plant_loop_state(repo)
+            _plant_prompts(repo)
             agent_loop.reprobe_capacity_and_resume(
                 repo,
                 suspended_status="claude_fixing",
                 sleep=_noop_sleep, probe=_always_true_probe,
+                invoke_adapter=False,
             )
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(state["status"], "claude_fixing")
@@ -405,12 +429,14 @@ class CapacityReprobeSuccessTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             _plant_loop_state(repo)
+            _plant_prompts(repo)
             agent_loop.reprobe_capacity_and_resume(
                 repo,
                 initial_backoff_seconds=2.0,
                 max_backoff_seconds=30.0,
                 sleep=lambda s: sleep_calls.append(s),
                 probe=_always_true_probe,
+                invoke_adapter=False,
             )
             # Attempt 1 backoff = 2 * 2**0 = 2.
             self.assertEqual(sleep_calls, [2.0])
@@ -478,6 +504,7 @@ class CapacityReprobeFailureAndBudgetTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             state_path = _plant_loop_state(repo)
+            _plant_prompts(repo)
             retry_path = (
                 repo / ".agent-loop" / "capacity-retry-state.json"
             )
@@ -487,6 +514,7 @@ class CapacityReprobeFailureAndBudgetTests(unittest.TestCase):
                 initial_backoff_seconds=1.0,
                 sleep=_noop_sleep,
                 probe=cyclic_probe,
+                invoke_adapter=False,
             )
             # On success, retry-state file is deleted.
             self.assertFalse(retry_path.exists())
@@ -542,6 +570,7 @@ class CapacityReprobeCumulativeBudgetTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             _plant_loop_state(repo)
+            _plant_prompts(repo)
             try:
                 agent_loop.reprobe_capacity_and_resume(
                     repo,
@@ -563,6 +592,7 @@ class CapacityReprobeCumulativeBudgetTests(unittest.TestCase):
                 initial_backoff_seconds=1.0,
                 sleep=_noop_sleep,
                 probe=_always_true_probe,
+                invoke_adapter=False,
             )
             state_path = repo / ".agent-loop" / "loop-state.json"
             state = json.loads(state_path.read_text(encoding="utf-8"))
@@ -675,15 +705,21 @@ class CapacityReprobeAuditLogTests(unittest.TestCase):
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             _plant_loop_state(repo)
+            _plant_prompts(repo)
             log = repo / ".agent-loop" / "orchestrator.log"
             agent_loop.reprobe_capacity_and_resume(
                 repo,
                 sleep=_noop_sleep, probe=_always_true_probe,
                 log_path=log,
+                invoke_adapter=False,
             )
             audit = log.read_text(encoding="utf-8")
             self.assertIn("capacity reprobe: started", audit)
             self.assertIn("capacity reprobe: succeeded", audit)
+            # Phase 9F fix-cycle: success audit now also records the
+            # resume dispatch line proving the suspended step was
+            # actually dispatched (not just status restored).
+            self.assertIn("capacity reprobe: resumed", audit)
 
     def test_failure_audit_lines(self) -> None:
         with TemporaryDirectory() as td:
@@ -715,6 +751,7 @@ class CapacityReprobeCliTests(unittest.TestCase):
         self.repo = Path(self.td.name)
         _make_repo(self.repo)
         _plant_loop_state(self.repo)
+        _plant_prompts(self.repo)
         import os
         self._prev_cwd = os.getcwd()
         os.chdir(self.repo)
@@ -746,7 +783,9 @@ class CapacityReprobeCliTests(unittest.TestCase):
     def test_cli_default_succeeds_with_env_var_available(self) -> None:
         # With AGENT_LOOP_CAPACITY_PROBE=available the default
         # probe returns True and the CLI restores loop-state on
-        # the first attempt.
+        # the first attempt. `--no-invoke-adapter` keeps the
+        # success-path dispatch to a descriptor-only write so the
+        # test does not block on a real Claude adapter handoff.
         import os
         prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
         os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
@@ -757,6 +796,7 @@ class CapacityReprobeCliTests(unittest.TestCase):
                     "--max-attempts", "1",
                     "--initial-backoff-seconds", "0.001",
                     "--max-backoff-seconds", "0.001",
+                    "--no-invoke-adapter",
                 ])
             self.assertEqual(rc, 0)
             state = json.loads(
@@ -902,16 +942,21 @@ class RecordCapacityHaltTests(unittest.TestCase):
             )
 
     def test_custom_suspended_status_override(self) -> None:
+        # Phase 9F fix-cycle: the suspended_status override is now
+        # validated against the supported allowlist. Switching from
+        # the default ("claude_implementing" inferred from current
+        # status) to the other supported value ("claude_fixing")
+        # still works.
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
-            _plant_loop_state(repo, status="claude_fixing")
+            _plant_loop_state(repo, status="claude_implementing")
             written = agent_loop.record_capacity_halt(
-                repo, suspended_status="awaiting_codex_review",
+                repo, suspended_status="claude_fixing",
             )
             retry_state = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(
                 retry_state["suspended_status"],
-                "awaiting_codex_review",
+                "claude_fixing",
             )
 
     def test_refuses_when_already_capacity_halted(self) -> None:
@@ -1014,6 +1059,7 @@ class Phase9EAndPhase9FIntegrationTests(unittest.TestCase):
                 state_path = _plant_loop_state(
                     repo, status="claude_implementing",
                 )
+                _plant_prompts(repo)
                 agent_loop.record_capacity_halt(repo)
                 # Now run the long-run loop; the pre-hop branch
                 # should detect halted_capacity_unavailable and
@@ -1159,6 +1205,7 @@ class Phase9EAndPhase9FIntegrationTests(unittest.TestCase):
             with TemporaryDirectory() as td:
                 repo = _make_repo(Path(td))
                 _plant_loop_state(repo, status="claude_implementing")
+                _plant_prompts(repo)
                 agent_loop.record_capacity_halt(repo)
                 log = repo / ".agent-loop" / "orchestrator.log"
                 with mock.patch(
@@ -1179,6 +1226,390 @@ class Phase9EAndPhase9FIntegrationTests(unittest.TestCase):
                 )
         finally:
             os.environ.pop(agent_loop.CAPACITY_PROBE_ENV_VAR, None)
+
+
+class SuspendedStatusAllowlistTests(unittest.TestCase):
+    """Phase 9F fix-cycle: only Claude-side step statuses have a
+    known resume continuation. Capacity halts recorded against any
+    other status (or carrying a tampered suspended_status on disk)
+    must refuse fail-closed rather than silently misroute on
+    resume.
+    """
+
+    def test_constant_lists_supported_statuses(self) -> None:
+        self.assertEqual(
+            agent_loop.CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES,
+            frozenset({"claude_implementing", "claude_fixing"}),
+        )
+
+    def test_record_refuses_unsupported_explicit_override(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_capacity_halt(
+                    repo, suspended_status="awaiting_codex_review",
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "not a Phase 9F supported resume target",
+                str(ctx.exception),
+            )
+
+    def test_record_refuses_unsupported_inferred_status(self) -> None:
+        # No explicit override: the resolved suspended_status falls
+        # back to the CURRENT loop-state status. A non-Claude-side
+        # status is also refused fail-closed.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="evidence_capture")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_capacity_halt(repo)
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "evidence_capture", str(ctx.exception),
+            )
+
+    def test_record_accepts_claude_implementing(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            written = agent_loop.record_capacity_halt(repo)
+            retry_state = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                retry_state["suspended_status"], "claude_implementing",
+            )
+
+    def test_record_accepts_claude_fixing(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_fixing")
+            written = agent_loop.record_capacity_halt(repo)
+            retry_state = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                retry_state["suspended_status"], "claude_fixing",
+            )
+
+    def test_reprobe_refuses_persisted_unsupported_status(self) -> None:
+        # A retry-state on disk that names an unsupported
+        # suspended_status (operator-tampered, legacy from before
+        # the allowlist landed, etc.) is refused fail-closed at
+        # validation time so no successful re-probe ever routes
+        # into the wrong continuation.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            retry_path = (
+                repo / ".agent-loop" / "capacity-retry-state.json"
+            )
+            retry_path.write_text(json.dumps({
+                "retry_signal_version": "phase-9f-v1",
+                "created_at": "2026-06-19T00:00:00Z",
+                "phase": ACTIVE_PHASE,
+                "sub_phase": ACTIVE_SUB_PHASE,
+                "task": "capacity-reprobe-test",
+                "cycle_count": 0,
+                "attempt_count": 0,
+                "max_attempts": 5,
+                "initial_backoff_seconds": 1.0,
+                "max_backoff_seconds": 30.0,
+                "suspended_status": "awaiting_codex_review",
+                "history": [],
+                "last_outcome": None,
+                "canonical_precedence_note": "test",
+            }), encoding="utf-8")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    invoke_adapter=False,
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "supported resume target", str(ctx.exception),
+            )
+
+
+class ReprobeDispatchesSuspendedStepTests(unittest.TestCase):
+    """Phase 9F fix-cycle: a successful re-probe does not merely
+    restore loop-state.status; it also dispatches the matching
+    Claude prompt handoff so the original suspended step actually
+    runs. The dispatch writes the canonical
+    `.agent-loop/prompt-handoff.json` descriptor (the same one
+    cmd_dispatch_prompt_handoff produces) so the rest of the
+    orchestrator picks up exactly where it would have if the
+    capacity halt had never occurred.
+    """
+
+    def test_claude_implementing_dispatches_implementation_handoff(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            agent_loop.reprobe_capacity_and_resume(
+                repo,
+                suspended_status="claude_implementing",
+                sleep=_noop_sleep,
+                probe=_always_true_probe,
+                invoke_adapter=False,
+            )
+            handoff_path = (
+                repo / ".agent-loop" / "prompt-handoff.json"
+            )
+            self.assertTrue(
+                handoff_path.exists(),
+                "prompt-handoff descriptor must be written on a "
+                "successful reprobe so the suspended step actually "
+                "runs",
+            )
+            handoff = json.loads(
+                handoff_path.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(handoff["mode"], "implementation")
+            self.assertEqual(
+                handoff["source_prompt_path"],
+                ".agent-loop/claude-prompt.md",
+            )
+
+    def test_claude_fixing_dispatches_fix_handoff(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            agent_loop.reprobe_capacity_and_resume(
+                repo,
+                suspended_status="claude_fixing",
+                sleep=_noop_sleep,
+                probe=_always_true_probe,
+                invoke_adapter=False,
+            )
+            handoff_path = (
+                repo / ".agent-loop" / "prompt-handoff.json"
+            )
+            self.assertTrue(handoff_path.exists())
+            handoff = json.loads(
+                handoff_path.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(handoff["mode"], "fix")
+            self.assertEqual(
+                handoff["source_prompt_path"],
+                ".agent-loop/fix-prompt.md",
+            )
+
+    def test_invoke_adapter_default_true_invokes_claude(self) -> None:
+        # The default `invoke_adapter=True` actually invokes the
+        # Claude adapter as part of the dispatch. Verified by
+        # stubbing make_claude_adapter so the dispatch records the
+        # invocation without blocking on a real handoff.
+        invocations: list[dict] = []
+
+        class _StubAdapter:
+            def invoke(self, prompt_path, summary_path):
+                invocations.append({
+                    "prompt": prompt_path.name,
+                    "summary": summary_path.name,
+                })
+                summary_path.write_text(
+                    "# summary\n", encoding="utf-8",
+                )
+                from agent_loop import ExecutionResult
+                return ExecutionResult(
+                    exit_code=0,
+                    model_id="claude-stub-model",
+                    duration_seconds=0.0,
+                )
+
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            with mock.patch(
+                "agent_loop.make_claude_adapter",
+                lambda: _StubAdapter(),
+            ):
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    suspended_status="claude_implementing",
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    # invoke_adapter default True
+                )
+            self.assertEqual(len(invocations), 1)
+            self.assertEqual(
+                invocations[0]["prompt"], "claude-prompt.md",
+            )
+
+    def test_resumed_audit_line_includes_handoff_mode(self) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            _plant_prompts(repo)
+            log = repo / ".agent-loop" / "orchestrator.log"
+            agent_loop.reprobe_capacity_and_resume(
+                repo,
+                suspended_status="claude_fixing",
+                sleep=_noop_sleep,
+                probe=_always_true_probe,
+                invoke_adapter=False,
+                log_path=log,
+            )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn("capacity reprobe: resumed", audit)
+            self.assertIn("handoff_mode='fix'", audit)
+            self.assertIn(
+                "suspended_status='claude_fixing'", audit,
+            )
+
+
+class Phase9FResumeRoutingIntegrationTests(unittest.TestCase):
+    """Phase 9F fix-cycle: the Phase 9E long-run integration must
+    actually resume the suspended Claude step on a successful
+    re-probe, not just restore loop-state.status and drop into the
+    generic Phase 9D review/fix path on the next hop.
+
+    Concretely: a capacity halt recorded from a real in-flight
+    `claude_implementing` status must, after a successful re-probe,
+    have dispatched the implementation prompt handoff. The
+    long-run loop's `invoke_claude_adapter` toggle forwards into
+    the reprobe call so the test can verify the descriptor without
+    consuming Claude capacity.
+    """
+
+    def setUp(self) -> None:
+        import os
+        self._prev = os.environ.get(
+            agent_loop.CAPACITY_PROBE_ENV_VAR,
+        )
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+
+    def tearDown(self) -> None:
+        import os
+        if self._prev is None:
+            os.environ.pop(
+                agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+            )
+        else:
+            os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = self._prev
+
+    def test_long_run_resume_dispatches_implementation_not_review(
+        self,
+    ) -> None:
+        # Record the capacity halt while loop-state is
+        # claude_implementing; the production path captures that as
+        # suspended_status. After run_long_run_continuation, the
+        # prompt-handoff descriptor must show the implementation
+        # mode was dispatched as part of the reprobe hop -- proving
+        # the long-run loop did NOT silently misroute into the
+        # Phase 9D review/fix path.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            _plant_prompts(repo)
+            agent_loop.record_capacity_halt(repo)
+            with mock.patch(
+                "agent_loop.time.sleep", lambda s: None,
+            ):
+                agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=1,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            handoff_path = (
+                repo / ".agent-loop" / "prompt-handoff.json"
+            )
+            self.assertTrue(
+                handoff_path.exists(),
+                "the long-run loop's capacity_reprobe hop must "
+                "dispatch the prompt handoff for the suspended "
+                "step, not just restore loop-state.status",
+            )
+            handoff = json.loads(
+                handoff_path.read_text(encoding="utf-8"),
+            )
+            self.assertEqual(handoff["mode"], "implementation")
+
+    def test_long_run_resume_dispatches_fix_for_claude_fixing(
+        self,
+    ) -> None:
+        # Symmetric test: a capacity halt recorded while loop-state
+        # is claude_fixing resumes via the fix prompt, not the
+        # implementation prompt.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_fixing")
+            _plant_prompts(repo)
+            agent_loop.record_capacity_halt(repo)
+            with mock.patch(
+                "agent_loop.time.sleep", lambda s: None,
+            ):
+                agent_loop.run_long_run_continuation(
+                    repo,
+                    max_hops=1,
+                    capture_evidence=False,
+                    invoke_codex_adapter=False,
+                    invoke_claude_adapter=False,
+                )
+            handoff = json.loads(
+                (
+                    repo / ".agent-loop" / "prompt-handoff.json"
+                ).read_text(encoding="utf-8"),
+            )
+            self.assertEqual(handoff["mode"], "fix")
+
+    def test_long_run_resume_forwards_invoke_claude_toggle(
+        self,
+    ) -> None:
+        # When the operator passes invoke_claude_adapter=False to
+        # the long-run loop, the reprobe call inside the hop must
+        # NOT invoke the Claude adapter. Stub make_claude_adapter
+        # to assert no invocations leaked through.
+        invocations: list[str] = []
+
+        class _UnexpectedAdapter:
+            def invoke(self, prompt_path, summary_path):
+                invocations.append(prompt_path.name)
+                from agent_loop import ExecutionResult
+                return ExecutionResult(
+                    exit_code=0,
+                    model_id="unexpected",
+                    duration_seconds=0.0,
+                )
+
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            _plant_prompts(repo)
+            agent_loop.record_capacity_halt(repo)
+            with mock.patch(
+                "agent_loop.make_claude_adapter",
+                lambda: _UnexpectedAdapter(),
+            ):
+                with mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=1,
+                        capture_evidence=False,
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=False,
+                    )
+            self.assertEqual(
+                invocations, [],
+                "invoke_claude_adapter=False must propagate into "
+                "the capacity-reprobe hop's dispatch",
+            )
 
 
 class CapacityReprobeHelpTextTests(unittest.TestCase):
