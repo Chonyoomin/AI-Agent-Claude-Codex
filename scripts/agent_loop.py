@@ -8269,16 +8269,27 @@ CAPACITY_RETRY_DEFAULT_INITIAL_BACKOFF_SECONDS = 1.0
 CAPACITY_RETRY_DEFAULT_MAX_BACKOFF_SECONDS = 30.0
 CAPACITY_RETRY_MAX_MAX_BACKOFF_SECONDS = 600.0
 CAPACITY_RETRY_DEFAULT_SUSPENDED_STATUS = "claude_implementing"
-# Phase 9F fix-cycle: only Claude-side step statuses can be auto-resumed
-# by the Phase 9F seam. A successful re-probe restores
-# loop-state.status to the saved suspended_status AND dispatches the
-# matching Claude prompt handoff so the original suspended step
-# actually runs. Status values outside this allowlist have no resume
-# continuation routing and must refuse fail-closed at record-time
+# Phase 9F fix-cycle: only step statuses that have a known
+# continuation routing can be auto-resumed by the Phase 9F seam.
+# A successful re-probe restores loop-state.status to the saved
+# suspended_status AND routes the resumed orchestrator step:
+#   - claude_implementing -> dispatch Claude implementation prompt
+#     handoff so the suspended Claude implementation actually runs
+#   - claude_fixing -> dispatch Claude fix prompt handoff so the
+#     suspended Claude fix cycle actually runs
+#   - awaiting_codex_review -> restore the status only; the next
+#     orchestrator step (Phase 9E review/fix iteration or the
+#     shipped Codex review continuation) invokes the Codex adapter
+#     against the already-captured Claude summary + evidence
+# Status values outside this allowlist have no resume continuation
+# routing and must refuse fail-closed at record-time
 # (record_capacity_halt) and at resume-time (the retry-state
 # validator), rather than silently routing to the wrong step.
+# This allowlist closes the Claude/Codex parity gap so the Phase 9F
+# surface treats Claude AND Codex token / rate-limit exhaustion as
+# resumable external-capacity halts.
 CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES = frozenset({
-    "claude_implementing", "claude_fixing",
+    "claude_implementing", "claude_fixing", "awaiting_codex_review",
 })
 CAPACITY_RETRY_CANONICAL_PRECEDENCE_NOTE = (
     "Phase 9F capacity-retry-state artifacts are auditable retry "
@@ -8735,21 +8746,36 @@ def reprobe_capacity_and_resume(
       4. On `True`: restores loop-state `status` to the
          retry-state's `suspended_status`, deletes the retry-state
          file, writes a `capacity reprobe: succeeded ...` audit
-         line, then DISPATCHES the matching Claude prompt handoff
-         (via the shipped `dispatch_prompt_handoff(...)`) so the
-         original suspended step actually runs:
-           - `claude_implementing` -> `mode=implementation`
+         line, then routes the resumed orchestrator step so the
+         original suspended work actually continues:
+           - `claude_implementing` -> dispatches the Claude
+             implementation prompt handoff via the shipped
+             `dispatch_prompt_handoff(mode=implementation, ...)`
              (replays `.agent-loop/claude-prompt.md`)
-           - `claude_fixing` -> `mode=fix`
+           - `claude_fixing` -> dispatches the Claude fix prompt
+             handoff via `dispatch_prompt_handoff(mode=fix, ...)`
              (replays `.agent-loop/fix-prompt.md`)
-         `invoke_adapter` is forwarded to
-         `dispatch_prompt_handoff(...)` so callers can write the
-         handoff descriptor without actually invoking the Claude
-         adapter (tests and dry-run operators). Writes a
-         `capacity reprobe: resumed ...` audit line and returns
-         the retry-state path (which no longer exists on disk; the
-         return value is the path the operator can re-run reprobe
-         against later).
+           - `awaiting_codex_review` -> Codex-side capacity halt;
+             the resume restores the status only. The next
+             orchestrator step (Phase 9E review/fix iteration via
+             `run_internal_review_fix_cycle(...)` or the shipped
+             Codex review continuation a normal cycle drives)
+             invokes the Codex adapter against the
+             already-captured Claude summary + evidence. The Phase
+             9F seam does NOT synchronously re-invoke the Codex
+             adapter because the verdict-handling loop
+             (`_handle_verdict_loop`) is the canonical owner of
+             the post-review routing.
+         `invoke_adapter` is forwarded into
+         `dispatch_prompt_handoff(...)` for the Claude-side branches
+         so callers can write the handoff descriptor without
+         actually invoking the Claude adapter (tests and dry-run
+         operators); the Codex-side branch is descriptor-free so
+         the flag has no effect there. Writes a
+         `capacity reprobe: resumed ...` audit line capturing the
+         routing decision and returns the retry-state path (which
+         no longer exists on disk; the return value is the path
+         the operator can re-run reprobe against later).
       5. On `False`: persists the updated retry-state with the
          attempt history, writes a `capacity reprobe: attempt
          failed ...` audit line, and continues to the next
@@ -8962,26 +8988,56 @@ def reprobe_capacity_and_resume(
                 f"{restored_status!r}\n"
             )
             # Phase 9F fix-cycle: actually resume the suspended step
-            # by dispatching the matching Claude prompt handoff.
-            # Restoring loop-state.status alone leaves the next
-            # orchestrator step ambiguous (the Phase 9E long-run
-            # loop would otherwise fall straight into the generic
-            # review/fix iteration without the suspended Claude
-            # invocation ever running). The suspended_status was
-            # already validated against the supported allowlist at
-            # record-time and at retry-state-load-time, so the
-            # mapping below is total over reachable values.
-            handoff_mode = (
-                PROMPT_HANDOFF_MODE_IMPLEMENTATION
-                if restored_status == "claude_implementing"
-                else PROMPT_HANDOFF_MODE_FIX
-            )
-            dispatch_prompt_handoff(
-                repo_root,
-                mode=handoff_mode,
-                log_path=log_path,
-                invoke_adapter=invoke_adapter,
-            )
+            # so the next orchestrator step continues the exact
+            # suspended work, not a generic fall-through.
+            #
+            # Routing (the suspended_status was already validated
+            # against the supported allowlist at record-time and at
+            # retry-state-load-time, so the mapping below is total
+            # over reachable values):
+            #
+            #   claude_implementing / claude_fixing: dispatch the
+            #     matching Claude prompt handoff so the suspended
+            #     Claude work step actually runs. dispatch_prompt_
+            #     handoff(...) is the same shipped Phase 9C path
+            #     cmd_run uses for routing Claude work.
+            #
+            #   awaiting_codex_review: restore the status only; the
+            #     next orchestrator step (Phase 9E review/fix
+            #     iteration via run_internal_review_fix_cycle, or
+            #     the shipped Codex review continuation a normal
+            #     cycle drives) invokes the Codex adapter against
+            #     the already-captured Claude summary + evidence.
+            #     The Phase 9F seam deliberately does NOT
+            #     synchronously re-invoke the Codex adapter from
+            #     here because the verdict-handling loop
+            #     (`_handle_verdict_loop`) is the canonical owner
+            #     of the post-review routing; embedding it inside
+            #     the reprobe call would duplicate the contract.
+            if restored_status == "claude_implementing":
+                handoff_mode = PROMPT_HANDOFF_MODE_IMPLEMENTATION
+                dispatch_prompt_handoff(
+                    repo_root,
+                    mode=handoff_mode,
+                    log_path=log_path,
+                    invoke_adapter=invoke_adapter,
+                )
+            elif restored_status == "claude_fixing":
+                handoff_mode = PROMPT_HANDOFF_MODE_FIX
+                dispatch_prompt_handoff(
+                    repo_root,
+                    mode=handoff_mode,
+                    log_path=log_path,
+                    invoke_adapter=invoke_adapter,
+                )
+            else:
+                # awaiting_codex_review: Codex-side capacity halt.
+                # The continuation routing is the next orchestrator
+                # step's Codex review invocation, not a Claude
+                # prompt re-dispatch. Recording the routing
+                # decision in the audit line lets the operator see
+                # which continuation path the resume targeted.
+                handoff_mode = "codex_review_pending"
             _audit(
                 f"{CAPACITY_RETRY_AUDIT_NOTE_PREFIX} resumed "
                 f"suspended_status={restored_status!r} "

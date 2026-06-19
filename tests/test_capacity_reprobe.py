@@ -1237,18 +1237,31 @@ class SuspendedStatusAllowlistTests(unittest.TestCase):
     """
 
     def test_constant_lists_supported_statuses(self) -> None:
+        # Phase 9F fix-cycle: the allowlist now covers both
+        # Claude-side suspended statuses (claude_implementing /
+        # claude_fixing) AND the Codex-side suspended status
+        # (awaiting_codex_review) so Claude/Codex token or
+        # rate-limit exhaustion are both resumable.
         self.assertEqual(
             agent_loop.CAPACITY_RETRY_SUPPORTED_SUSPENDED_STATUSES,
-            frozenset({"claude_implementing", "claude_fixing"}),
+            frozenset({
+                "claude_implementing",
+                "claude_fixing",
+                "awaiting_codex_review",
+            }),
         )
 
     def test_record_refuses_unsupported_explicit_override(self) -> None:
+        # `evidence_capture` has no Phase 9F continuation routing
+        # (it is owned by the run_checks evidence producer, not by
+        # Claude or Codex), so a capacity halt recorded against it
+        # is still refused fail-closed.
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             _plant_loop_state(repo, status="claude_implementing")
             with self.assertRaises(HaltError) as ctx:
                 agent_loop.record_capacity_halt(
-                    repo, suspended_status="awaiting_codex_review",
+                    repo, suspended_status="evidence_capture",
                 )
             self.assertEqual(
                 ctx.exception.status, "halted_input_missing",
@@ -1317,7 +1330,7 @@ class SuspendedStatusAllowlistTests(unittest.TestCase):
                 "max_attempts": 5,
                 "initial_backoff_seconds": 1.0,
                 "max_backoff_seconds": 30.0,
-                "suspended_status": "awaiting_codex_review",
+                "suspended_status": "evidence_capture",
                 "history": [],
                 "last_outcome": None,
                 "canonical_precedence_note": "test",
@@ -1609,6 +1622,265 @@ class Phase9FResumeRoutingIntegrationTests(unittest.TestCase):
                 invocations, [],
                 "invoke_claude_adapter=False must propagate into "
                 "the capacity-reprobe hop's dispatch",
+            )
+
+
+class CodexSideCapacityHaltTests(unittest.TestCase):
+    """Phase 9F fix-cycle: Codex/Claude parity. A capacity halt
+    recorded while loop-state is at `awaiting_codex_review` (the
+    Codex-side suspended status) is supported by the Phase 9F
+    allowlist and resumes through the correct Codex review
+    continuation, not through a Claude prompt re-dispatch.
+    """
+
+    def test_record_accepts_awaiting_codex_review_explicit(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="claude_implementing")
+            written = agent_loop.record_capacity_halt(
+                repo, suspended_status="awaiting_codex_review",
+            )
+            retry_state = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                retry_state["suspended_status"],
+                "awaiting_codex_review",
+            )
+
+    def test_record_accepts_awaiting_codex_review_inferred(
+        self,
+    ) -> None:
+        # No explicit override: the resolved suspended_status falls
+        # back to the CURRENT loop-state status. A Codex-side
+        # in-flight status is now accepted (Phase 9F fix-cycle:
+        # Claude/Codex parity).
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo, status="awaiting_codex_review")
+            written = agent_loop.record_capacity_halt(repo)
+            retry_state = json.loads(written.read_text(encoding="utf-8"))
+            self.assertEqual(
+                retry_state["suspended_status"],
+                "awaiting_codex_review",
+            )
+
+    def test_reprobe_restores_codex_side_status_without_claude_dispatch(
+        self,
+    ) -> None:
+        # A successful reprobe for awaiting_codex_review restores
+        # loop-state.status to "awaiting_codex_review" and does
+        # NOT write a Claude prompt handoff descriptor (the Phase
+        # 9F seam deliberately routes the continuation through the
+        # next orchestrator step's Codex review invocation).
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(repo)
+            agent_loop.reprobe_capacity_and_resume(
+                repo,
+                suspended_status="awaiting_codex_review",
+                sleep=_noop_sleep,
+                probe=_always_true_probe,
+                invoke_adapter=False,
+            )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["status"], "awaiting_codex_review",
+            )
+            # No Claude prompt handoff descriptor written for the
+            # Codex-side resume path.
+            handoff_path = (
+                repo / ".agent-loop" / "prompt-handoff.json"
+            )
+            self.assertFalse(
+                handoff_path.exists(),
+                "Codex-side capacity resume must NOT dispatch a "
+                "Claude prompt handoff; the continuation is the "
+                "next orchestrator step's Codex review invocation",
+            )
+            # Retry-state file is deleted on success.
+            retry_path = (
+                repo / ".agent-loop" / "capacity-retry-state.json"
+            )
+            self.assertFalse(retry_path.exists())
+
+    def test_reprobe_codex_side_audit_records_codex_review_pending(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            log = repo / ".agent-loop" / "orchestrator.log"
+            agent_loop.reprobe_capacity_and_resume(
+                repo,
+                suspended_status="awaiting_codex_review",
+                sleep=_noop_sleep,
+                probe=_always_true_probe,
+                invoke_adapter=False,
+                log_path=log,
+            )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn("capacity reprobe: resumed", audit)
+            self.assertIn(
+                "suspended_status='awaiting_codex_review'", audit,
+            )
+            self.assertIn(
+                "handoff_mode='codex_review_pending'", audit,
+            )
+
+    def test_reprobe_codex_side_does_not_invoke_claude_adapter(
+        self,
+    ) -> None:
+        # The Codex-side resume path must not touch the Claude
+        # adapter even when invoke_adapter=True (the flag only
+        # controls Claude prompt handoff dispatch, and the Codex-
+        # side path skips that dispatch entirely).
+        invocations: list[str] = []
+
+        class _UnexpectedClaude:
+            def invoke(self, prompt_path, summary_path):
+                invocations.append(prompt_path.name)
+                from agent_loop import ExecutionResult
+                return ExecutionResult(
+                    exit_code=0,
+                    model_id="unexpected",
+                    duration_seconds=0.0,
+                )
+
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            with mock.patch(
+                "agent_loop.make_claude_adapter",
+                lambda: _UnexpectedClaude(),
+            ):
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    suspended_status="awaiting_codex_review",
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    # invoke_adapter defaults to True
+                )
+            self.assertEqual(
+                invocations, [],
+                "Codex-side resume must NOT invoke the Claude "
+                "adapter even when invoke_adapter=True",
+            )
+
+    def test_long_run_resume_routes_codex_side_capacity_halt(
+        self,
+    ) -> None:
+        # Phase 9E integration: a capacity halt recorded while
+        # loop-state is at awaiting_codex_review resumes via the
+        # Codex review path. The successful reprobe restores the
+        # status to "awaiting_codex_review"; the long-run loop's
+        # next hop then runs run_internal_review_fix_cycle, which
+        # is the canonical Codex review invocation path. The test
+        # verifies the resume does NOT write a Claude prompt
+        # handoff descriptor (silent Claude misroute would be a
+        # contract violation).
+        import os
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(
+                    repo, status="awaiting_codex_review",
+                )
+                _plant_prompts(repo)
+                agent_loop.record_capacity_halt(repo)
+                with mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    written = agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=1,
+                        capture_evidence=False,
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=False,
+                    )
+                payload = json.loads(
+                    written.read_text(encoding="utf-8"),
+                )
+                self.assertEqual(
+                    payload["hops"][0]["action_taken"],
+                    "capacity_reprobe",
+                )
+                self.assertEqual(
+                    payload["hops"][0]["capacity_reprobe_rc"], 0,
+                )
+                # Loop-state restored to the Codex-side suspended
+                # status, not silently flipped to a Claude-side
+                # one.
+                state_path = (
+                    repo / ".agent-loop" / "loop-state.json"
+                )
+                state = json.loads(
+                    state_path.read_text(encoding="utf-8"),
+                )
+                self.assertEqual(
+                    state["status"], "awaiting_codex_review",
+                )
+                # No Claude prompt handoff descriptor written.
+                handoff_path = (
+                    repo / ".agent-loop" / "prompt-handoff.json"
+                )
+                self.assertFalse(
+                    handoff_path.exists(),
+                    "Codex-side capacity halt resume must NOT "
+                    "dispatch a Claude prompt handoff in the "
+                    "long-run loop",
+                )
+        finally:
+            if prev is None:
+                os.environ.pop(
+                    agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+                )
+            else:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_reprobe_refuses_persisted_evidence_capture_status(
+        self,
+    ) -> None:
+        # Defense in depth: a persisted retry-state naming
+        # `evidence_capture` (still unsupported even after the
+        # Codex-side parity extension) is refused fail-closed at
+        # load time.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            retry_path = (
+                repo / ".agent-loop" / "capacity-retry-state.json"
+            )
+            retry_path.write_text(json.dumps({
+                "retry_signal_version": "phase-9f-v1",
+                "created_at": "2026-06-19T00:00:00Z",
+                "phase": ACTIVE_PHASE,
+                "sub_phase": ACTIVE_SUB_PHASE,
+                "task": "capacity-reprobe-test",
+                "cycle_count": 0,
+                "attempt_count": 0,
+                "max_attempts": 5,
+                "initial_backoff_seconds": 1.0,
+                "max_backoff_seconds": 30.0,
+                "suspended_status": "evidence_capture",
+                "history": [],
+                "last_outcome": None,
+                "canonical_precedence_note": "test",
+            }), encoding="utf-8")
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    invoke_adapter=False,
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "supported resume target", str(ctx.exception),
             )
 
 
