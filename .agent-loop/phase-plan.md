@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10A - External Workspace Controller Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10B - External Target Attach Record Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3877,10 +3877,10 @@ behavior.
 
 ### Status
 
-Active. First planning slice under Phase 10, focused on defining how this
-controller repo can safely target an external workspace or repository without
-collapsing controller-owned and target-owned responsibilities, runtime state,
-or artifact truth.
+Complete and approved by human to advance to Phase 10B. Phase 10A closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the external-workspace
+controller contract, descriptor-path correction follow-up, focused validation,
+and README alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -3922,6 +3922,76 @@ work, and which later Phase 10 slices implement those behaviors.
 - no external workspace bootstrap, attach flow, or target selection runtime
   (Phase 10B)
 - no external UI, dashboard, or run-control implementation (Phase 10C and
+  later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10B - External Target Attach Record Contract
+
+### Status
+
+Active. Planning slice under Phase 10 focused on defining the controller-owned
+attach-record contract that future external-workspace attach/detach runtime
+slices must follow so target selection and attach state are explicit,
+auditable, and fail-closed.
+
+### Objective
+
+Define the External Target Attach Record Contract for the agent loop. This
+slice should specify the controller-owned attach-record schema, what
+target-selection metadata it must persist, how canonicalized target paths and
+controller identity are represented, what audit/refusal fields are required,
+and how later Phase 10 attach/detach runtime slices depend on that record.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10B as active
+- `.agent-loop/phase-plan.md` records Phase 10A as closed history and contains
+  a `## Phase 10B - External Target Attach Record Contract` section with
+  concrete objective, done criteria, and exclusions
+- the repository defines, in concrete contract form, the controller-owned
+  attach-record schema future external-workspace mode must use before any
+  attach/detach runtime ships
+- the contract explicitly defines canonicalized target-path metadata,
+  controller identity, attach timestamp, operator/audit fields, signal/version
+  markers, mode-selection/bootstrap-state/stale-attach inputs, and the
+  refusal-sensitive invariants later runtime slices must preserve
+- the contract preserves the shipped artifact/source-of-truth boundary:
+  controller-owned attach metadata is explicit, target canonical artifacts
+  remain authoritative, and future UI/runtime descriptors remain advisory
+  unless explicitly promoted by contract
+- the contract preserves the shipped CLI-first workflow, planner/activation
+  boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume
+  behavior, cycle thresholds, and repo-artifact source-of-truth model
+- focused validation proves the attach-record contract is concrete, internally
+  consistent, ASCII-safe, and reflected accurately in the repo planning/docs
+  surfaces
+- `README.md` reflects that Phase 10B is active and that the attach-record
+  contract is now the implementation focus
+
+### Exclusions
+
+- no attach/detach runtime implementation or target-selection runtime behavior
+  (Phase 10D)
+- no bootstrap runtime implementation, and no bootstrap-contract work beyond
+  what is strictly necessary to define attach-record dependencies (Phase 10C
+  and Phase 10E)
+- no external UI, dashboard, or run-control implementation (Phase 10G and
   later)
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG
   layer, GitHub integration, or model-policy extensibility work
