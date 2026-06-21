@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9G - Final Human Acceptance And Polish Gate)
+Phase 10 - Future Product Features (sub-phase: Phase 10A - External Workspace Controller Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3814,11 +3814,10 @@ behavior.
 
 ### Status
 
-Active. Final implementation slice under the approved Phase 9 autonomy
-contract, focused on requiring an explicit final human review, polish, and
-acceptance gate before a fully autonomous PRD-to-product run is treated as
-complete, while preserving the shipped hard stops, ownership boundaries, and
-canonical artifact truth.
+Complete and approved by human to advance to Phase 10A. Phase 9G closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the final human acceptance
+runtime, canonical accepted-state follow-up fixes, focused validation, and
+artifact/doc alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -3872,4 +3871,71 @@ behavior.
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
 - no MCP support, external UI, or concurrent-agent operation in this slice
+- no Git automation
+
+## Phase 10A - External Workspace Controller Contract
+
+### Status
+
+Active. First planning slice under Phase 10, focused on defining how this
+controller repo can safely target an external workspace or repository without
+collapsing controller-owned and target-owned responsibilities, runtime state,
+or artifact truth.
+
+### Objective
+
+Define the External Workspace Controller Contract for the agent loop. This
+slice should specify how the controller repo can target a different workspace
+or repository safely, what remains controller-owned versus target-owned, where
+`.agent-loop` artifacts live, how attach/bootstrap and refusal behavior must
+work, and which later Phase 10 slices implement those behaviors.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10A as active
+- `.agent-loop/phase-plan.md` records Phase 9G as closed history and contains a
+  `## Phase 10A - External Workspace Controller Contract` section with concrete
+  objective, done criteria, and exclusions
+- the repository defines, in concrete contract form, how a controller repo may
+  safely target an external workspace or repository without collapsing
+  controller-owned and target-owned responsibilities
+- the contract explicitly defines controller-owned versus target-owned
+  artifacts, path boundaries, attach/bootstrap expectations, refusal behavior,
+  and approval gates before any Phase 10B implementation work begins
+- the contract preserves the shipped artifact/source-of-truth boundary:
+  canonical repo artifacts remain authoritative, and any future
+  external-workspace metadata or UI surfaces remain advisory unless explicitly
+  promoted by contract
+- the contract preserves the shipped CLI-first workflow,
+  planner/activation boundaries, approval semantics, halt/refusal vocabulary,
+  checkpoint/resume behavior, cycle thresholds, and repo-artifact
+  source-of-truth model
+- focused validation proves the new contract is concrete, internally
+  consistent, ASCII-safe, and reflected accurately in the repo planning/docs
+  surfaces
+- `README.md` reflects that Phase 10A is active and that the external-workspace
+  controller contract is now the implementation focus
+
+### Exclusions
+
+- no external workspace bootstrap, attach flow, or target selection runtime
+  (Phase 10B)
+- no external UI, dashboard, or run-control implementation (Phase 10C and
+  later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
 - no Git automation
