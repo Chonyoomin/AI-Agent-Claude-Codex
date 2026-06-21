@@ -51,8 +51,21 @@ PHASE_8B_DOC_PATHS = (
 # fully autonomous PRD-to-product mode).
 AUTONOMY_CONTRACT_PATH = REPO_ROOT / "docs" / "autonomy-contract.md"
 PHASE_9A_DOC_PATHS = (AUTONOMY_CONTRACT_PATH,)
+
+# Phase 10A external workspace controller contract doc (External
+# Workspace Controller Contract slice; documentation-only contract for
+# the future Phase 10 external-workspace runtime that lets the
+# controller repository safely target a separate workspace or
+# repository).
+EXTERNAL_WORKSPACE_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "external-workspace-contract.md"
+)
+PHASE_10A_DOC_PATHS = (EXTERNAL_WORKSPACE_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
-    PHASE_8A_DOC_PATHS + PHASE_8B_DOC_PATHS + PHASE_9A_DOC_PATHS
+    PHASE_8A_DOC_PATHS
+    + PHASE_8B_DOC_PATHS
+    + PHASE_9A_DOC_PATHS
+    + PHASE_10A_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -1714,6 +1727,301 @@ class ReadmeMarksPhase9gAsActiveTests(unittest.TestCase):
                 fragment, self.text,
                 f"README.md Phase 9G paragraph does not document "
                 f"refusal-mode fragment {fragment!r}",
+            )
+
+
+class ExternalWorkspaceContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10A: the external-workspace controller contract doc must
+    exist on disk, be non-empty, be ASCII-only, and carry the canonical
+    section headers a Phase 10B implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = EXTERNAL_WORKSPACE_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10A external-workspace contract doc at "
+            f"{self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/external-workspace-contract.md contains "
+                f"non-ASCII bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# External Workspace Controller Contract",
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Self-Targeting Mode",
+            "## Controller-Owned Artifacts",
+            "## Target-Owned Artifacts",
+            "## Path Resolution",
+            "## Attach And Bootstrap",
+            "## Refusal Behavior",
+            "## Approval Gates",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Out Of Scope For Phase 10A",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/external-workspace-contract.md missing "
+                f"required section header {header!r}",
+            )
+
+
+class ExternalWorkspaceContractDistinguishesShippedModeTests(
+    unittest.TestCase,
+):
+    """The contract must explicitly distinguish the future Phase 10
+    external-workspace mode from the shipped self-targeting mode so a
+    reader cannot conflate them. This is the load-bearing scope
+    distinction the Phase 9A autonomy contract uses too.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_WORKSPACE_CONTRACT_PATH)
+        # Collapse whitespace so substring checks survive line-wrap.
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_marks_runtime_as_not_yet_implemented(self) -> None:
+        # Phase 10A is documentation-only; the doc must not silently
+        # promise the runtime as shipped.
+        self.assertIn(
+            "is NOT yet implemented", self.collapsed,
+            "docs/external-workspace-contract.md does not mark the "
+            "external-workspace runtime as not-yet-implemented",
+        )
+
+    def test_contract_locates_future_runtime_in_phase_10b_or_later(
+        self,
+    ) -> None:
+        # The contract must locate the future runtime in the right
+        # Phase 10 sub-phases so a reader knows which slices implement
+        # which piece.
+        for sub_phase in (
+            "Phase 10B",
+            "Phase 10C",
+        ):
+            self.assertIn(
+                sub_phase, self.collapsed,
+                f"docs/external-workspace-contract.md does not name "
+                f"{sub_phase!r} as the locus for the corresponding "
+                f"future runtime work",
+            )
+
+    def test_contract_names_shipped_self_targeting_mode(self) -> None:
+        # The contract must explicitly call out the shipped
+        # self-targeting mode as a distinct, preserved mode rather
+        # than silently replacing it.
+        for fragment in (
+            "shipped self-targeting mode",
+            "find_repo_root",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"docs/external-workspace-contract.md does not "
+                f"reference the shipped self-targeting mode via "
+                f"{fragment!r}",
+            )
+
+
+class ExternalWorkspaceContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The Phase 10A contract MUST preserve the shipped hard stops (no
+    Git automation, the Phase 4C activator + APPROVED_FOR_ACTIVATION
+    gate, the Phase 9G final human acceptance gate, the source-of-truth
+    boundary). Operators read this section to verify the contract does
+    not weaken the shipped safety boundaries before any runtime ships.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_WORKSPACE_CONTRACT_PATH)
+        # Collapse whitespace so substring checks survive line-wrap.
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+        self.collapsed_lower = self.collapsed.lower()
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        # The repo-wide no-Git-automation boundary must apply in BOTH
+        # roots (controller and target) under Phase 10.
+        for fragment in (
+            "commit, push, tag, branch, stash, reset, checkout",
+            "BOTH roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"docs/external-workspace-contract.md does not "
+                f"preserve the no-Git-automation boundary via "
+                f"{fragment!r}",
+            )
+
+    def test_contract_preserves_approved_for_activation(self) -> None:
+        self.assertIn(
+            "APPROVED_FOR_ACTIVATION", self.collapsed,
+            "docs/external-workspace-contract.md does not preserve "
+            "the APPROVED_FOR_ACTIVATION human-approval gate",
+        )
+        self.assertIn(
+            "Phase 4C activator", self.collapsed,
+            "docs/external-workspace-contract.md does not name the "
+            "Phase 4C activator as the preserved activation step",
+        )
+
+    def test_contract_preserves_final_human_acceptance_gate(self) -> None:
+        # The Phase 9G gate must continue to apply per-target under
+        # Phase 10; the external-workspace mode never auto-accepts.
+        self.assertIn(
+            "Phase 9G", self.collapsed,
+            "docs/external-workspace-contract.md does not name the "
+            "Phase 9G final acceptance gate as a preserved boundary",
+        )
+        self.assertIn(
+            "final human acceptance", self.collapsed,
+            "docs/external-workspace-contract.md does not preserve "
+            "the final human acceptance / polish gate",
+        )
+
+    def test_contract_preserves_canonical_artifact_source_of_truth(
+        self,
+    ) -> None:
+        # Advisory descriptors / future UI MUST stay advisory. The
+        # contract must say so explicitly.
+        for fragment in (
+            "canonical artifacts on disk remain authoritative",
+            "advisory",
+        ):
+            self.assertIn(
+                fragment, self.collapsed_lower,
+                f"docs/external-workspace-contract.md does not "
+                f"preserve the canonical source-of-truth model via "
+                f"{fragment!r}",
+            )
+
+    def test_contract_refuses_controller_target_collapse(self) -> None:
+        # The two roots must be distinct; nesting and same-root are
+        # explicit refusal cases.
+        for fragment in (
+            "same as the controller root",
+            "nested inside the controller",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"docs/external-workspace-contract.md does not "
+                f"refuse the controller/target collapse via "
+                f"{fragment!r}",
+            )
+
+
+class ReadmePointsAtExternalWorkspaceContractDocTests(
+    unittest.TestCase,
+):
+    """Phase 10A: the README must route a reader at the new contract
+    doc and mark Phase 10A as the current active sub-phase.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_names_external_workspace_contract_doc(self) -> None:
+        # A clean-clone reader looking for the Phase 10A scope must be
+        # routed at the new contract doc by name.
+        self.assertIn(
+            "docs/external-workspace-contract.md", self.text,
+            "README.md does not route readers at the Phase 10A "
+            "external-workspace contract doc",
+        )
+
+
+class ReadmeMarksPhase10aAsActiveTests(unittest.TestCase):
+    """Phase 10A: README must name Phase 10A as the current active
+    sub-phase, describe the documentation-only contract surface (the
+    new `docs/external-workspace-contract.md` contract doc and the
+    controller-owned vs target-owned ownership boundary it pins), and
+    preserve the documented Phase 4 planner / Phase 4C activator
+    boundary plus the Phase 9G final human acceptance gate so the
+    contract does not silently weaken either.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_10a_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10A", self.text,
+            "README.md does not name Phase 10A as a current focus",
+        )
+        self.assertIn(
+            "External Workspace Controller Contract", self.text,
+            "README.md does not name the Phase 10A sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_contract_surface(self) -> None:
+        for fragment in (
+            "docs/external-workspace-contract.md",
+            ".agent-loop/external-target.json",
+            "controller-owned",
+            "target-owned",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10A paragraph does not name "
+                f"shipped contract surface {fragment!r}",
+            )
+
+    def test_readme_preserves_planner_activator_boundary(
+        self,
+    ) -> None:
+        # The Phase 10A paragraph must explicitly state that any
+        # target-side phase activation continues to require the
+        # shipped Phase 4C activator + APPROVED_FOR_ACTIVATION token.
+        for fragment in (
+            "Phase 4C activator",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10A paragraph does not preserve "
+                f"the {fragment!r} boundary",
+            )
+
+    def test_readme_preserves_phase_9g_final_acceptance_gate(
+        self,
+    ) -> None:
+        # The Phase 10A paragraph must explicitly state that the
+        # Phase 9G final acceptance gate continues to apply per-target.
+        self.assertIn(
+            "Phase 9G final human acceptance gate", self.text,
+            "README.md Phase 10A paragraph does not preserve the "
+            "Phase 9G final human acceptance gate per target",
+        )
+
+    def test_readme_marks_phase_10a_as_documentation_only(self) -> None:
+        # Phase 10A must NOT silently promise runtime behavior; the
+        # paragraph must explicitly mark itself as documentation /
+        # contract only with the runtime deferred to Phase 10B+.
+        for fragment in (
+            "documentation / contract only",
+            "Phase 10B",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10A paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
             )
 
 
