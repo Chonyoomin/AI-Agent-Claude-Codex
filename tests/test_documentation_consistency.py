@@ -1987,6 +1987,114 @@ class ExternalWorkspaceContractUsesRealPhase9eDescriptorPathTests(
         )
 
 
+class ExternalWorkspaceContractUsesCurrentPhase10DependencyMapTests(
+    unittest.TestCase,
+):
+    """Phase 10B fix: the Phase 10A baseline contract's future-phase
+    dependency map MUST match the current resliced Phase 10 plan, not
+    the pre-reslice mapping that named Phase 10B as "bootstrap and
+    attach flow" and Phase 10C as "runtime control / UI". The current
+    canonical slicing is:
+
+    - Phase 10B = External Target Attach Record Contract
+    - Phase 10C = External Target Bootstrap Contract
+    - Phase 10D = External Workspace Attach/Detach Runtime Initial Slice
+    - Phase 10E = External Target Bootstrap Runtime
+    - Phase 10F = Target-Side Cycle Dispatch
+    - Phase 10G = External UI / Dashboard / Run-Control
+
+    The previous fix cycle missed this because no test guarded the
+    Phase 10A doc's dependency map; this class is the guard.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_WORKSPACE_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_corrected_phase_10_dependency_map(
+        self,
+    ) -> None:
+        # Each Phase 10x label must be paired with its current
+        # canonical title at least once in the doc.
+        for label, title in (
+            ("Phase 10B", "External Target Attach Record Contract"),
+            ("Phase 10C", "External Target Bootstrap Contract"),
+            (
+                "Phase 10D",
+                "External Workspace Attach/Detach Runtime "
+                "Initial Slice",
+            ),
+            ("Phase 10E", "External Target Bootstrap Runtime"),
+            ("Phase 10F", "Target-Side Cycle Dispatch"),
+            (
+                "Phase 10G",
+                "External UI / Dashboard / Run-Control",
+            ),
+        ):
+            self.assertIn(
+                label, self.collapsed,
+                f"docs/external-workspace-contract.md does not name "
+                f"sub-phase {label!r}",
+            )
+            self.assertIn(
+                title, self.collapsed,
+                f"docs/external-workspace-contract.md does not name "
+                f"the canonical title {title!r} for {label!r}",
+            )
+
+    def test_contract_does_not_use_pre_reslice_phase_10b_mapping(
+        self,
+    ) -> None:
+        # The pre-reslice mapping put bootstrap-and-attach at 10B;
+        # the current canonical slicing puts the attach-record
+        # contract at 10B and the bootstrap contract at 10C.
+        for stale_fragment in (
+            "Phase 10B: external workspace bootstrap and attach flow",
+            "Phase 10B: External Workspace Bootstrap",
+            "external workspace bootstrap and attach flow",
+        ):
+            self.assertNotIn(
+                stale_fragment, self.collapsed,
+                f"docs/external-workspace-contract.md still carries "
+                f"the pre-reslice Phase 10B mapping via "
+                f"{stale_fragment!r}; the current canonical Phase "
+                f"10B title is 'External Target Attach Record "
+                f"Contract'",
+            )
+
+    def test_contract_does_not_use_pre_reslice_phase_10c_mapping(
+        self,
+    ) -> None:
+        # The pre-reslice mapping put runtime control / UI at 10C;
+        # the current canonical slicing puts the bootstrap contract
+        # at 10C and the external UI at 10G.
+        for stale_fragment in (
+            "Phase 10C: external workspace runtime control",
+            "Phase 10C and later) is advisory",
+            "Phase 10C and later",
+        ):
+            self.assertNotIn(
+                stale_fragment, self.collapsed,
+                f"docs/external-workspace-contract.md still carries "
+                f"the pre-reslice Phase 10C mapping via "
+                f"{stale_fragment!r}; the current canonical Phase "
+                f"10C title is 'External Target Bootstrap Contract' "
+                f"and the external UI / dashboard surface is now "
+                f"Phase 10G",
+            )
+
+    def test_contract_routes_external_ui_to_phase_10g(self) -> None:
+        # The advisory external-UI / dashboard / notification-stream
+        # disclaimer in the Source-Of-Truth-Preservation section
+        # must point at Phase 10G now, not Phase 10C.
+        self.assertIn(
+            "Phase 10G", self.collapsed,
+            "docs/external-workspace-contract.md does not route the "
+            "external UI / dashboard / notification-stream advisory "
+            "at Phase 10G",
+        )
+
+
 class ReadmePointsAtExternalWorkspaceContractDocTests(
     unittest.TestCase,
 ):

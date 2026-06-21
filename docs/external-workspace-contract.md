@@ -12,11 +12,23 @@ which boundaries are preserved from the shipped Phase 1 - 9 system.
 Implementation of the external-workspace runtime is deferred to later Phase 10
 sub-phases:
 
-- Phase 10B: external workspace bootstrap and attach flow
-- Phase 10C: external workspace runtime control (UI / dashboard / run control)
-- Phase 10D and later: additional external-workspace capabilities tracked in
-  `ROADMAP.md` (concurrent Codex / Claude execution, MCP integration, RAG
-  layer, GitHub integration, model-policy extensibility)
+- Phase 10B: External Target Attach Record Contract (controller-owned
+  attach-record schema; see
+  `docs/external-target-attach-record-contract.md`)
+- Phase 10C: External Target Bootstrap Contract (target-side canonical
+  artifact set bring-up; refusal behavior when bootstrap is incomplete)
+- Phase 10D: External Workspace Attach/Detach Runtime Initial Slice
+  (the CLI + library that writes and reads the Phase 10B attach record)
+- Phase 10E: External Target Bootstrap Runtime (the CLI + library that
+  satisfies the Phase 10C bootstrap contract)
+- Phase 10F: Target-Side Cycle Dispatch (per-target cycle routing
+  through the shipped Phase 5 approval-mode runtime semantics)
+- Phase 10G: External UI / Dashboard / Run-Control (advisory external
+  surfaces over the canonical attach record + per-target loop-state)
+- Phase 10H and later: additional external-workspace capabilities
+  tracked in `ROADMAP.md` (concurrent Codex / Claude execution, MCP
+  integration, RAG layer, GitHub integration, model-policy
+  extensibility)
 
 ## Scope
 
@@ -261,7 +273,7 @@ by this contract:
   per-target audit trail; the controller's own audit log records attach
   / detach / refusal events but never substitutes for the target's
   per-cycle audit history
-- any external UI surface, dashboard, or notification stream (Phase 10C
+- any external UI surface, dashboard, or notification stream (Phase 10G
   and later) is advisory only; the underlying canonical artifacts win
   on disagreement
 

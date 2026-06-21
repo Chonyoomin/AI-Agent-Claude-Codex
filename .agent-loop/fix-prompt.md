@@ -1,33 +1,39 @@
 # Claude Code Fix Task
 
 ## Phase
-Phase 10 - Future Product Features (sub-phase: Phase 10A - External Workspace Controller Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10B - External Target Attach Record Contract)
 
 ## Objective
-Align the new Phase 10A external-workspace contract surfaces with the actual shipped Phase 9E artifact name so the contract does not teach a non-existent descriptor path.
+Fix the remaining Phase 10 contract-alignment issues by correcting the stale future-phase mapping in the Phase 10A baseline contract and adding focused test coverage so the Phase 10A and Phase 10B dependency map cannot drift again.
 
 ## Context
-Codex re-reviewed the current Phase 10A repo state and found one remaining documentation-contract mismatch:
+Codex re-reviewed the current Phase 10B repo state and found two Claude-owned follow-ups:
 
-1. The new external-workspace contract names the Phase 9E target-owned descriptor as `.agent-loop/long-run-loop.json`, and the new README Phase 10A paragraph repeats the same name. That path is not a shipped artifact. The actual Phase 9E descriptor path in the repo is `.agent-loop/long-run-continuation.json` (`LONG_RUN_CONTINUATION_OUTPUT_REL` in `scripts/agent_loop.py`), and the existing documentation-consistency tests already lock that real name in for Phase 9E. As written, the new Phase 10A contract teaches future implementers and operators to reason about the wrong canonical artifact name.
+1. `docs/external-workspace-contract.md` still uses the pre-reslice Phase 10 dependency map. Its `## Status` section says `Phase 10B` is "external workspace bootstrap and attach flow" and `Phase 10C` is runtime control/UI. That is now wrong relative to the active plan and shipped canonical artifacts: Phase 10B is the attach-record contract, Phase 10C is the bootstrap contract, Phase 10D is the attach/detach runtime, Phase 10E is the bootstrap runtime, Phase 10F is target-side cycle dispatch, and Phase 10G is the external UI/dashboard/run-control slice.
+
+2. `tests/test_documentation_consistency.py` does not currently assert that the older Phase 10A baseline contract uses the current resliced Phase 10 dependency map. Because that guard is missing, the stale 10A phase-ordering text survived even though the new 10B doc and README tests passed.
 
 ## Required fixes
-- update the Phase 10A documentation surfaces so they use the real shipped Phase 9E descriptor path:
-  - `docs/external-workspace-contract.md`
-  - `README.md`
-- add or adjust focused documentation-consistency coverage so this exact Phase 9E artifact-name mismatch would fail closed if it reappears
-- preserve the Phase 10A scope:
-  - documentation/contract only
+- update `docs/external-workspace-contract.md` so its future Phase 10 dependency list matches the current canonical slicing:
+  - Phase 10B = External Target Attach Record Contract
+  - Phase 10C = External Target Bootstrap Contract
+  - Phase 10D = External Workspace Attach/Detach Runtime Initial Slice
+  - Phase 10E = External Target Bootstrap Runtime
+  - Phase 10F = Target-Side Cycle Dispatch
+  - Phase 10G = External UI / Dashboard / Run-Control
+- keep the Phase 10A contract narrow:
+  - this is still documentation/contract only
   - no runtime implementation
-  - no new CLI or Python behavior
+  - no new CLI or Python runtime behavior
   - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
-- keep the surrounding contract text intact unless a small supporting edit is required for internal consistency
+- add or adjust focused documentation-consistency tests so the stale Phase 10A future-phase mapping would fail closed if it reappears
+- preserve the existing Phase 10B contract and README content unless a very small supporting edit is required for internal consistency
 
 ## Constraints
 - follow `CLAUDE.md`
-- stay within Phase 10A scope
+- stay within Phase 10B fix scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
-- prefer the smallest safe doc/test change that removes the wrong `.agent-loop/long-run-loop.json` artifact name
+- prefer the smallest safe doc/test change that removes the stale dependency map and locks the corrected one in
 
 ## Required output
-After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include focused validation showing the corrected Phase 9E artifact path is now used consistently.
+After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include focused validation showing the corrected Phase 10A dependency map and the new consistency coverage both pass.
