@@ -9482,13 +9482,23 @@ def record_final_acceptance(
         re-acceptance; the operator must explicitly delete the
         prior artifact to re-record, which leaves an audit trail)
 
-    On success the artifact is written to disk, a `final
+    On success the artifact is written to disk FIRST, then
+    `loop-state.status` is transitioned from
+    `FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS` to
+    `FINAL_ACCEPTANCE_ACCEPTED_STATUS` so the canonical state
+    model itself reflects accepted completion; a `final
     acceptance: recorded ...` audit line is appended to
-    `log_path` (when supplied), and the artifact path is returned.
-    The function does NOT mutate loop-state.json. Recording
-    acceptance is a gate, not an activation: the shipped Phase 4C
+    `log_path` (when supplied); the artifact path is returned.
+    No other loop-state field is mutated. Recording acceptance
+    is a gate, not an activation: the shipped Phase 4C
     activator + the human-gated APPROVED_FOR_ACTIVATION token
-    remain the only path to the next phase.
+    remain the only path to the next phase. The artifact-first
+    ordering means a `save_loop_state` failure after the
+    artifact write leaves the system in a torn state the
+    evaluator detects (returns
+    `awaiting_final_human_acceptance` with
+    `acceptance_artifact_matches_loop_state=True` plus a "torn
+    state" reason) rather than silently advancing.
     """
     al = repo_root / ".agent-loop"
     state_path = al / "loop-state.json"

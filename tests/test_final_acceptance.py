@@ -33,10 +33,18 @@ The tests prove:
   - the symmetric Phase 9 protected output sets all include the
     new `.agent-loop/final-acceptance.json` path so no other
     Phase 9 slice can overwrite it through its own output flag
-  - the recorder does NOT mutate loop-state (gate, not
-    activation); the shipped Phase 4C activator +
+  - the recorder writes the artifact first, then transitions
+    only `loop-state.status` from
+    `phase_complete_awaiting_human_approval` to
+    `phase_complete_final_human_accepted` so the canonical state
+    model itself reflects accepted completion; no other
+    loop-state field is mutated. Recording remains a gate, not
+    an activation: the shipped Phase 4C activator +
     APPROVED_FOR_ACTIVATION human approval remain the only path
-    to the next phase
+    to the next phase. The artifact-first ordering means a
+    `save_loop_state` failure after the artifact write leaves a
+    torn state the evaluator detects rather than silently
+    advancing.
 """
 from __future__ import annotations
 

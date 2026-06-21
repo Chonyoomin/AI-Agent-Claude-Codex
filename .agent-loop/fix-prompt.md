@@ -4,32 +4,30 @@
 Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9G - Final Human Acceptance And Polish Gate)
 
 ## Objective
-Close the remaining Phase 9G contract gap so explicit final human acceptance is reflected in the canonical state model, not only in the separate `.agent-loop/final-acceptance.json` evaluator path.
+Remove the remaining stale Phase 9G non-mutation wording so the shipped code/tests describe the current canonical accepted-state behavior accurately.
 
 ## Context
-Codex re-reviewed the current Phase 9G repo state and found one remaining issue:
+Codex re-reviewed the updated Phase 9G repo state and found one residual mismatch:
 
-1. The shipped Phase 9G slice records final human acceptance into `.agent-loop/final-acceptance.json` and `evaluate_final_acceptance(...)` can report `final_acceptance_recorded`, but the canonical loop-state model still stops at `status == "phase_complete_awaiting_human_approval"` with `last_verdict == "APPROVED_FOR_HUMAN_REVIEW"`. The Phase 9G task contract explicitly says Codex should update the canonical phase/task artifacts to reflect the accepted terminal state rather than relying on runtime-only signals. Today `record_final_acceptance(...)` intentionally does not mutate `loop-state.json`, `cmd_record_final_acceptance(...)` repeats that contract, the tests assert the non-mutation behavior, and the README documents the same split-state model. That leaves final human acceptance authoritative only through the separate artifact/evaluator path instead of being representable in the canonical state model itself.
+1. The implementation now correctly transitions `loop-state.status` to `phase_complete_final_human_accepted` during `record_final_acceptance(...)`, and the README plus most tests were updated to match. However, the `record_final_acceptance(...)` docstring in `scripts/agent_loop.py` still says "The function does NOT mutate loop-state.json", and the top-of-file test contract comment in `tests/test_final_acceptance.py` still says "the recorder does NOT mutate loop-state". Those statements are now false. This is no longer a runtime bug, but it is still a shipped contract/documentation mismatch inside the authoritative code/test surface.
 
 ## Required fixes
-- implement the narrowest safe Phase 9G change that makes accepted completion visible through the canonical state model, not only through `.agent-loop/final-acceptance.json`
-- keep the explicit human gate intact:
-  - no silent auto-acceptance
-  - no bypass of the required `accepted_by` / optional `notes` recording flow
-  - no automatic next-phase activation behavior
-- update the relevant runtime/docs/tests together so the contract is internally consistent:
+- update the stale Phase 9G wording in the remaining code/test self-documentation so it matches the current implementation:
   - `scripts/agent_loop.py`
   - `tests/test_final_acceptance.py`
-  - `README.md`
-  - `.agent-loop/claude-summary.md`
-- preserve the existing fail-closed behavior for malformed loop-state, malformed acceptance artifacts, stale acceptance artifacts, output-boundary violations, and re-acceptance without explicit delete/re-record
-- keep scope limited to the Phase 9G final-acceptance contract gap; do not widen into new Phase 9 features
+- preserve the actual shipped behavior:
+  - `record_final_acceptance(...)` writes the artifact first, then transitions only `loop-state.status`
+  - no other loop-state fields are mutated
+  - recording remains a gate, not an activation
+  - explicit human acceptance, artifact validation, and re-record refusal behavior remain unchanged
+- keep scope narrow: this is an internal consistency/docstring cleanup, not new Phase 9 behavior
+- update `.agent-loop/claude-summary.md` with the focused fix and validation evidence
 
 ## Constraints
 - follow `CLAUDE.md`
 - stay within Phase 9G scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
-- prefer the smallest coherent implementation that removes the split-brain between accepted completion and canonical loop-state
+- prefer the smallest safe text-only/code-comment/docstring change that removes the stale non-mutation wording
 
 ## Required output
-After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include focused validation showing the new canonical accepted-state behavior.
+After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include focused validation showing the remaining stale wording is gone.
