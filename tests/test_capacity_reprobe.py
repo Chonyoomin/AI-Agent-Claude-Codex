@@ -1732,18 +1732,34 @@ class CodexSideCapacityHaltTests(unittest.TestCase):
         self,
     ) -> None:
         # The Codex-side resume path must not touch the Claude
-        # adapter even when invoke_adapter=True (the flag only
-        # controls Claude prompt handoff dispatch, and the Codex-
-        # side path skips that dispatch entirely).
-        invocations: list[str] = []
+        # adapter even when invoke_adapter=True. The flag dispatches
+        # the Codex review wait (not a Claude prompt handoff) for
+        # the Codex-side branch.
+        claude_invocations: list[str] = []
+        codex_invocations: list[str] = []
 
         class _UnexpectedClaude:
             def invoke(self, prompt_path, summary_path):
-                invocations.append(prompt_path.name)
+                claude_invocations.append(prompt_path.name)
                 from agent_loop import ExecutionResult
                 return ExecutionResult(
                     exit_code=0,
-                    model_id="unexpected",
+                    model_id="unexpected-claude",
+                    duration_seconds=0.0,
+                )
+
+        class _StubCodex:
+            def wait_for_review(self, review_path):
+                codex_invocations.append(review_path.name)
+                review_path.write_text(
+                    "# Codex Review\n\n## Verdict\n"
+                    "APPROVED_FOR_HUMAN_REVIEW\n",
+                    encoding="utf-8",
+                )
+                from agent_loop import ExecutionResult
+                return ExecutionResult(
+                    exit_code=0,
+                    model_id="codex-stub-model",
                     duration_seconds=0.0,
                 )
 
@@ -1753,6 +1769,9 @@ class CodexSideCapacityHaltTests(unittest.TestCase):
             with mock.patch(
                 "agent_loop.make_claude_adapter",
                 lambda: _UnexpectedClaude(),
+            ), mock.patch(
+                "agent_loop.make_codex_adapter",
+                lambda: _StubCodex(),
             ):
                 agent_loop.reprobe_capacity_and_resume(
                     repo,
@@ -1762,9 +1781,16 @@ class CodexSideCapacityHaltTests(unittest.TestCase):
                     # invoke_adapter defaults to True
                 )
             self.assertEqual(
-                invocations, [],
+                claude_invocations, [],
                 "Codex-side resume must NOT invoke the Claude "
                 "adapter even when invoke_adapter=True",
+            )
+            # Codex IS invoked on the Codex-side resume path
+            # (Phase 9F fix-cycle: close the automatic-resume gap).
+            self.assertEqual(
+                codex_invocations, ["codex-review.md"],
+                "Codex-side resume must invoke the Codex adapter "
+                "with the canonical codex-review.md path",
             )
 
     def test_long_run_resume_routes_codex_side_capacity_halt(
@@ -1882,6 +1908,263 @@ class CodexSideCapacityHaltTests(unittest.TestCase):
             self.assertIn(
                 "supported resume target", str(ctx.exception),
             )
+
+
+class CodexSideAutomaticResumeTests(unittest.TestCase):
+    """Phase 9F fix-cycle: a successful capacity reprobe from
+    `awaiting_codex_review` resumes the suspended Codex review
+    step AUTOMATICALLY by invoking the shipped Codex adapter
+    (via `make_codex_adapter().wait_for_review(...)`) against the
+    already-captured Claude summary + evidence, not merely
+    restoring loop-state.status. The standalone CLI success path
+    + the library entry both honor this contract.
+    """
+
+    def _stub_codex(self, invocations, model_id="codex-stub-v1"):
+        class _StubCodex:
+            def wait_for_review(self_inner, review_path):
+                invocations.append({
+                    "review_path": review_path.name,
+                })
+                review_path.write_text(
+                    "# Codex Review\n\n## Verdict\n"
+                    "APPROVED_FOR_HUMAN_REVIEW\n",
+                    encoding="utf-8",
+                )
+                from agent_loop import ExecutionResult
+                return ExecutionResult(
+                    exit_code=0,
+                    model_id=model_id,
+                    duration_seconds=0.0,
+                )
+        return _StubCodex()
+
+    def test_library_resume_invokes_codex_adapter_by_default(
+        self,
+    ) -> None:
+        invocations: list[dict] = []
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            with mock.patch(
+                "agent_loop.make_codex_adapter",
+                lambda: self._stub_codex(invocations),
+            ):
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    suspended_status="awaiting_codex_review",
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    # invoke_adapter defaults to True
+                )
+            self.assertEqual(len(invocations), 1)
+            self.assertEqual(
+                invocations[0]["review_path"], "codex-review.md",
+            )
+            # Codex adapter actually wrote the review artifact.
+            review_path = (
+                repo / ".agent-loop" / "codex-review.md"
+            )
+            self.assertTrue(review_path.exists())
+
+    def test_resume_saves_codex_version_on_invocation(
+        self,
+    ) -> None:
+        invocations: list[dict] = []
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(repo)
+            with mock.patch(
+                "agent_loop.make_codex_adapter",
+                lambda: self._stub_codex(
+                    invocations, model_id="codex-resume-v9",
+                ),
+            ):
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    suspended_status="awaiting_codex_review",
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                )
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["codex_version"], "codex-resume-v9",
+                "the resumed Codex review must persist its model_id "
+                "into loop-state.codex_version when the adapter "
+                "self-reports it (mirrors the normal-cycle Codex "
+                "review step contract)",
+            )
+
+    def test_resume_audit_records_codex_review_invoked(self) -> None:
+        invocations: list[dict] = []
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            log = repo / ".agent-loop" / "orchestrator.log"
+            with mock.patch(
+                "agent_loop.make_codex_adapter",
+                lambda: self._stub_codex(invocations),
+            ):
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    suspended_status="awaiting_codex_review",
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    log_path=log,
+                )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn(
+                "capacity reprobe: resumed", audit,
+            )
+            self.assertIn("handoff_mode='codex_review'", audit)
+            self.assertNotIn(
+                "handoff_mode='codex_review_pending'", audit,
+                "the audit line must record 'codex_review' (active "
+                "dispatch) when invoke_adapter=True, not the "
+                "descriptor-free 'codex_review_pending' marker",
+            )
+            self.assertIn(
+                "capacity reprobe: codex_review_invoked", audit,
+            )
+            self.assertIn("exit_code=0", audit)
+
+    def test_dry_run_invoke_adapter_false_keeps_descriptor_free(
+        self,
+    ) -> None:
+        # Explicit invoke_adapter=False keeps the prior behavior:
+        # restore status, audit codex_review_pending, do NOT call
+        # the Codex adapter.
+        invocations: list[dict] = []
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            log = repo / ".agent-loop" / "orchestrator.log"
+            with mock.patch(
+                "agent_loop.make_codex_adapter",
+                lambda: self._stub_codex(invocations),
+            ):
+                agent_loop.reprobe_capacity_and_resume(
+                    repo,
+                    suspended_status="awaiting_codex_review",
+                    sleep=_noop_sleep,
+                    probe=_always_true_probe,
+                    invoke_adapter=False,
+                    log_path=log,
+                )
+            self.assertEqual(
+                invocations, [],
+                "invoke_adapter=False must skip the Codex adapter "
+                "wait_for_review call on the Codex-side resume",
+            )
+            audit = log.read_text(encoding="utf-8")
+            self.assertIn(
+                "handoff_mode='codex_review_pending'", audit,
+            )
+
+    def test_cli_success_path_invokes_codex_adapter(self) -> None:
+        # The standalone CLI success path (no --no-invoke-adapter)
+        # now actively invokes the Codex adapter on a Codex-side
+        # resume; it no longer stops at restore-only behavior.
+        invocations: list[dict] = []
+        import os
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        prev_cwd = os.getcwd()
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo, status="awaiting_codex_review",
+            )
+            agent_loop.record_capacity_halt(repo)
+            os.chdir(repo)
+            try:
+                with mock.patch(
+                    "agent_loop.make_codex_adapter",
+                    lambda: self._stub_codex(invocations),
+                ), mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    rc = agent_loop.main([
+                        "run-capacity-reprobe",
+                        "--max-attempts", "1",
+                        "--initial-backoff-seconds", "0.001",
+                        "--max-backoff-seconds", "0.001",
+                    ])
+                self.assertEqual(rc, 0)
+                self.assertEqual(
+                    len(invocations), 1,
+                    "CLI success path must invoke the Codex "
+                    "adapter on a Codex-side resume",
+                )
+                # codex-review.md was written by the stub.
+                review_path = (
+                    repo / ".agent-loop" / "codex-review.md"
+                )
+                self.assertTrue(review_path.exists())
+            finally:
+                os.chdir(prev_cwd)
+                if prev is None:
+                    os.environ.pop(
+                        agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+                    )
+                else:
+                    os.environ[
+                        agent_loop.CAPACITY_PROBE_ENV_VAR
+                    ] = prev
+
+    def test_long_run_resume_invokes_codex_when_flag_true(
+        self,
+    ) -> None:
+        # Phase 9E integration: the long-run loop's
+        # invoke_claude_adapter=True forwards into the reprobe
+        # call's invoke_adapter=True; on the Codex-side resume
+        # this dispatches the Codex review wait. The long-run
+        # hop's review/fix iteration still runs after, but the
+        # capacity-reprobe hop itself owns the Codex adapter
+        # invocation for the suspended step.
+        codex_invocations: list[dict] = []
+        import os
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(
+                    repo, status="awaiting_codex_review",
+                )
+                _plant_prompts(repo)
+                agent_loop.record_capacity_halt(repo)
+                with mock.patch(
+                    "agent_loop.make_codex_adapter",
+                    lambda: self._stub_codex(codex_invocations),
+                ), mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=1,
+                        capture_evidence=False,
+                        # invoke_codex_adapter=False prevents the
+                        # next-hop review/fix iteration from
+                        # invoking Codex a second time; the
+                        # capacity-reprobe hop's invocation is the
+                        # one under test.
+                        invoke_codex_adapter=False,
+                        invoke_claude_adapter=True,
+                    )
+                self.assertEqual(
+                    len(codex_invocations), 1,
+                    "long-run loop with invoke_claude_adapter=True "
+                    "must dispatch the Codex review wait as part "
+                    "of the Codex-side resume hop",
+                )
+        finally:
+            if prev is None:
+                os.environ.pop(
+                    agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+                )
+            else:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
 
 
 class CapacityReprobeHelpTextTests(unittest.TestCase):

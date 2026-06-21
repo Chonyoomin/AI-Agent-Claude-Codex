@@ -8756,26 +8756,36 @@ def reprobe_capacity_and_resume(
              handoff via `dispatch_prompt_handoff(mode=fix, ...)`
              (replays `.agent-loop/fix-prompt.md`)
            - `awaiting_codex_review` -> Codex-side capacity halt;
-             the resume restores the status only. The next
-             orchestrator step (Phase 9E review/fix iteration via
-             `run_internal_review_fix_cycle(...)` or the shipped
-             Codex review continuation a normal cycle drives)
-             invokes the Codex adapter against the
-             already-captured Claude summary + evidence. The Phase
-             9F seam does NOT synchronously re-invoke the Codex
-             adapter because the verdict-handling loop
-             (`_handle_verdict_loop`) is the canonical owner of
-             the post-review routing.
-         `invoke_adapter` is forwarded into
-         `dispatch_prompt_handoff(...)` for the Claude-side branches
-         so callers can write the handoff descriptor without
-         actually invoking the Claude adapter (tests and dry-run
-         operators); the Codex-side branch is descriptor-free so
-         the flag has no effect there. Writes a
-         `capacity reprobe: resumed ...` audit line capturing the
-         routing decision and returns the retry-state path (which
-         no longer exists on disk; the return value is the path
-         the operator can re-run reprobe against later).
+             invokes the shipped Codex adapter via
+             `make_codex_adapter().wait_for_review(review_path)`
+             against the already-captured Claude summary +
+             evidence so the suspended Codex review actually
+             runs. Saves `codex_version` into loop-state when the
+             adapter self-reports a model id. A non-zero adapter
+             exit code is recorded in the audit log but does NOT
+             raise; the canonical `.agent-loop/codex-review.md`
+             (when the adapter wrote one) plus the audit line are
+             the source-of-truth signals the next orchestrator
+             step consumes. This branch deliberately stops short
+             of parsing the review or driving the verdict loop;
+             `_handle_verdict_loop` remains the canonical owner
+             of post-review routing.
+         `invoke_adapter` controls actual adapter invocation in
+         every supported branch: for Claude-side it is forwarded
+         into `dispatch_prompt_handoff(...)`; for Codex-side it
+         gates the `wait_for_review(...)` call. `invoke_adapter=
+         False` keeps the call descriptor-free / dispatch-free so
+         tests and dry-run operators can preview the resume
+         routing without consuming Claude or Codex capacity.
+         Writes a `capacity reprobe: resumed ...` audit line
+         capturing the routing decision (handoff_mode is
+         `implementation` / `fix` / `codex_review` /
+         `codex_review_pending`); on the Codex-side invoked path
+         also emits a `capacity reprobe: codex_review_invoked
+         ...` audit line with the adapter outcome. Returns the
+         retry-state path (which no longer exists on disk; the
+         return value is the path the operator can re-run reprobe
+         against later).
       5. On `False`: persists the updated retry-state with the
          attempt history, writes a `capacity reprobe: attempt
          failed ...` audit line, and continues to the next
@@ -9032,12 +9042,55 @@ def reprobe_capacity_and_resume(
                 )
             else:
                 # awaiting_codex_review: Codex-side capacity halt.
-                # The continuation routing is the next orchestrator
-                # step's Codex review invocation, not a Claude
-                # prompt re-dispatch. Recording the routing
-                # decision in the audit line lets the operator see
-                # which continuation path the resume targeted.
-                handoff_mode = "codex_review_pending"
+                # Resume by invoking the shipped Codex adapter
+                # against the already-captured Claude summary +
+                # evidence so the suspended Codex review step
+                # actually runs (Phase 9F fix-cycle: close the
+                # Codex-side automatic-resume gap; restoring
+                # loop-state.status alone fell short of the
+                # contract "resume the exact suspended step
+                # automatically when capacity returns"). The
+                # `invoke_adapter` flag controls whether the
+                # adapter is actually invoked (mirroring how it
+                # controls dispatch_prompt_handoff for the
+                # Claude-side branches): True dispatches the
+                # Codex review wait, False keeps the descriptor-
+                # free routing-decision-only behavior so dry-run
+                # operators can preview the resume routing
+                # without consuming Codex capacity. Following the
+                # dispatch_prompt_handoff pattern, a non-zero
+                # adapter exit code is recorded into the audit
+                # log but does NOT raise; the canonical
+                # codex-review.md (when the adapter wrote one)
+                # plus the audit-log line are the
+                # source-of-truth signals the next orchestrator
+                # step consumes. The `_handle_verdict_loop`
+                # remains the canonical owner of post-review
+                # routing; this branch deliberately stops short
+                # of parsing the review or driving the verdict
+                # loop.
+                if invoke_adapter:
+                    handoff_mode = "codex_review"
+                    review_path = al / "codex-review.md"
+                    codex_adapter = make_codex_adapter()
+                    codex_result = codex_adapter.wait_for_review(
+                        review_path,
+                    )
+                    if codex_result.model_id is not None:
+                        data = save_loop_state(
+                            state_path, data,
+                            {"codex_version": codex_result.model_id},
+                        )
+                    _audit(
+                        f"{CAPACITY_RETRY_AUDIT_NOTE_PREFIX} "
+                        f"codex_review_invoked "
+                        f"exit_code={codex_result.exit_code} "
+                        f"model_id={codex_result.model_id!r} "
+                        f"duration_seconds="
+                        f"{codex_result.duration_seconds}\n"
+                    )
+                else:
+                    handoff_mode = "codex_review_pending"
             _audit(
                 f"{CAPACITY_RETRY_AUDIT_NOTE_PREFIX} resumed "
                 f"suspended_status={restored_status!r} "
