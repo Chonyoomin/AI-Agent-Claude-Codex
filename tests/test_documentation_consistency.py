@@ -1357,12 +1357,13 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
         # 500 chars on each side of the keyword is enough to span the
         # densest Phase 9 paragraph in the README without becoming
         # so wide it stops being a useful proximity signal.
-        # Phase 9C, 9D, 9E, and 9F shipped in their own
-        # implementation slices; the must-be-deferred set covers
-        # only the still-unshipped Phase 9G runtime work.
-        for sub_phase in (
-            "Phase 9G",
-        ):
+        # Phase 9C, 9D, 9E, 9F, and 9G have all shipped in their
+        # own implementation slices; the must-be-deferred set is
+        # now empty for the Phase 9 surface (the Phase 9 runtime
+        # is complete through Phase 9G). The loop is kept as a
+        # structural guard so a future deferred sub-phase can be
+        # re-added here without restructuring the test.
+        for sub_phase in ():
             if sub_phase in self.text:
                 idx = self.text.find(sub_phase)
                 window = self.text[max(0, idx - 500): idx + 500]
@@ -1374,8 +1375,7 @@ class ReadmeMarksPhase9bAsActiveTests(unittest.TestCase):
                     self.fail(
                         f"README.md mentions {sub_phase!r} (offset "
                         f"{idx}) without a deferred / future / "
-                        f"roadmap context within 500 chars; Phase "
-                        f"9C-9G runtime work is not shipped"
+                        f"roadmap context within 500 chars"
                     )
 
     def test_readme_prd_intake_paragraph_names_canonical_precedence(
@@ -1642,6 +1642,78 @@ class ReadmeMarksPhase9fAsActiveTests(unittest.TestCase):
                 fragment, self.text,
                 f"README.md Phase 9F paragraph does not name "
                 f"the preserved {fragment!r} boundary",
+            )
+
+
+class ReadmeMarksPhase9gAsActiveTests(unittest.TestCase):
+    """Phase 9G: README must name Phase 9G as the current active
+    sub-phase, describe the shipped final-human-acceptance surface
+    (the `record-final-acceptance` and `evaluate-final-acceptance`
+    CLI subcommands, the `.agent-loop/final-acceptance.json`
+    canonical artifact, and the `awaiting_final_human_acceptance`
+    / `final_acceptance_recorded` signal vocabulary), and
+    preserve the documented Phase 4 planner / Phase 4C activator
+    boundary so the gate does not silently activate the next
+    phase.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_9g_as_active(self) -> None:
+        self.assertIn(
+            "Phase 9G", self.text,
+            "README.md does not name Phase 9G as a current focus",
+        )
+        self.assertIn(
+            "Final Human Acceptance And Polish Gate", self.text,
+            "README.md does not name the Phase 9G sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_acceptance_surface(self) -> None:
+        for fragment in (
+            "record-final-acceptance",
+            "evaluate-final-acceptance",
+            ".agent-loop/final-acceptance.json",
+            "awaiting_final_human_acceptance",
+            "final_acceptance_recorded",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9G paragraph does not name "
+                f"shipped surface {fragment!r}",
+            )
+
+    def test_readme_preserves_planner_activator_boundary(
+        self,
+    ) -> None:
+        # The Phase 9G paragraph must explicitly state that the
+        # acceptance gate does NOT activate the next phase; the
+        # shipped Phase 4C activator + APPROVED_FOR_ACTIVATION
+        # human approval are still the only path.
+        for fragment in (
+            "Phase 4C activator",
+            "APPROVED_FOR_ACTIVATION",
+            "gate, not an activation",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9G paragraph does not preserve "
+                f"the {fragment!r} boundary",
+            )
+
+    def test_readme_documents_acceptance_refusal_modes(self) -> None:
+        # The Phase 9G paragraph must name the load-bearing
+        # refusal modes so an operator can predict the behavior.
+        for fragment in (
+            "phase_complete_awaiting_human_approval",
+            "APPROVED_FOR_HUMAN_REVIEW",
+            "refuses silent re-acceptance",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 9G paragraph does not document "
+                f"refusal-mode fragment {fragment!r}",
             )
 
 

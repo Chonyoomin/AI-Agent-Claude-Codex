@@ -6071,6 +6071,13 @@ PRD_INTAKE_PROTECTED_OUTPUT_PATHS = frozenset({
     # artifact: symmetric protection so no other Phase 9 slice can
     # overwrite the Phase 9F retry-state through its own output flag.
     ".agent-loop/capacity-retry-state.json",
+    # Phase 9G final human acceptance + polish gate artifact:
+    # symmetric protection so no other Phase 9 slice can overwrite
+    # the Phase 9G final-acceptance artifact through its own output
+    # flag. The acceptance artifact is the canonical signal that
+    # the human has explicitly accepted a fully autonomous Phase 9
+    # run as complete.
+    ".agent-loop/final-acceptance.json",
 })
 
 
@@ -9159,6 +9166,526 @@ def reprobe_capacity_and_resume(
             f"budget, or abandon the run."
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Phase 9G: Final Human Acceptance And Polish Gate
+#
+# Final runtime-building slice under the approved Phase 9 autonomy
+# contract. Requires an explicit final human review, polish, and
+# acceptance step before a fully autonomous PRD-to-product run is
+# treated as complete. The shipped Phase 9B/9C/9D/9E/9F surfaces
+# can drive a PRD to a Codex-approved terminal (loop-state.status
+# = "phase_complete_awaiting_human_approval" + last_verdict =
+# "APPROVED_FOR_HUMAN_REVIEW"); Phase 9G adds the load-bearing
+# "but the human still has to look at it before we call it done"
+# gate the autonomy contract requires.
+#
+# The slice consists of:
+#   - a canonical authoritative artifact at
+#     `.agent-loop/final-acceptance.json` that records WHO accepted
+#     the run, WHEN, the loop-state snapshot at acceptance time,
+#     and any operator-supplied polish notes
+#   - a library function `record_final_acceptance(...)` that writes
+#     the artifact, audits the event, and refuses fail-closed when
+#     the run is not yet at the Codex-approved terminal, when an
+#     existing acceptance is already on disk (no silent
+#     re-acceptance), or when `accepted_by` is missing or empty
+#   - a library function `evaluate_final_acceptance(repo_root) ->
+#     dict` that reads canonical artifacts only and returns one of
+#     three signals: `not_ready` (the run has not reached the
+#     Codex-approved terminal), `awaiting_final_human_acceptance`
+#     (Codex-approved terminal reached but no acceptance artifact
+#     yet), `final_acceptance_recorded` (acceptance artifact present
+#     and matches the current loop-state)
+#   - matching CLI subcommands `record-final-acceptance` and
+#     `evaluate-final-acceptance`
+#
+# Boundary preservation (out of scope, deferred):
+#   - automatic next-phase activation (still gated by Phase 4C
+#     activator + APPROVED_FOR_ACTIVATION human approval)
+#   - any change to the Phase 9E completion-signal vocabulary;
+#     `evaluate_phase_completion(...)` continues to return
+#     `completion_approved` on the Codex terminal so existing
+#     Phase 9E callers stay byte-equivalent. Phase 9G is a
+#     separate evaluator that operators (and downstream tools)
+#     consult to decide whether the run is TRULY complete.
+#   - any change to the Phase 2A / 3A / 4A contract bodies
+#   - any change to the Phase 6F token-exhaustion primitive or
+#     the Phase 9F capacity-halt re-probe primitive
+#   - any auto-accepting completion or silent skip of the explicit
+#     final human gate
+# ---------------------------------------------------------------------------
+
+FINAL_ACCEPTANCE_SIGNAL_VERSION = "phase-9g-v1"
+FINAL_ACCEPTANCE_OUTPUT_REL = ".agent-loop/final-acceptance.json"
+FINAL_ACCEPTANCE_AUDIT_NOTE_PREFIX = "final acceptance:"
+FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS = (
+    "phase_complete_awaiting_human_approval"
+)
+FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT = "APPROVED_FOR_HUMAN_REVIEW"
+FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH = 200
+FINAL_ACCEPTANCE_MAX_NOTES_LENGTH = 8000
+FINAL_ACCEPTANCE_SIGNAL_NOT_READY = "not_ready"
+FINAL_ACCEPTANCE_SIGNAL_AWAITING = "awaiting_final_human_acceptance"
+FINAL_ACCEPTANCE_SIGNAL_RECORDED = "final_acceptance_recorded"
+FINAL_ACCEPTANCE_SIGNALS = frozenset({
+    FINAL_ACCEPTANCE_SIGNAL_NOT_READY,
+    FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+    FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+})
+FINAL_ACCEPTANCE_CANONICAL_PRECEDENCE_NOTE = (
+    "Phase 9G final-acceptance artifacts are the canonical "
+    "authoritative signal that a fully autonomous Phase 9 run has "
+    "been explicitly accepted by a human. The shipped Phase 4 "
+    "planner / Phase 4C activator (APPROVED_FOR_ACTIVATION human "
+    "approval) remain the only path to the NEXT phase. Phase 9G "
+    "is a gate, not an automatic activation; recording acceptance "
+    "does not advance loop-state past the Codex-approved terminal."
+)
+
+# Phase 9G output boundary: shares the Phase 9F protected set,
+# swaps self so the Phase 9G acceptance artifact is writable while
+# every sibling Phase 9 advisory descriptor (including the Phase 9F
+# retry-state) stays protected. Adding a new sibling to the chain
+# means inheriting the entire prior chain minus self plus the
+# immediately-prior self-default.
+FINAL_ACCEPTANCE_PROTECTED_OUTPUT_PATHS = frozenset(
+    (CAPACITY_RETRY_PROTECTED_OUTPUT_PATHS - {
+        ".agent-loop/final-acceptance.json",
+    }) | {
+        ".agent-loop/capacity-retry-state.json",
+    }
+)
+
+
+def _validate_final_acceptance_accepted_by(value) -> str:
+    """Refuse fail-closed on a missing, non-string, empty, or
+    over-bounded `accepted_by`. The acceptance artifact is the
+    canonical record of WHO accepted the run; a blank or anonymous
+    acceptance would defeat the purpose of the gate.
+    """
+    if value is None:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "final acceptance accepted_by is required; this is "
+                "the canonical record of WHO accepted the run and "
+                "cannot be blank"
+            ),
+        )
+    if not isinstance(value, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance accepted_by must be a string; "
+                f"got {type(value).__name__}={value!r}"
+            ),
+        )
+    stripped = value.strip()
+    if not stripped:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "final acceptance accepted_by must not be empty or "
+                "whitespace-only"
+            ),
+        )
+    if len(stripped) > FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance accepted_by exceeds "
+                f"FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH="
+                f"{FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH} chars "
+                f"(got {len(stripped)})"
+            ),
+        )
+    return stripped
+
+
+def _validate_final_acceptance_notes(value):
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance notes must be a string when "
+                f"supplied; got {type(value).__name__}={value!r}"
+            ),
+        )
+    if len(value) > FINAL_ACCEPTANCE_MAX_NOTES_LENGTH:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance notes exceeds "
+                f"FINAL_ACCEPTANCE_MAX_NOTES_LENGTH="
+                f"{FINAL_ACCEPTANCE_MAX_NOTES_LENGTH} chars "
+                f"(got {len(value)})"
+            ),
+        )
+    return value
+
+
+def _validate_final_acceptance_output_target(
+    repo_root: Path, output_path: Path,
+) -> None:
+    """Refuse fail-closed on an output path that targets a sibling
+    descriptor, escapes `.agent-loop/`, targets the memory subtree,
+    or resolves to an existing directory. Uses
+    `FINAL_ACCEPTANCE_PROTECTED_OUTPUT_PATHS`.
+    """
+    repo_resolved = repo_root.resolve()
+    out_resolved = output_path.resolve()
+    try:
+        rel = out_resolved.relative_to(repo_resolved).as_posix()
+    except ValueError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance output path escapes repo root: "
+                f"{output_path}"
+            ),
+        ) from exc
+    if not rel.startswith(".agent-loop/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance output path must be under "
+                f".agent-loop/; got {rel!r}"
+            ),
+        )
+    if rel in FINAL_ACCEPTANCE_PROTECTED_OUTPUT_PATHS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance output path {rel!r} is in "
+                f"FINAL_ACCEPTANCE_PROTECTED_OUTPUT_PATHS; the "
+                f"Phase 9G slice refuses to overwrite an "
+                f"orchestrator-owned, Codex-owned, or sibling "
+                f"Phase 9 advisory descriptor"
+            ),
+        )
+    if rel.startswith(".agent-loop/memory/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance output path {rel!r} is under "
+                f".agent-loop/memory/; that subtree is owned by "
+                f"the Phase 6 durable-memory writers"
+            ),
+        )
+    if out_resolved.exists() and out_resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance output path is a directory: "
+                f"{output_path}"
+            ),
+        )
+
+
+def record_final_acceptance(
+    repo_root: Path,
+    *,
+    accepted_by: Optional[str] = None,
+    notes: Optional[str] = None,
+    output_path: Optional[Path] = None,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Phase 9G: record explicit human acceptance of a fully
+    autonomous Phase 9 run.
+
+    Reads `.agent-loop/loop-state.json` (validated via the shipped
+    validators), requires the run to be at the Codex-approved
+    terminal (`status ==
+    FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS` AND `last_verdict
+    == FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT`), validates
+    `accepted_by` is a non-empty string (the canonical record of
+    WHO accepted), optionally validates `notes` is a bounded
+    string, and writes the canonical acceptance artifact to
+    `output_path` (defaults to
+    `.agent-loop/final-acceptance.json`).
+
+    The artifact captures a snapshot of the loop-state at
+    acceptance time (`phase`, `sub_phase`, `task`, `cycle_count`,
+    `last_verdict`) so the recorded acceptance is an auditable
+    point-in-time decision. Subsequent loop-state mutations do not
+    silently invalidate the artifact; instead
+    `evaluate_final_acceptance(...)` reports
+    `final_acceptance_recorded` only when the artifact matches the
+    current loop-state.
+
+    Refusal modes (all fail-closed via `HaltError(...)`):
+      - missing or malformed `loop-state.json`
+      - unsupported `contract_version`
+      - loop-state status != required terminal status
+      - loop-state last_verdict != required terminal verdict
+      - `accepted_by` is None, not a string, empty / whitespace
+        only, or longer than
+        `FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH`
+      - `notes` is not a string or exceeds
+        `FINAL_ACCEPTANCE_MAX_NOTES_LENGTH`
+      - output path resolves outside `.agent-loop/`, targets a
+        protected sibling Phase 9 descriptor (including the Phase
+        9F retry-state), is under `.agent-loop/memory/`, or
+        resolves to an existing directory
+      - an acceptance artifact already exists on disk at the
+        resolved output path (Phase 9G refuses silent
+        re-acceptance; the operator must explicitly delete the
+        prior artifact to re-record, which leaves an audit trail)
+
+    On success the artifact is written to disk, a `final
+    acceptance: recorded ...` audit line is appended to
+    `log_path` (when supplied), and the artifact path is returned.
+    The function does NOT mutate loop-state.json. Recording
+    acceptance is a gate, not an activation: the shipped Phase 4C
+    activator + the human-gated APPROVED_FOR_ACTIVATION token
+    remain the only path to the next phase.
+    """
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    status = str(data.get("status") or "")
+    last_verdict = data.get("last_verdict")
+    if status != FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance refused: loop-state.status="
+                f"{status!r}; expected "
+                f"{FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS!r} "
+                f"(the Codex-approved terminal). A Phase 9 run "
+                f"must reach the Codex-approved terminal before "
+                f"the final human gate can be recorded."
+            ),
+        )
+    if last_verdict != FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance refused: loop-state.last_verdict="
+                f"{last_verdict!r}; expected "
+                f"{FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT!r}. "
+                f"The Codex-approved terminal requires both "
+                f"status and last_verdict to align."
+            ),
+        )
+
+    stripped_accepted_by = _validate_final_acceptance_accepted_by(
+        accepted_by,
+    )
+    validated_notes = _validate_final_acceptance_notes(notes)
+
+    out = (
+        output_path if output_path is not None
+        else repo_root / FINAL_ACCEPTANCE_OUTPUT_REL
+    )
+    _validate_final_acceptance_output_target(repo_root, out)
+
+    if out.exists():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance refused: an acceptance artifact "
+                f"already exists at "
+                f"{out.relative_to(repo_root).as_posix()}; Phase "
+                f"9G does not silently re-accept. Delete the "
+                f"existing artifact explicitly to re-record (the "
+                f"deletion leaves a manual audit trail)."
+            ),
+        )
+
+    payload = {
+        "acceptance_signal_version": FINAL_ACCEPTANCE_SIGNAL_VERSION,
+        "accepted_at": _utc_iso_now(),
+        "accepted_by": stripped_accepted_by,
+        "phase": data.get("phase"),
+        "sub_phase": data.get("sub_phase"),
+        "task": data.get("task"),
+        "cycle_count": data.get("cycle_count"),
+        "last_verdict": last_verdict,
+        "notes": validated_notes,
+        "canonical_precedence_note": (
+            FINAL_ACCEPTANCE_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(
+        json.dumps(payload, indent=2) + "\n", encoding="utf-8",
+    )
+
+    if log_path is not None:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with log_path.open("a", encoding="utf-8") as fh:
+            fh.write(
+                f"{FINAL_ACCEPTANCE_AUDIT_NOTE_PREFIX} recorded "
+                f"signal_version={FINAL_ACCEPTANCE_SIGNAL_VERSION} "
+                f"accepted_by={stripped_accepted_by!r} "
+                f"phase={data.get('phase')!r} "
+                f"sub_phase={data.get('sub_phase')!r} "
+                f"cycle_count={data.get('cycle_count')}\n"
+            )
+
+    return out
+
+
+def evaluate_final_acceptance(repo_root: Path) -> dict:
+    """Phase 9G: compute the canonical final-acceptance signal
+    from canonical artifacts only.
+
+    Returns a dict carrying:
+      - `acceptance_signal`: one of
+        `FINAL_ACCEPTANCE_SIGNAL_NOT_READY` (the run has not
+        reached the Codex-approved terminal),
+        `FINAL_ACCEPTANCE_SIGNAL_AWAITING` (Codex-approved
+        terminal reached but no acceptance artifact yet),
+        `FINAL_ACCEPTANCE_SIGNAL_RECORDED` (acceptance artifact
+        present and matches the current loop-state)
+      - `terminal_status`: the loop-state `status`
+      - `last_verdict`: the loop-state `last_verdict`
+      - `acceptance_artifact_present`: bool
+      - `acceptance_artifact_matches_loop_state`: bool (False
+        when the artifact is absent OR when it points at a
+        different phase / sub_phase / task / cycle_count than the
+        current loop-state)
+      - `accepted_by`: the recorded `accepted_by` when the
+        artifact is present and matches; otherwise None
+      - `reason`: a short human-readable explanation
+
+    The function reads loop-state.json through the shipped
+    validators and consults only the canonical artifacts; no
+    transcript, chat state, or alternate runtime artifact is
+    examined. The artifact is treated as ADVISORY DATA from the
+    evaluator's perspective (the evaluator never mutates it); the
+    artifact is AUTHORITATIVE when it matches the current
+    loop-state (proving the human's recorded acceptance is still
+    valid for the current run).
+    """
+    state_path = repo_root / ".agent-loop" / "loop-state.json"
+    data = load_loop_state(state_path)
+    validate_loop_state(data)
+    check_contract_version(data)
+
+    status = str(data.get("status") or "")
+    last_verdict = data.get("last_verdict")
+
+    if (
+        status != FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS
+        or last_verdict != FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT
+    ):
+        return {
+            "acceptance_signal": FINAL_ACCEPTANCE_SIGNAL_NOT_READY,
+            "terminal_status": status or None,
+            "last_verdict": last_verdict,
+            "acceptance_artifact_present": False,
+            "acceptance_artifact_matches_loop_state": False,
+            "accepted_by": None,
+            "reason": (
+                f"loop-state.status={status!r} / last_verdict="
+                f"{last_verdict!r} have not reached the Codex-"
+                f"approved terminal (status="
+                f"{FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS!r}, "
+                f"last_verdict="
+                f"{FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT!r}); "
+                f"final acceptance is not yet applicable."
+            ),
+        }
+
+    artifact_path = repo_root / FINAL_ACCEPTANCE_OUTPUT_REL
+    if not artifact_path.exists():
+        return {
+            "acceptance_signal": FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "acceptance_artifact_present": False,
+            "acceptance_artifact_matches_loop_state": False,
+            "accepted_by": None,
+            "reason": (
+                "Codex-approved terminal reached but no final-"
+                "acceptance artifact on disk; the runtime refuses "
+                "to treat the run as complete until explicit human "
+                "acceptance is recorded via "
+                "`record-final-acceptance`."
+            ),
+        }
+
+    try:
+        raw = artifact_path.read_text(encoding="utf-8")
+        artifact = json.loads(raw)
+    except (OSError, json.JSONDecodeError):
+        # The artifact is on disk but unreadable / malformed. Treat
+        # this as awaiting + does-not-match: the runtime should
+        # NOT silently treat a corrupt artifact as a valid
+        # acceptance.
+        return {
+            "acceptance_signal": FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "acceptance_artifact_present": True,
+            "acceptance_artifact_matches_loop_state": False,
+            "accepted_by": None,
+            "reason": (
+                f"acceptance artifact at "
+                f"{FINAL_ACCEPTANCE_OUTPUT_REL!r} is unreadable "
+                f"or malformed; treating as awaiting. Delete the "
+                f"corrupt artifact and re-record via "
+                f"`record-final-acceptance`."
+            ),
+        }
+
+    matches = (
+        isinstance(artifact, dict)
+        and artifact.get("acceptance_signal_version")
+        == FINAL_ACCEPTANCE_SIGNAL_VERSION
+        and artifact.get("phase") == data.get("phase")
+        and artifact.get("sub_phase") == data.get("sub_phase")
+        and artifact.get("task") == data.get("task")
+        and artifact.get("cycle_count") == data.get("cycle_count")
+        and artifact.get("last_verdict") == last_verdict
+    )
+    if not matches:
+        return {
+            "acceptance_signal": FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "acceptance_artifact_present": True,
+            "acceptance_artifact_matches_loop_state": False,
+            "accepted_by": (
+                artifact.get("accepted_by")
+                if isinstance(artifact, dict) else None
+            ),
+            "reason": (
+                "acceptance artifact is present but its recorded "
+                "phase / sub_phase / task / cycle_count / "
+                "last_verdict / signal_version does not match the "
+                "current loop-state; the prior acceptance does "
+                "not apply to the current run. Delete the stale "
+                "artifact and re-record via "
+                "`record-final-acceptance`."
+            ),
+        }
+
+    return {
+        "acceptance_signal": FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+        "terminal_status": status,
+        "last_verdict": last_verdict,
+        "acceptance_artifact_present": True,
+        "acceptance_artifact_matches_loop_state": True,
+        "accepted_by": artifact.get("accepted_by"),
+        "reason": (
+            f"final-acceptance artifact at "
+            f"{FINAL_ACCEPTANCE_OUTPUT_REL!r} matches the current "
+            f"loop-state; the human-gated final acceptance is "
+            f"recorded. The shipped Phase 4C activator + "
+            f"APPROVED_FOR_ACTIVATION human approval remain the "
+            f"only path to the next phase."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -12901,6 +13428,91 @@ def cmd_reprobe_capacity_and_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_record_final_acceptance(args: argparse.Namespace) -> int:
+    """Phase 9G operator runtime path: record explicit human
+    acceptance of a fully autonomous Phase 9 run via
+    `record_final_acceptance(...)`.
+
+    Routes any `HaltError` through `_halt` so the structural
+    refusal vocabulary lands on disk for human inspection. On
+    success prints the written acceptance-artifact path plus a
+    pointer to the audit log. Does NOT mutate loop-state; the
+    acceptance gate does NOT activate the next phase (the shipped
+    Phase 4C activator + APPROVED_FOR_ACTIVATION human approval
+    remain the only path to the next phase).
+    """
+    repo_root = find_repo_root()
+    al = repo_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        if args.output is not None:
+            output_path = _resolve_prd_intake_path(
+                repo_root, args.output, label="output",
+            )
+        else:
+            output_path = None
+        kwargs: dict = {
+            "accepted_by": args.accepted_by,
+            "output_path": output_path,
+            "log_path": log_path,
+        }
+        if args.notes is not None:
+            kwargs["notes"] = args.notes
+        written = record_final_acceptance(repo_root, **kwargs)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    rel = written.relative_to(repo_root).as_posix()
+    print(
+        f"[orchestrator] final acceptance recorded; artifact at "
+        f"{rel}. See "
+        f"{log_path.relative_to(repo_root).as_posix()} for the "
+        f"`final acceptance: recorded ...` audit note. The shipped "
+        f"Phase 4C activator + APPROVED_FOR_ACTIVATION human "
+        f"approval remain the only path to the next phase."
+    )
+    return 0
+
+
+def cmd_evaluate_final_acceptance(_args: argparse.Namespace) -> int:
+    """Phase 9G operator runtime path: read-only inspection of the
+    canonical final-acceptance signal.
+
+    Calls `evaluate_final_acceptance(...)`, prints a deterministic
+    table with the signal value plus the structural fields the
+    evaluator returns, and always exits 0 (this is a reporter,
+    never a controller). When loop-state.json is missing or
+    malformed the function still emits a single-line table with
+    the load error rather than crashing.
+    """
+    repo_root = find_repo_root()
+    try:
+        result = evaluate_final_acceptance(repo_root)
+    except HaltError as halt:
+        print(
+            f"signal_version: {FINAL_ACCEPTANCE_SIGNAL_VERSION}\n"
+            f"load_error: {halt.status}: {halt.reason}"
+        )
+        return 0
+    print(
+        f"signal_version: {FINAL_ACCEPTANCE_SIGNAL_VERSION}\n"
+        f"acceptance_signal: {result['acceptance_signal']}\n"
+        f"terminal_status: {result.get('terminal_status')}\n"
+        f"last_verdict: {result.get('last_verdict')}\n"
+        f"acceptance_artifact_present: "
+        f"{result.get('acceptance_artifact_present')}\n"
+        f"acceptance_artifact_matches_loop_state: "
+        f"{result.get('acceptance_artifact_matches_loop_state')}\n"
+        f"accepted_by: {result.get('accepted_by')}\n"
+        f"reason: {result.get('reason')}"
+    )
+    return 0
+
+
 def cmd_runtime_adapter_eval(args: argparse.Namespace) -> int:
     """Phase 6N operator runtime path: evaluate the selected runtime
     adapter against the shipped Phase 6M contract.
@@ -14584,6 +15196,92 @@ def build_parser() -> argparse.ArgumentParser:
             "suspended step actually runs."
         ),
     )
+    record_final = sub.add_parser(
+        "record-final-acceptance",
+        help=(
+            "Phase 9G final human acceptance + polish gate: record "
+            "explicit human acceptance of a fully autonomous Phase "
+            "9 run. Writes the canonical acceptance artifact at "
+            f"`{FINAL_ACCEPTANCE_OUTPUT_REL}` capturing WHO "
+            "accepted (`--accepted-by`), WHEN (UTC ISO-8601), the "
+            "loop-state snapshot at acceptance time (phase / "
+            "sub_phase / task / cycle_count / last_verdict), and "
+            "any operator-supplied polish notes (`--notes`). "
+            "Refuses fail-closed on missing / malformed "
+            "loop-state, unsupported `contract_version`, "
+            "loop-state.status != "
+            f"{FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS!r}, "
+            "loop-state.last_verdict != "
+            f"{FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT!r}, missing "
+            "/ empty / non-string `--accepted-by`, "
+            f"`--accepted-by` longer than "
+            f"{FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH} chars, "
+            "non-string or over-bounded `--notes`, "
+            "output-boundary violations (path outside "
+            "`.agent-loop/`, protected sibling Phase 9 descriptor, "
+            "memory subtree, directory), and an existing "
+            "acceptance artifact on disk (Phase 9G refuses silent "
+            "re-acceptance; delete the prior artifact explicitly "
+            "to re-record, which leaves a manual audit trail). "
+            "Does NOT mutate loop-state; the shipped Phase 4C "
+            "activator + APPROVED_FOR_ACTIVATION human approval "
+            "remain the only path to the next phase."
+        ),
+    )
+    record_final.add_argument(
+        "--accepted-by",
+        type=str,
+        required=True,
+        help=(
+            "Required non-empty operator identifier recorded as "
+            "the canonical `accepted_by` field in the acceptance "
+            f"artifact. Capped at "
+            f"{FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH} chars."
+        ),
+    )
+    record_final.add_argument(
+        "--notes",
+        type=str,
+        default=None,
+        help=(
+            "Optional free-text polish notes recorded into the "
+            f"acceptance artifact's `notes` field. Capped at "
+            f"{FINAL_ACCEPTANCE_MAX_NOTES_LENGTH} chars."
+        ),
+    )
+    record_final.add_argument(
+        "--output",
+        type=str,
+        default=None,
+        help=(
+            "Repo-relative path for the acceptance artifact. "
+            f"Defaults to {FINAL_ACCEPTANCE_OUTPUT_REL!r}. "
+            "Absolute paths and paths that escape the repo root "
+            "are refused; the library function additionally "
+            "refuses paths outside `.agent-loop/`, paths targeting "
+            "any sibling Phase 9 advisory descriptor (intake / "
+            "handoff / review-fix-loop / long-run-continuation / "
+            "capacity-retry-state), paths under "
+            "`.agent-loop/memory/`, and directory targets."
+        ),
+    )
+    sub.add_parser(
+        "evaluate-final-acceptance",
+        help=(
+            "Phase 9G read-only inspector: report the canonical "
+            "final-acceptance signal computed from canonical "
+            "artifacts. Returns one of `not_ready` (the run has "
+            "not reached the Codex-approved terminal), "
+            "`awaiting_final_human_acceptance` (Codex-approved "
+            "terminal reached but no acceptance artifact yet), "
+            "`final_acceptance_recorded` (acceptance artifact "
+            "present and matches the current loop-state). The "
+            "inspector is purely read-only: it never mutates a "
+            "canonical artifact, never writes anywhere on disk, "
+            "and exits 0 regardless of which signal it reports "
+            "(matching the Phase 7C `status` reporter pattern)."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -14843,6 +15541,8 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "run-long-run-continuation": cmd_run_long_run_continuation,
     "run-capacity-reprobe": cmd_reprobe_capacity_and_resume,
     "record-capacity-halt": cmd_record_capacity_halt,
+    "record-final-acceptance": cmd_record_final_acceptance,
+    "evaluate-final-acceptance": cmd_evaluate_final_acceptance,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
