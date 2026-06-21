@@ -609,17 +609,33 @@ Track future non-MVP features.
 
 Phase 10 is organized as future sub-phase candidates:
 
-- Phase 10A - External Workspace Controller Contract: let this agent system target other folders or repositories safely, with explicit controller-vs-target ownership boundaries instead of assuming the agent only operates inside its own repo
-- Phase 10B - External Workspace Bootstrap And Target Selection: add attach/bootstrap flows, target-folder or target-repository selection, and initialization of required `.agent-loop` artifacts for a chosen external workspace when appropriate
-- Phase 10C - Minimal External UI And Run Control: add a thin operator UI that can pick a target project, show active phase/task/status, open prompt/review/evidence artifacts, and run or resume the loop without replacing the CLI-first contract
-- Phase 10D - Artifact Dashboard And Run History: expand the external UI with review summaries, diff visualization, progress history, approval actions, cost/token tracking, and failure analytics while keeping repo artifacts as the source of truth
-- Phase 10E - Controlled Concurrent Agent Operation: allow Codex to continue Codex-owned work while Claude is implementing, with explicit overlap rules, stale-artifact detection, overlap-safe review/fix prechecks, recovery behavior, and refusal paths when concurrency would invalidate the active task context
-- Phase 10F - MCP Integration Contract And Safe Tool Boundary: add MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules that let live tools assist planning, implementation, and review without bypassing evidence review or ownership boundaries
-- Phase 10G - RAG And Knowledge Indexing Layer: add durable retrieval over repo-local or external knowledge sources so the loop can pull only the most relevant docs, decisions, standards, PRD sections, and failure/fix patterns into a run
-- Phase 10H - GitHub / Branch / Review Integrations: add branch-per-task workflow support, GitHub PR review integration, rollback-aware workflow helpers, and related release-facing workflow surfaces
-- Phase 10I - Model, Policy Pack, And Template Extensibility: add multi-model support, API tool execution, custom policy packs, project templates, configurable agent-role presets, and more granular autonomy controls
-- Phase 10J - Human-Facing Memory Vault Surfaces: add optional Obsidian-style memory exports and related human-readable decision or architecture views without replacing repo artifacts as the primary source of truth
-- Phase 10K - Multi-Agent Framework Evaluation Beyond The Native Loop: evaluate CrewAI or similar delegated-role frameworks only after the adapter boundary, durable memory, external-workspace control, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
+- Phase 10A - External Workspace Controller Contract: define how this agent system may safely target other folders or repositories, with explicit controller-vs-target ownership boundaries instead of assuming the agent only operates inside its own repo
+- Phase 10B - External Target Attach Record Contract: define the controller-owned attach-record schema, target selection metadata, path-canonicalization rules, and audit expectations before any attach runtime ships
+- Phase 10C - External Workspace Bootstrap Contract: define how target-side `.agent-loop` initialization may occur, what can be bootstrapped, what must be refused, and how partial bootstrap stays fail-closed
+- Phase 10D - External Workspace Attach/Detach Runtime Initial Slice: implement the minimal attach/detach runtime path, controller-owned attach record handling, and bounded target-selection flow without yet adding full target bootstrap automation
+- Phase 10E - External Workspace Bootstrap Runtime Initial Slice: implement explicit target bootstrap for the required artifact set under the approved contract, preserving controller-vs-target boundaries and refusal behavior
+- Phase 10F - External Target Validation And Refusal Hardening: add stronger target-root validation, malformed-artifact refusal coverage, stale-attach detection, and related safety hardening for external-workspace control
+- Phase 10G - Minimal External UI Contract: define the first external operator UI surface, its advisory-vs-canonical boundaries, and how it may interact with the shipped CLI-first workflow
+- Phase 10H - Minimal External UI Read-Only Status Surface: implement a thin read-only UI that can select a target, show active phase/task/status, and open canonical artifacts without becoming a control plane
+- Phase 10I - Minimal External UI Run/Resume Controls: add bounded run/resume/inspect controls to the external UI while preserving the CLI-first contract and canonical repo artifacts as the source of truth
+- Phase 10J - Artifact Dashboard Contract: define how review summaries, diff views, progress history, approval actions, token/cost reporting, and failure analytics should be surfaced without replacing canonical artifacts
+- Phase 10K - Artifact Dashboard Initial Slice: implement the first artifact dashboard and run-history views on top of the approved contract, keeping dashboard data advisory
+- Phase 10L - Controlled Concurrent Operation Contract: define the overlap rules, ownership boundaries, stale-artifact detection, review/fix invalidation rules, and recovery behavior required before any concurrent Codex/Claude work is allowed
+- Phase 10M - Overlap-Safe Detection Initial Slice: implement detection and refusal paths for unsafe overlap so the system can tell when concurrent work would invalidate the active task context
+- Phase 10N - Codex-Owned Concurrent Work Initial Slice: allow Codex to continue limited Codex-owned work while Claude is implementing, only where overlap-safe detection proves the work cannot invalidate Claude's active task context
+- Phase 10O - MCP Integration Contract And Safe Tool Boundary: define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review or ownership boundaries
+- Phase 10P - MCP Read-Only Tool Boundary Initial Slice: implement the first MCP-assisted read-only surfaces so external tools can assist context gathering without mutating canonical artifacts
+- Phase 10Q - MCP Runtime Action Guardrails: add the mutation boundaries, refusal behavior, auditing, and explicit allow-list rules required before any non-read-only MCP-assisted runtime action is allowed
+- Phase 10R - RAG Contract And Index Boundary: define the retrieval/indexing contract for repo-local or external knowledge sources, including provenance, freshness, and advisory-only boundaries
+- Phase 10S - RAG Local Index Initial Slice: implement the first local knowledge index and bounded retrieval flow so the loop can pull only the most relevant docs, decisions, standards, PRD sections, and failure/fix patterns into a run
+- Phase 10T - GitHub Integration Contract: define the branch/PR/review integration boundaries, rollback expectations, review-source-of-truth rules, and refusal behavior before any GitHub runtime path ships
+- Phase 10U - GitHub Review/PR Read-Only Initial Slice: implement the first read-only GitHub surfaces for branch, PR, and review context without allowing workflow mutation
+- Phase 10V - GitHub Workflow Mutation Guardrails: add the safety rules, auditing, rollback-aware checks, and explicit approval boundaries required before any GitHub-affecting workflow helper is allowed
+- Phase 10W - Model, Policy Pack, And Template Extensibility Contract: define how multi-model support, API tool execution, custom policy packs, project templates, configurable agent-role presets, and finer autonomy controls may extend the loop safely
+- Phase 10X - Policy Pack Loading Initial Slice: implement the first bounded policy-pack loading and selection flow under the approved extensibility contract
+- Phase 10Y - Human-Facing Memory Vault Export Contract: define how optional Obsidian-style memory exports and related human-readable decision or architecture views may be produced without replacing repo artifacts as the primary source of truth
+- Phase 10Z - Human-Facing Memory Vault Export Initial Slice: implement the first bounded export path for human-readable memory/decision surfaces
+- Phase 10AA - Multi-Agent Framework Evaluation Beyond The Native Loop: evaluate CrewAI, LangGraph, LangChain orchestration patterns, or similar delegated-role frameworks only after the adapter boundary, durable memory, external-workspace control, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
 
 Success:
 
