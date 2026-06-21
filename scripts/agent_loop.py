@@ -8020,18 +8020,21 @@ def run_long_run_continuation(
                 # allows. The Phase 9E hop counter still bounds
                 # the OUTER loop, but each hop's reprobe call
                 # honors the Phase 9F primitive's own cumulative
-                # contract. `invoke_adapter` is wired to the
-                # long-run loop's `invoke_claude_adapter` so a
-                # successful reprobe dispatches the matching
-                # Claude prompt handoff (Phase 9F fix-cycle:
-                # resumes the actual suspended step rather than
-                # only restoring loop-state.status), while
-                # `invoke_claude_adapter=False` keeps the dispatch
-                # to a descriptor-only write for dry runs.
+                # contract. Both per-side adapter-invocation
+                # flags are forwarded so a Claude-side resume
+                # dispatch honors `--no-invoke-claude` AND a
+                # Codex-side resume dispatch honors
+                # `--no-invoke-codex` (Phase 9F fix-cycle:
+                # previously the call only forwarded
+                # invoke_claude_adapter as a single
+                # invoke_adapter argument, which incorrectly
+                # routed Codex-side capacity resume through the
+                # Claude flag).
                 reprobe_capacity_and_resume(
                     repo_root,
                     log_path=log_path,
-                    invoke_adapter=invoke_claude_adapter,
+                    invoke_claude_adapter=invoke_claude_adapter,
+                    invoke_codex_adapter=invoke_codex_adapter,
                 )
                 hop["capacity_reprobe_rc"] = 0
             except HaltError as halt:
@@ -8727,6 +8730,8 @@ def reprobe_capacity_and_resume(
     output_path: Optional[Path] = None,
     log_path: Optional[Path] = None,
     invoke_adapter: bool = True,
+    invoke_claude_adapter: Optional[bool] = None,
+    invoke_codex_adapter: Optional[bool] = None,
 ) -> Path:
     """Phase 9F: bounded capacity-halt re-probe + automatic resume.
 
@@ -8770,13 +8775,24 @@ def reprobe_capacity_and_resume(
              of parsing the review or driving the verdict loop;
              `_handle_verdict_loop` remains the canonical owner
              of post-review routing.
-         `invoke_adapter` controls actual adapter invocation in
-         every supported branch: for Claude-side it is forwarded
-         into `dispatch_prompt_handoff(...)`; for Codex-side it
-         gates the `wait_for_review(...)` call. `invoke_adapter=
-         False` keeps the call descriptor-free / dispatch-free so
-         tests and dry-run operators can preview the resume
-         routing without consuming Claude or Codex capacity.
+         Adapter invocation control is per-side so the Phase 9E
+         long-run loop's `--no-invoke-claude` / `--no-invoke-codex`
+         escape hatches map to the correct branch:
+           - `invoke_claude_adapter` (default None -> falls back
+             to `invoke_adapter`) gates the Claude-side dispatch
+             (`dispatch_prompt_handoff(...)`'s adapter invocation)
+           - `invoke_codex_adapter` (default None -> falls back
+             to `invoke_adapter`) gates the Codex-side
+             `wait_for_review(...)` call
+           - `invoke_adapter` (default True) is the global
+             back-compat toggle used by the standalone
+             `run-capacity-reprobe` CLI and any caller that wants
+             to skip BOTH dispatches at once; per-side overrides
+             win when explicitly supplied
+         False on the relevant side keeps the call descriptor-free
+         / dispatch-free so tests and dry-run operators can
+         preview the resume routing without consuming Claude or
+         Codex capacity.
          Writes a `capacity reprobe: resumed ...` audit line
          capturing the routing decision (handoff_mode is
          `implementation` / `fix` / `codex_review` /
@@ -9012,25 +9028,37 @@ def reprobe_capacity_and_resume(
             #     handoff(...) is the same shipped Phase 9C path
             #     cmd_run uses for routing Claude work.
             #
-            #   awaiting_codex_review: restore the status only; the
-            #     next orchestrator step (Phase 9E review/fix
-            #     iteration via run_internal_review_fix_cycle, or
-            #     the shipped Codex review continuation a normal
-            #     cycle drives) invokes the Codex adapter against
-            #     the already-captured Claude summary + evidence.
-            #     The Phase 9F seam deliberately does NOT
-            #     synchronously re-invoke the Codex adapter from
-            #     here because the verdict-handling loop
-            #     (`_handle_verdict_loop`) is the canonical owner
-            #     of the post-review routing; embedding it inside
-            #     the reprobe call would duplicate the contract.
+            #   awaiting_codex_review: invoke the Codex adapter
+            #     against the already-captured Claude summary +
+            #     evidence so the suspended Codex review actually
+            #     runs.
+            #
+            # Per-side invocation control: `invoke_claude_adapter`
+            # gates the Claude-side dispatch, `invoke_codex_adapter`
+            # gates the Codex-side dispatch. Both fall back to the
+            # global `invoke_adapter` toggle when the per-side
+            # override is unset, so the standalone CLI's
+            # `--no-invoke-adapter` continues to act as a global
+            # off-switch while the Phase 9E long-run loop's
+            # separate `--no-invoke-claude` / `--no-invoke-codex`
+            # escape hatches map to the correct branch.
+            effective_invoke_claude = (
+                invoke_claude_adapter
+                if invoke_claude_adapter is not None
+                else invoke_adapter
+            )
+            effective_invoke_codex = (
+                invoke_codex_adapter
+                if invoke_codex_adapter is not None
+                else invoke_adapter
+            )
             if restored_status == "claude_implementing":
                 handoff_mode = PROMPT_HANDOFF_MODE_IMPLEMENTATION
                 dispatch_prompt_handoff(
                     repo_root,
                     mode=handoff_mode,
                     log_path=log_path,
-                    invoke_adapter=invoke_adapter,
+                    invoke_adapter=effective_invoke_claude,
                 )
             elif restored_status == "claude_fixing":
                 handoff_mode = PROMPT_HANDOFF_MODE_FIX
@@ -9038,38 +9066,33 @@ def reprobe_capacity_and_resume(
                     repo_root,
                     mode=handoff_mode,
                     log_path=log_path,
-                    invoke_adapter=invoke_adapter,
+                    invoke_adapter=effective_invoke_claude,
                 )
             else:
                 # awaiting_codex_review: Codex-side capacity halt.
                 # Resume by invoking the shipped Codex adapter
                 # against the already-captured Claude summary +
                 # evidence so the suspended Codex review step
-                # actually runs (Phase 9F fix-cycle: close the
-                # Codex-side automatic-resume gap; restoring
-                # loop-state.status alone fell short of the
-                # contract "resume the exact suspended step
-                # automatically when capacity returns"). The
-                # `invoke_adapter` flag controls whether the
-                # adapter is actually invoked (mirroring how it
-                # controls dispatch_prompt_handoff for the
-                # Claude-side branches): True dispatches the
-                # Codex review wait, False keeps the descriptor-
-                # free routing-decision-only behavior so dry-run
-                # operators can preview the resume routing
-                # without consuming Codex capacity. Following the
-                # dispatch_prompt_handoff pattern, a non-zero
-                # adapter exit code is recorded into the audit
-                # log but does NOT raise; the canonical
-                # codex-review.md (when the adapter wrote one)
-                # plus the audit-log line are the
-                # source-of-truth signals the next orchestrator
-                # step consumes. The `_handle_verdict_loop`
-                # remains the canonical owner of post-review
-                # routing; this branch deliberately stops short
-                # of parsing the review or driving the verdict
-                # loop.
-                if invoke_adapter:
+                # actually runs. The Codex-side dispatch is gated
+                # by `effective_invoke_codex` (per-side override
+                # falling back to the global `invoke_adapter`
+                # toggle) so the Phase 9E long-run loop's
+                # `--no-invoke-codex` escape hatch maps to the
+                # correct branch; previously the dispatch
+                # incorrectly keyed off the Claude flag, which
+                # broke operator control over Codex capacity
+                # consumption. Following the dispatch_prompt_
+                # handoff pattern, a non-zero adapter exit code
+                # is recorded into the audit log but does NOT
+                # raise; the canonical codex-review.md (when the
+                # adapter wrote one) plus the audit-log line are
+                # the source-of-truth signals the next
+                # orchestrator step consumes. The
+                # `_handle_verdict_loop` remains the canonical
+                # owner of post-review routing; this branch
+                # deliberately stops short of parsing the review
+                # or driving the verdict loop.
+                if effective_invoke_codex:
                     handoff_mode = "codex_review"
                     review_path = al / "codex-review.md"
                     codex_adapter = make_codex_adapter()
@@ -9095,7 +9118,8 @@ def reprobe_capacity_and_resume(
                 f"{CAPACITY_RETRY_AUDIT_NOTE_PREFIX} resumed "
                 f"suspended_status={restored_status!r} "
                 f"handoff_mode={handoff_mode!r} "
-                f"invoke_adapter={invoke_adapter}\n"
+                f"invoke_claude_adapter={effective_invoke_claude} "
+                f"invoke_codex_adapter={effective_invoke_codex}\n"
             )
             return out
         # Persist the failed-attempt state so the next operator
