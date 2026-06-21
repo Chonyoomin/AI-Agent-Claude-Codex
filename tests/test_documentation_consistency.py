@@ -1926,6 +1926,57 @@ class ExternalWorkspaceContractPreservesShippedHardStopsTests(
             )
 
 
+class ExternalWorkspaceContractUsesRealPhase9eDescriptorPathTests(
+    unittest.TestCase,
+):
+    """Phase 10A fix: the contract surfaces must reference the REAL
+    shipped Phase 9E descriptor path
+    (`.agent-loop/long-run-continuation.json`,
+    `LONG_RUN_CONTINUATION_OUTPUT_REL` in `scripts/agent_loop.py`), not
+    a stale `.agent-loop/long-run-loop.json` name. The Phase 9E
+    descriptor is the canonical long-run-continuation artifact written
+    by `run_long_run_continuation(...)`; teaching a wrong path would
+    mislead a future Phase 10B implementer about the target-owned
+    artifact set.
+    """
+
+    def setUp(self) -> None:
+        self.contract_text = _read(EXTERNAL_WORKSPACE_CONTRACT_PATH)
+        self.readme_text = _read(README_PATH)
+
+    def test_contract_uses_real_phase_9e_descriptor_path(self) -> None:
+        self.assertIn(
+            ".agent-loop/long-run-continuation.json",
+            self.contract_text,
+            "docs/external-workspace-contract.md does not name the "
+            "real shipped Phase 9E descriptor path "
+            ".agent-loop/long-run-continuation.json",
+        )
+
+    def test_contract_does_not_use_stale_phase_9e_descriptor_path(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            "long-run-loop.json", self.contract_text,
+            "docs/external-workspace-contract.md references the "
+            "stale / non-existent Phase 9E descriptor name "
+            "long-run-loop.json; the real shipped path is "
+            ".agent-loop/long-run-continuation.json",
+        )
+
+    def test_readme_phase_10a_does_not_use_stale_phase_9e_name(
+        self,
+    ) -> None:
+        # The bug rode along in the Phase 10A README paragraph too;
+        # pin the corrected name there.
+        self.assertNotIn(
+            "long-run-loop", self.readme_text,
+            "README.md references the stale / non-existent Phase 9E "
+            "descriptor name long-run-loop; the real shipped path is "
+            ".agent-loop/long-run-continuation.json",
+        )
+
+
 class ReadmePointsAtExternalWorkspaceContractDocTests(
     unittest.TestCase,
 ):

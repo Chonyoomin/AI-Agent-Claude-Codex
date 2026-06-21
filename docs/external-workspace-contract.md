@@ -109,8 +109,8 @@ operates on the TARGET's artifact set, not the controller's:
   (`.agent-loop/prompt-handoff.json`)
 - the target's Phase 9D review-fix-loop descriptor
   (`.agent-loop/review-fix-loop.json`)
-- the target's Phase 9E long-run-loop descriptor
-  (`.agent-loop/long-run-loop.json`)
+- the target's Phase 9E long-run-continuation descriptor
+  (`.agent-loop/long-run-continuation.json`)
 - the target's Phase 9F capacity-retry-state artifact
   (`.agent-loop/capacity-retry-state.json`)
 - the target's Phase 9G final-acceptance artifact

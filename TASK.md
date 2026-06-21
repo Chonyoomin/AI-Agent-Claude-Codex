@@ -20,39 +20,40 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10A - External Workspace Controller Contract
+Phase 10B - External Target Attach Record Contract
 
 ## Phase Status
 
-Phase 9G (Final Human Acceptance And Polish Gate) is closed after Codex review approval and human progression. Phase 10A is now active as the first planning slice under Phase 10. This sub-phase should define how the controller repo can safely target an external workspace or repository, with explicit controller-vs-target ownership boundaries and refusal rules, before any external bootstrap, UI, or concurrent-agent implementation is attempted.
+Phase 10A (External Workspace Controller Contract) is closed after Codex review approval and human progression. Phase 10B is now active as the next planning slice under Phase 10. This sub-phase should define the controller-owned attach-record contract for future external-workspace mode, including schema, canonicalized-path metadata, audit requirements, and refusal-sensitive fields, before any attach/detach runtime ships.
 
 ## Active Task
 
-Define the External Workspace Controller Contract for the agent loop. This slice should specify how the controller repo can target a different workspace or repository safely, what remains controller-owned versus target-owned, where `.agent-loop` artifacts live, how attach/bootstrap and refusal behavior must work, and which later Phase 10 slices implement those behaviors.
+Define the External Target Attach Record Contract for the agent loop. This slice should specify the controller-owned attach-record schema, what target-selection metadata it must persist, how canonicalized target paths and controller identity are represented, what audit/refusal fields are required, and how later Phase 10 attach/detach runtime slices depend on that record.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10A as active
-- `.agent-loop/phase-plan.md` records Phase 9G as closed history and contains a `## Phase 10A - External Workspace Controller Contract` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository defines, in concrete contract form, how a controller repo may safely target an external workspace or repository without collapsing controller-owned and target-owned responsibilities
-- the contract explicitly defines controller-owned versus target-owned artifacts, path boundaries, attach/bootstrap expectations, refusal behavior, and approval gates before any Phase 10B implementation work begins
-- the contract preserves the shipped artifact/source-of-truth boundary: canonical repo artifacts remain authoritative, and any future external-workspace metadata or UI surfaces remain advisory unless explicitly promoted by contract
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10B as active
+- `.agent-loop/phase-plan.md` records Phase 10A as closed history and contains a `## Phase 10B - External Target Attach Record Contract` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the repository defines, in concrete contract form, the controller-owned attach-record schema for external-workspace mode rather than leaving attach metadata implicit in UI/runtime state
+- the contract explicitly defines required attach-record fields such as canonicalized target path, controller identity, signal/version marker, operator/audit fields, mode-selection metadata, stale-attach detection inputs, and refusal-sensitive invariants before any Phase 10D attach runtime work begins
+- the contract preserves the shipped artifact/source-of-truth boundary: the attach record remains controller-owned, target-side canonical artifacts remain target-owned, and future UI/runtime surfaces remain advisory unless explicitly promoted by contract
 - the contract preserves the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- focused validation proves the new contract is concrete, internally consistent, ASCII-safe, and reflected accurately in the repo planning/docs surfaces
-- `README.md` reflects that Phase 10A is active and that the external-workspace controller contract is now the implementation focus
+- focused validation proves the attach-record contract is concrete, internally consistent, ASCII-safe, and reflected accurately in the repo planning/docs surfaces
+- `README.md` reflects that Phase 10B is active and that the attach-record contract is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not begin external-workspace implementation after Phase 10A until:
+Do not begin attach/detach runtime implementation after Phase 10B until:
 
-- this Phase 10A slice receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the controller-vs-target contract as concrete enough for implementation
+- this Phase 10B slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the attach-record contract as concrete enough for implementation
 - Codex updates the canonical phase/task artifacts to activate the next Phase 10 sub-phase rather than treating roadmap bullets as implementation authority on their own
 
 ## Out Of Scope For Current Phase
 
-- any external workspace bootstrap, attach flow, or target selection runtime (Phase 10B)
-- any external UI, dashboard, or run-control implementation (Phase 10C and later)
+- any attach/detach runtime implementation or target-selection runtime behavior (Phase 10D)
+- any bootstrap contract/runtime work beyond what is strictly necessary to define attach-record dependencies (Phase 10C and 10E)
+- any external UI, dashboard, or run-control implementation (Phase 10G and later)
 - any concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
 - any rewrite of current shipped behavior just to make future external-workspace support easier

@@ -1,30 +1,31 @@
 # Claude Code Task
 
 ## Phase
-Phase 10A - External Workspace Controller Contract
+Phase 10B - External Target Attach Record Contract
 
 ## Objective
-Define the External Workspace Controller Contract for the agent loop. This slice should specify how the controller repo can target a different workspace or repository safely, what remains controller-owned versus target-owned, where `.agent-loop` artifacts live, how attach/bootstrap and refusal behavior must work, and which later Phase 10 slices implement those behaviors.
+Define the External Target Attach Record Contract for the agent loop. This slice should specify the controller-owned attach-record schema, what target-selection metadata it must persist, how canonicalized target paths and controller identity are represented, what audit/refusal fields are required, and how later Phase 10 attach/detach runtime slices depend on that record.
 
 ## Context
-Phase 10 starts the future product-features track. Phase 10A is a planning/contract slice, not an implementation slice: the goal is to define, before any runtime or UI work, how this controller repo can safely target an external workspace or repository without blurring controller-owned artifacts, target-owned artifacts, or shipped safety boundaries.
+Phase 10 continues the future product-features track. Phase 10B is a planning/contract slice, not a runtime slice: the goal is to define the controller-owned attach record before any attach/detach implementation ships, so later runtime work has a concrete schema, audit model, and refusal boundary instead of inventing metadata ad hoc.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10A as active
-- `.agent-loop/phase-plan.md` records Phase 9G as closed history and contains a `## Phase 10A - External Workspace Controller Contract` section with concrete objective, done criteria, and exclusions
-- define the contract, in repo artifacts, for safe external-workspace targeting:
-  - what remains controller-owned in this repo
-  - what may exist in a target workspace or repository
-  - where `.agent-loop` artifacts live in controller and target modes
-  - how path resolution, attach/bootstrap, refusal behavior, and approval gates must work
-  - how later Phase 10B/10C/10D/10E work depends on this contract
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10B as active
+- `.agent-loop/phase-plan.md` records Phase 10A as closed history and contains a `## Phase 10B - External Target Attach Record Contract` section with concrete objective, done criteria, and exclusions
+- define the attach-record contract, in repo artifacts, for future external-workspace mode:
+  - exact schema-stable fields the controller-owned attach record must carry
+  - how canonicalized target path, controller identity, attach timestamp, operator identity, and signal/version markers are represented
+  - what mode-selection, bootstrap-state, stale-attach detection, and refusal-sensitive metadata must be persisted
+  - which fields are canonical versus advisory
+  - how later Phase 10C/10D/10E work depends on this record
 - preserve the shipped artifact/source-of-truth boundary:
-  - canonical repo artifacts remain authoritative
-  - any future external-workspace metadata, descriptors, or UI surfaces must stay advisory unless the contract explicitly promotes them
+  - the attach record is controller-owned
+  - target-side canonical artifacts remain target-owned
+  - future runtime/UI surfaces must stay advisory unless the contract explicitly promotes them
 - preserve the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- update `README.md` so it reflects that Phase 10A is active and that the external-workspace controller contract is now the implementation focus
+- update `README.md` so it reflects that Phase 10B is active and that the attach-record contract is now the implementation focus
 - add focused validation sufficient to prove the new contract/docs surface is concrete, consistent, and non-drifting
-- do not implement external-workspace runtime behavior in this slice; this phase is contract/planning only
+- do not implement attach/detach runtime behavior in this slice; this phase is contract/planning only
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -37,7 +38,8 @@ Phase 10 starts the future product-features track. Phase 10A is a planning/contr
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no external workspace bootstrap, attach flow, or target selection runtime
+- no attach/detach runtime implementation or target-selection runtime behavior
+- no bootstrap runtime implementation
 - no external UI, dashboard, or run-control implementation
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - no automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
