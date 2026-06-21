@@ -2112,16 +2112,16 @@ class CodexSideAutomaticResumeTests(unittest.TestCase):
                         agent_loop.CAPACITY_PROBE_ENV_VAR
                     ] = prev
 
-    def test_long_run_resume_invokes_codex_when_flag_true(
+    def test_long_run_codex_side_resume_invokes_codex_when_codex_flag_true(
         self,
     ) -> None:
-        # Phase 9E integration: the long-run loop's
-        # invoke_claude_adapter=True forwards into the reprobe
-        # call's invoke_adapter=True; on the Codex-side resume
-        # this dispatches the Codex review wait. The long-run
-        # hop's review/fix iteration still runs after, but the
-        # capacity-reprobe hop itself owns the Codex adapter
-        # invocation for the suspended step.
+        # Phase 9F fix-cycle: the long-run loop's
+        # `invoke_codex_adapter` (not invoke_claude_adapter) gates
+        # the Codex-side capacity-resume dispatch. With
+        # invoke_codex_adapter=True the Codex-side reprobe hop
+        # actively dispatches `wait_for_review`. max_hops=1 means
+        # only the reprobe hop runs; there is no next-hop
+        # review/fix iteration to invoke Codex a second time.
         codex_invocations: list[dict] = []
         import os
         prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
@@ -2144,20 +2144,147 @@ class CodexSideAutomaticResumeTests(unittest.TestCase):
                         repo,
                         max_hops=1,
                         capture_evidence=False,
-                        # invoke_codex_adapter=False prevents the
-                        # next-hop review/fix iteration from
-                        # invoking Codex a second time; the
-                        # capacity-reprobe hop's invocation is the
-                        # one under test.
+                        invoke_codex_adapter=True,
+                        invoke_claude_adapter=False,
+                    )
+                self.assertEqual(
+                    len(codex_invocations), 1,
+                    "long-run loop with invoke_codex_adapter=True "
+                    "must dispatch the Codex review wait as part "
+                    "of the Codex-side resume hop",
+                )
+        finally:
+            if prev is None:
+                os.environ.pop(
+                    agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+                )
+            else:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_long_run_codex_side_resume_skips_codex_when_codex_flag_false(
+        self,
+    ) -> None:
+        # Phase 9F fix-cycle: the long-run loop's
+        # `invoke_codex_adapter=False` MUST suppress the Codex
+        # adapter dispatch on the Codex-side capacity-resume hop,
+        # regardless of `invoke_claude_adapter`. Previously the
+        # call routed Codex dispatch through the Claude flag,
+        # which meant `--no-invoke-codex` had no effect on a
+        # Codex-side resume - an operator-control bug.
+        codex_invocations: list[dict] = []
+        import os
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(
+                    repo, status="awaiting_codex_review",
+                )
+                _plant_prompts(repo)
+                agent_loop.record_capacity_halt(repo)
+                with mock.patch(
+                    "agent_loop.make_codex_adapter",
+                    lambda: self._stub_codex(codex_invocations),
+                ), mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=1,
+                        capture_evidence=False,
+                        # invoke_claude_adapter=True must NOT
+                        # leak through to the Codex-side dispatch.
                         invoke_codex_adapter=False,
                         invoke_claude_adapter=True,
                     )
                 self.assertEqual(
-                    len(codex_invocations), 1,
-                    "long-run loop with invoke_claude_adapter=True "
-                    "must dispatch the Codex review wait as part "
-                    "of the Codex-side resume hop",
+                    codex_invocations, [],
+                    "long-run loop with invoke_codex_adapter=False "
+                    "must NOT dispatch the Codex adapter on the "
+                    "Codex-side resume hop even when "
+                    "invoke_claude_adapter=True",
                 )
+                # Loop-state is still correctly restored from the
+                # halt; only the adapter dispatch was suppressed.
+                state = json.loads(
+                    (
+                        repo / ".agent-loop" / "loop-state.json"
+                    ).read_text(encoding="utf-8"),
+                )
+                self.assertEqual(
+                    state["status"], "awaiting_codex_review",
+                )
+        finally:
+            if prev is None:
+                os.environ.pop(
+                    agent_loop.CAPACITY_PROBE_ENV_VAR, None,
+                )
+            else:
+                os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = prev
+
+    def test_long_run_claude_side_resume_still_respects_claude_flag(
+        self,
+    ) -> None:
+        # Phase 9F fix-cycle regression guard: the Claude-side
+        # branch must still honor invoke_claude_adapter (and
+        # ignore invoke_codex_adapter). With
+        # invoke_claude_adapter=False the Claude-side resume
+        # writes only the prompt-handoff descriptor; the Claude
+        # adapter is NOT invoked even when
+        # invoke_codex_adapter=True.
+        claude_invocations: list[str] = []
+
+        class _UnexpectedClaude:
+            def invoke(self, prompt_path, summary_path):
+                claude_invocations.append(prompt_path.name)
+                from agent_loop import ExecutionResult
+                return ExecutionResult(
+                    exit_code=0,
+                    model_id="unexpected-claude",
+                    duration_seconds=0.0,
+                )
+
+        import os
+        prev = os.environ.get(agent_loop.CAPACITY_PROBE_ENV_VAR)
+        os.environ[agent_loop.CAPACITY_PROBE_ENV_VAR] = "available"
+        try:
+            with TemporaryDirectory() as td:
+                repo = _make_repo(Path(td))
+                _plant_loop_state(
+                    repo, status="claude_implementing",
+                )
+                _plant_prompts(repo)
+                agent_loop.record_capacity_halt(repo)
+                with mock.patch(
+                    "agent_loop.make_claude_adapter",
+                    lambda: _UnexpectedClaude(),
+                ), mock.patch(
+                    "agent_loop.time.sleep", lambda s: None,
+                ):
+                    agent_loop.run_long_run_continuation(
+                        repo,
+                        max_hops=1,
+                        capture_evidence=False,
+                        invoke_codex_adapter=True,
+                        invoke_claude_adapter=False,
+                    )
+                self.assertEqual(
+                    claude_invocations, [],
+                    "Claude-side resume must honor "
+                    "invoke_claude_adapter=False even when "
+                    "invoke_codex_adapter=True",
+                )
+                # The prompt-handoff descriptor still gets
+                # written (descriptor-only dispatch); only the
+                # adapter call is suppressed.
+                handoff = json.loads(
+                    (
+                        repo / ".agent-loop" / "prompt-handoff.json"
+                    ).read_text(encoding="utf-8"),
+                )
+                self.assertEqual(handoff["mode"], "implementation")
+                self.assertFalse(handoff["adapter_invoked"])
         finally:
             if prev is None:
                 os.environ.pop(
