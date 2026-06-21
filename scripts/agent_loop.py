@@ -3297,6 +3297,16 @@ DISTILLATION_SIGNAL_VERSION = "phase-6i-v1"
 DISTILLATION_DEFAULT_EXCERPT_BYTE_LIMIT = 4096
 DISTILLATION_MAX_EXCERPT_BYTE_LIMIT = 65536
 DISTILLATION_ELIGIBLE_STATUS = "phase_complete_awaiting_human_approval"
+# Phase 9G fix-cycle: distillation also fires at the canonical
+# accepted terminal (`phase_complete_final_human_accepted`) so a
+# run that has been recorded as accepted via Phase 9G is still
+# eligible for phase-boundary memory distillation. The singular
+# constant is preserved for backward compatibility with existing
+# test references; the runtime check uses the frozenset.
+DISTILLATION_ELIGIBLE_STATUSES = frozenset({
+    "phase_complete_awaiting_human_approval",
+    "phase_complete_final_human_accepted",
+})
 DISTILLATION_ELIGIBLE_VERDICT = "APPROVED_FOR_HUMAN_REVIEW"
 DISTILLATION_SOURCE_ARTIFACTS = (
     ".agent-loop/claude-summary.md",
@@ -3566,14 +3576,16 @@ def distill_phase_boundary_memory(
     #    disagrees so the slice cannot be misused outside the named
     #    boundary.
     status = data.get("status")
-    if status != DISTILLATION_ELIGIBLE_STATUS:
+    if status not in DISTILLATION_ELIGIBLE_STATUSES:
         raise HaltError(
             "halted_input_missing",
             (
                 f"distillation refused: loop-state status {status!r} "
-                f"is not {DISTILLATION_ELIGIBLE_STATUS!r}; phase-"
-                f"boundary distillation only fires at the named "
-                f"terminal state"
+                f"is not in "
+                f"{sorted(DISTILLATION_ELIGIBLE_STATUSES)!r}; "
+                f"phase-boundary distillation only fires at a "
+                f"Codex-approved terminal state (awaiting-human or "
+                f"Phase 9G accepted)"
             ),
         )
     last_verdict = data.get("last_verdict")
@@ -7748,7 +7760,19 @@ def evaluate_phase_completion(repo_root: Path) -> dict:
     last_verdict = data.get("last_verdict")
 
     if (
-        status == "phase_complete_awaiting_human_approval"
+        status
+        in (
+            "phase_complete_awaiting_human_approval",
+            # Phase 9G fix-cycle: the canonical accepted
+            # terminal is also a valid completion signal so the
+            # long-run loop terminates cleanly after a Phase 9G
+            # acceptance recording has bumped loop-state to the
+            # accepted status. The Phase 9G surface is still a
+            # gate, not an activation; this only widens the
+            # Phase 9E terminal recognition to include the
+            # post-acceptance state.
+            "phase_complete_final_human_accepted",
+        )
         and last_verdict == "APPROVED_FOR_HUMAN_REVIEW"
     ):
         return {
@@ -7758,13 +7782,13 @@ def evaluate_phase_completion(repo_root: Path) -> dict:
             "terminal_status": status,
             "last_verdict": last_verdict,
             "reason": (
-                "Codex returned APPROVED_FOR_HUMAN_REVIEW and "
-                "loop-state.status is "
-                "phase_complete_awaiting_human_approval; the "
-                "sub-phase is complete and awaiting human approval. "
-                "Phase 9E stops here (Phase 4C activator + "
-                "APPROVED_FOR_ACTIVATION human approval remain "
-                "the only path to the next phase)."
+                f"Codex returned APPROVED_FOR_HUMAN_REVIEW and "
+                f"loop-state.status is {status!r}; the sub-phase "
+                f"is complete and either awaiting human approval "
+                f"or has been explicitly accepted via Phase 9G. "
+                f"Phase 9E stops here (Phase 4C activator + "
+                f"APPROVED_FOR_ACTIVATION human approval remain "
+                f"the only path to the next phase)."
             ),
         }
     if (
@@ -9223,6 +9247,28 @@ FINAL_ACCEPTANCE_AUDIT_NOTE_PREFIX = "final acceptance:"
 FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS = (
     "phase_complete_awaiting_human_approval"
 )
+# Phase 9G fix-cycle: the canonical post-acceptance loop-state
+# status. `record_final_acceptance(...)` transitions loop-state
+# from FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS to this value as
+# part of recording, so accepted completion is visible through the
+# canonical state model itself (not only through the separate
+# `.agent-loop/final-acceptance.json` evaluator path). The status
+# is still NOT an activator: Phase 4C activator +
+# APPROVED_FOR_ACTIVATION human approval remain the only path to
+# the next phase.
+FINAL_ACCEPTANCE_ACCEPTED_STATUS = (
+    "phase_complete_final_human_accepted"
+)
+# Statuses that the Phase 9G surface treats as the
+# "Codex-approved terminal" family: either the pre-acceptance
+# awaiting state OR the post-acceptance accepted state. Phase 9E
+# `evaluate_phase_completion(...)` and the DISTILLATION_ELIGIBLE
+# check accept both so existing terminal-state callers stay
+# coherent across the recording transition.
+FINAL_ACCEPTANCE_VALID_TERMINAL_STATUSES = frozenset({
+    FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS,
+    FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+})
 FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT = "APPROVED_FOR_HUMAN_REVIEW"
 FINAL_ACCEPTANCE_MAX_ACCEPTED_BY_LENGTH = 200
 FINAL_ACCEPTANCE_MAX_NOTES_LENGTH = 8000
@@ -9452,6 +9498,28 @@ def record_final_acceptance(
 
     status = str(data.get("status") or "")
     last_verdict = data.get("last_verdict")
+    if status == FINAL_ACCEPTANCE_ACCEPTED_STATUS:
+        # Phase 9G fix-cycle: the canonical state model already
+        # records this run as accepted. Re-recording requires the
+        # operator to explicitly delete the acceptance artifact
+        # AND reset loop-state.status back to the pre-acceptance
+        # terminal so the gate is re-armed; both halves of the
+        # canonical signal must be reset together.
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"final acceptance refused: loop-state.status is "
+                f"already {FINAL_ACCEPTANCE_ACCEPTED_STATUS!r}; "
+                f"this run has already been recorded as accepted. "
+                f"To re-record, explicitly delete the acceptance "
+                f"artifact AND reset loop-state.status back to "
+                f"{FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS!r} so "
+                f"the gate is re-armed (both halves of the "
+                f"canonical accepted-state signal must be reset "
+                f"together; the reset leaves a manual audit "
+                f"trail)."
+            ),
+        )
     if status != FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS:
         raise HaltError(
             "halted_input_missing",
@@ -9519,6 +9587,28 @@ def record_final_acceptance(
         json.dumps(payload, indent=2) + "\n", encoding="utf-8",
     )
 
+    # Phase 9G fix-cycle: transition loop-state.status from the
+    # pre-acceptance terminal to the canonical accepted terminal
+    # so the canonical state model itself reflects accepted
+    # completion. The artifact-on-disk + loop-state.status
+    # together carry the auditable accepted-state signal; the
+    # artifact captured a snapshot of the PRE-transition
+    # loop-state (phase / sub_phase / task / cycle_count /
+    # last_verdict) so the snapshot remains valid after the
+    # status transition. The transition is a gate, not an
+    # activation: the shipped Phase 4C activator +
+    # APPROVED_FOR_ACTIVATION human approval remain the only
+    # path to the next phase. The artifact is written first; if
+    # save_loop_state fails the artifact is on disk but loop-
+    # state still reads as the pre-acceptance terminal, and the
+    # evaluator reports `awaiting_final_human_acceptance` (torn
+    # state) so the gate fails loud rather than silently
+    # advancing.
+    save_loop_state(
+        state_path, data,
+        {"status": FINAL_ACCEPTANCE_ACCEPTED_STATUS},
+    )
+
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as fh:
@@ -9528,7 +9618,9 @@ def record_final_acceptance(
                 f"accepted_by={stripped_accepted_by!r} "
                 f"phase={data.get('phase')!r} "
                 f"sub_phase={data.get('sub_phase')!r} "
-                f"cycle_count={data.get('cycle_count')}\n"
+                f"cycle_count={data.get('cycle_count')} "
+                f"accepted_status="
+                f"{FINAL_ACCEPTANCE_ACCEPTED_STATUS!r}\n"
             )
 
     return out
@@ -9574,8 +9666,13 @@ def evaluate_final_acceptance(repo_root: Path) -> dict:
     status = str(data.get("status") or "")
     last_verdict = data.get("last_verdict")
 
+    # Phase 9G fix-cycle: the not_ready check accepts EITHER the
+    # pre-acceptance terminal OR the canonical accepted terminal
+    # as a valid "Codex-approved terminal" family. Anything else
+    # (in-flight cycle state, halt, planner-pending, etc.) is
+    # not yet at the acceptance gate.
     if (
-        status != FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS
+        status not in FINAL_ACCEPTANCE_VALID_TERMINAL_STATUSES
         or last_verdict != FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT
     ):
         return {
@@ -9587,9 +9684,9 @@ def evaluate_final_acceptance(repo_root: Path) -> dict:
             "accepted_by": None,
             "reason": (
                 f"loop-state.status={status!r} / last_verdict="
-                f"{last_verdict!r} have not reached the Codex-"
-                f"approved terminal (status="
-                f"{FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS!r}, "
+                f"{last_verdict!r} have not reached a Codex-"
+                f"approved terminal (status in "
+                f"{sorted(FINAL_ACCEPTANCE_VALID_TERMINAL_STATUSES)!r}, "
                 f"last_verdict="
                 f"{FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT!r}); "
                 f"final acceptance is not yet applicable."
@@ -9667,6 +9764,39 @@ def evaluate_final_acceptance(repo_root: Path) -> dict:
                 "not apply to the current run. Delete the stale "
                 "artifact and re-record via "
                 "`record-final-acceptance`."
+            ),
+        }
+
+    # Phase 9G fix-cycle: the `recorded` signal requires BOTH
+    # halves of the canonical accepted-state signal: artifact
+    # present AND matches loop-state AND loop-state.status ==
+    # FINAL_ACCEPTANCE_ACCEPTED_STATUS. The status-bumped
+    # transition is the second authoritative half so a torn
+    # state (artifact present + status stuck at the
+    # pre-acceptance terminal) is reported as
+    # `awaiting_final_human_acceptance` rather than silently
+    # treated as accepted. This protects against partial writes
+    # (e.g. record crashed between artifact write and
+    # save_loop_state) and against operator hand-edits that
+    # reset only one half of the signal.
+    if status != FINAL_ACCEPTANCE_ACCEPTED_STATUS:
+        return {
+            "acceptance_signal": FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+            "terminal_status": status,
+            "last_verdict": last_verdict,
+            "acceptance_artifact_present": True,
+            "acceptance_artifact_matches_loop_state": True,
+            "accepted_by": artifact.get("accepted_by"),
+            "reason": (
+                f"acceptance artifact is present and matches "
+                f"loop-state, but loop-state.status="
+                f"{status!r} has not advanced to "
+                f"{FINAL_ACCEPTANCE_ACCEPTED_STATUS!r} (torn "
+                f"state). Re-record via "
+                f"`record-final-acceptance` after explicitly "
+                f"deleting the existing artifact so both halves "
+                f"of the canonical accepted-state signal land "
+                f"together."
             ),
         }
 

@@ -259,12 +259,27 @@ class RecordFinalAcceptanceTerminalGateTests(unittest.TestCase):
                 "Phase 4 planner",
                 artifact["canonical_precedence_note"],
             )
-            # The acceptance gate does NOT mutate loop-state: it is
-            # a gate, not an activation.
+            # Phase 9G fix-cycle: the acceptance gate now
+            # transitions loop-state.status from the pre-acceptance
+            # terminal to the canonical accepted terminal so the
+            # canonical state model itself reflects accepted
+            # completion. The transition is still a gate, not an
+            # activation: no other loop-state field is mutated and
+            # the next phase is not auto-activated (Phase 4C
+            # activator + APPROVED_FOR_ACTIVATION remain the only
+            # path).
             state = json.loads(state_path.read_text(encoding="utf-8"))
             self.assertEqual(
-                state["status"], "phase_complete_awaiting_human_approval",
+                state["status"], "phase_complete_final_human_accepted",
             )
+            # Last_verdict and other fields are NOT mutated by the
+            # gate; only the status reflects the acceptance.
+            self.assertEqual(
+                state["last_verdict"], "APPROVED_FOR_HUMAN_REVIEW",
+            )
+            self.assertEqual(state["cycle_count"], 3)
+            self.assertEqual(state["phase"], ACTIVE_PHASE)
+            self.assertEqual(state["sub_phase"], ACTIVE_SUB_PHASE)
 
 
 class RecordFinalAcceptanceAcceptedByValidationTests(unittest.TestCase):
@@ -459,6 +474,15 @@ class RecordFinalAcceptanceRefusesSilentReacceptanceTests(
 ):
 
     def test_refuses_when_artifact_already_exists(self) -> None:
+        # Phase 9G fix-cycle: after a successful record, BOTH
+        # halves of the canonical accepted-state signal are set
+        # (artifact on disk + loop-state.status bumped to
+        # `phase_complete_final_human_accepted`). The second
+        # `record_final_acceptance` call hits the new
+        # status-already-accepted guard FIRST so the refusal
+        # message names the canonical state-model condition;
+        # the artifact-exists guard is reachable only when the
+        # status guard has been manually reset (next test).
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
             _plant_loop_state(repo)
@@ -473,21 +497,72 @@ class RecordFinalAcceptanceRefusesSilentReacceptanceTests(
                 ctx.exception.status, "halted_input_missing",
             )
             self.assertIn(
-                "already exists", str(ctx.exception),
+                "already 'phase_complete_final_human_accepted'",
+                str(ctx.exception),
             )
+            self.assertIn(
+                "delete the acceptance artifact AND reset "
+                "loop-state.status",
+                str(ctx.exception),
+            )
+
+    def test_refuses_when_artifact_exists_but_status_reset(
+        self,
+    ) -> None:
+        # Phase 9G fix-cycle: the artifact-already-exists guard
+        # still fires when an operator manually resets only the
+        # loop-state.status half of the canonical accepted
+        # signal (leaving the artifact in place). The refusal
+        # message names the existing artifact so the operator
+        # sees both halves of the reset are required.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(repo)
+            agent_loop.record_final_acceptance(
+                repo, accepted_by="first-operator",
+            )
+            # Manually reset only the loop-state half (artifact
+            # remains on disk).
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "phase_complete_awaiting_human_approval"
+            state_path.write_text(
+                json.dumps(state), encoding="utf-8",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_final_acceptance(
+                    repo, accepted_by="second-operator",
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn("already exists", str(ctx.exception))
             self.assertIn(
                 "Delete the existing artifact",
                 str(ctx.exception),
             )
 
-    def test_explicit_delete_allows_re_record(self) -> None:
+    def test_explicit_delete_and_status_reset_allows_re_record(
+        self,
+    ) -> None:
+        # Phase 9G fix-cycle: the full re-record flow now
+        # requires resetting BOTH halves of the canonical
+        # accepted-state signal: delete the artifact AND reset
+        # loop-state.status back to the pre-acceptance terminal.
+        # This is the fail-loud workflow the contract requires;
+        # no `--force` flag is provided.
         with TemporaryDirectory() as td:
             repo = _make_repo(Path(td))
-            _plant_loop_state(repo)
+            state_path = _plant_loop_state(repo)
             written = agent_loop.record_final_acceptance(
                 repo, accepted_by="first-operator",
             )
+            # Reset both halves: delete artifact + reset status.
             written.unlink()
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "phase_complete_awaiting_human_approval"
+            state_path.write_text(
+                json.dumps(state), encoding="utf-8",
+            )
             agent_loop.record_final_acceptance(
                 repo, accepted_by="second-operator",
                 notes="re-recorded after polish",
@@ -495,6 +570,12 @@ class RecordFinalAcceptanceRefusesSilentReacceptanceTests(
             artifact = json.loads(written.read_text(encoding="utf-8"))
             self.assertEqual(
                 artifact["accepted_by"], "second-operator",
+            )
+            # Loop-state has been bumped back to accepted by the
+            # re-record.
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["status"], "phase_complete_final_human_accepted",
             )
 
 
@@ -627,6 +708,201 @@ class EvaluateFinalAcceptanceTests(unittest.TestCase):
             agent_loop.evaluate_final_acceptance(repo)
             after = written.read_text(encoding="utf-8")
             self.assertEqual(before, after)
+
+
+class CanonicalAcceptedStateModelTests(unittest.TestCase):
+    """Phase 9G fix-cycle: accepted completion is visible through
+    the canonical state model (loop-state.status =
+    `phase_complete_final_human_accepted`) AND the
+    `.agent-loop/final-acceptance.json` artifact. Both halves must
+    be set together for the `recorded` signal; a torn state is
+    reported as `awaiting_final_human_acceptance` so the gate
+    fails loud rather than silently advancing on a partial signal.
+    """
+
+    def test_new_accepted_status_constant_value(self) -> None:
+        self.assertEqual(
+            agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+            "phase_complete_final_human_accepted",
+        )
+
+    def test_valid_terminal_statuses_set_contains_both(self) -> None:
+        self.assertEqual(
+            agent_loop.FINAL_ACCEPTANCE_VALID_TERMINAL_STATUSES,
+            frozenset({
+                "phase_complete_awaiting_human_approval",
+                "phase_complete_final_human_accepted",
+            }),
+        )
+
+    def test_record_transitions_status_atomically(self) -> None:
+        # The recording writes the artifact first, then transitions
+        # loop-state.status. Both halves are present on disk after
+        # a successful record.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(repo)
+            artifact_path = (
+                repo / ".agent-loop" / "final-acceptance.json"
+            )
+            agent_loop.record_final_acceptance(
+                repo, accepted_by="operator",
+            )
+            # Both halves of the canonical accepted-state signal
+            # are now on disk.
+            self.assertTrue(artifact_path.exists())
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(
+                state["status"],
+                "phase_complete_final_human_accepted",
+            )
+
+    def test_record_refuses_when_status_already_accepted(self) -> None:
+        # Re-recording on a run that already has loop-state at the
+        # canonical accepted terminal is refused fail-closed with
+        # a clear message naming both halves of the required reset.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(
+                repo,
+                status="phase_complete_final_human_accepted",
+            )
+            with self.assertRaises(HaltError) as ctx:
+                agent_loop.record_final_acceptance(
+                    repo, accepted_by="operator",
+                )
+            self.assertEqual(
+                ctx.exception.status, "halted_input_missing",
+            )
+            self.assertIn(
+                "already 'phase_complete_final_human_accepted'",
+                str(ctx.exception),
+            )
+
+    def test_evaluate_recorded_requires_status_bumped(self) -> None:
+        # When the artifact matches but loop-state.status is
+        # still at the pre-acceptance terminal (torn state), the
+        # evaluator returns `awaiting_final_human_acceptance` so
+        # the gate fails loud.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            state_path = _plant_loop_state(repo)
+            agent_loop.record_final_acceptance(
+                repo, accepted_by="operator",
+            )
+            # Manually reset only the loop-state half (artifact
+            # remains on disk + matches).
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            state["status"] = "phase_complete_awaiting_human_approval"
+            state_path.write_text(
+                json.dumps(state), encoding="utf-8",
+            )
+            result = agent_loop.evaluate_final_acceptance(repo)
+            self.assertEqual(
+                result["acceptance_signal"],
+                "awaiting_final_human_acceptance",
+            )
+            self.assertTrue(result["acceptance_artifact_present"])
+            self.assertTrue(
+                result["acceptance_artifact_matches_loop_state"],
+            )
+            self.assertIn("torn state", result["reason"])
+
+    def test_evaluate_recorded_when_both_halves_present(self) -> None:
+        # Both halves of the canonical accepted-state signal are
+        # set: artifact present + matches + loop-state.status =
+        # canonical accepted. The evaluator returns the
+        # `recorded` signal.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            agent_loop.record_final_acceptance(
+                repo, accepted_by="operator",
+            )
+            result = agent_loop.evaluate_final_acceptance(repo)
+            self.assertEqual(
+                result["acceptance_signal"],
+                "final_acceptance_recorded",
+            )
+
+    def test_evaluate_treats_accepted_status_as_valid_terminal(
+        self,
+    ) -> None:
+        # Phase 9G fix-cycle: the `not_ready` check accepts BOTH
+        # the pre-acceptance terminal AND the canonical accepted
+        # terminal as valid Codex-approved terminal states. A
+        # loop-state at the accepted terminal but with the
+        # artifact missing is reported as awaiting, not as
+        # not_ready.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo,
+                status="phase_complete_final_human_accepted",
+            )
+            # No artifact written.
+            result = agent_loop.evaluate_final_acceptance(repo)
+            self.assertEqual(
+                result["acceptance_signal"],
+                "awaiting_final_human_acceptance",
+            )
+
+    def test_phase_9e_completion_recognizes_accepted_status(
+        self,
+    ) -> None:
+        # The Phase 9E `evaluate_phase_completion(...)` was
+        # extended to recognize the canonical accepted terminal
+        # as a `completion_approved` signal so the long-run loop
+        # terminates cleanly after a Phase 9G acceptance recording.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(
+                repo,
+                status="phase_complete_final_human_accepted",
+            )
+            result = agent_loop.evaluate_phase_completion(repo)
+            self.assertEqual(
+                result["completion_signal"],
+                "completion_approved",
+            )
+            self.assertEqual(
+                result["terminal_status"],
+                "phase_complete_final_human_accepted",
+            )
+
+    def test_phase_9e_completion_still_recognizes_awaiting_status(
+        self,
+    ) -> None:
+        # Regression guard: the pre-acceptance terminal still
+        # produces a `completion_approved` signal so existing
+        # Phase 9E callers stay byte-equivalent.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            result = agent_loop.evaluate_phase_completion(repo)
+            self.assertEqual(
+                result["completion_signal"],
+                "completion_approved",
+            )
+
+    def test_audit_line_records_accepted_status(self) -> None:
+        # The audit line now also records the new
+        # `accepted_status` field so operators inspecting the
+        # log see the canonical state-model transition.
+        with TemporaryDirectory() as td:
+            repo = _make_repo(Path(td))
+            _plant_loop_state(repo)
+            log_path = repo / ".agent-loop" / "orchestrator.log"
+            agent_loop.record_final_acceptance(
+                repo, accepted_by="operator",
+                log_path=log_path,
+            )
+            audit = log_path.read_text(encoding="utf-8")
+            self.assertIn(
+                "accepted_status="
+                "'phase_complete_final_human_accepted'",
+                audit,
+            )
 
 
 class FinalAcceptanceCliTests(unittest.TestCase):

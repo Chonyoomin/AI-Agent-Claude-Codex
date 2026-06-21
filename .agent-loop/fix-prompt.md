@@ -1,33 +1,35 @@
 # Claude Code Fix Task
 
 ## Phase
-Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9F - Capacity-Halt Reprobe And Automatic Resume)
+Phase 9 - Fully Autonomous PRD-To-Product Mode (sub-phase: Phase 9G - Final Human Acceptance And Polish Gate)
 
 ## Objective
-Align the remaining Phase 9F README documentation with the shipped per-side adapter-invocation behavior so the operator-facing docs no longer describe the superseded single-flag long-run forwarding model.
+Close the remaining Phase 9G contract gap so explicit final human acceptance is reflected in the canonical state model, not only in the separate `.agent-loop/final-acceptance.json` evaluator path.
 
 ## Context
-Codex re-reviewed the current Phase 9F repo state and found one remaining artifact mismatch:
+Codex re-reviewed the current Phase 9G repo state and found one remaining issue:
 
-1. The runtime and tests now correctly implement per-side adapter invocation control for capacity-resume dispatch (`invoke_claude_adapter` and `invoke_codex_adapter`), and the Phase 9E long-run pre-hop path now forwards both flags into `reprobe_capacity_and_resume(...)`. However, the active Phase 9F README section still contains stale prose from the older implementation. It still says the Phase 9E long-run loop dispatches `reprobe_capacity_and_resume(..., invoke_adapter=invoke_claude_adapter)` and that the second `capacity reprobe: resumed ...` audit line records a single `invoke_adapter` flag. That is no longer true in the shipped code: the long-run path forwards both per-side flags, and the audit line now records `invoke_claude_adapter=...` plus `invoke_codex_adapter=...`. This is now the only remaining mismatch blocking a clean approve-for-transition verdict.
+1. The shipped Phase 9G slice records final human acceptance into `.agent-loop/final-acceptance.json` and `evaluate_final_acceptance(...)` can report `final_acceptance_recorded`, but the canonical loop-state model still stops at `status == "phase_complete_awaiting_human_approval"` with `last_verdict == "APPROVED_FOR_HUMAN_REVIEW"`. The Phase 9G task contract explicitly says Codex should update the canonical phase/task artifacts to reflect the accepted terminal state rather than relying on runtime-only signals. Today `record_final_acceptance(...)` intentionally does not mutate `loop-state.json`, `cmd_record_final_acceptance(...)` repeats that contract, the tests assert the non-mutation behavior, and the README documents the same split-state model. That leaves final human acceptance authoritative only through the separate artifact/evaluator path instead of being representable in the canonical state model itself.
 
 ## Required fixes
-- update the Phase 9F README section so it matches the shipped runtime exactly:
-  - Phase 9E long-run forwarding uses both `invoke_claude_adapter` and `invoke_codex_adapter`
-  - the standalone `run-capacity-reprobe` CLI still uses the back-compat global `--no-invoke-adapter` toggle
-  - the `capacity reprobe: resumed ...` audit line now records the per-side effective flags, not a single `invoke_adapter` field
-- preserve the existing documented behavior that is still correct:
-  - Claude-side resume dispatches through the Claude prompt-handoff path
-  - Codex-side resume dispatches through `make_codex_adapter().wait_for_review(...)`
-  - per-side dry-run suppression remains supported in the long-run path
-- do not widen scope beyond the narrow README / summary artifact alignment issue
-- add or rerun focused validation sufficient to prove the documentation now matches the shipped repo state
+- implement the narrowest safe Phase 9G change that makes accepted completion visible through the canonical state model, not only through `.agent-loop/final-acceptance.json`
+- keep the explicit human gate intact:
+  - no silent auto-acceptance
+  - no bypass of the required `accepted_by` / optional `notes` recording flow
+  - no automatic next-phase activation behavior
+- update the relevant runtime/docs/tests together so the contract is internally consistent:
+  - `scripts/agent_loop.py`
+  - `tests/test_final_acceptance.py`
+  - `README.md`
+  - `.agent-loop/claude-summary.md`
+- preserve the existing fail-closed behavior for malformed loop-state, malformed acceptance artifacts, stale acceptance artifacts, output-boundary violations, and re-acceptance without explicit delete/re-record
+- keep scope limited to the Phase 9G final-acceptance contract gap; do not widen into new Phase 9 features
 
 ## Constraints
 - follow `CLAUDE.md`
-- stay within Phase 9F scope
+- stay within Phase 9G scope
 - do not modify `AGENTS.md` or `CLAUDE.md`
-- prefer the smallest safe documentation change that removes the stale single-flag wording
+- prefer the smallest coherent implementation that removes the split-brain between accepted completion and canonical loop-state
 
 ## Required output
-After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include the new validation results.
+After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include focused validation showing the new canonical accepted-state behavior.
