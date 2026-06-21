@@ -8280,10 +8280,12 @@ CAPACITY_RETRY_DEFAULT_SUSPENDED_STATUS = "claude_implementing"
 #     handoff so the suspended Claude implementation actually runs
 #   - claude_fixing -> dispatch Claude fix prompt handoff so the
 #     suspended Claude fix cycle actually runs
-#   - awaiting_codex_review -> restore the status only; the next
-#     orchestrator step (Phase 9E review/fix iteration or the
-#     shipped Codex review continuation) invokes the Codex adapter
-#     against the already-captured Claude summary + evidence
+#   - awaiting_codex_review -> resume the Codex-side suspended step;
+#     when Codex invocation is enabled, the reprobe path invokes the
+#     shipped Codex adapter against the already-captured Claude
+#     summary + evidence, and when Codex invocation is disabled it
+#     restores status without dispatch so dry-run callers can preview
+#     the routing decision
 # Status values outside this allowlist have no resume continuation
 # routing and must refuse fail-closed at record-time
 # (record_capacity_halt) and at resume-time (the retry-state
