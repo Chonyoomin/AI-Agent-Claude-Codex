@@ -20,44 +20,44 @@ Phase 9 - Fully Autonomous PRD-To-Product Mode
 
 ## Active Sub-Phase
 
-Phase 9F - Capacity-Halt Reprobe And Automatic Resume
+Phase 9G - Final Human Acceptance And Polish Gate
 
 ## Phase Status
 
-Phase 9E (Long-Run Continuation And Completion Heuristics) is closed after Codex review approval and human progression. Phase 9F is now active as the next implementation slice under the approved Phase 9 contract. This sub-phase should extend the autonomous runtime across external-capacity interruptions by treating Claude/Codex token or rate-limit exhaustion as a bounded, resumable halt with auditable re-probe and automatic resume behavior, while preserving the shipped planner, activation, artifact-truth, and hard-stop boundaries.
+Phase 9F (Capacity-Halt Reprobe And Automatic Resume) is closed after Codex review approval and human progression. Phase 9G is now active as the final implementation slice under the approved Phase 9 contract. This sub-phase should require an explicit final human review, polish, and acceptance gate before a fully autonomous PRD-to-product run is treated as complete, while preserving the shipped planner, activation, artifact-truth, and hard-stop boundaries.
 
 ## Active Task
 
-Implement the Capacity-Halt Reprobe And Automatic Resume slice for the agent loop. This slice should treat Claude/Codex token or rate-limit exhaustion as a resumable external-capacity halt, persist bounded retry metadata beside the existing checkpoint, wait with bounded backoff, re-probe availability, and resume the exact suspended step automatically when capacity returns without silently widening autonomy or retrying forever, while preserving the shipped planner/activation boundary, artifact source-of-truth model, and hard-stop behavior.
+Implement the Final Human Acceptance And Polish Gate slice for the agent loop. This slice should require an explicit final human review, polish, and acceptance step before a fully autonomous PRD-to-product run is treated as complete, using canonical repo artifacts and preserving the shipped planner/activation boundary, artifact source-of-truth model, and hard-stop behavior.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 9 / 9F as active
-- `.agent-loop/phase-plan.md` records Phase 9E as closed history and contains a `## Phase 9F - Capacity-Halt Reprobe And Automatic Resume` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository ships a bounded capacity-halt re-probe and automatic-resume layer for Claude/Codex token or rate-limit exhaustion that extends the shipped Phase 6 continuation primitives and the Phase 9B/9C/9D/9E autonomous runtime
-- the runtime persists auditable retry metadata beside the existing checkpoint, waits with bounded backoff, re-probes capacity availability, and resumes the exact suspended step automatically when capacity returns
-- the new surface preserves the shipped artifact/source-of-truth boundary: canonical prompt, summary, review, fix, checkpoint, retry-state, and loop-state artifacts remain authoritative; advisory descriptors remain routing/timing artifacts only
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 9 / 9G as active
+- `.agent-loop/phase-plan.md` records Phase 9F as closed history and contains a `## Phase 9G - Final Human Acceptance And Polish Gate` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the repository ships a bounded final human acceptance / polish gate for the fully autonomous Phase 9 runtime that extends the shipped Phase 9B/9C/9D/9E/9F surfaces
+- the runtime detects the final acceptance boundary from canonical artifacts and refuses to treat the run as complete until explicit human acceptance is recorded
+- the new surface preserves the shipped artifact/source-of-truth boundary: canonical prompt, summary, review, fix, checkpoint, retry-state, loop-state, and final-acceptance artifacts remain authoritative; advisory descriptors remain routing/timing artifacts only
 - the new surface preserves the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- focused validation proves bounded capacity-halt retry behavior, refusal behavior, retry-budget/backoff behavior, and hard-stop preservation from repo artifacts and logs
-- `README.md` reflects that Phase 9F is active and that capacity-halt re-probe / automatic resume are now the implementation focus
+- focused validation proves final-acceptance gating behavior, refusal behavior, and hard-stop preservation from repo artifacts and logs
+- `README.md` reflects that Phase 9G is active and that the final human acceptance / polish gate is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not start the next 9x sub-phase after Phase 9F until:
+Do not treat the fully autonomous Phase 9 run as complete after Phase 9G until:
 
-- this Phase 9F slice receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human explicitly approves moving to the next sub-phase
-- Codex updates `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` for the next sub-phase
+- this Phase 9G slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human explicitly performs the final review / polish / acceptance step
+- Codex updates the canonical phase/task artifacts to reflect the accepted terminal state rather than silently declaring completion from runtime-only signals
 
 ## Out Of Scope For Current Phase
 
-- final acceptance automation (Phase 9G)
+- auto-accepting product completion or silently skipping the explicit final human gate
 - any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
-- any new intake, runtime-adapter, LangChain, VS Code, MCP, or external-UI feature work unrelated to the narrow capacity-halt re-probe / automatic-resume slice
-- any product-completion acceptance logic beyond the narrow capacity-halt retry / automatic-resume slice
+- any new intake, runtime-adapter, LangChain, VS Code, MCP, or external-UI feature work unrelated to the narrow final human acceptance / polish gate slice
+- any product-completion logic that bypasses explicit human signoff
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
 - inventing unreviewable autonomous behavior that the repo does not currently ship just to simplify the implementation
-- collapsing later Phase 9 roadmap items into this slice
+- collapsing future roadmap work beyond the final human gate into this slice
 - MCP support, external UI, concurrent-agent operation, or implementation of end-to-end fully autonomous PRD-to-product execution (future phases)
 - recursive invocation of the locally installed `claude` CLI
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
