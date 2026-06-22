@@ -15,8 +15,9 @@ sub-phases:
 - Phase 10B: External Target Attach Record Contract (controller-owned
   attach-record schema; see
   `docs/external-target-attach-record-contract.md`)
-- Phase 10C: External Target Bootstrap Contract (target-side canonical
-  artifact set bring-up; refusal behavior when bootstrap is incomplete)
+- Phase 10C: External Workspace Bootstrap Contract (target-side
+  canonical artifact set bring-up; refusal behavior when bootstrap is
+  incomplete)
 - Phase 10D: External Workspace Attach/Detach Runtime Initial Slice
   (the CLI + library that writes and reads the Phase 10B attach record)
 - Phase 10E: External Target Bootstrap Runtime (the CLI + library that

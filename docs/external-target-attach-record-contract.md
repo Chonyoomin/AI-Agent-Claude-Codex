@@ -424,7 +424,7 @@ The future attach record writer MUST refuse to:
 The attach record's schema is load-bearing for the following later
 Phase 10 sub-phases:
 
-- Phase 10C (External Target Bootstrap Contract) reads
+- Phase 10C (External Workspace Bootstrap Contract) reads
   `bootstrap_state.status` to decide whether the bootstrap runtime
   must run at attach time, and writes the values back into the
   attach record's `bootstrap_state` sub-object before the attach

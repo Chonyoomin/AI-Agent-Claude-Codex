@@ -2007,7 +2007,7 @@ class ExternalWorkspaceContractUsesCurrentPhase10DependencyMapTests(
     canonical slicing is:
 
     - Phase 10B = External Target Attach Record Contract
-    - Phase 10C = External Target Bootstrap Contract
+    - Phase 10C = External Workspace Bootstrap Contract
     - Phase 10D = External Workspace Attach/Detach Runtime Initial Slice
     - Phase 10E = External Target Bootstrap Runtime
     - Phase 10F = Target-Side Cycle Dispatch
@@ -2028,7 +2028,7 @@ class ExternalWorkspaceContractUsesCurrentPhase10DependencyMapTests(
         # canonical title at least once in the doc.
         for label, title in (
             ("Phase 10B", "External Target Attach Record Contract"),
-            ("Phase 10C", "External Target Bootstrap Contract"),
+            ("Phase 10C", "External Workspace Bootstrap Contract"),
             (
                 "Phase 10D",
                 "External Workspace Attach/Detach Runtime "
@@ -2088,9 +2088,9 @@ class ExternalWorkspaceContractUsesCurrentPhase10DependencyMapTests(
                 f"docs/external-workspace-contract.md still carries "
                 f"the pre-reslice Phase 10C mapping via "
                 f"{stale_fragment!r}; the current canonical Phase "
-                f"10C title is 'External Target Bootstrap Contract' "
-                f"and the external UI / dashboard surface is now "
-                f"Phase 10G",
+                f"10C title is 'External Workspace Bootstrap "
+                f"Contract' and the external UI / dashboard surface "
+                f"is now Phase 10G",
             )
 
     def test_contract_routes_external_ui_to_phase_10g(self) -> None:
@@ -2892,6 +2892,128 @@ class ReadmeMarksPhase10cAsActiveTests(unittest.TestCase):
                 f"README.md Phase 10C paragraph does not document "
                 f"the documentation-only scope fragment "
                 f"{fragment!r}",
+            )
+
+
+class Phase10cTitleAlignmentAcrossContractStackTests(
+    unittest.TestCase,
+):
+    """Phase 10C fix: the layered Phase 10 contract stack MUST use the
+    same canonical Phase 10C title everywhere. The active title is
+    `External Workspace Bootstrap Contract`. An older draft used
+    `External Target Bootstrap Contract`; the drift currently appears
+    only in cross-references inside the Phase 10A baseline contract
+    and the Phase 10B attach-record contract. This class is the guard
+    that fails-closed if either doc drifts back to the stale title.
+
+    The Phase 10C doc itself is covered by
+    `BootstrapContractDocExistsAndIsWellFormedTests`; this class
+    covers the cross-references in the sibling Phase 10A and 10B
+    contract docs.
+    """
+
+    CORRECT_TITLE = "External Workspace Bootstrap Contract"
+    STALE_TITLE = "External Target Bootstrap Contract"
+
+    def setUp(self) -> None:
+        self.workspace = _read(EXTERNAL_WORKSPACE_CONTRACT_PATH)
+        self.attach = _read(ATTACH_RECORD_CONTRACT_PATH)
+        self.workspace_collapsed = re.sub(
+            r"\s+", " ", self.workspace,
+        )
+        self.attach_collapsed = re.sub(r"\s+", " ", self.attach)
+
+    def test_workspace_contract_uses_correct_phase_10c_title(
+        self,
+    ) -> None:
+        self.assertIn(
+            self.CORRECT_TITLE, self.workspace_collapsed,
+            f"docs/external-workspace-contract.md does not name the "
+            f"canonical Phase 10C title {self.CORRECT_TITLE!r}",
+        )
+
+    def test_workspace_contract_does_not_use_stale_phase_10c_title(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            self.STALE_TITLE, self.workspace_collapsed,
+            f"docs/external-workspace-contract.md still names the "
+            f"stale Phase 10C title {self.STALE_TITLE!r}; the "
+            f"current canonical title is {self.CORRECT_TITLE!r}",
+        )
+
+    def test_attach_record_contract_uses_correct_phase_10c_title(
+        self,
+    ) -> None:
+        self.assertIn(
+            self.CORRECT_TITLE, self.attach_collapsed,
+            f"docs/external-target-attach-record-contract.md does "
+            f"not name the canonical Phase 10C title "
+            f"{self.CORRECT_TITLE!r}",
+        )
+
+    def test_attach_record_contract_does_not_use_stale_phase_10c_title(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            self.STALE_TITLE, self.attach_collapsed,
+            f"docs/external-target-attach-record-contract.md still "
+            f"names the stale Phase 10C title "
+            f"{self.STALE_TITLE!r}; the current canonical title is "
+            f"{self.CORRECT_TITLE!r}",
+        )
+
+
+class ReadmePhase10cBootstrapWriteBoundaryWordingTests(
+    unittest.TestCase,
+):
+    """Phase 10C fix: the README's Phase 10C paragraph MUST describe
+    bootstrap's write boundary accurately. The original wording said
+    the five canonical artifacts may be written by bootstrap "and
+    ONLY by bootstrap", which overstated the contract: the Phase 4C
+    activator and the shipped Phase 3A orchestrator also rewrite
+    those same target-side canonical artifacts on per-target activation
+    and per-cycle updates. The corrected wording constrains
+    bootstrap's own write boundary without claiming bootstrap is the
+    only runtime that may ever touch those files.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_does_not_overstate_bootstrap_write_ownership(
+        self,
+    ) -> None:
+        # The "and ONLY by bootstrap" wording is the overstatement.
+        self.assertNotIn(
+            "and ONLY by bootstrap", self.text,
+            "README.md Phase 10C paragraph still uses the "
+            "overstated 'and ONLY by bootstrap' wording; Phase 10C "
+            "only constrains bootstrap's own write boundary, not "
+            "the long-term write ownership of the five canonical "
+            "artifacts (the Phase 4C activator and the shipped "
+            "Phase 3A orchestrator also rewrite those files)",
+        )
+
+    def test_readme_names_other_runtimes_that_rewrite_canonical_files(
+        self,
+    ) -> None:
+        # The corrected wording should explicitly name at least one
+        # of the other shipped runtimes that legitimately rewrites
+        # these target-side canonical artifacts after bootstrap so a
+        # reader sees the bootstrap write boundary is bootstrap-
+        # scoped, not lifetime-scoped.
+        for fragment in (
+            "Phase 4C activator on per-target phase activation",
+            "Phase 3A orchestrator",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10C paragraph does not name "
+                f"the shipped runtime {fragment!r} that "
+                f"legitimately rewrites the same canonical files "
+                f"after bootstrap; the corrected wording must "
+                f"make clear bootstrap is not the only writer",
             )
 
 
