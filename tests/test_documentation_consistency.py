@@ -70,12 +70,22 @@ ATTACH_RECORD_CONTRACT_PATH = (
     REPO_ROOT / "docs" / "external-target-attach-record-contract.md"
 )
 PHASE_10B_DOC_PATHS = (ATTACH_RECORD_CONTRACT_PATH,)
+
+# Phase 10C external workspace bootstrap contract doc (External
+# Workspace Bootstrap Contract slice; documentation-only contract
+# for the target-side `.agent-loop` initialization surface future
+# Phase 10D attach + Phase 10E bootstrap runtime slices must follow).
+BOOTSTRAP_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "external-workspace-bootstrap-contract.md"
+)
+PHASE_10C_DOC_PATHS = (BOOTSTRAP_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
     PHASE_8A_DOC_PATHS
     + PHASE_8B_DOC_PATHS
     + PHASE_9A_DOC_PATHS
     + PHASE_10A_DOC_PATHS
     + PHASE_10B_DOC_PATHS
+    + PHASE_10C_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -2529,6 +2539,357 @@ class ReadmeMarksPhase10bAsActiveTests(unittest.TestCase):
             self.assertIn(
                 fragment, self.text,
                 f"README.md Phase 10B paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
+            )
+
+
+class BootstrapContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10C: the external workspace bootstrap contract doc must
+    exist on disk, be non-empty, be ASCII-only, and carry the canonical
+    section headers a Phase 10E implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = BOOTSTRAP_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10C bootstrap contract doc at "
+            f"{self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/external-workspace-bootstrap-contract.md "
+                f"contains non-ASCII bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# External Workspace Bootstrap Contract",
+            "## Status",
+            "## Scope",
+            "## Distinction From Other Shipped Artifacts",
+            "## Canonical Artifact Set The Bootstrap May Write",
+            "## Initial Contents Of Each Canonical Artifact",
+            "## Pre-Bootstrap Target States",
+            "## Operator Opt-In",
+            "## Bootstrap-State Field Schema",
+            "## Refusal Behavior",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Dependencies On Later Phase 10 Slices",
+            "## Out Of Scope For Phase 10C",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/external-workspace-bootstrap-contract.md "
+                f"missing required section header {header!r}",
+            )
+
+
+class BootstrapContractPinsSchemaTests(unittest.TestCase):
+    """The Phase 10C bootstrap contract MUST pin the canonical
+    artifact set, pre-bootstrap state enumeration, and bootstrap-state
+    extension fields by name so a future Phase 10E implementer can
+    write the bootstrap runtime from this contract without further
+    design decisions.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(BOOTSTRAP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_signal_version_marker(self) -> None:
+        self.assertIn(
+            "bootstrap_signal_version", self.collapsed,
+            "bootstrap contract does not name the "
+            "bootstrap_signal_version field",
+        )
+        self.assertIn(
+            "phase-10c-v1", self.collapsed,
+            "bootstrap contract does not pin the phase-10c-v1 "
+            "signal-version string",
+        )
+
+    def test_contract_pins_canonical_artifact_set(self) -> None:
+        # The five target-side canonical artifacts bootstrap may
+        # write (and only those five).
+        for path in (
+            "`TASK.md`",
+            "`.agent-loop/current-task.md`",
+            "`.agent-loop/current-phase.md`",
+            "`.agent-loop/phase-plan.md`",
+            "`.agent-loop/loop-state.json`",
+        ):
+            self.assertIn(
+                path, self.collapsed,
+                f"bootstrap contract does not name target-side "
+                f"canonical artifact {path!r}",
+            )
+
+    def test_contract_pins_pre_bootstrap_state_enumeration(
+        self,
+    ) -> None:
+        # The four pre-bootstrap target states; the enumeration is
+        # closed.
+        for value in (
+            "empty_target",
+            "partial_target",
+            "full_target",
+            "malformed_target",
+        ):
+            self.assertIn(
+                value, self.collapsed,
+                f"bootstrap contract does not name pre-bootstrap "
+                f"target-state value {value!r}",
+            )
+
+    def test_contract_pins_bootstrap_state_extension_fields(
+        self,
+    ) -> None:
+        # Six required extension fields for the Phase 10B attach
+        # record's bootstrap_state sub-object when bootstrap was
+        # performed.
+        for field in (
+            "bootstrap_signal_version",
+            "pre_bootstrap_target_state",
+            "artifacts_written",
+            "initial_loop_state_status",
+            "initial_human_objective_excerpt",
+            "bootstrap_log_line",
+        ):
+            self.assertIn(
+                field, self.collapsed,
+                f"bootstrap contract does not name required "
+                f"bootstrap-state extension field {field!r}",
+            )
+
+    def test_contract_pins_initial_loop_state_status(self) -> None:
+        # The new awaiting_first_activation status the Phase 10E
+        # bootstrap runtime introduces (no shipped status fits a
+        # bootstrapped-but-not-activated target).
+        self.assertIn(
+            "awaiting_first_activation", self.collapsed,
+            "bootstrap contract does not pin the new "
+            "awaiting_first_activation loop-state.status value",
+        )
+
+
+class BootstrapContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The Phase 10C contract MUST preserve the shipped hard stops
+    (no Git automation, the Phase 4C activator + APPROVED_FOR_ACTIVATION
+    gate, the Phase 9G final human acceptance gate, the
+    source-of-truth boundary, the bootstrap-never-overwrites
+    guarantee). The Phase 10A + 10B baselines already pin most of
+    these; the bootstrap contract MUST NOT silently weaken any.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(BOOTSTRAP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_marks_runtime_as_not_yet_implemented(self) -> None:
+        self.assertIn(
+            "is NOT yet implemented", self.collapsed,
+            "bootstrap contract does not mark the bootstrap runtime "
+            "as not-yet-implemented",
+        )
+
+    def test_contract_locates_future_runtime_in_phase_10d_or_later(
+        self,
+    ) -> None:
+        for sub_phase in (
+            "Phase 10D",
+            "Phase 10E",
+            "Phase 10F",
+            "Phase 10G",
+        ):
+            self.assertIn(
+                sub_phase, self.collapsed,
+                f"bootstrap contract does not name {sub_phase!r} "
+                f"as the locus for the corresponding future runtime "
+                f"work",
+            )
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        for fragment in (
+            "commit, push, tag, branch, stash, reset, checkout",
+            "BOTH roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"bootstrap contract does not preserve the "
+                f"no-Git-automation boundary via {fragment!r}",
+            )
+
+    def test_contract_preserves_approved_for_activation(self) -> None:
+        self.assertIn(
+            "APPROVED_FOR_ACTIVATION", self.collapsed,
+            "bootstrap contract does not preserve the "
+            "APPROVED_FOR_ACTIVATION human-approval gate",
+        )
+        self.assertIn(
+            "Phase 4C activator", self.collapsed,
+            "bootstrap contract does not name the Phase 4C "
+            "activator as the preserved activation step",
+        )
+
+    def test_contract_preserves_final_human_acceptance_gate(
+        self,
+    ) -> None:
+        self.assertIn(
+            "Phase 9G", self.collapsed,
+            "bootstrap contract does not name the Phase 9G final "
+            "acceptance gate as a preserved boundary",
+        )
+
+    def test_contract_preserves_canonical_artifact_source_of_truth(
+        self,
+    ) -> None:
+        for fragment in (
+            "canonical artifacts on disk remain authoritative",
+            "advisory",
+        ):
+            self.assertIn(
+                fragment, self.collapsed.lower(),
+                f"bootstrap contract does not preserve the "
+                f"source-of-truth model via {fragment!r}",
+            )
+
+    def test_contract_pins_bootstrap_never_overwrites(self) -> None:
+        # The load-bearing guarantee: bootstrap MUST NOT overwrite
+        # an existing canonical artifact even if it is malformed.
+        for fragment in (
+            "bootstrap never overwrites",
+            "MUST NOT overwrite",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"bootstrap contract does not pin the "
+                f"bootstrap-never-overwrites guarantee via "
+                f"{fragment!r}",
+            )
+
+    def test_contract_refuses_silent_autonomy_widening(self) -> None:
+        # bootstrap_by MUST NOT auto-fill from $USER / whoami.
+        self.assertIn(
+            "auto-fill", self.collapsed.lower(),
+            "bootstrap contract does not refuse silent identity "
+            "auto-fill",
+        )
+        for fragment in ("$USER", "whoami"):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"bootstrap contract does not explicitly refuse "
+                f"auto-fill of bootstrapped_by from {fragment!r}",
+            )
+
+
+class ReadmePointsAtBootstrapContractDocTests(unittest.TestCase):
+    """Phase 10C: the README must route a reader at the new contract
+    doc and mark Phase 10C as the current active sub-phase.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_names_bootstrap_contract_doc(self) -> None:
+        self.assertIn(
+            "docs/external-workspace-bootstrap-contract.md",
+            self.text,
+            "README.md does not route readers at the Phase 10C "
+            "bootstrap contract doc",
+        )
+
+
+class ReadmeMarksPhase10cAsActiveTests(unittest.TestCase):
+    """Phase 10C: README must name Phase 10C as the current active
+    sub-phase, describe the documentation-only contract surface (the
+    new doc, the five canonical artifacts bootstrap may write, the
+    four-value pre-bootstrap state enumeration, the six bootstrap-
+    state extension fields, the new awaiting_first_activation
+    status), and preserve the documented Phase 4 planner / Phase 4C
+    activator boundary plus the Phase 9G final human acceptance
+    gate so the contract does not silently weaken either.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_10c_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10C", self.text,
+            "README.md does not name Phase 10C as a current focus",
+        )
+        self.assertIn(
+            "External Workspace Bootstrap Contract", self.text,
+            "README.md does not name the Phase 10C sub-phase title",
+        )
+
+    def test_readme_names_the_shipped_contract_surface(self) -> None:
+        for fragment in (
+            "docs/external-workspace-bootstrap-contract.md",
+            "bootstrap_signal_version",
+            "phase-10c-v1",
+            "empty_target",
+            "partial_target",
+            "full_target",
+            "malformed_target",
+            "pre_bootstrap_target_state",
+            "artifacts_written",
+            "initial_loop_state_status",
+            "awaiting_first_activation",
+            "bootstrap_log_line",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10C paragraph does not name "
+                f"shipped contract surface {fragment!r}",
+            )
+
+    def test_readme_preserves_planner_activator_boundary(self) -> None:
+        for fragment in (
+            "Phase 4C activator",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10C paragraph does not preserve "
+                f"the {fragment!r} boundary",
+            )
+
+    def test_readme_preserves_phase_9g_final_acceptance_gate(
+        self,
+    ) -> None:
+        self.assertIn(
+            "Phase 9G final human acceptance gate", self.text,
+            "README.md Phase 10C paragraph does not preserve the "
+            "Phase 9G final human acceptance gate per target",
+        )
+
+    def test_readme_marks_phase_10c_as_documentation_only(self) -> None:
+        for fragment in (
+            "documentation / contract only",
+            "Phase 10E",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10C paragraph does not document "
                 f"the documentation-only scope fragment "
                 f"{fragment!r}",
             )
