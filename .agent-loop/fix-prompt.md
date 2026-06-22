@@ -1,40 +1,36 @@
 # Claude Code Fix Task
 
-## Phase
-Phase 10 - Future Product Features (sub-phase: Phase 10C - External Workspace Bootstrap Contract)
-
 ## Objective
-Fix the remaining Phase 10C contract-alignment issues by correcting the cross-contract Phase 10C title drift and tightening the README wording so it does not overstate bootstrap's long-term write ownership.
+Fix only the issues found in `.agent-loop/codex-review.md`.
 
 ## Context
-Codex re-reviewed the current Phase 10C repo state and found two Claude-owned follow-ups:
+The previous implementation was reviewed by Codex and received the verdict `NEEDS_FIXES`.
 
-1. Cross-contract title drift: older Phase 10 documents still refer to Phase 10C as `External Target Bootstrap Contract`, while the active canonical phase title is `External Workspace Bootstrap Contract`. This drift currently appears in:
-   - `docs/external-workspace-contract.md`
-   - `docs/external-target-attach-record-contract.md`
-   The active task artifacts, phase plan, roadmap, README, and new Phase 10C doc already use `External Workspace Bootstrap Contract`. The layered contract stack should use one canonical Phase 10C title everywhere.
-
-2. README overstatement: the new Phase 10C paragraph in `README.md` says the five canonical artifacts may be written by bootstrap "and ONLY by bootstrap". That overstates the contract. The Phase 10C contract constrains what the bootstrap surface may write, but those same target-side canonical artifacts are later rewritten by normal target-side flows such as the Phase 4C activator and later runtime behavior. The README should describe the bootstrap write boundary accurately without implying bootstrap is the only runtime that may ever touch those files.
+Read:
+- `CLAUDE.md`
+- `.agent-loop/claude-prompt.md`
+- `.agent-loop/codex-review.md`
+- `.agent-loop/git-diff.patch`
+- `.agent-loop/test-output.log`
+- `.agent-loop/lint-output.log`
+- `.agent-loop/typecheck-output.log`
+- `.agent-loop/build-output.log`
 
 ## Required fixes
-- update the stale Phase 10C title references so the layered contract stack uses the same canonical sub-phase title everywhere:
-  - `docs/external-workspace-contract.md`
-  - `docs/external-target-attach-record-contract.md`
-- update the Phase 10C README paragraph so it says bootstrap may write exactly the five canonical artifacts during bootstrap, without claiming bootstrap is the only runtime that may ever write them afterward
-- add or adjust focused documentation-consistency coverage so both regressions would fail closed if they reappear:
-  - stale `External Target Bootstrap Contract` references where the canonical title should now be `External Workspace Bootstrap Contract`
-  - the misleading README wording that overstates bootstrap's long-term write ownership
-- preserve Phase 10C scope:
-  - documentation/contract only
-  - no runtime implementation
-  - no new CLI or Python behavior
-  - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- update `scripts/agent_loop.py` so the Phase 10D detach schema validator refuses malformed controller-owned attach records when `mode_selection.approval_mode` is outside `EXTERNAL_TARGET_APPROVAL_MODES`
+- update `scripts/agent_loop.py` so the Phase 10D detach schema validator refuses malformed controller-owned attach records when `bootstrap_state.status` is outside `EXTERNAL_TARGET_BOOTSTRAP_STATUSES`
+- add focused coverage in `tests/test_external_target_attach.py` proving both out-of-enumeration cases now refuse fail-closed and leave the malformed attach record on disk
 
 ## Constraints
-- follow `CLAUDE.md`
-- stay within Phase 10C fix scope
-- do not modify `AGENTS.md` or `CLAUDE.md`
-- prefer the smallest safe doc/test change that removes the drift and locks the corrected wording in
+- Fix only the listed issues.
+- Do not redesign unrelated code.
+- Do not expand the product scope.
+- Do not modify `AGENTS.md`.
+- Do not modify `CLAUDE.md`.
+- Do not delete files unless explicitly required and approved.
+- Preserve the original task objective.
+- Update tests if behavior changes.
+- Prefer minimal, targeted changes.
 
 ## Required output
-After applying the fix, update `.agent-loop/claude-summary.md` in the required Claude Implementation Summary format and include focused validation showing the corrected Phase 10C title alignment and README wording both pass with the new consistency coverage.
+After applying fixes, update `.agent-loop/claude-summary.md` using the required Claude Implementation Summary format.

@@ -10208,6 +10208,107 @@ def _build_external_target_attach_payload(
     }
 
 
+def _validate_external_target_attach_record_schema(
+    record: dict,
+) -> None:
+    """Phase 10D fix-cycle: validate the full Phase 10B attach-record
+    schema before any detach side-effect. Refuses fail-closed on
+    missing required top-level fields, wrong-typed required fields,
+    missing required sub-fields inside the structured top-level
+    objects (`controller_identity`, `mode_selection`,
+    `bootstrap_state`, `stale_attach_detection`, `audit`), and
+    wrong-typed required sub-fields.
+
+    The check covers schema structure only; semantic checks (signal-
+    version recognition, controller-path match) are enforced by the
+    caller. Calling this helper before deletion guarantees the
+    controller never silently clears an underspecified or partially
+    corrupted attach record.
+    """
+    required_string_top_level = (
+        "attach_record_signal_version",
+        "attached_at",
+        "attached_by",
+        "target_path_canonical",
+        "target_path_raw",
+        "controller_path_canonical",
+        "canonical_precedence_note",
+    )
+    for field in required_string_top_level:
+        value = record.get(field)
+        if not isinstance(value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {field!r} is missing or "
+                    f"non-string ({value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+    required_subobject_string_fields = (
+        ("controller_identity", "repo_signature"),
+        ("controller_identity", "orchestrator_version"),
+        ("controller_identity", "contract_version"),
+        ("mode_selection", "approval_mode"),
+        ("mode_selection", "selected_at"),
+        ("mode_selection", "selected_by"),
+        ("bootstrap_state", "status"),
+        (
+            "stale_attach_detection",
+            "target_path_canonical_at_attach",
+        ),
+        (
+            "stale_attach_detection",
+            "controller_path_canonical_at_attach",
+        ),
+        ("audit", "attach_log_line"),
+    )
+    for parent, sub in required_subobject_string_fields:
+        parent_value = record.get(parent)
+        if not isinstance(parent_value, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {parent!r} is missing or not "
+                    f"an object ({parent_value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+        sub_value = parent_value.get(sub)
+        if not isinstance(sub_value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {parent}.{sub} is missing or "
+                    f"non-string ({sub_value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+    required_subobject_list_fields = (
+        (
+            "stale_attach_detection",
+            "target_marker_files_at_attach",
+        ),
+        ("audit", "refusal_history"),
+    )
+    for parent, sub in required_subobject_list_fields:
+        parent_value = record.get(parent)
+        sub_value = parent_value.get(sub)
+        if not isinstance(sub_value, list):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {parent}.{sub} is missing or "
+                    f"non-list ({sub_value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+
+
 def _atomic_write_json(target: Path, payload: dict) -> None:
     """Write JSON atomically via temp-write + rename. Phase 10B
     requires the attach record to be either fully present or fully
@@ -10317,6 +10418,38 @@ def attach_external_target(
                 f"`partial_target` and `malformed_target` are "
                 f"always refused per the Phase 10C "
                 f"bootstrap-never-overwrites guarantee."
+            ),
+        )
+
+    # Phase 10D fix-cycle: the classifier intentionally does NOT
+    # call `check_contract_version` (a target may legitimately have
+    # a different contract_version than the running controller for
+    # FUTURE classification purposes), but ATTACH-time MUST refuse
+    # an unsupported target `contract_version` per the Phase 10A
+    # refusal contract. Equally, ATTACH-time MUST refuse a target
+    # whose loop-state.status is any `halted_*` value: attaching
+    # to a halted target would let the controller silently treat
+    # a halted run as resumable without operator review. Both
+    # refusals fire BEFORE any attach-record write so the
+    # controller never advances past a refusal-eligible target.
+    target_state_path = (
+        target_resolved / ".agent-loop" / "loop-state.json"
+    )
+    target_state = load_loop_state(target_state_path)
+    validate_loop_state(target_state)
+    check_contract_version(target_state)
+    target_status = str(target_state.get("status") or "")
+    if target_status.startswith("halted_"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target attach refused: target "
+                f"loop-state.status={target_status!r} is a halted "
+                f"state. Attaching to a halted target would let "
+                f"the controller silently treat a halted run as "
+                f"resumable; the operator must resolve the halt "
+                f"on the target side (via the shipped recovery "
+                f"vocabulary) before the controller may attach."
             ),
         )
 
@@ -10466,19 +10599,15 @@ def detach_external_target(
             ),
         )
 
-    record_controller_canonical = record.get(
-        "controller_path_canonical",
-    )
-    if not isinstance(record_controller_canonical, str):
-        raise HaltError(
-            "halted_input_missing",
-            (
-                f"external target detach refused: attach record "
-                f"controller_path_canonical is missing or "
-                f"non-string ({record_controller_canonical!r}); "
-                f"the record is structurally invalid"
-            ),
-        )
+    # Phase 10D fix-cycle: validate the full Phase 10B attach-record
+    # schema before any detach side-effect. An underspecified record
+    # (e.g. one carrying only `attach_record_signal_version` +
+    # `controller_path_canonical`) used to slip past detach; the
+    # explicit schema check refuses fail-closed instead so the
+    # operator must inspect the malformed record manually.
+    _validate_external_target_attach_record_schema(record)
+
+    record_controller_canonical = record["controller_path_canonical"]
     controller_resolved = controller_root.resolve()
     if record_controller_canonical != controller_resolved.as_posix():
         raise HaltError(
