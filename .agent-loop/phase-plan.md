@@ -4083,10 +4083,11 @@ Phase 10D/10E runtime slices depend on that bootstrap contract.
 
 ### Status
 
-Active. Implementation slice under Phase 10 focused on adding the minimal
-attach/detach runtime path for external-workspace mode so target selection,
-attach-record persistence, and bounded detach behavior become executable while
-still preserving the approved controller/target ownership boundary.
+Complete and approved by human to advance to Phase 10E. Phase 10D closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the external-workspace
+attach/detach runtime, contract-level refusal hardening follow-ups, focused
+validation, and README/runtime alignment were all verified in the current repo
+state.
 
 ### Objective
 
@@ -4131,6 +4132,83 @@ bootstrap automation.
 - no bootstrap runtime implementation beyond the bounded hooks strictly
   required for Phase 10D attach/detach flow (Phase 10E)
 - no target-side cycle dispatch implementation (Phase 10F)
+- no external UI, dashboard, or run-control implementation (Phase 10G and
+  later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10E - External Workspace Bootstrap Runtime Initial Slice
+
+### Status
+
+Active. Implementation slice under Phase 10 focused on adding the explicit
+bootstrap runtime for `empty_target` external workspaces so the approved Phase
+10C target initialization contract becomes executable while still preserving the
+controller/target ownership boundary and the shipped activation gate.
+
+### Objective
+
+Implement the External Workspace Bootstrap Runtime Initial Slice for the agent
+loop. This slice should add the explicit bootstrap path for `empty_target`
+external workspaces under the approved Phase 10C contract, write only the
+allowed target-side canonical artifact set atomically, update the
+controller-owned attach record's bootstrap-state fields consistently, and
+refuse partial or malformed target states without widening into target-side
+cycle dispatch or external UI behavior.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10E as active
+- `.agent-loop/phase-plan.md` records Phase 10D as closed history and contains
+  a `## Phase 10E - External Workspace Bootstrap Runtime Initial Slice`
+  section with concrete objective, done criteria, and exclusions
+- the repository implements the explicit bootstrap runtime path for
+  `empty_target` external workspaces under the approved Phase 10C contract
+  instead of leaving bootstrap documentation-only
+- the runtime writes exactly the five allowed target-side canonical bootstrap
+  artifacts atomically or rolls back fully on failure, and never bootstraps by
+  copying controller canonical artifacts
+- the runtime updates the controller-owned `.agent-loop/external-target.json`
+  attach record's `bootstrap_state` extension fields consistently with the
+  approved Phase 10C schema, including bootstrap signal/version, artifacts
+  written, initial loop-state status, objective/intent excerpt handling, and
+  bootstrap audit line handling
+- the runtime enforces the approved no-opt-in / partial-target /
+  malformed-target / missing-input / operator-identity / atomicity refusal
+  paths without widening the planner/activation boundary
+- the runtime preserves the shipped artifact/source-of-truth boundary:
+  controller-owned attach metadata remains controller-owned, target-side
+  canonical artifacts remain target-owned, bootstrap does not silently activate
+  a phase, and target-side first activation still requires the shipped Phase 4C
+  activator plus `APPROVED_FOR_ACTIVATION`
+- the runtime preserves the shipped CLI-first workflow, approval semantics,
+  halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and
+  repo-artifact source-of-truth model
+- focused validation proves the bootstrap runtime is bounded, consistent with
+  the approved contracts, and reflected accurately in the repo
+  planning/docs/runtime surfaces
+- `README.md` reflects that Phase 10E is active and that the bootstrap runtime
+  slice is now the implementation focus
+
+### Exclusions
+
+- no target-side cycle dispatch implementation beyond the bounded bootstrap
+  hooks required to leave a target at `awaiting_first_activation` (Phase 10F)
 - no external UI, dashboard, or run-control implementation (Phase 10G and
   later)
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG
