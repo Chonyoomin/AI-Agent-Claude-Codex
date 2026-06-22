@@ -20,39 +20,38 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10C - External Workspace Bootstrap Contract
+Phase 10D - External Workspace Attach/Detach Runtime Initial Slice
 
 ## Phase Status
 
-Phase 10B (External Target Attach Record Contract) is closed after Codex review approval and human progression. Phase 10C is now active as the next planning slice under Phase 10. This sub-phase should define the bootstrap contract for target-side `.agent-loop` initialization in external-workspace mode, including what may be bootstrapped, what must be refused, and how partial bootstrap remains fail-closed before any bootstrap or attach runtime ships.
+Phase 10C (External Workspace Bootstrap Contract) is closed after Codex review approval and human progression. Phase 10D is now active as the next implementation slice under Phase 10. This sub-phase should implement the minimal attach/detach runtime path for external-workspace mode, including controller-owned attach-record handling and bounded target-selection flow, while consuming the approved Phase 10A/10B/10C contracts without yet adding full bootstrap automation.
 
 ## Active Task
 
-Define the External Workspace Bootstrap Contract for the agent loop. This slice should specify how target-side `.agent-loop` initialization may occur in external-workspace mode, which canonical artifacts may be created or refused, what operator decisions and bootstrap states must be recorded, and how later Phase 10D/10E runtime slices depend on that bootstrap contract.
+Implement the External Workspace Attach/Detach Runtime Initial Slice for the agent loop. This slice should add the minimal runtime path that selects an external target, validates the approved ownership/path boundaries, writes and removes the controller-owned attach record under the approved contract, and records bounded attach/detach audit behavior without yet performing full target bootstrap automation.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10C as active
-- `.agent-loop/phase-plan.md` records Phase 10B as closed history and contains a `## Phase 10C - External Workspace Bootstrap Contract` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository defines, in concrete contract form, how target-side `.agent-loop` initialization may occur in external-workspace mode rather than leaving bootstrap behavior implicit in later runtime/UI code
-- the contract explicitly defines what canonical artifact set may be bootstrapped, which partial or malformed target states must be refused, what operator opt-in or approval-sensitive inputs are required, and what bootstrap-state invariants later Phase 10D/10E runtime slices must preserve
-- the contract preserves the shipped artifact/source-of-truth boundary: controller-owned attach metadata remains controller-owned, target-side canonical artifacts remain target-owned, and bootstrap does not blur those boundaries or invent advisory state as canonical truth
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10D as active
+- `.agent-loop/phase-plan.md` records Phase 10C as closed history and contains a `## Phase 10D - External Workspace Attach/Detach Runtime Initial Slice` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the repository implements the minimal external-workspace attach/detach runtime path that consumes the approved Phase 10A/10B/10C contracts instead of leaving attach behavior documentation-only
+- the runtime writes and removes the controller-owned `.agent-loop/external-target.json` attach record according to the approved Phase 10B schema, enforces the approved same-root / nested-root / malformed-record / already-attached refusals, and records attach/detach audit lines without widening the planner/activation boundary
+- the runtime preserves the shipped artifact/source-of-truth boundary: controller-owned attach metadata remains controller-owned, target-side canonical artifacts remain target-owned, and attach/detach does not silently activate a phase, invent advisory state as canonical truth, or bypass approval gates
 - the contract preserves the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- focused validation proves the bootstrap contract is concrete, internally consistent, ASCII-safe, and reflected accurately in the repo planning/docs surfaces
-- `README.md` reflects that Phase 10C is active and that the bootstrap contract is now the implementation focus
+- focused validation proves the attach/detach runtime is bounded, consistent with the approved contracts, and reflected accurately in the repo planning/docs/runtime surfaces
+- `README.md` reflects that Phase 10D is active and that the attach/detach runtime slice is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not begin attach/detach or bootstrap runtime implementation after Phase 10C until:
+Do not begin broader bootstrap or external UI/runtime expansion after Phase 10D until:
 
-- this Phase 10C slice receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the bootstrap contract as concrete enough for implementation
+- this Phase 10D slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the minimal attach/detach runtime as concrete enough to build the next external-workspace slices on
 - Codex updates the canonical phase/task artifacts to activate the next Phase 10 sub-phase rather than treating roadmap bullets as implementation authority on their own
 
 ## Out Of Scope For Current Phase
 
-- any attach/detach runtime implementation or target-selection runtime behavior (Phase 10D)
-- any bootstrap runtime implementation beyond the contract/planning work for this phase (Phase 10E)
+- any bootstrap runtime implementation beyond the bounded hooks strictly required for Phase 10D attach/detach flow (Phase 10E)
 - any external UI, dashboard, or run-control implementation (Phase 10G and later)
 - any concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state

@@ -4,17 +4,17 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10C - External Workspace Bootstrap Contract
+Phase 10D - External Workspace Attach/Detach Runtime Initial Slice
 
 ## Status
-Phase 10C is active as the next planning slice under Phase 10. The goal is to define the bootstrap contract for target-side `.agent-loop` initialization in external-workspace mode: what may be bootstrapped, what must be refused, what operator opt-ins are required, and how partial bootstrap stays fail-closed before any runtime implementation ships.
+Phase 10D is active as the next implementation slice under Phase 10. The goal is to implement the minimal attach/detach runtime path for external-workspace mode: selecting a target, enforcing the approved ownership/path boundaries, writing and removing the controller-owned attach record, and recording bounded attach/detach audit behavior without yet adding full bootstrap automation.
 
 ## Task
-Define the External Workspace Bootstrap Contract for the agent loop. This slice should specify how target-side `.agent-loop` initialization may occur in external-workspace mode, which canonical artifacts may be created or refused, what operator decisions and bootstrap states must be recorded, and how later Phase 10D/10E runtime slices depend on that bootstrap contract.
+Implement the External Workspace Attach/Detach Runtime Initial Slice for the agent loop. This slice should add the minimal runtime path that selects an external target, validates the approved ownership/path boundaries, writes and removes the controller-owned attach record under the approved contract, and records bounded attach/detach audit behavior without yet performing full target bootstrap automation.
 
 ## Notes
 
-- keep this slice narrow: define the bootstrap contract only; do not broaden into attach runtime, bootstrap runtime implementation, or UI implementation
+- keep this slice narrow: implement the minimal attach/detach runtime only; do not broaden into full bootstrap runtime, target-side dispatch, or UI implementation
 - preserve existing Phase 2A / 3A / 4A contracts unchanged
 - `.agent-loop/claude-done.json` is a routing signal, not proof of correctness
 - preserve the existing Phase 5E post-review reconciliation behavior and the Phase 5F phase-start prompt-bootstrap path unchanged

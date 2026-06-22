@@ -1,31 +1,31 @@
 # Claude Code Task
 
 ## Phase
-Phase 10C - External Workspace Bootstrap Contract
+Phase 10D - External Workspace Attach/Detach Runtime Initial Slice
 
 ## Objective
-Define the External Workspace Bootstrap Contract for the agent loop. This slice should specify how target-side `.agent-loop` initialization may occur in external-workspace mode, which canonical artifacts may be created or refused, what operator decisions and bootstrap states must be recorded, and how later Phase 10D/10E runtime slices depend on that bootstrap contract.
+Implement the External Workspace Attach/Detach Runtime Initial Slice for the agent loop. This slice should add the minimal runtime path that selects an external target, validates the approved ownership/path boundaries, writes and removes the controller-owned attach record under the approved contract, and records bounded attach/detach audit behavior without yet performing full target bootstrap automation.
 
 ## Context
-Phase 10 continues the future product-features track. Phase 10C is a planning/contract slice, not a runtime slice: the goal is to define the bootstrap contract before any bootstrap or attach/detach implementation ships, so later runtime work has a concrete initialization boundary, refusal model, and source-of-truth contract instead of inventing bootstrap behavior ad hoc.
+Phase 10 continues the future product-features track. Phase 10D is the first implementation slice in the external-workspace path: the approved Phase 10A/10B/10C contracts now exist, and this slice should turn the minimal attach/detach path into executable runtime behavior without widening into full bootstrap runtime, target-side cycle dispatch, or external UI control.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10C as active
-- `.agent-loop/phase-plan.md` records Phase 10B as closed history and contains a `## Phase 10C - External Workspace Bootstrap Contract` section with concrete objective, done criteria, and exclusions
-- define the bootstrap contract, in repo artifacts, for future external-workspace mode:
-  - what target-side canonical artifact set may be initialized by bootstrap
-  - which partial, malformed, or ambiguous target states must be refused fail-closed
-  - what explicit operator opt-in or approval-sensitive inputs are required before bootstrap may proceed
-  - what bootstrap-state values, audit expectations, and target/controller ownership boundaries later runtime slices must preserve
-  - how later Phase 10D/10E runtime work depends on this contract
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10D as active
+- `.agent-loop/phase-plan.md` records Phase 10C as closed history and contains a `## Phase 10D - External Workspace Attach/Detach Runtime Initial Slice` section with concrete objective, done criteria, and exclusions
+- implement the minimal attach/detach runtime path in repo code:
+  - select an external target through a bounded runtime surface
+  - validate the approved Phase 10A ownership/path refusals before attach
+  - write the controller-owned `.agent-loop/external-target.json` attach record according to the approved Phase 10B schema
+  - remove the attach record on detach through an explicit bounded detach path
+  - emit attach/detach audit lines consistent with the approved Phase 10A/10B/10C contracts
 - preserve the shipped artifact/source-of-truth boundary:
   - controller-owned attach metadata remains controller-owned
   - target-side canonical artifacts remain target-owned
-  - bootstrap must not invent advisory state as canonical truth
+  - attach/detach must not silently activate a target-side phase
+  - attach/detach must not invent advisory state as canonical truth
 - preserve the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- update `README.md` so it reflects that Phase 10C is active and that the bootstrap contract is now the implementation focus
-- add focused validation sufficient to prove the new contract/docs surface is concrete, consistent, and non-drifting
-- do not implement bootstrap runtime or attach/detach runtime behavior in this slice; this phase is contract/planning only
+- update `README.md` so it reflects that Phase 10D is active and that the attach/detach runtime slice is now the implementation focus
+- add focused validation sufficient to prove the runtime is bounded, consistent with the approved contracts, and non-drifting
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -38,8 +38,8 @@ Phase 10 continues the future product-features track. Phase 10C is a planning/co
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no attach/detach runtime implementation or target-selection runtime behavior
-- no bootstrap runtime implementation beyond the contract/planning work for this phase
+- no bootstrap runtime implementation beyond the bounded hooks strictly required for Phase 10D attach/detach flow
+- no target-side cycle dispatch implementation
 - no external UI, dashboard, or run-control implementation
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - no automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
