@@ -1,30 +1,31 @@
 # Claude Code Task
 
 ## Phase
-Phase 10A - External Workspace Controller Contract
+Phase 10D - External Workspace Attach/Detach Runtime Initial Slice
 
 ## Objective
-Define the External Workspace Controller Contract for the agent loop. This slice should specify how the controller repo can target a different workspace or repository safely, what remains controller-owned versus target-owned, where `.agent-loop` artifacts live, how attach/bootstrap and refusal behavior must work, and which later Phase 10 slices implement those behaviors.
+Implement the External Workspace Attach/Detach Runtime Initial Slice for the agent loop. This slice should add the minimal runtime path that selects an external target, validates the approved ownership/path boundaries, writes and removes the controller-owned attach record under the approved contract, and records bounded attach/detach audit behavior without yet performing full target bootstrap automation.
 
 ## Context
-Phase 10 starts the future product-features track. Phase 10A is a planning/contract slice, not an implementation slice: the goal is to define, before any runtime or UI work, how this controller repo can safely target an external workspace or repository without blurring controller-owned artifacts, target-owned artifacts, or shipped safety boundaries.
+Phase 10 continues the future product-features track. Phase 10D is the first implementation slice in the external-workspace path: the approved Phase 10A/10B/10C contracts now exist, and this slice should turn the minimal attach/detach path into executable runtime behavior without widening into full bootstrap runtime, target-side cycle dispatch, or external UI control.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10A as active
-- `.agent-loop/phase-plan.md` records Phase 9G as closed history and contains a `## Phase 10A - External Workspace Controller Contract` section with concrete objective, done criteria, and exclusions
-- define the contract, in repo artifacts, for safe external-workspace targeting:
-  - what remains controller-owned in this repo
-  - what may exist in a target workspace or repository
-  - where `.agent-loop` artifacts live in controller and target modes
-  - how path resolution, attach/bootstrap, refusal behavior, and approval gates must work
-  - how later Phase 10B/10C/10D/10E work depends on this contract
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10D as active
+- `.agent-loop/phase-plan.md` records Phase 10C as closed history and contains a `## Phase 10D - External Workspace Attach/Detach Runtime Initial Slice` section with concrete objective, done criteria, and exclusions
+- implement the minimal attach/detach runtime path in repo code:
+  - select an external target through a bounded runtime surface
+  - validate the approved Phase 10A ownership/path refusals before attach
+  - write the controller-owned `.agent-loop/external-target.json` attach record according to the approved Phase 10B schema
+  - remove the attach record on detach through an explicit bounded detach path
+  - emit attach/detach audit lines consistent with the approved Phase 10A/10B/10C contracts
 - preserve the shipped artifact/source-of-truth boundary:
-  - canonical repo artifacts remain authoritative
-  - any future external-workspace metadata, descriptors, or UI surfaces must stay advisory unless the contract explicitly promotes them
+  - controller-owned attach metadata remains controller-owned
+  - target-side canonical artifacts remain target-owned
+  - attach/detach must not silently activate a target-side phase
+  - attach/detach must not invent advisory state as canonical truth
 - preserve the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- update `README.md` so it reflects that Phase 10A is active and that the external-workspace controller contract is now the implementation focus
-- add focused validation sufficient to prove the new contract/docs surface is concrete, consistent, and non-drifting
-- do not implement external-workspace runtime behavior in this slice; this phase is contract/planning only
+- update `README.md` so it reflects that Phase 10D is active and that the attach/detach runtime slice is now the implementation focus
+- add focused validation sufficient to prove the runtime is bounded, consistent with the approved contracts, and non-drifting
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -37,7 +38,8 @@ Phase 10 starts the future product-features track. Phase 10A is a planning/contr
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no external workspace bootstrap, attach flow, or target selection runtime
+- no bootstrap runtime implementation beyond the bounded hooks strictly required for Phase 10D attach/detach flow
+- no target-side cycle dispatch implementation
 - no external UI, dashboard, or run-control implementation
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - no automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state

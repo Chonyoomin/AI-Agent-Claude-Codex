@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10A - External Workspace Controller Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10D - External Workspace Attach/Detach Runtime Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3877,10 +3877,10 @@ behavior.
 
 ### Status
 
-Active. First planning slice under Phase 10, focused on defining how this
-controller repo can safely target an external workspace or repository without
-collapsing controller-owned and target-owned responsibilities, runtime state,
-or artifact truth.
+Complete and approved by human to advance to Phase 10B. Phase 10A closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the external-workspace
+controller contract, descriptor-path correction follow-up, focused validation,
+and README alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -3922,6 +3922,216 @@ work, and which later Phase 10 slices implement those behaviors.
 - no external workspace bootstrap, attach flow, or target selection runtime
   (Phase 10B)
 - no external UI, dashboard, or run-control implementation (Phase 10C and
+  later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10B - External Target Attach Record Contract
+
+### Status
+
+Complete and approved by human to advance to Phase 10C. Phase 10B closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the attach-record contract,
+README alignment, and the corrective Phase 10A dependency-map follow-up were
+all verified in the current repo state.
+
+### Objective
+
+Define the External Target Attach Record Contract for the agent loop. This
+slice should specify the controller-owned attach-record schema, what
+target-selection metadata it must persist, how canonicalized target paths and
+controller identity are represented, what audit/refusal fields are required,
+and how later Phase 10 attach/detach runtime slices depend on that record.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10B as active
+- `.agent-loop/phase-plan.md` records Phase 10A as closed history and contains
+  a `## Phase 10B - External Target Attach Record Contract` section with
+  concrete objective, done criteria, and exclusions
+- the repository defines, in concrete contract form, the controller-owned
+  attach-record schema future external-workspace mode must use before any
+  attach/detach runtime ships
+- the contract explicitly defines canonicalized target-path metadata,
+  controller identity, attach timestamp, operator/audit fields, signal/version
+  markers, mode-selection/bootstrap-state/stale-attach inputs, and the
+  refusal-sensitive invariants later runtime slices must preserve
+- the contract preserves the shipped artifact/source-of-truth boundary:
+  controller-owned attach metadata is explicit, target canonical artifacts
+  remain authoritative, and future UI/runtime descriptors remain advisory
+  unless explicitly promoted by contract
+- the contract preserves the shipped CLI-first workflow, planner/activation
+  boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume
+  behavior, cycle thresholds, and repo-artifact source-of-truth model
+- focused validation proves the attach-record contract is concrete, internally
+  consistent, ASCII-safe, and reflected accurately in the repo planning/docs
+  surfaces
+- `README.md` reflects that Phase 10B is active and that the attach-record
+  contract is now the implementation focus
+
+### Exclusions
+
+- no attach/detach runtime implementation or target-selection runtime behavior
+  (Phase 10D)
+- no bootstrap runtime implementation, and no bootstrap-contract work beyond
+  what is strictly necessary to define attach-record dependencies (Phase 10C
+  and Phase 10E)
+- no external UI, dashboard, or run-control implementation (Phase 10G and
+  later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10C - External Workspace Bootstrap Contract
+
+### Status
+
+Complete and approved by human to advance to Phase 10D. Phase 10C closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bootstrap contract,
+README alignment, and the cross-contract title/write-boundary follow-up were
+all verified in the current repo state.
+
+### Objective
+
+Define the External Workspace Bootstrap Contract for the agent loop. This slice
+should specify how target-side `.agent-loop` initialization may occur in
+external-workspace mode, which canonical artifacts may be created or refused,
+what operator decisions and bootstrap states must be recorded, and how later
+Phase 10D/10E runtime slices depend on that bootstrap contract.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10C as active
+- `.agent-loop/phase-plan.md` records Phase 10B as closed history and contains
+  a `## Phase 10C - External Workspace Bootstrap Contract` section with
+  concrete objective, done criteria, and exclusions
+- the repository defines, in concrete contract form, how target-side
+  `.agent-loop` initialization may occur in external-workspace mode before any
+  bootstrap or attach runtime ships
+- the contract explicitly defines the canonical artifact set that may be
+  bootstrapped, the partial or malformed target states that must be refused,
+  the operator opt-in / approval-sensitive inputs required before bootstrap,
+  and the bootstrap-state invariants later runtime slices must preserve
+- the contract preserves the shipped artifact/source-of-truth boundary:
+  controller-owned attach metadata remains controller-owned, target-side
+  canonical artifacts remain target-owned, and bootstrap does not invent
+  advisory state as canonical truth
+- the contract preserves the shipped CLI-first workflow, planner/activation
+  boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume
+  behavior, cycle thresholds, and repo-artifact source-of-truth model
+- focused validation proves the bootstrap contract is concrete, internally
+  consistent, ASCII-safe, and reflected accurately in the repo planning/docs
+  surfaces
+- `README.md` reflects that Phase 10C is active and that the bootstrap
+  contract is now the implementation focus
+
+### Exclusions
+
+- no attach/detach runtime implementation or target-selection runtime behavior
+  (Phase 10D)
+- no bootstrap runtime implementation beyond the contract/planning work for
+  this phase (Phase 10E)
+- no external UI, dashboard, or run-control implementation (Phase 10G and
+  later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10D - External Workspace Attach/Detach Runtime Initial Slice
+
+### Status
+
+Active. Implementation slice under Phase 10 focused on adding the minimal
+attach/detach runtime path for external-workspace mode so target selection,
+attach-record persistence, and bounded detach behavior become executable while
+still preserving the approved controller/target ownership boundary.
+
+### Objective
+
+Implement the External Workspace Attach/Detach Runtime Initial Slice for the
+agent loop. This slice should add the minimal runtime path that selects an
+external target, validates the approved ownership/path boundaries, writes and
+removes the controller-owned attach record under the approved contract, and
+records bounded attach/detach audit behavior without yet performing full target
+bootstrap automation.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10D as active
+- `.agent-loop/phase-plan.md` records Phase 10C as closed history and contains
+  a `## Phase 10D - External Workspace Attach/Detach Runtime Initial Slice`
+  section with concrete objective, done criteria, and exclusions
+- the repository implements the minimal external-workspace attach/detach
+  runtime path that consumes the approved Phase 10A/10B/10C contracts rather
+  than leaving attach behavior documentation-only
+- the runtime writes and removes the controller-owned
+  `.agent-loop/external-target.json` attach record according to the approved
+  Phase 10B schema, enforces the approved same-root / nested-root /
+  malformed-record / already-attached refusals, and records attach/detach audit
+  lines without widening the planner/activation boundary
+- the runtime preserves the shipped artifact/source-of-truth boundary:
+  controller-owned attach metadata remains controller-owned, target-side
+  canonical artifacts remain target-owned, and attach/detach does not silently
+  activate a phase, invent advisory state as canonical truth, or bypass
+  approval gates
+- the runtime preserves the shipped CLI-first workflow, planner/activation
+  boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume
+  behavior, cycle thresholds, and repo-artifact source-of-truth model
+- focused validation proves the attach/detach runtime is bounded, consistent
+  with the approved contracts, and reflected accurately in the repo
+  planning/docs/runtime surfaces
+- `README.md` reflects that Phase 10D is active and that the attach/detach
+  runtime slice is now the implementation focus
+
+### Exclusions
+
+- no bootstrap runtime implementation beyond the bounded hooks strictly
+  required for Phase 10D attach/detach flow (Phase 10E)
+- no target-side cycle dispatch implementation (Phase 10F)
+- no external UI, dashboard, or run-control implementation (Phase 10G and
   later)
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG
   layer, GitHub integration, or model-policy extensibility work
