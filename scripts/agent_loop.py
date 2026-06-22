@@ -10308,6 +10308,39 @@ def _validate_external_target_attach_record_schema(
                 ),
             )
 
+    # Phase 10D fix-cycle: refuse fail-closed on out-of-enumeration
+    # values for the two Phase 10B closed enumerations. The prior
+    # schema check only verified `mode_selection.approval_mode` and
+    # `bootstrap_state.status` were strings; a malformed record
+    # carrying e.g. `approval_mode == "bogus"` would slip through.
+    # The closed-enumeration check is the controller-side guard
+    # against another controller (or operator hand-edit) writing an
+    # out-of-vocabulary record that would silently detach.
+    approval_mode = record["mode_selection"]["approval_mode"]
+    if approval_mode not in EXTERNAL_TARGET_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"mode_selection.approval_mode={approval_mode!r} "
+                f"is not in EXTERNAL_TARGET_APPROVAL_MODES="
+                f"{sorted(EXTERNAL_TARGET_APPROVAL_MODES)!r}; the "
+                f"record is structurally invalid"
+            ),
+        )
+    bootstrap_status = record["bootstrap_state"]["status"]
+    if bootstrap_status not in EXTERNAL_TARGET_BOOTSTRAP_STATUSES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"bootstrap_state.status={bootstrap_status!r} is "
+                f"not in EXTERNAL_TARGET_BOOTSTRAP_STATUSES="
+                f"{sorted(EXTERNAL_TARGET_BOOTSTRAP_STATUSES)!r}; "
+                f"the record is structurally invalid"
+            ),
+        )
+
 
 def _atomic_write_json(target: Path, payload: dict) -> None:
     """Write JSON atomically via temp-write + rename. Phase 10B

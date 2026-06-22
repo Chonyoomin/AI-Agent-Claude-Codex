@@ -1221,6 +1221,64 @@ class DetachSchemaRefusalTests(unittest.TestCase):
                 exc.reason,
             )
 
+    def test_refuses_out_of_enumeration_approval_mode(self) -> None:
+        # Phase 10D fix-cycle: a malformed record whose
+        # `mode_selection.approval_mode` is outside the Phase 10B
+        # closed enumeration refuses fail-closed AT SCHEMA TIME (not
+        # only at the controller-mismatch check). Without this guard
+        # an operator hand-edit or another controller could write
+        # e.g. `approval_mode == "bogus_mode"` and the record would
+        # silently detach.
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            record = _make_valid_attach_record(
+                controller_canonical=controller.resolve().as_posix(),
+            )
+            record["mode_selection"]["approval_mode"] = "bogus_mode"
+            self._plant(controller, record)
+            exc = self._detach_raises(controller)
+            self.assertEqual(exc.status, "halted_input_missing")
+            self.assertIn(
+                "mode_selection.approval_mode", exc.reason,
+            )
+            self.assertIn(
+                "EXTERNAL_TARGET_APPROVAL_MODES", exc.reason,
+            )
+            # The refusal must NOT delete the malformed record; the
+            # operator must inspect it manually.
+            self.assertTrue(
+                (controller / ATTACH_RECORD_REL).exists(),
+            )
+
+    def test_refuses_out_of_enumeration_bootstrap_status(self) -> None:
+        # Phase 10D fix-cycle: same guard for the
+        # `bootstrap_state.status` closed enumeration. A malformed
+        # record carrying a fabricated status string (e.g.
+        # `"target_canonical_set_pending"`) is now rejected at
+        # schema time.
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            record = _make_valid_attach_record(
+                controller_canonical=controller.resolve().as_posix(),
+            )
+            record["bootstrap_state"]["status"] = (
+                "target_canonical_set_pending"
+            )
+            self._plant(controller, record)
+            exc = self._detach_raises(controller)
+            self.assertEqual(exc.status, "halted_input_missing")
+            self.assertIn(
+                "bootstrap_state.status", exc.reason,
+            )
+            self.assertIn(
+                "EXTERNAL_TARGET_BOOTSTRAP_STATUSES", exc.reason,
+            )
+            self.assertTrue(
+                (controller / ATTACH_RECORD_REL).exists(),
+            )
+
 
 # ---------------------------------------------------------------------------
 # CLI argparse grammar
