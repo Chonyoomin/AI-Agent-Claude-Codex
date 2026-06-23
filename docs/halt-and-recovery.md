@@ -216,6 +216,44 @@ the script was missing, not executable, or refused at the OS level.
 executable. On Windows hosts running through Git Bash, verify the
 shebang and the file's CRLF/LF line endings.
 
+### `halted_external_target_bootstrap_input_missing`
+
+**Meaning.** The Phase 10E external-workspace bootstrap runtime
+refused fail-closed because a required input was missing, malformed,
+out of range, or contradicted another input. The accompanying reason
+names the specific field. Concrete cases include:
+missing / empty / over-bounded `--bootstrapped-by`,
+`--human-objective`, or `--project-intent`; an
+`--bootstrapped-by` value that does not match `--attached-by` (the
+Phase 10C single-operator-identity invariant); an `--approval-mode`
+outside the Phase 10B closed enumeration; and a pre-bootstrap
+target state other than `empty_target` at bootstrap time
+(`partial_target` / `malformed_target` are always refused per the
+Phase 10C bootstrap-never-overwrites guarantee; `full_target` needs
+no bootstrap and is handled by the no-bootstrap attach path).
+
+**Recovery.** Inspect the refusal message, supply the missing /
+correct input (or repair the target's pre-bootstrap state), and
+re-run the `attach-external-target --bootstrap ...` command. No
+attach record is written on a bootstrap refusal so the controller's
+state is unchanged.
+
+### `halted_external_target_bootstrap_atomicity_failure`
+
+**Meaning.** The Phase 10E bootstrap runtime started writing the
+target-side canonical artifact set but a filesystem error during the
+temp-write or rename phase forced a rollback. Every artifact already
+written in the same bootstrap call is removed before the halt fires,
+so the target is left in the original `empty_target` state.
+
+**Recovery.** Resolve the underlying filesystem issue (target root
+no longer writable, full disk, a sibling tool holding a lock on one
+of the five canonical paths, etc.), then re-run the
+`attach-external-target --bootstrap ...` command. If the rollback
+itself could not delete a partial artifact (rare; the rollback is
+best-effort), inspect the target manually and delete any leftover
+canonical artifact before retrying.
+
 ## Terminal halts (human required)
 
 ### `halted_failed_requires_human`

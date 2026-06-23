@@ -9891,6 +9891,35 @@ EXTERNAL_TARGET_CANONICAL_PRECEDENCE_NOTE = (
     "not silently activate a phase."
 )
 
+# Phase 10E: bootstrap runtime constants. Per the Phase 10C contract,
+# bootstrap initializes the target's canonical artifact set on operator
+# opt-in. The `awaiting_first_activation` loop-state status is the
+# Phase 10E status the bootstrap runtime is the sole writer of; the
+# shipped Phase 4C activator + APPROVED_FOR_ACTIVATION human approval
+# remain the only path that advances a bootstrapped target past
+# `awaiting_first_activation`.
+EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS = (
+    "awaiting_first_activation"
+)
+EXTERNAL_TARGET_BOOTSTRAP_INITIAL_MAX_CYCLES = 3
+EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_EXCERPT_MAX_LENGTH = 200
+EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_MAX_LENGTH = 8000
+EXTERNAL_TARGET_BOOTSTRAP_PROJECT_INTENT_MAX_LENGTH = 8000
+# Phase 10E halt-status family. The Phase 10C contract reserved the
+# `halted_external_target_bootstrap_*` namespace for the bootstrap
+# runtime; this slice introduces two specific statuses paired with a
+# `docs/halt-and-recovery.md` update.
+HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING = (
+    "halted_external_target_bootstrap_input_missing"
+)
+HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE = (
+    "halted_external_target_bootstrap_atomicity_failure"
+)
+EXTERNAL_TARGET_BOOTSTRAP_HALT_STATUSES = frozenset({
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE,
+})
+
 
 def _validate_external_target_attached_by(
     value, *, field_name: str = "attached_by",
@@ -10117,6 +10146,492 @@ def classify_pre_bootstrap_target_state(target_root: Path) -> str:
     return EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL
 
 
+def _validate_external_target_bootstrap_bounded_string(
+    value, *, field_name: str, max_length: int, halt_status: str,
+) -> str:
+    """Refuse fail-closed on a missing / non-string / empty / over-bounded
+    bootstrap input string. Used for `human_objective` and
+    `project_intent`, both of which the Phase 10C contract requires
+    the operator to supply with no default.
+    """
+    if value is None:
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} is required; "
+                f"the Phase 10C contract requires the operator to "
+                f"supply this value explicitly (no default)"
+            ),
+        )
+    if not isinstance(value, str):
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} must be a "
+                f"string; got {type(value).__name__}={value!r}"
+            ),
+        )
+    stripped = value.strip()
+    if not stripped:
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} must not be "
+                f"empty or whitespace-only"
+            ),
+        )
+    if len(stripped) > max_length:
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} exceeds "
+                f"max_length={max_length} chars (got {len(stripped)})"
+            ),
+        )
+    return stripped
+
+
+def _build_external_target_bootstrap_task_md(
+    *,
+    human_objective: str,
+    project_intent: str,
+    bootstrapped_at: str,
+    bootstrapped_by: str,
+) -> str:
+    """Phase 10C-pinned initial TASK.md skeleton for a bootstrapped
+    target. Every section other than `Human Objective` and `Project
+    Intent` carries the explicit `(to be set by first Phase 4C
+    activation)` placeholder so a reviewer sees the artifact is
+    awaiting first activation. The bootstrap runtime never invents an
+    active phase / task; first-phase activation goes through the
+    shipped Phase 4C activator + APPROVED_FOR_ACTIVATION human
+    approval against the target.
+    """
+    return (
+        "# TASK.md\n"
+        "\n"
+        "## Human Objective\n"
+        "\n"
+        f"{human_objective}\n"
+        "\n"
+        "## Project Intent\n"
+        "\n"
+        f"{project_intent}\n"
+        "\n"
+        "## Active Phase\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Active Sub-Phase\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Phase Status\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Active Task\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Phase Outcome Required Now\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Next-Phase Gate\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Out Of Scope For Current Phase\n"
+        "\n"
+        "- (to be set by first Phase 4C activation)\n"
+        "\n"
+        f"<!-- bootstrapped_at={bootstrapped_at} "
+        f"bootstrapped_by={bootstrapped_by} "
+        f"bootstrap_signal_version="
+        f"{EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION} -->\n"
+    )
+
+
+def _build_external_target_bootstrap_initial_loop_state(
+    *,
+    approval_mode: str,
+    controller_contract_version: str,
+    controller_orchestrator_version: str,
+) -> dict:
+    """Phase 10C-pinned initial loop-state.json contents for a
+    bootstrapped target. Status is the new
+    `awaiting_first_activation` value the Phase 10E runtime introduces.
+    """
+    return {
+        "phase": None,
+        "sub_phase": None,
+        "task": None,
+        "status": (
+            EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+        ),
+        "cycle_count": 0,
+        "max_cycles": EXTERNAL_TARGET_BOOTSTRAP_INITIAL_MAX_CYCLES,
+        "last_verdict": None,
+        "last_verdict_phase": None,
+        "contract_version": controller_contract_version,
+        "claude_version": None,
+        "codex_version": None,
+        "orchestrator_version": controller_orchestrator_version,
+        "approval_mode": approval_mode,
+        "awaiting_human_for": None,
+    }
+
+
+def _bootstrap_canonical_contents(
+    *,
+    human_objective: str,
+    project_intent: str,
+    bootstrapped_at: str,
+    bootstrapped_by: str,
+    approval_mode: str,
+    controller_contract_version: str,
+    controller_orchestrator_version: str,
+) -> dict:
+    """Return a mapping of repo-relative path -> serialized bytes for
+    every canonical artifact the Phase 10C bootstrap surface writes.
+    The mapping uses the same five paths
+    `EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS` enumerates so the
+    classifier and the writer agree on the exact set.
+    """
+    task_md = _build_external_target_bootstrap_task_md(
+        human_objective=human_objective,
+        project_intent=project_intent,
+        bootstrapped_at=bootstrapped_at,
+        bootstrapped_by=bootstrapped_by,
+    )
+    initial_loop_state = (
+        _build_external_target_bootstrap_initial_loop_state(
+            approval_mode=approval_mode,
+            controller_contract_version=(
+                controller_contract_version
+            ),
+            controller_orchestrator_version=(
+                controller_orchestrator_version
+            ),
+        )
+    )
+    initial_loop_state_serialized = (
+        json.dumps(initial_loop_state, indent=2) + "\n"
+    )
+    return {
+        "TASK.md": task_md,
+        ".agent-loop/current-task.md": (
+            "# Current Task\n"
+            "\n"
+            "## Status\n"
+            "\n"
+            "Awaiting first Phase 4C activation; bootstrap "
+            f"initialized the target on {bootstrapped_at} on "
+            f"behalf of {bootstrapped_by}.\n"
+        ),
+        ".agent-loop/current-phase.md": (
+            "# Current Phase\n"
+            "\n"
+            "Awaiting first Phase 4C activation\n"
+        ),
+        ".agent-loop/phase-plan.md": (
+            "# Phase Plan\n"
+            "\n"
+            "## Active Phase\n"
+            "\n"
+            "Awaiting first Phase 4C activation\n"
+        ),
+        ".agent-loop/loop-state.json": initial_loop_state_serialized,
+    }
+
+
+def _atomic_bootstrap_write_target(
+    target_root: Path, contents_by_relpath: dict,
+) -> list:
+    """Phase 10E: write the five canonical bootstrap artifacts
+    atomically. Pre-checks every destination is absent, writes to
+    `.tmp` siblings first, then renames each in sequence. On any
+    failure (during the tmp write OR during the rename phase) every
+    artifact already written in this call is rolled back so the
+    target is left in the original `empty_target` state.
+
+    Returns the sorted list of repo-relative paths that were
+    successfully written. Raises `HaltError(
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE, ...)` on
+    write or rename failure; raises `HaltError(
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING, ...)` if any
+    destination unexpectedly already exists (the classifier and the
+    writer agree on the `empty_target` invariant; a race where another
+    process planted one of the five paths between classification and
+    write surfaces as an input-missing refusal because the target is
+    no longer the state the operator opted into).
+    """
+    paths_in_order = list(
+        EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS
+    )
+    final_paths = []
+    tmp_paths = []
+    created_directories = []
+    try:
+        agent_loop_dir = target_root / ".agent-loop"
+        agent_loop_dir_existed_before = agent_loop_dir.exists()
+        if not agent_loop_dir_existed_before:
+            agent_loop_dir.mkdir(parents=True, exist_ok=False)
+            created_directories.append(agent_loop_dir)
+        for rel in paths_in_order:
+            dest = target_root / rel
+            if dest.exists():
+                raise HaltError(
+                    HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+                    (
+                        f"external target bootstrap refused: "
+                        f"destination {rel!r} already exists on "
+                        f"disk; the classifier observed "
+                        f"`empty_target` but another process must "
+                        f"have planted the artifact before the "
+                        f"write phase started. The Phase 10C "
+                        f"contract refuses to overwrite any "
+                        f"existing canonical artifact even on "
+                        f"opt-in bootstrap; re-inspect the target "
+                        f"manually before retrying."
+                    ),
+                )
+        for rel in paths_in_order:
+            tmp = target_root / (rel + ".tmp")
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                tmp.write_text(
+                    contents_by_relpath[rel], encoding="utf-8",
+                )
+            except OSError as exc:
+                raise HaltError(
+                    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE,
+                    (
+                        f"external target bootstrap refused: "
+                        f"atomic write failed at temp write for "
+                        f"{rel!r} ({exc}); every artifact already "
+                        f"written in this bootstrap call is rolled "
+                        f"back so the target is left in the "
+                        f"original empty_target state"
+                    ),
+                ) from exc
+            tmp_paths.append(tmp)
+        for rel, tmp in zip(paths_in_order, tmp_paths):
+            dest = target_root / rel
+            try:
+                os.replace(tmp, dest)
+            except OSError as exc:
+                raise HaltError(
+                    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE,
+                    (
+                        f"external target bootstrap refused: "
+                        f"atomic rename failed at {rel!r} ({exc}); "
+                        f"every artifact already written in this "
+                        f"bootstrap call is rolled back so the "
+                        f"target is left in the original "
+                        f"empty_target state"
+                    ),
+                ) from exc
+            final_paths.append(rel)
+        return sorted(final_paths)
+    except BaseException:
+        for rel in final_paths:
+            try:
+                (target_root / rel).unlink()
+            except OSError:
+                pass
+        for tmp in tmp_paths:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+        for directory in reversed(created_directories):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        raise
+
+
+def bootstrap_external_target(
+    target_root: Path,
+    *,
+    bootstrapped_by: Optional[str] = None,
+    attached_by: Optional[str] = None,
+    approval_mode: Optional[str] = None,
+    human_objective: Optional[str] = None,
+    project_intent: Optional[str] = None,
+    controller_contract_version: Optional[str] = None,
+    controller_orchestrator_version: Optional[str] = None,
+    bootstrapped_at: Optional[str] = None,
+    bootstrap_log_line: Optional[str] = None,
+) -> dict:
+    """Phase 10E: initialize the target-side canonical artifact set on
+    operator opt-in. Returns the bootstrap_state extension fields the
+    caller (typically `attach_external_target` under `--bootstrap`)
+    persists into the controller-owned attach record.
+
+    The caller is responsible for canonicalizing `target_root` (via
+    `_validate_external_target_path` or equivalent) and for verifying
+    the pre-bootstrap classification is `empty_target` BEFORE invoking
+    this function. The runtime itself performs the contract refusal
+    checks for bootstrap-specific inputs (`bootstrapped_by`,
+    `human_objective`, `project_intent`, `bootstrapped_by` ==
+    `attached_by`), classifies the target one more time
+    fail-closed, writes the five canonical artifacts atomically with
+    rollback on failure, and returns the bootstrap-state payload.
+
+    Refusal modes (all fail-closed via `HaltError`):
+      - missing / non-string / empty / over-bounded `bootstrapped_by`,
+        `attached_by`, `human_objective`, or `project_intent`
+      - `bootstrapped_by != attached_by` (Phase 10C single-operator-
+        identity invariant)
+      - `approval_mode` outside the Phase 10B closed enumeration
+      - pre-bootstrap classification is anything other than
+        `empty_target` (the contract refuses bootstrap of
+        `partial_target` / `malformed_target` / `full_target`; the
+        caller is expected to dispatch `full_target` to the no-
+        bootstrap attach path before invoking this function)
+      - atomic write or rename failure (rolled back; the target is
+        left in the original `empty_target` state)
+    """
+    stripped_bootstrapped_by = _validate_external_target_attached_by(
+        bootstrapped_by, field_name="bootstrapped_by",
+    )
+    stripped_attached_by = _validate_external_target_attached_by(
+        attached_by, field_name="attached_by",
+    )
+    if stripped_bootstrapped_by != stripped_attached_by:
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: "
+                f"bootstrapped_by={stripped_bootstrapped_by!r} does "
+                f"not match attached_by={stripped_attached_by!r}; "
+                f"the Phase 10C contract requires the attach and "
+                f"the bootstrap to record the same operator "
+                f"identity in a single attach session"
+            ),
+        )
+    validated_mode = _validate_external_target_approval_mode(
+        approval_mode,
+    )
+    stripped_human_objective = (
+        _validate_external_target_bootstrap_bounded_string(
+            human_objective,
+            field_name="human_objective",
+            max_length=(
+                EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_MAX_LENGTH
+            ),
+            halt_status=(
+                HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING
+            ),
+        )
+    )
+    stripped_project_intent = (
+        _validate_external_target_bootstrap_bounded_string(
+            project_intent,
+            field_name="project_intent",
+            max_length=(
+                EXTERNAL_TARGET_BOOTSTRAP_PROJECT_INTENT_MAX_LENGTH
+            ),
+            halt_status=(
+                HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING
+            ),
+        )
+    )
+    if not isinstance(controller_contract_version, str):
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: "
+                f"controller_contract_version must be a string "
+                f"(controller's loop-state contract_version); got "
+                f"{type(controller_contract_version).__name__}="
+                f"{controller_contract_version!r}"
+            ),
+        )
+    if not isinstance(controller_orchestrator_version, str):
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: "
+                f"controller_orchestrator_version must be a string "
+                f"(running ORCHESTRATOR_VERSION); got "
+                f"{type(controller_orchestrator_version).__name__}="
+                f"{controller_orchestrator_version!r}"
+            ),
+        )
+    # Re-classify fail-closed: the caller is expected to dispatch
+    # `full_target` to the no-bootstrap attach path before invoking
+    # this function; a non-`empty_target` here is a contract
+    # violation rather than a race-condition surface.
+    pre_bootstrap_state = classify_pre_bootstrap_target_state(
+        target_root,
+    )
+    if pre_bootstrap_state != EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY:
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: pre-bootstrap "
+                f"target state is {pre_bootstrap_state!r}; the "
+                f"Phase 10C contract permits bootstrap only against "
+                f"`empty_target` (partial_target / malformed_target "
+                f"are always refused per the bootstrap-never-"
+                f"overwrites guarantee; full_target needs no "
+                f"bootstrap)"
+            ),
+        )
+    if bootstrapped_at is None:
+        bootstrapped_at = _utc_iso_now()
+    contents_by_relpath = _bootstrap_canonical_contents(
+        human_objective=stripped_human_objective,
+        project_intent=stripped_project_intent,
+        bootstrapped_at=bootstrapped_at,
+        bootstrapped_by=stripped_bootstrapped_by,
+        approval_mode=validated_mode,
+        controller_contract_version=controller_contract_version,
+        controller_orchestrator_version=(
+            controller_orchestrator_version
+        ),
+    )
+    artifacts_written = _atomic_bootstrap_write_target(
+        target_root, contents_by_relpath,
+    )
+    excerpt = stripped_human_objective[
+        :EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_EXCERPT_MAX_LENGTH
+    ]
+    if bootstrap_log_line is None:
+        bootstrap_log_line = (
+            f"{EXTERNAL_TARGET_AUDIT_NOTE_PREFIX} bootstrapped "
+            f"bootstrap_signal_version="
+            f"{EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION} "
+            f"bootstrapped_by={stripped_bootstrapped_by!r} "
+            f"pre_bootstrap_target_state={pre_bootstrap_state!r} "
+            f"target_path_canonical={target_root.as_posix()!r} "
+            f"artifacts_written={artifacts_written!r} "
+            f"initial_loop_state_status="
+            f"{EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS!r}"
+        )
+    return {
+        "status": "target_canonical_set_bootstrapped",
+        "bootstrapped_at": bootstrapped_at,
+        "bootstrapped_by": stripped_bootstrapped_by,
+        "bootstrap_signal_version": (
+            EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION
+        ),
+        "pre_bootstrap_target_state": pre_bootstrap_state,
+        "artifacts_written": artifacts_written,
+        "initial_loop_state_status": (
+            EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+        ),
+        "initial_human_objective_excerpt": excerpt,
+        "bootstrap_log_line": bootstrap_log_line,
+    }
+
+
 def _compute_external_target_repo_signature(
     canonical_path: Path,
 ) -> str:
@@ -10142,13 +10657,31 @@ def _build_external_target_attach_payload(
     controller_contract_version,
     controller_orchestrator_version,
     attach_log_line: str,
+    bootstrap_state: Optional[dict] = None,
 ) -> dict:
-    """Assemble the Phase 10B attach-record payload. Only the
-    `target_canonical_set_present` bootstrap-state branch is exercised
-    in this slice (Phase 10D refuses every other pre-bootstrap target
-    state); the Phase 10C extension fields are all `null` per the
-    Phase 10B + 10C contract invariant for the no-bootstrap case.
+    """Assemble the Phase 10B attach-record payload. If
+    `bootstrap_state` is None, the `target_canonical_set_present`
+    branch fires and every Phase 10C extension field is `null` per
+    the contract invariant for the no-bootstrap case. If
+    `bootstrap_state` is the dict returned by
+    `bootstrap_external_target(...)`, the
+    `target_canonical_set_bootstrapped` branch fires and the
+    extension fields carry the bootstrap runtime's recorded values.
     """
+    if bootstrap_state is None:
+        bootstrap_state_payload = {
+            "status": "target_canonical_set_present",
+            "bootstrapped_at": None,
+            "bootstrapped_by": None,
+            "bootstrap_signal_version": None,
+            "pre_bootstrap_target_state": pre_bootstrap_state,
+            "artifacts_written": None,
+            "initial_loop_state_status": None,
+            "initial_human_objective_excerpt": None,
+            "bootstrap_log_line": None,
+        }
+    else:
+        bootstrap_state_payload = dict(bootstrap_state)
     return {
         "attach_record_signal_version": (
             EXTERNAL_TARGET_ATTACH_SIGNAL_VERSION
@@ -10176,17 +10709,7 @@ def _build_external_target_attach_payload(
             "selected_at": attached_at,
             "selected_by": attached_by,
         },
-        "bootstrap_state": {
-            "status": "target_canonical_set_present",
-            "bootstrapped_at": None,
-            "bootstrapped_by": None,
-            "bootstrap_signal_version": None,
-            "pre_bootstrap_target_state": pre_bootstrap_state,
-            "artifacts_written": None,
-            "initial_loop_state_status": None,
-            "initial_human_objective_excerpt": None,
-            "bootstrap_log_line": None,
-        },
+        "bootstrap_state": bootstrap_state_payload,
         "stale_attach_detection": {
             "target_marker_files_at_attach": list(
                 EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS
@@ -10361,19 +10884,25 @@ def attach_external_target(
     attached_by: Optional[str] = None,
     approval_mode: Optional[str] = None,
     log_path: Optional[Path] = None,
+    bootstrap: bool = False,
+    bootstrapped_by: Optional[str] = None,
+    human_objective: Optional[str] = None,
+    project_intent: Optional[str] = None,
 ) -> Path:
-    """Phase 10D: write the controller-owned attach record at
-    `.agent-loop/external-target.json` for an external target.
+    """Phase 10D + Phase 10E: write the controller-owned attach record
+    at `.agent-loop/external-target.json` for an external target,
+    optionally bootstrapping the target's canonical artifact set in
+    the same attach call when the operator opts in.
 
     The runtime validates the operator-supplied target root against
     the Phase 10A path-resolution refusals (must exist, be a directory,
     be readable/writable, must not equal the controller root, must not
     be nested inside the controller root), classifies the target's
-    pre-bootstrap state per the Phase 10C contract, and writes the
-    Phase 10B attach record atomically when the classification is
-    `full_target`. Every other pre-bootstrap state refuses fail-closed
-    with a forward-pointer to the Phase 10E bootstrap runtime (not
-    shipped yet).
+    pre-bootstrap state per the Phase 10C contract, and either
+    attaches to a `full_target` directly OR (when `bootstrap=True`
+    and the state is `empty_target`) invokes the Phase 10E bootstrap
+    runtime to initialize the target's canonical artifact set before
+    writing the attach record.
 
     Refusal modes (all fail-closed via `HaltError`):
       - the attach record already exists on disk
@@ -10385,20 +10914,31 @@ def attach_external_target(
       - target_path canonicalizes to the controller root (same-root)
       - target_path is nested inside the controller root
       - the pre-bootstrap target-state classification is
-        `empty_target`, `partial_target`, or `malformed_target`
-        (bootstrap is Phase 10E; this slice refuses everything but
-        `full_target`)
+        `empty_target` and the operator did NOT pass `bootstrap=True`
+      - the pre-bootstrap target-state classification is
+        `partial_target` or `malformed_target` (always refused per
+        the Phase 10C bootstrap-never-overwrites guarantee)
+      - `bootstrap=True` is set but the state is `partial_target` or
+        `malformed_target` (the contract still refuses bootstrap of
+        those states)
+      - bootstrap-specific refusals from
+        `bootstrap_external_target(...)` (missing / over-bounded
+        `bootstrapped_by` / `human_objective` / `project_intent`,
+        `bootstrapped_by != attached_by`, atomicity failure)
 
     On success the attach record is written atomically to disk and a
-    `external target: attached ...` audit line is appended to
-    `log_path` (when supplied). The attach record's
-    `audit.attach_log_line` field is byte-matched to the line
-    appended to the log so a reviewer can reconstruct the audit
-    trail from either source alone.
+    `external target: attached ...` audit line (plus a separate
+    `external target: bootstrapped ...` audit line when bootstrap
+    fired) is appended to `log_path` (when supplied). The attach
+    record's `audit.attach_log_line` field is byte-matched to the
+    attach line; the bootstrap line is byte-matched to
+    `bootstrap_state.bootstrap_log_line` per the Phase 10C contract.
 
     Attach NEVER activates a target-side phase. The shipped Phase 4C
     activator + APPROVED_FOR_ACTIVATION human approval remain the
-    only path to per-target phase activation.
+    only path to per-target phase activation; a bootstrapped target
+    sits at `loop-state.status = "awaiting_first_activation"` until
+    the operator runs the shipped activator against the target.
     """
     out = controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
     if out.exists():
@@ -10438,53 +10978,93 @@ def attach_external_target(
     pre_bootstrap_state = classify_pre_bootstrap_target_state(
         target_resolved,
     )
-    if pre_bootstrap_state != EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL:
+
+    # Phase 10E: branch on (pre_bootstrap_state, bootstrap-opt-in).
+    # The Phase 10C contract pins the matrix:
+    #   full_target  + bootstrap=False  -> no-bootstrap attach path
+    #   full_target  + bootstrap=True   -> no-bootstrap attach path
+    #                                       (bootstrap is a no-op on
+    #                                        full_target; the operator
+    #                                        flag is honored by the
+    #                                        runtime checking whether
+    #                                        bootstrap is needed)
+    #   empty_target + bootstrap=True   -> Phase 10E bootstrap, then
+    #                                       attach with bootstrapped
+    #                                       extension fields
+    #   empty_target + bootstrap=False  -> refuse (no opt-in)
+    #   partial_target / malformed_target (any opt-in) -> always
+    #                                       refuse (bootstrap-never-
+    #                                       overwrites guarantee)
+    if pre_bootstrap_state in (
+        EXTERNAL_TARGET_PRE_BOOTSTRAP_PARTIAL,
+        EXTERNAL_TARGET_PRE_BOOTSTRAP_MALFORMED,
+    ):
         raise HaltError(
             "halted_input_missing",
             (
                 f"external target attach refused: pre-bootstrap "
                 f"target state is {pre_bootstrap_state!r}; this "
-                f"Phase 10D slice only attaches to a `full_target` "
-                f"(all five canonical artifacts present AND "
-                f"loop-state.json structurally valid). Bootstrap "
-                f"runtime for `empty_target` is Phase 10E; "
-                f"`partial_target` and `malformed_target` are "
-                f"always refused per the Phase 10C "
-                f"bootstrap-never-overwrites guarantee."
+                f"state is always refused per the Phase 10C "
+                f"bootstrap-never-overwrites guarantee. The "
+                f"operator must explicitly resolve the partial or "
+                f"malformed canonical set on disk (delete the "
+                f"present artifacts to reduce to `empty_target`, "
+                f"or manually complete / repair the canonical set "
+                f"to reduce to `full_target`) before re-attempting."
             ),
         )
-
-    # Phase 10D fix-cycle: the classifier intentionally does NOT
-    # call `check_contract_version` (a target may legitimately have
-    # a different contract_version than the running controller for
-    # FUTURE classification purposes), but ATTACH-time MUST refuse
-    # an unsupported target `contract_version` per the Phase 10A
-    # refusal contract. Equally, ATTACH-time MUST refuse a target
-    # whose loop-state.status is any `halted_*` value: attaching
-    # to a halted target would let the controller silently treat
-    # a halted run as resumable without operator review. Both
-    # refusals fire BEFORE any attach-record write so the
-    # controller never advances past a refusal-eligible target.
-    target_state_path = (
-        target_resolved / ".agent-loop" / "loop-state.json"
-    )
-    target_state = load_loop_state(target_state_path)
-    validate_loop_state(target_state)
-    check_contract_version(target_state)
-    target_status = str(target_state.get("status") or "")
-    if target_status.startswith("halted_"):
+    if (
+        pre_bootstrap_state == EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+        and not bootstrap
+    ):
         raise HaltError(
             "halted_input_missing",
             (
-                f"external target attach refused: target "
-                f"loop-state.status={target_status!r} is a halted "
-                f"state. Attaching to a halted target would let "
-                f"the controller silently treat a halted run as "
-                f"resumable; the operator must resolve the halt "
-                f"on the target side (via the shipped recovery "
-                f"vocabulary) before the controller may attach."
+                f"external target attach refused: pre-bootstrap "
+                f"target state is {pre_bootstrap_state!r} and "
+                f"`--bootstrap` was not supplied. Bootstrap is an "
+                f"explicit per-attach opt-in under the Phase 10C "
+                f"contract; pass --bootstrap (with "
+                f"--bootstrapped-by, --human-objective, "
+                f"--project-intent) to initialize the target's "
+                f"canonical artifact set, or attach a `full_target` "
+                f"instead."
             ),
         )
+
+    # Phase 10D: the classifier intentionally does NOT call
+    # `check_contract_version` (a target may legitimately have a
+    # different contract_version than the running controller for
+    # FUTURE classification purposes), but ATTACH-time MUST refuse
+    # an unsupported target `contract_version` per the Phase 10A
+    # refusal contract. Equally, ATTACH-time MUST refuse a target
+    # whose loop-state.status is any `halted_*` value. Both refusals
+    # apply only to the `full_target` branch; the `empty_target` +
+    # bootstrap branch has no pre-existing target loop-state to
+    # validate (the bootstrap runtime writes it from scratch with the
+    # controller's own contract_version).
+    if pre_bootstrap_state == EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL:
+        target_state_path = (
+            target_resolved / ".agent-loop" / "loop-state.json"
+        )
+        target_state = load_loop_state(target_state_path)
+        validate_loop_state(target_state)
+        check_contract_version(target_state)
+        target_status = str(target_state.get("status") or "")
+        if target_status.startswith("halted_"):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target attach refused: target "
+                    f"loop-state.status={target_status!r} is a "
+                    f"halted state. Attaching to a halted target "
+                    f"would let the controller silently treat a "
+                    f"halted run as resumable; the operator must "
+                    f"resolve the halt on the target side (via the "
+                    f"shipped recovery vocabulary) before the "
+                    f"controller may attach."
+                ),
+            )
 
     # The Phase 10B attach record's `controller_identity.contract_version`
     # is captured from the running controller's loop-state at attach
@@ -10504,6 +11084,35 @@ def attach_external_target(
     controller_orchestrator_version = ORCHESTRATOR_VERSION
 
     attached_at = _utc_iso_now()
+
+    # Phase 10E: invoke the bootstrap runtime for an `empty_target`
+    # + opt-in attach BEFORE writing the attach record so the attach
+    # record carries the bootstrapped extension fields and so a
+    # bootstrap failure leaves no attach record on disk.
+    bootstrap_state = None
+    bootstrap_log_line = None
+    if (
+        bootstrap
+        and pre_bootstrap_state
+        == EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+    ):
+        bootstrap_state = bootstrap_external_target(
+            target_resolved,
+            bootstrapped_by=bootstrapped_by,
+            attached_by=stripped_attached_by,
+            approval_mode=validated_mode,
+            human_objective=human_objective,
+            project_intent=project_intent,
+            controller_contract_version=(
+                controller_contract_version
+            ),
+            controller_orchestrator_version=(
+                controller_orchestrator_version
+            ),
+            bootstrapped_at=attached_at,
+        )
+        bootstrap_log_line = bootstrap_state["bootstrap_log_line"]
+
     attach_log_line = (
         f"{EXTERNAL_TARGET_AUDIT_NOTE_PREFIX} attached "
         f"signal_version="
@@ -10529,6 +11138,7 @@ def attach_external_target(
             controller_orchestrator_version
         ),
         attach_log_line=attach_log_line,
+        bootstrap_state=bootstrap_state,
     )
 
     _atomic_write_json(out, payload)
@@ -10536,6 +11146,8 @@ def attach_external_target(
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as fh:
+            if bootstrap_log_line is not None:
+                fh.write(bootstrap_log_line + "\n")
             fh.write(attach_log_line + "\n")
 
     return out
@@ -14512,9 +15124,11 @@ def cmd_evaluate_final_acceptance(_args: argparse.Namespace) -> int:
 
 
 def cmd_attach_external_target(args: argparse.Namespace) -> int:
-    """Phase 10D operator runtime path: write the controller-owned
-    attach record at `.agent-loop/external-target.json` for an
-    external target.
+    """Phase 10D + Phase 10E operator runtime path: write the
+    controller-owned attach record at `.agent-loop/external-target.json`
+    for an external target, optionally bootstrapping the target's
+    canonical artifact set in the same attach call when `--bootstrap`
+    is supplied.
 
     Routes any `HaltError` through `_halt` so the structural refusal
     vocabulary lands on disk for human inspection. On success prints
@@ -14534,6 +15148,10 @@ def cmd_attach_external_target(args: argparse.Namespace) -> int:
             attached_by=args.attached_by,
             approval_mode=args.approval_mode,
             log_path=log_path,
+            bootstrap=bool(getattr(args, "bootstrap", False)),
+            bootstrapped_by=getattr(args, "bootstrapped_by", None),
+            human_objective=getattr(args, "human_objective", None),
+            project_intent=getattr(args, "project_intent", None),
         )
     except HaltError as halt:
         try:
@@ -14542,15 +15160,28 @@ def cmd_attach_external_target(args: argparse.Namespace) -> int:
             data = {}
         return _halt(state_path, data, halt, log_path)
     rel = written.relative_to(controller_root).as_posix()
-    print(
-        f"[orchestrator] external target attached; attach record at "
-        f"{rel}. See "
-        f"{log_path.relative_to(controller_root).as_posix()} for "
-        f"the `external target: attached ...` audit note. The "
-        f"shipped Phase 4C activator + APPROVED_FOR_ACTIVATION "
-        f"human approval remain the only path to per-target phase "
-        f"activation."
-    )
+    if getattr(args, "bootstrap", False):
+        print(
+            f"[orchestrator] external target attached and "
+            f"bootstrapped; attach record at {rel}. See "
+            f"{log_path.relative_to(controller_root).as_posix()} for "
+            f"the `external target: bootstrapped ...` and `external "
+            f"target: attached ...` audit notes. The bootstrapped "
+            f"target sits at loop-state.status="
+            f"'awaiting_first_activation'; the shipped Phase 4C "
+            f"activator + APPROVED_FOR_ACTIVATION human approval "
+            f"remain the only path to per-target phase activation."
+        )
+    else:
+        print(
+            f"[orchestrator] external target attached; attach record "
+            f"at {rel}. See "
+            f"{log_path.relative_to(controller_root).as_posix()} for "
+            f"the `external target: attached ...` audit note. The "
+            f"shipped Phase 4C activator + APPROVED_FOR_ACTIVATION "
+            f"human approval remain the only path to per-target "
+            f"phase activation."
+        )
     return 0
 
 
@@ -16433,6 +17064,74 @@ def build_parser() -> argparse.ArgumentParser:
             "fully autonomous PRD-to-product mode and is an "
             "explicit per-attach decision (never an implicit "
             "default)."
+        ),
+    )
+    attach_external.add_argument(
+        "--bootstrap",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase 10E opt-in flag for the bootstrap runtime. "
+            "Defaults OFF; an attach without --bootstrap refuses "
+            "fail-closed on any pre-bootstrap state other than "
+            "`full_target`. When supplied AND the pre-bootstrap "
+            "target state is `empty_target`, the bootstrap runtime "
+            "initializes the target's five canonical artifacts "
+            "(`TASK.md`, `.agent-loop/current-task.md`, "
+            "`.agent-loop/current-phase.md`, "
+            "`.agent-loop/phase-plan.md`, "
+            "`.agent-loop/loop-state.json`) atomically with "
+            "rollback on failure, then the attach record carries "
+            "the Phase 10C bootstrap_state extension fields. On "
+            "`full_target` the flag is a no-op (the operator's "
+            "intent is honored by the runtime checking whether "
+            "bootstrap is needed); on `partial_target` / "
+            "`malformed_target` the attach still refuses per the "
+            "Phase 10C bootstrap-never-overwrites guarantee."
+        ),
+    )
+    attach_external.add_argument(
+        "--bootstrapped-by",
+        type=str,
+        default=None,
+        help=(
+            "Phase 10E required operator identifier when "
+            "--bootstrap is supplied. MUST equal --attached-by "
+            "(the Phase 10C single-operator-identity invariant). "
+            f"Capped at {EXTERNAL_TARGET_ATTACHED_BY_MAX_LENGTH} "
+            "chars. Never auto-filled from `$USER` / `whoami` / any "
+            "environment variable; the operator must claim "
+            "identity explicitly."
+        ),
+    )
+    attach_external.add_argument(
+        "--human-objective",
+        type=str,
+        default=None,
+        help=(
+            "Phase 10E required initial `Human Objective` body for "
+            "the bootstrapped target's TASK.md when --bootstrap is "
+            "supplied. No default; the operator must supply this "
+            f"value explicitly. Capped at "
+            f"{EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_MAX_LENGTH}"
+            f" chars in the TASK.md body; the first "
+            f"{EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_EXCERPT_MAX_LENGTH}"
+            " chars are captured into the attach record's "
+            "`bootstrap_state.initial_human_objective_excerpt` "
+            "field for audit."
+        ),
+    )
+    attach_external.add_argument(
+        "--project-intent",
+        type=str,
+        default=None,
+        help=(
+            "Phase 10E required initial `Project Intent` body for "
+            "the bootstrapped target's TASK.md when --bootstrap is "
+            "supplied. No default; the operator must supply this "
+            f"value explicitly. Capped at "
+            f"{EXTERNAL_TARGET_BOOTSTRAP_PROJECT_INTENT_MAX_LENGTH}"
+            " chars."
         ),
     )
     detach_external = sub.add_parser(

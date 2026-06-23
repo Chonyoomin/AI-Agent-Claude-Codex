@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10D - External Workspace Attach/Detach Runtime Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10E - External Workspace Bootstrap Runtime Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 

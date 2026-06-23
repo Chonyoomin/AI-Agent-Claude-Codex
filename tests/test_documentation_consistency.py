@@ -2703,11 +2703,21 @@ class BootstrapContractPreservesShippedHardStopsTests(
         self.text = _read(BOOTSTRAP_CONTRACT_PATH)
         self.collapsed = re.sub(r"\s+", " ", self.text)
 
-    def test_contract_marks_runtime_as_not_yet_implemented(self) -> None:
-        self.assertIn(
+    def test_contract_marks_runtime_as_implemented(self) -> None:
+        # Phase 10E shipped the bootstrap runtime; the contract's
+        # Status section must reflect that the runtime is implemented
+        # so a future reader does not assume the bootstrap surface is
+        # still documentation-only.
+        self.assertNotIn(
             "is NOT yet implemented", self.collapsed,
-            "bootstrap contract does not mark the bootstrap runtime "
-            "as not-yet-implemented",
+            "bootstrap contract still claims the runtime is "
+            "not-yet-implemented; Phase 10E shipped the runtime and "
+            "the Status section must reflect that",
+        )
+        self.assertIn(
+            "Phase 10E runtime slice implements", self.collapsed,
+            "bootstrap contract does not announce that the Phase 10E "
+            "runtime slice implements the bootstrap surface",
         )
 
     def test_contract_locates_future_runtime_in_phase_10d_or_later(

@@ -2,26 +2,36 @@
 
 ## Status
 
-Phase 10C defines this contract. The bootstrap runtime that creates a
-target-side canonical artifact set on an external target is NOT yet
-implemented. The contract below specifies how target-side `.agent-loop`
-initialization may occur in external-workspace mode, which target states
-the runtime must refuse fail-closed, which canonical artifacts may be
-created by bootstrap and with which initial contents, what operator
-opt-in is required, what bootstrap-state metadata must be persisted into
-the Phase 10B attach record, and which boundaries are preserved from
-the shipped Phase 1 - 9 system and the Phase 10A / 10B contracts.
-Implementation of the bootstrap runtime is deferred to later Phase 10
-sub-phases:
+Phase 10C defines this contract. The Phase 10E runtime slice implements
+the bootstrap runtime that satisfies this contract: the
+`bootstrap_external_target(...)` library function plus the `--bootstrap`
+opt-in surface on `attach_external_target(...)` and the
+`attach-external-target` CLI now write the canonical target-side
+artifact set under the Phase 10C invariants, persist the Phase 10C
+extension fields back into the Phase 10B attach record, and refuse
+fail-closed on every contract-listed refusal case. The Phase 10E slice
+also introduces the `halted_external_target_bootstrap_input_missing`
+and `halted_external_target_bootstrap_atomicity_failure` halt statuses
+documented in `docs/halt-and-recovery.md`. The contract below specifies
+how target-side `.agent-loop` initialization may occur in
+external-workspace mode, which target states the runtime must refuse
+fail-closed, which canonical artifacts may be created by bootstrap and
+with which initial contents, what operator opt-in is required, what
+bootstrap-state metadata must be persisted into the Phase 10B attach
+record, and which boundaries are preserved from the shipped Phase 1 - 9
+system and the Phase 10A / 10B contracts. Implementation of additional
+external-workspace surfaces is deferred to later Phase 10 sub-phases:
 
 - Phase 10D: External Workspace Attach/Detach Runtime Initial Slice
-  (consumes the bootstrap contract during attach by either confirming
-  the target's canonical set is already present or invoking the
-  bootstrap runtime to satisfy this contract before writing the
-  attach record's `bootstrap_state` sub-object)
-- Phase 10E: External Target Bootstrap Runtime (the CLI + library that
-  satisfies this contract by writing the target-side canonical
-  artifact set with the initial contents this contract pins)
+  (shipped; consumes the bootstrap contract during attach by either
+  confirming the target's canonical set is already present or invoking
+  the Phase 10E bootstrap runtime to satisfy this contract before
+  writing the attach record's `bootstrap_state` sub-object)
+- Phase 10E: External Target Bootstrap Runtime (shipped; the
+  `bootstrap_external_target(...)` library function plus the
+  `--bootstrap` opt-in surface on `attach-external-target` satisfy
+  this contract by writing the target-side canonical artifact set
+  with the initial contents this contract pins)
 - Phase 10F: Target-Side Cycle Dispatch (consumes the
   fully-bootstrapped target through the shipped Phase 5 approval-mode
   runtime semantics)

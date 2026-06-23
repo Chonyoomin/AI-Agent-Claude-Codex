@@ -705,11 +705,12 @@ class AttachExternalTargetRefusalTests(unittest.TestCase):
             controller = _make_controller(tdp / "controller")
             target = tdp / "target"
             target.mkdir()
-            # No canonical artifacts: empty_target.
+            # No canonical artifacts: empty_target. Without
+            # `--bootstrap` the attach path refuses fail-closed.
             with self.assertRaises(HaltError) as ctx:
                 self._attach(controller, target_path=str(target))
             self.assertIn("empty_target", ctx.exception.reason)
-            self.assertIn("Phase 10E", ctx.exception.reason)
+            self.assertIn("--bootstrap", ctx.exception.reason)
 
     def test_refuses_partial_target_state(self) -> None:
         with TemporaryDirectory() as td:
