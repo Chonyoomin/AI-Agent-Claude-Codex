@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10F - External Target Validation And Refusal Hardening)
+Phase 10 - Future Product Features (sub-phase: Phase 10G - Minimal External UI Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4232,7 +4232,7 @@ cycle dispatch or external UI behavior.
 
 ### Status
 
-Active. Implementation slice under Phase 10 focused on strengthening
+Closed after Codex review approval and human progression. This slice focused on strengthening
 external-workspace validation and refusal behavior so attached-target safety
 checks fail closed on stale, inconsistent, or malformed state before later
 target-side control surfaces are introduced.
@@ -4281,6 +4281,75 @@ behavior.
 - no target-side cycle dispatch or multi-step run-control implementation
   (Phase 10G and later)
 - no external UI, dashboard, or run-control implementation
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10G - Minimal External UI Contract
+
+### Status
+
+Active. Planning/contract slice under Phase 10 focused on defining the first
+external operator UI surface for external-workspace mode without yet shipping a
+UI runtime or broadening into a second control plane.
+
+### Objective
+
+Define the Minimal External UI Contract for the agent loop. This slice should
+specify the first external operator UI surface for external-workspace mode:
+which canonical artifacts it may read, which actions remain CLI-only, how
+advisory UI state must defer to repo artifacts on disk, and what
+safety/approval boundaries must remain intact before any UI runtime is
+implemented.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10G as active
+- `.agent-loop/phase-plan.md` records Phase 10F as closed history and contains
+  a `## Phase 10G - Minimal External UI Contract` section with concrete
+  objective, done criteria, and exclusions
+- the repository gains a documentation-first contract for the first external
+  operator UI surface instead of jumping directly to implementation
+- the contract defines which canonical controller-side and target-side
+  artifacts a minimal external UI may read, and which UI-visible values are
+  advisory mirrors rather than sources of truth
+- the contract preserves the shipped CLI-first workflow by explicitly stating
+  which actions remain CLI-only and must not be silently triggered from a UI
+  surface
+- the contract preserves the shipped artifact/source-of-truth boundary: repo
+  artifacts on disk remain authoritative over any UI cache, session state, or
+  rendered status summary
+- the contract preserves the shipped approval semantics, halt/refusal
+  vocabulary, checkpoint/resume behavior, controller-vs-target ownership
+  boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION`
+  activation gate
+- focused validation proves the new UI contract is bounded, internally
+  consistent with the approved external-workspace slices, and reflected
+  accurately in planning/docs surfaces
+- `README.md` reflects that Phase 10G is active and that the minimal external
+  UI contract is now the planning focus
+
+### Exclusions
+
+- no external UI runtime, dashboard, or run-control implementation beyond the
+  documentation-first contract for the minimal surface (Phase 10H and later)
+- no target-side cycle dispatch, autonomous multi-target orchestration, or
+  external control plane that can mutate canonical artifacts outside the
+  shipped CLI surfaces
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG
   layer, GitHub integration, or model-policy extensibility work
 - no automatic next-phase activation behavior that bypasses or rewrites the

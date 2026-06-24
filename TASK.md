@@ -20,40 +20,40 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10F - External Target Validation And Refusal Hardening
+Phase 10G - Minimal External UI Contract
 
 ## Phase Status
 
-Phase 10E (External Workspace Bootstrap Runtime Initial Slice) is closed after Codex review approval and human progression. Phase 10F is now active as the next implementation slice under Phase 10. This sub-phase should harden external-workspace safety checks around target validation, stale attach state, and refusal coverage while preserving the shipped controller-vs-target ownership boundary and without yet adding target-side cycle dispatch or external UI control.
+Phase 10F (External Target Validation And Refusal Hardening) is closed after Codex review approval and human progression. Phase 10G is now active as the next planning/contract slice under Phase 10. This sub-phase should define the first external operator UI surface, its advisory-vs-canonical boundaries, and how it may interact with the shipped CLI-first workflow without yet implementing a UI runtime or broadening into a new control plane.
 
 ## Active Task
 
-Implement External Target Validation And Refusal Hardening for the agent loop. This slice should strengthen external-workspace runtime safety by hardening target-root and attach-state validation, expanding malformed-artifact and stale-attach refusal coverage, and tightening controller/target consistency checks without widening into target-side cycle dispatch or external UI behavior.
+Define the Minimal External UI Contract for the agent loop. This slice should specify the first external operator UI surface for external-workspace mode: which canonical artifacts it may read, which actions remain CLI-only, how advisory UI state must defer to repo artifacts on disk, and what safety/approval boundaries must remain intact before any UI runtime is implemented.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10F as active
-- `.agent-loop/phase-plan.md` records Phase 10E as closed history and contains a `## Phase 10F - External Target Validation And Refusal Hardening` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository strengthens external-workspace validation and refusal behavior around attached targets, target-root safety, and controller/target consistency without changing the shipped ownership model
-- the runtime refuses stale or inconsistent external-target state fail-closed instead of silently proceeding when attach metadata and on-disk target markers no longer agree
-- the runtime expands malformed-artifact and validation coverage so external-workspace control surfaces reject structurally invalid or semantically inconsistent target-side state with explicit refusal paths
-- the runtime preserves the shipped artifact/source-of-truth boundary: controller-owned attach metadata remains controller-owned, target-side canonical artifacts remain target-owned, bootstrap does not silently activate a phase, and target-side first activation still requires the shipped Phase 4C activator plus `APPROVED_FOR_ACTIVATION`
-- the runtime preserves the shipped CLI-first workflow, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- focused validation proves the new hardening behavior is bounded, consistent with the approved contracts, and reflected accurately in the repo planning/docs/runtime surfaces
-- `README.md` reflects that Phase 10F is active and that external-target validation/refusal hardening is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10G as active
+- `.agent-loop/phase-plan.md` records Phase 10F as closed history and contains a `## Phase 10G - Minimal External UI Contract` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
+- the repository gains a documentation-first contract for the first external operator UI surface instead of jumping directly to implementation
+- the contract defines which canonical controller-side and target-side artifacts a minimal external UI may read, and which UI-visible values are advisory mirrors rather than sources of truth
+- the contract preserves the shipped CLI-first workflow by explicitly stating which actions remain CLI-only and must not be silently triggered from a UI surface
+- the contract preserves the shipped artifact/source-of-truth boundary: repo artifacts on disk remain authoritative over any UI cache, session state, or rendered status summary
+- the contract preserves the shipped approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` activation gate
+- focused validation proves the new UI contract is bounded, internally consistent with the approved external-workspace slices, and reflected accurately in planning/docs surfaces
+- `README.md` reflects that Phase 10G is active and that the minimal external UI contract is now the planning focus
 
 ## Next-Phase Gate
 
-Do not begin target-side cycle dispatch or external UI/runtime expansion after Phase 10F until:
+Do not begin external UI implementation or broader control-plane expansion after Phase 10G until:
 
-- this Phase 10F slice receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the validation/refusal hardening as concrete enough to build the next external-workspace slices on
+- this Phase 10G slice receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the minimal external UI contract as concrete enough to build the first external UI implementation slice on
 - Codex updates the canonical phase/task artifacts to activate the next Phase 10 sub-phase rather than treating roadmap bullets as implementation authority on their own
 
 ## Out Of Scope For Current Phase
 
-- any target-side cycle dispatch implementation beyond the bounded bootstrap hooks required to leave a target at `awaiting_first_activation`
-- any attach/detach contract rewrite or broader external UI, dashboard, or run-control implementation (Phase 10G and later)
+- any external UI runtime, dashboard, or run-control implementation beyond the documentation-first contract for the minimal surface (Phase 10H and later)
+- any target-side cycle dispatch, autonomous multi-target orchestration, or external control plane that can mutate canonical artifacts outside the shipped CLI surfaces
 - any concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
 - any rewrite of current shipped behavior just to make future external-workspace support easier

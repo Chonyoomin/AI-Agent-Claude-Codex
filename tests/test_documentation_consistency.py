@@ -79,6 +79,16 @@ BOOTSTRAP_CONTRACT_PATH = (
     REPO_ROOT / "docs" / "external-workspace-bootstrap-contract.md"
 )
 PHASE_10C_DOC_PATHS = (BOOTSTRAP_CONTRACT_PATH,)
+
+# Phase 10G external UI contract doc (Minimal External UI Contract
+# slice; documentation-only contract for the future minimal external
+# operator UI surface, pinning the read-only artifact set, the
+# advisory-vs-canonical mirror rule, the CLI-only operation list, and
+# the safety/approval boundaries the UI must preserve).
+EXTERNAL_UI_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "external-ui-contract.md"
+)
+PHASE_10G_DOC_PATHS = (EXTERNAL_UI_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
     PHASE_8A_DOC_PATHS
     + PHASE_8B_DOC_PATHS
@@ -86,6 +96,7 @@ ALL_OPERATOR_DOC_PATHS = (
     + PHASE_10A_DOC_PATHS
     + PHASE_10B_DOC_PATHS
     + PHASE_10C_DOC_PATHS
+    + PHASE_10G_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -3024,6 +3035,462 @@ class ReadmePhase10cBootstrapWriteBoundaryWordingTests(
                 f"legitimately rewrites the same canonical files "
                 f"after bootstrap; the corrected wording must "
                 f"make clear bootstrap is not the only writer",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10G - Minimal External UI Contract: documentation tests
+# ---------------------------------------------------------------------------
+class ExternalUiContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10G: the minimal external UI contract doc must exist on
+    disk, be non-empty, be ASCII-only, and carry the canonical section
+    headers a future Phase 10H implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = EXTERNAL_UI_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10G external-UI contract doc at "
+            f"{self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/external-ui-contract.md contains non-ASCII "
+                f"bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# Minimal External UI Contract",
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## Canonical Artifacts The Minimal UI May Read",
+            "## Advisory-Vs-Canonical Mirror Rule",
+            "## Operations That Remain CLI-Only",
+            "## UI Identity And Operator Attribution",
+            "## Refusal Behavior",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Dependencies On Later Phase 10 Slices",
+            "## Out Of Scope For Phase 10G",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/external-ui-contract.md missing required "
+                f"section header {header!r}",
+            )
+
+
+class ExternalUiContractPinsReadOnlyArtifactSetTests(
+    unittest.TestCase,
+):
+    """Phase 10G: the UI contract MUST enumerate the canonical
+    artifacts the future UI may read on both the controller and the
+    target side, so a Phase 10H implementer can build the read set
+    without further design decisions.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_UI_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_controller_side_canonical_artifacts(
+        self,
+    ) -> None:
+        for fragment in (
+            ".agent-loop/external-target.json",
+            ".agent-loop/loop-state.json",
+            ".agent-loop/orchestrator.log",
+            ".agent-loop/proposed-phase.md",
+            ".agent-loop/current-task.md",
+            ".agent-loop/current-phase.md",
+            ".agent-loop/claude-prompt.md",
+            ".agent-loop/claude-summary.md",
+            ".agent-loop/codex-review.md",
+            ".agent-loop/fix-prompt.md",
+            ".agent-loop/final-acceptance.json",
+            "TASK.md",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not name controller-side "
+                f"canonical artifact {fragment!r} in its UI read set",
+            )
+
+    def test_contract_names_target_side_artifacts(self) -> None:
+        # The UI may read target-side artifacts only when an attach
+        # record is present and fresh; the doc must say so.
+        self.assertIn(
+            "attach record is present and fresh", self.collapsed,
+            "external-ui contract does not gate target-side reads on "
+            "attach-record-presence + freshness",
+        )
+
+
+class ExternalUiContractPinsAdvisoryMirrorRuleTests(
+    unittest.TestCase,
+):
+    """The contract MUST distinguish canonical mirrors (verbatim
+    renderings of on-disk artifact values, attributed to the source
+    artifact, refreshed per poll) from advisory derived state
+    (UI-computed values from canonical mirrors that MUST be marked as
+    advisory). Without this distinction the UI could promote derived
+    values to a source of truth.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_UI_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_canonical_mirror_vocabulary(self) -> None:
+        for fragment in (
+            "Canonical mirror",
+            "Advisory derived state",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not pin the "
+                f"{fragment!r} vocabulary",
+            )
+
+    def test_contract_prohibits_cross_snapshot_merging(self) -> None:
+        # The UI MUST NOT show two values from different on-disk
+        # snapshots in the same rendered record; without this rule
+        # the UI could silently merge stale state.
+        self.assertIn(
+            "cross-merge", self.collapsed,
+        )
+        self.assertIn(
+            "one consistent on-disk snapshot", self.collapsed,
+            "external-ui contract does not prohibit cross-snapshot "
+            "merging in a single rendered record",
+        )
+
+    def test_contract_prohibits_caching_past_poll_cycle(self) -> None:
+        self.assertIn(
+            "MUST NOT cache", self.collapsed,
+        )
+        self.assertIn(
+            "single poll cycle", self.collapsed,
+            "external-ui contract does not prohibit caching beyond a "
+            "single poll cycle",
+        )
+
+
+class ExternalUiContractPinsCliOnlyOperationsTests(unittest.TestCase):
+    """The Phase 10G contract MUST enumerate the shipped mutating
+    operations the UI is not allowed to silently trigger. A future
+    Phase 10H runtime that proxies a mutating CLI from a UI button
+    would break this contract; the doc names the operations
+    explicitly.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_UI_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_cli_only_mutating_operations(self) -> None:
+        for op in (
+            "attach-external-target",
+            "detach-external-target",
+            "verify-external-target",
+            "plan",
+            "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                f"`{op}`", self.collapsed,
+                f"external-ui contract does not name CLI-only "
+                f"mutating operation {op!r}",
+            )
+
+    def test_contract_prohibits_ui_dispatch_of_mutating_cli(
+        self,
+    ) -> None:
+        self.assertIn(
+            "MUST NOT issue, dispatch, proxy, auto-trigger, "
+            "queue, or schedule", self.collapsed,
+            "external-ui contract does not explicitly prohibit the "
+            "UI from dispatching mutating CLI operations",
+        )
+
+    def test_contract_permits_copy_to_clipboard_but_not_execute(
+        self,
+    ) -> None:
+        for fragment in (
+            "COPIES the equivalent CLI command",
+            "MUST NOT execute the command on the operator's behalf",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not pin the "
+                f"copy-paste-but-not-execute rule via {fragment!r}",
+            )
+
+
+class ExternalUiContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The Phase 10G contract MUST preserve the shipped hard stops
+    (no Git automation in either root, the Phase 4C activator + the
+    APPROVED_FOR_ACTIVATION token, the Phase 9G final human
+    acceptance gate, the no-auto-fill operator-identity invariants,
+    the controller-vs-target ownership boundary, the source-of-truth
+    boundary). The Phase 10A - 10F baselines pin most of these; the
+    UI contract MUST NOT silently weaken any.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_UI_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        for fragment in (
+            "commit, push, tag, branch, stash, reset, checkout",
+            "BOTH roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not preserve the "
+                f"no-Git-automation boundary via {fragment!r}",
+            )
+
+    def test_contract_preserves_approved_for_activation(self) -> None:
+        self.assertIn(
+            "APPROVED_FOR_ACTIVATION", self.collapsed,
+            "external-ui contract does not preserve the "
+            "APPROVED_FOR_ACTIVATION human-approval gate",
+        )
+        self.assertIn(
+            "Phase 4C activator", self.collapsed,
+            "external-ui contract does not name the Phase 4C "
+            "activator as the preserved activation step",
+        )
+
+    def test_contract_preserves_phase_9g_acceptance_gate(self) -> None:
+        self.assertIn(
+            "Phase 9G", self.collapsed,
+            "external-ui contract does not name the Phase 9G final "
+            "acceptance gate as a preserved boundary",
+        )
+        self.assertIn(
+            "record-final-acceptance", self.collapsed,
+            "external-ui contract does not name the shipped "
+            "record-final-acceptance CLI as the canonical acceptance "
+            "writer",
+        )
+
+    def test_contract_refuses_silent_identity_autofill(self) -> None:
+        # Operator-identity fields MUST NOT be auto-filled from
+        # browser session, env vars, or any UI-side identity store.
+        self.assertIn(
+            "MUST NOT auto-fill", self.collapsed,
+            "external-ui contract does not refuse silent identity "
+            "auto-fill",
+        )
+        for fragment in (
+            "browser session",
+            "$USER",
+            "whoami",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not explicitly refuse "
+                f"identity auto-fill from {fragment!r}",
+            )
+
+    def test_contract_pins_canonical_artifact_source_of_truth(
+        self,
+    ) -> None:
+        for fragment in (
+            "canonical artifacts on disk remain authoritative",
+            "must not introduce a ui-side database",
+        ):
+            self.assertIn(
+                fragment, self.collapsed.lower(),
+                f"external-ui contract does not preserve the "
+                f"source-of-truth model via {fragment!r}",
+            )
+
+    def test_contract_preserves_controller_target_ownership(
+        self,
+    ) -> None:
+        for fragment in (
+            "controller-vs-target ownership boundary",
+            "controller-owned",
+            "target-side",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not preserve the "
+                f"controller-vs-target ownership boundary via "
+                f"{fragment!r}",
+            )
+
+    def test_contract_marks_runtime_as_not_yet_implemented(
+        self,
+    ) -> None:
+        # Phase 10G is documentation-only; the doc must not silently
+        # promise the UI runtime as shipped.
+        self.assertIn(
+            "No external UI runtime", self.collapsed,
+            "external-ui contract does not mark the UI runtime as "
+            "not-yet-shipped",
+        )
+        self.assertIn(
+            "Phase 10H", self.collapsed,
+            "external-ui contract does not locate the future UI "
+            "runtime in Phase 10H",
+        )
+
+
+class ExternalUiContractEnumeratesRefusalsTests(unittest.TestCase):
+    """The Phase 10G contract MUST enumerate the cases in which the
+    future UI is required to refuse fail-closed (render an error
+    state rather than silently proceed). The enumeration lets a
+    Phase 10H implementer build the error-state vocabulary without
+    further design decisions.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(EXTERNAL_UI_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_required_refusal_cases(self) -> None:
+        for fragment in (
+            "attach record is missing",
+            "freshness probe reports drift",
+            "filesystem permission denial",
+            "signal-version marker",
+            "APPROVED_FOR_ACTIVATION",
+            "same-root / nesting refusal",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not enumerate the "
+                f"refusal case named by {fragment!r}",
+            )
+
+    def test_contract_routes_refusals_to_shipped_cli_remediation(
+        self,
+    ) -> None:
+        self.assertIn(
+            "shipped CLI remediation step", self.collapsed,
+            "external-ui contract does not route UI error states to "
+            "shipped CLI remediation",
+        )
+
+
+class ReadmePointsAtExternalUiContractDocTests(unittest.TestCase):
+    """Phase 10G: the README must route a reader at the new contract
+    doc and mark Phase 10G as the current active sub-phase.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_names_external_ui_contract_doc(self) -> None:
+        self.assertIn(
+            "docs/external-ui-contract.md", self.text,
+            "README.md does not route readers at the Phase 10G "
+            "external-UI contract doc",
+        )
+
+
+class ReadmeMarksPhase10gAsActiveTests(unittest.TestCase):
+    """Phase 10G: README must name Phase 10G as the current active
+    sub-phase, describe the documentation-only contract surface (the
+    canonical artifact read set, the advisory-vs-canonical mirror
+    rule, the CLI-only operations, the no-auto-fill operator-
+    identity invariant), and preserve the documented Phase 4C
+    activator boundary and the Phase 9G final human acceptance gate
+    so the UI contract does not silently weaken either.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_marks_phase_10g_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10G", self.text,
+            "README.md does not name Phase 10G as a current focus",
+        )
+        self.assertIn(
+            "Minimal External UI Contract", self.text,
+            "README.md does not name the Phase 10G sub-phase title",
+        )
+
+    def test_readme_names_shipped_contract_surface(self) -> None:
+        for fragment in (
+            "docs/external-ui-contract.md",
+            "advisory-vs-canonical mirror rule",
+            "CLI-only operation",
+            "attach-external-target",
+            "verify-external-target",
+            "record-final-acceptance",
+            "Phase 4C activator",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10G paragraph does not name "
+                f"shipped contract surface {fragment!r}",
+            )
+
+    def test_readme_preserves_phase_9g_final_acceptance_gate(
+        self,
+    ) -> None:
+        self.assertIn(
+            "Phase 9G", self.text,
+            "README.md Phase 10G paragraph does not name the Phase "
+            "9G acceptance gate as a preserved boundary",
+        )
+
+    def test_readme_marks_phase_10g_as_documentation_only(self) -> None:
+        for fragment in (
+            "documentation form only",
+            "Phase 10H",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10G paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
+            )
+
+    def test_readme_routes_advanced_ui_to_phase_10h_or_later(
+        self,
+    ) -> None:
+        # Future UI capabilities must be routed to Phase 10H/10I so a
+        # reader does not assume they ship in 10G.
+        for fragment in (
+            "Phase 10H",
+            "Phase 10I",
+            "concurrent-attach awareness",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10G paragraph does not route "
+                f"future UI capability {fragment!r} to a later "
+                f"sub-phase",
             )
 
 
