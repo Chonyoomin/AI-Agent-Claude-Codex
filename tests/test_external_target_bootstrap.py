@@ -857,5 +857,146 @@ class BootstrapCLISurfaceTests(unittest.TestCase):
         self.assertIsNone(args.project_intent)
 
 
+# ---------------------------------------------------------------------------
+# Phase 10E fix-cycle: CLI handler reports based on whether bootstrap
+# actually ran (attach record's bootstrap_state.status), not whether
+# --bootstrap was merely passed. The Phase 10C contract treats
+# --bootstrap against a `full_target` as a no-op; the CLI must NOT
+# claim a bootstrap happened or point at a nonexistent audit note in
+# that case.
+# ---------------------------------------------------------------------------
+class CmdAttachExternalTargetMessageBranchingTests(unittest.TestCase):
+
+    def _make_args(self, target: Path, **overrides):
+        defaults = dict(
+            cmd="attach-external-target",
+            target_path=str(target),
+            attached_by="alice",
+            approval_mode="review",
+            bootstrap=False,
+            bootstrapped_by=None,
+            human_objective=None,
+            project_intent=None,
+        )
+        defaults.update(overrides)
+        import argparse as _ap
+        return _ap.Namespace(**defaults)
+
+    def _run_cmd(self, controller: Path, args) -> str:
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with mock.patch.object(
+            agent_loop, "find_repo_root", return_value=controller,
+        ):
+            with redirect_stdout(buf):
+                rc = agent_loop.cmd_attach_external_target(args)
+        self.assertEqual(rc, 0, f"cmd_attach_external_target rc={rc}")
+        return buf.getvalue()
+
+    def test_full_target_with_bootstrap_flag_reports_plain_attach(
+        self,
+    ) -> None:
+        # The Phase 10C contract: --bootstrap against a `full_target`
+        # is a no-op. The CLI must report plain attach wording and
+        # MUST NOT claim a bootstrap happened or point at a
+        # nonexistent `external target: bootstrapped ...` audit note.
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            target = tdp / "target"
+            target.mkdir()
+            _write_full_target(target)
+            args = self._make_args(
+                target,
+                bootstrap=True,
+                bootstrapped_by="alice",
+                human_objective="ignored on full_target",
+                project_intent="ignored on full_target",
+            )
+            output = self._run_cmd(controller, args)
+            self.assertIn("external target attached;", output)
+            self.assertNotIn("attached and bootstrapped", output)
+            self.assertNotIn(
+                "external target: bootstrapped", output,
+            )
+            self.assertNotIn(
+                "awaiting_first_activation", output,
+            )
+            # The on-disk attach record confirms the no-op branch
+            # fired: bootstrap_state.status remained
+            # `target_canonical_set_present`.
+            record = json.loads(
+                (controller / ATTACH_RECORD_REL)
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                record["bootstrap_state"]["status"],
+                "target_canonical_set_present",
+            )
+            # And the orchestrator log has no `bootstrapped` line.
+            log_contents = (
+                controller / ".agent-loop" / "orchestrator.log"
+            ).read_text(encoding="utf-8")
+            self.assertNotIn(
+                "external target: bootstrapped", log_contents,
+            )
+
+    def test_empty_target_with_bootstrap_flag_reports_bootstrap(
+        self,
+    ) -> None:
+        # The mirror case: --bootstrap against an `empty_target`
+        # actually invokes bootstrap. The CLI must report the
+        # bootstrap wording and point at the real `external target:
+        # bootstrapped ...` audit note.
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            target = tdp / "target"
+            target.mkdir()
+            args = self._make_args(
+                target,
+                bootstrap=True,
+                bootstrapped_by="alice",
+                human_objective="Goal.",
+                project_intent="Intent.",
+            )
+            output = self._run_cmd(controller, args)
+            self.assertIn("attached and bootstrapped", output)
+            self.assertIn(
+                "external target: bootstrapped", output,
+            )
+            self.assertIn("awaiting_first_activation", output)
+            record = json.loads(
+                (controller / ATTACH_RECORD_REL)
+                .read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                record["bootstrap_state"]["status"],
+                "target_canonical_set_bootstrapped",
+            )
+
+    def test_full_target_without_bootstrap_flag_reports_plain_attach(
+        self,
+    ) -> None:
+        # The Phase 10D baseline: no --bootstrap against a
+        # `full_target` is plain attach. Wording must match the
+        # full_target + --bootstrap case (both are no-bootstrap
+        # branches and must look identical to the operator).
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            target = tdp / "target"
+            target.mkdir()
+            _write_full_target(target)
+            args = self._make_args(target, bootstrap=False)
+            output = self._run_cmd(controller, args)
+            self.assertIn("external target attached;", output)
+            self.assertNotIn("attached and bootstrapped", output)
+            self.assertNotIn(
+                "external target: bootstrapped", output,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

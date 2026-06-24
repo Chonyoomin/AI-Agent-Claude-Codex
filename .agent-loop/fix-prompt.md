@@ -17,9 +17,9 @@ Read:
 - `.agent-loop/build-output.log`
 
 ## Required fixes
-- update `scripts/agent_loop.py` so the Phase 10D detach schema validator refuses malformed controller-owned attach records when `mode_selection.approval_mode` is outside `EXTERNAL_TARGET_APPROVAL_MODES`
-- update `scripts/agent_loop.py` so the Phase 10D detach schema validator refuses malformed controller-owned attach records when `bootstrap_state.status` is outside `EXTERNAL_TARGET_BOOTSTRAP_STATUSES`
-- add focused coverage in `tests/test_external_target_attach.py` proving both out-of-enumeration cases now refuse fail-closed and leave the malformed attach record on disk
+- update `scripts/agent_loop.py` so `cmd_attach_external_target(...)` only reports "attached and bootstrapped" when bootstrap actually ran, not merely when the operator passed `--bootstrap`
+- preserve the Phase 10C/10E `full_target + --bootstrap` no-op contract by reporting plain attach wording when `bootstrap_state.status == "target_canonical_set_present"` and by not pointing the operator at a nonexistent `external target: bootstrapped ...` audit note
+- add focused coverage proving a `full_target + --bootstrap` attach succeeds on the no-op branch and emits non-bootstrap CLI output that matches the real audit/log behavior
 
 ## Constraints
 - Fix only the listed issues.

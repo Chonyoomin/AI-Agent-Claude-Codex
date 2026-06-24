@@ -15160,7 +15160,25 @@ def cmd_attach_external_target(args: argparse.Namespace) -> int:
             data = {}
         return _halt(state_path, data, halt, log_path)
     rel = written.relative_to(controller_root).as_posix()
-    if getattr(args, "bootstrap", False):
+    # Phase 10E fix: branch on whether bootstrap ACTUALLY ran, not
+    # just on whether `--bootstrap` was passed. The Phase 10C contract
+    # treats `--bootstrap` against a `full_target` as a no-op: the
+    # attach record carries `bootstrap_state.status =
+    # "target_canonical_set_present"` and no `external target:
+    # bootstrapped ...` audit line is written. The previous keying
+    # off `args.bootstrap` falsely told the operator to look for a
+    # nonexistent audit note in that case.
+    try:
+        record = json.loads(written.read_text(encoding="utf-8"))
+        bootstrap_status = record.get(
+            "bootstrap_state", {},
+        ).get("status")
+    except (OSError, json.JSONDecodeError):
+        bootstrap_status = None
+    bootstrap_actually_ran = (
+        bootstrap_status == "target_canonical_set_bootstrapped"
+    )
+    if bootstrap_actually_ran:
         print(
             f"[orchestrator] external target attached and "
             f"bootstrapped; attach record at {rel}. See "
