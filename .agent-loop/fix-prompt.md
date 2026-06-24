@@ -4,7 +4,7 @@
 Fix only the issues found in `.agent-loop/codex-review.md`.
 
 ## Context
-The previous implementation was reviewed by Codex and received the verdict `NEEDS_FIXES`.
+The latest implementation was reviewed by Codex and received the verdict `APPROVED_FOR_HUMAN_REVIEW`.
 
 Read:
 - `CLAUDE.md`
@@ -17,9 +17,7 @@ Read:
 - `.agent-loop/build-output.log`
 
 ## Required fixes
-- update `scripts/agent_loop.py` so `cmd_attach_external_target(...)` only reports "attached and bootstrapped" when bootstrap actually ran, not merely when the operator passed `--bootstrap`
-- preserve the Phase 10C/10E `full_target + --bootstrap` no-op contract by reporting plain attach wording when `bootstrap_state.status == "target_canonical_set_present"` and by not pointing the operator at a nonexistent `external target: bootstrapped ...` audit note
-- add focused coverage proving a `full_target + --bootstrap` attach succeeds on the no-op branch and emits non-bootstrap CLI output that matches the real audit/log behavior
+- none; there are no open Claude-owned fixes from the current Codex review
 
 ## Constraints
 - Fix only the listed issues.

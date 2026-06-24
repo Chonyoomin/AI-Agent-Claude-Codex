@@ -1,32 +1,31 @@
 # Claude Code Task
 
 ## Phase
-Phase 10E - External Workspace Bootstrap Runtime Initial Slice
+Phase 10F - External Target Validation And Refusal Hardening
 
 ## Objective
-Implement the External Workspace Bootstrap Runtime Initial Slice for the agent loop. This slice should add the explicit bootstrap path for `empty_target` external workspaces under the approved Phase 10C contract, write only the allowed target-side canonical artifact set atomically, update the controller-owned attach record's bootstrap-state fields consistently, and refuse partial or malformed target states without widening into target-side cycle dispatch or external UI behavior.
+Implement External Target Validation And Refusal Hardening for the agent loop. This slice should strengthen external-workspace runtime safety by hardening target-root and attach-state validation, expanding malformed-artifact and stale-attach refusal coverage, and tightening controller/target consistency checks without widening into target-side cycle dispatch or external UI behavior.
 
 ## Context
-Phase 10 continues the future product-features track. Phase 10D completed the controller-side attach/detach runtime path, and Phase 10E is the next implementation slice in the external-workspace path: the approved Phase 10C bootstrap contract now needs to become executable runtime behavior for `empty_target` workspaces without widening into target-side cycle dispatch or external UI control.
+Phase 10 continues the future product-features track. Phase 10E completed the bounded bootstrap-runtime path for `empty_target` external workspaces, and Phase 10F is the next safety-hardening slice in the external-workspace path: the shipped attach/bootstrap surfaces now need stronger validation and refusal handling around stale, inconsistent, or malformed external-target state before later target-side control surfaces are added.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10E as active
-- `.agent-loop/phase-plan.md` records Phase 10D as closed history and contains a `## Phase 10E - External Workspace Bootstrap Runtime Initial Slice` section with concrete objective, done criteria, and exclusions
-- implement the explicit bootstrap runtime path in repo code:
-  - bootstrap only `empty_target` workspaces under the approved Phase 10C contract and explicit operator opt-in
-  - write exactly the five allowed target-side canonical bootstrap artifacts atomically, or roll back fully on failure
-  - require the approved operator-provided bootstrap inputs, including bootstrap identity plus initial `Human Objective` and `Project Intent`
-  - update the controller-owned `.agent-loop/external-target.json` attach record's `bootstrap_state` extension fields consistently with the approved Phase 10C schema
-  - emit bootstrap audit lines consistent with the approved Phase 10B/10C contracts
-  - refuse `partial_target`, `malformed_target`, missing-input, operator-identity mismatch, and atomicity-failure cases fail-closed
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10F as active
+- `.agent-loop/phase-plan.md` records Phase 10E as closed history and contains a `## Phase 10F - External Target Validation And Refusal Hardening` section with concrete objective, done criteria, and exclusions
+- harden the external-workspace runtime path in repo code:
+  - strengthen validation around attached targets, target-root safety, and controller/target consistency
+  - refuse stale attach state fail-closed when controller-owned attach metadata and target-side marker artifacts no longer agree
+  - expand malformed-artifact coverage so structurally invalid or semantically inconsistent external-target state is rejected explicitly rather than tolerated or silently repaired
+  - keep the existing attach/bootstrap ownership boundary intact: controller-owned attach metadata remains controller-owned and target-side canonical artifacts remain target-owned
+  - preserve the shipped activation gate: hardening must not silently activate a target-side phase or collapse the Phase 4C activator + `APPROVED_FOR_ACTIVATION` boundary
 - preserve the shipped artifact/source-of-truth boundary:
   - controller-owned attach metadata remains controller-owned
   - target-side canonical artifacts remain target-owned
-  - bootstrap must not silently activate a target-side phase
-  - bootstrap must not invent advisory state as canonical truth
+  - the hardening layer must not silently activate a target-side phase
+  - the hardening layer must not invent advisory state as canonical truth
 - preserve the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- update `README.md` so it reflects that Phase 10E is active and that the bootstrap runtime slice is now the implementation focus
-- add focused validation sufficient to prove the runtime is bounded, consistent with the approved contracts, and non-drifting
+- update `README.md` so it reflects that Phase 10F is active and that external-target validation/refusal hardening is now the implementation focus
+- add focused validation sufficient to prove the hardening behavior is bounded, consistent with the approved contracts, and non-drifting
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -39,7 +38,7 @@ Phase 10 continues the future product-features track. Phase 10D completed the co
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no target-side cycle dispatch implementation beyond the bounded bootstrap hooks required to leave a target at `awaiting_first_activation`
+- no target-side cycle dispatch or multi-step run-control implementation
 - no external UI, dashboard, or run-control implementation
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
 - no automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state

@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10E - External Workspace Bootstrap Runtime Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10F - External Target Validation And Refusal Hardening)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4155,7 +4155,7 @@ bootstrap automation.
 
 ### Status
 
-Active. Implementation slice under Phase 10 focused on adding the explicit
+Closed after Codex review approval and human progression. This slice added the explicit
 bootstrap runtime for `empty_target` external workspaces so the approved Phase
 10C target initialization contract becomes executable while still preserving the
 controller/target ownership boundary and the shipped activation gate.
@@ -4211,6 +4211,76 @@ cycle dispatch or external UI behavior.
   hooks required to leave a target at `awaiting_first_activation` (Phase 10F)
 - no external UI, dashboard, or run-control implementation (Phase 10G and
   later)
+- no concurrent Codex/Claude execution implementation, MCP integration, RAG
+  layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external-workspace
+  support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10F - External Target Validation And Refusal Hardening
+
+### Status
+
+Active. Implementation slice under Phase 10 focused on strengthening
+external-workspace validation and refusal behavior so attached-target safety
+checks fail closed on stale, inconsistent, or malformed state before later
+target-side control surfaces are introduced.
+
+### Objective
+
+Implement External Target Validation And Refusal Hardening for the agent loop.
+This slice should strengthen external-workspace runtime safety by hardening
+target-root and attach-state validation, expanding malformed-artifact and
+stale-attach refusal coverage, and tightening controller/target consistency
+checks without widening into target-side cycle dispatch or external UI
+behavior.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10F as active
+- `.agent-loop/phase-plan.md` records Phase 10E as closed history and contains
+  a `## Phase 10F - External Target Validation And Refusal Hardening` section
+  with concrete objective, done criteria, and exclusions
+- the repository strengthens external-workspace validation and refusal behavior
+  around attached targets, target-root safety, and controller/target
+  consistency without changing the shipped ownership model
+- the runtime refuses stale or inconsistent external-target state fail-closed
+  instead of silently proceeding when attach metadata and on-disk target
+  markers no longer agree
+- the runtime expands malformed-artifact and validation coverage so
+  external-workspace control surfaces reject structurally invalid or
+  semantically inconsistent target-side state with explicit refusal paths
+- the runtime preserves the shipped artifact/source-of-truth boundary:
+  controller-owned attach metadata remains controller-owned, target-side
+  canonical artifacts remain target-owned, bootstrap does not silently activate
+  a phase, and target-side first activation still requires the shipped Phase 4C
+  activator plus `APPROVED_FOR_ACTIVATION`
+- the runtime preserves the shipped CLI-first workflow, approval semantics,
+  halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and
+  repo-artifact source-of-truth model
+- focused validation proves the new hardening behavior is bounded, consistent
+  with the approved contracts, and reflected accurately in the repo
+  planning/docs/runtime surfaces
+- `README.md` reflects that Phase 10F is active and that external-target
+  validation/refusal hardening is now the implementation focus
+
+### Exclusions
+
+- no target-side cycle dispatch or multi-step run-control implementation
+  (Phase 10G and later)
+- no external UI, dashboard, or run-control implementation
 - no concurrent Codex/Claude execution implementation, MCP integration, RAG
   layer, GitHub integration, or model-policy extensibility work
 - no automatic next-phase activation behavior that bypasses or rewrites the
