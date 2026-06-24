@@ -10864,6 +10864,158 @@ def _validate_external_target_attach_record_schema(
             ),
         )
 
+    # Phase 10F: internal coherence checks. The Phase 10B + 10C
+    # contracts pin several cross-field invariants that the previous
+    # validator did not enforce. A record that satisfies the
+    # structural type / closed-enumeration checks but contradicts
+    # itself across fields is still a malformed record and must
+    # refuse fail-closed instead of being silently accepted.
+    if record["mode_selection"]["selected_by"] != record["attached_by"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"mode_selection.selected_by="
+                f"{record['mode_selection']['selected_by']!r} does "
+                f"not match attached_by={record['attached_by']!r}; "
+                f"the Phase 10B contract requires the same operator "
+                f"identity for both fields (single-attach-session "
+                f"invariant)"
+            ),
+        )
+    if record["mode_selection"]["selected_at"] != record["attached_at"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"mode_selection.selected_at="
+                f"{record['mode_selection']['selected_at']!r} does "
+                f"not match attached_at={record['attached_at']!r}; "
+                f"the Phase 10B contract requires the same timestamp "
+                f"for both fields (single-attach-session invariant)"
+            ),
+        )
+    sad = record["stale_attach_detection"]
+    if (
+        sad["target_path_canonical_at_attach"]
+        != record["target_path_canonical"]
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"stale_attach_detection.target_path_canonical_at_attach"
+                f"={sad['target_path_canonical_at_attach']!r} does "
+                f"not match target_path_canonical="
+                f"{record['target_path_canonical']!r}; the Phase 10B "
+                f"contract requires both fields to record the same "
+                f"canonical path at attach time"
+            ),
+        )
+    if (
+        sad["controller_path_canonical_at_attach"]
+        != record["controller_path_canonical"]
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"stale_attach_detection.controller_path_canonical_at_attach"
+                f"={sad['controller_path_canonical_at_attach']!r} "
+                f"does not match controller_path_canonical="
+                f"{record['controller_path_canonical']!r}; the "
+                f"Phase 10B contract requires both fields to record "
+                f"the same canonical path at attach time"
+            ),
+        )
+    # Phase 10C extension-field coherence: a `target_canonical_set_present`
+    # record MUST carry null for every Phase 10C extension field; a
+    # `target_canonical_set_bootstrapped` record MUST carry non-null
+    # values matching the bootstrap-runtime contract.
+    bs = record["bootstrap_state"]
+    extension_fields = (
+        "bootstrapped_at",
+        "bootstrapped_by",
+        "bootstrap_signal_version",
+        "artifacts_written",
+        "initial_loop_state_status",
+        "initial_human_objective_excerpt",
+        "bootstrap_log_line",
+    )
+    if bootstrap_status == "target_canonical_set_present":
+        for field in extension_fields:
+            if bs.get(field) is not None:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"external target detach refused: attach "
+                        f"record bootstrap_state.status="
+                        f"'target_canonical_set_present' requires "
+                        f"bootstrap_state.{field} to be null; got "
+                        f"{bs.get(field)!r}. The Phase 10B + 10C "
+                        f"no-bootstrap-branch invariant is "
+                        f"contradicted"
+                    ),
+                )
+    else:  # target_canonical_set_bootstrapped
+        for field in extension_fields:
+            if bs.get(field) is None:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"external target detach refused: attach "
+                        f"record bootstrap_state.status="
+                        f"'target_canonical_set_bootstrapped' "
+                        f"requires bootstrap_state.{field} to be "
+                        f"non-null. The Phase 10C bootstrap-runtime "
+                        f"contract is contradicted"
+                    ),
+                )
+        if (
+            bs["bootstrap_signal_version"]
+            != EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach record "
+                    f"bootstrap_state.bootstrap_signal_version="
+                    f"{bs['bootstrap_signal_version']!r}; the "
+                    f"running orchestrator only recognizes "
+                    f"{EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION!r} "
+                    f"for the bootstrapped branch"
+                ),
+            )
+        if (
+            bs["pre_bootstrap_target_state"]
+            != EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach record "
+                    f"bootstrap_state.pre_bootstrap_target_state="
+                    f"{bs['pre_bootstrap_target_state']!r}; the "
+                    f"Phase 10C contract requires "
+                    f"{EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY!r} when "
+                    f"bootstrap was performed"
+                ),
+            )
+        if (
+            bs["initial_loop_state_status"]
+            != EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach record "
+                    f"bootstrap_state.initial_loop_state_status="
+                    f"{bs['initial_loop_state_status']!r}; the "
+                    f"Phase 10C contract requires "
+                    f"{EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS!r}"
+                ),
+            )
+
 
 def _atomic_write_json(target: Path, payload: dict) -> None:
     """Write JSON atomically via temp-write + rename. Phase 10B
@@ -11296,6 +11448,357 @@ def detach_external_target(
             )
 
     return attach_record_path
+
+
+# ---------------------------------------------------------------------------
+# Phase 10F: External Target Validation And Refusal Hardening
+#
+# Adds three layers on top of the shipped Phase 10D/10E surfaces
+# WITHOUT changing the attach / detach / bootstrap runtime semantics:
+#
+#   - the existing `_validate_external_target_attach_record_schema(...)`
+#     gains internal-coherence checks (mode_selection identity match,
+#     stale_attach_detection canonical-path equality, bootstrap_state
+#     null-vs-non-null coherence) above the basic type checks
+#   - new freshness probe library function
+#     `probe_external_target_attach_freshness(...)` checks on-disk
+#     drift between the attach record's stale_attach_detection
+#     snapshot and the current state of both controller and target
+#     roots (target dir still exists; canonical path still resolves
+#     identically; target marker files still present on disk)
+#   - new throwing assertion `assert_external_target_attach_fresh(...)`
+#     raises HaltError("halted_external_target_stale_attach", ...)
+#     on drift so future callers can use it as a fail-closed guard
+#   - new aggregator inspector `inspect_external_target_attach(...)`
+#     combines the schema validator + bootstrap-state coherence + the
+#     freshness probe into a single structured report
+#   - new `inspect-external-target` CLI subcommand surfaces the
+#     report (Phase 7C reporter pattern: always exits 0, never
+#     mutates, never logs)
+#
+# The hardening preserves every shipped boundary: controller-owned
+# metadata stays controller-owned, target-side canonical artifacts
+# stay target-owned, no phase is silently activated, no shipped halt
+# vocabulary is repurposed, and the existing attach / detach / boot-
+# strap CLI surfaces and library APIs keep their shipped signatures.
+# ---------------------------------------------------------------------------
+
+HALTED_EXTERNAL_TARGET_STALE_ATTACH = (
+    "halted_external_target_stale_attach"
+)
+
+EXTERNAL_TARGET_INSPECTION_SIGNAL_VERSION = "phase-10f-v1"
+
+
+def probe_external_target_attach_freshness(
+    controller_root: Path,
+) -> dict:
+    """Phase 10F: probe whether the controller-owned attach record at
+    `.agent-loop/external-target.json` still agrees with the current
+    on-disk state of the controller and target roots. Returns a
+    structured report; never raises on stale or missing state (so
+    callers can render the report even on drift). Hard failures
+    (unreadable attach record JSON, malformed top-level structure)
+    raise the same `HaltError` family the detach path uses so
+    callers see consistent refusal vocabulary.
+
+    Report fields:
+      - `freshness_signal_version`: literal phase-10f-v1
+      - `attach_record_path`: repo-relative path to the attach record
+      - `attached`: True if an attach record is on disk, False otherwise
+      - `is_fresh`: True if the attach record's stale_attach_detection
+        snapshot still matches current on-disk state; False if any
+        drift was observed
+      - `reasons`: list of human-readable drift reasons; empty when
+        is_fresh is True
+      - `current_target_path_canonical`: the target's canonical path
+        as currently resolvable (None if target dir no longer exists)
+      - `current_controller_path_canonical`: the controller's
+        canonical path as currently resolvable
+      - `missing_target_marker_files`: list of repo-relative marker
+        paths the attach record snapshot expected but are no longer
+        present on disk
+    """
+    report = {
+        "freshness_signal_version": (
+            EXTERNAL_TARGET_INSPECTION_SIGNAL_VERSION
+        ),
+        "attach_record_path": EXTERNAL_TARGET_ATTACH_RECORD_REL,
+        "attached": False,
+        "is_fresh": False,
+        "reasons": [],
+        "current_target_path_canonical": None,
+        "current_controller_path_canonical": None,
+        "missing_target_marker_files": [],
+    }
+    attach_record_path = (
+        controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
+    )
+    if not attach_record_path.exists():
+        report["reasons"].append(
+            f"no attach record on disk at "
+            f"{EXTERNAL_TARGET_ATTACH_RECORD_REL}"
+        )
+        return report
+    report["attached"] = True
+    try:
+        raw = attach_record_path.read_text(encoding="utf-8")
+        record = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target freshness probe refused: attach "
+                f"record at {attach_record_path} is unreadable or "
+                f"malformed JSON ({exc})"
+            ),
+        ) from exc
+    if not isinstance(record, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target freshness probe refused: attach "
+                f"record at {attach_record_path} is not a JSON "
+                f"object"
+            ),
+        )
+    controller_resolved = controller_root.resolve()
+    report["current_controller_path_canonical"] = (
+        controller_resolved.as_posix()
+    )
+    recorded_controller = record.get("controller_path_canonical")
+    if recorded_controller != controller_resolved.as_posix():
+        report["reasons"].append(
+            f"controller_path_canonical drift: attach record says "
+            f"{recorded_controller!r} but the running controller "
+            f"resolves to {controller_resolved.as_posix()!r}"
+        )
+    recorded_target = record.get("target_path_canonical")
+    if isinstance(recorded_target, str):
+        target_path = Path(recorded_target)
+        if not target_path.exists():
+            report["reasons"].append(
+                f"target_path_canonical no longer exists on disk: "
+                f"{recorded_target!r}"
+            )
+        else:
+            try:
+                current_target_resolved = target_path.resolve()
+                report["current_target_path_canonical"] = (
+                    current_target_resolved.as_posix()
+                )
+                if (
+                    current_target_resolved.as_posix()
+                    != recorded_target
+                ):
+                    report["reasons"].append(
+                        f"target_path_canonical drift: attach "
+                        f"record says {recorded_target!r} but the "
+                        f"path now resolves to "
+                        f"{current_target_resolved.as_posix()!r}"
+                    )
+                marker_files = record.get(
+                    "stale_attach_detection", {},
+                ).get("target_marker_files_at_attach", [])
+                if isinstance(marker_files, list):
+                    for rel in marker_files:
+                        if not isinstance(rel, str):
+                            continue
+                        if not (target_path / rel).exists():
+                            report[
+                                "missing_target_marker_files"
+                            ].append(rel)
+                    if report["missing_target_marker_files"]:
+                        report["reasons"].append(
+                            f"target marker files missing on "
+                            f"disk: "
+                            f"{report['missing_target_marker_files']!r}"
+                        )
+            except OSError as exc:
+                report["reasons"].append(
+                    f"target_path_canonical cannot be resolved: "
+                    f"{exc}"
+                )
+    report["is_fresh"] = not report["reasons"]
+    return report
+
+
+def assert_external_target_attach_fresh(
+    controller_root: Path,
+) -> None:
+    """Phase 10F: throwing companion to
+    `probe_external_target_attach_freshness(...)`. Raises
+    `HaltError(HALTED_EXTERNAL_TARGET_STALE_ATTACH, ...)` on any
+    observed drift between the controller-owned attach record and
+    the current on-disk state of either root. Raises
+    `HaltError("halted_input_missing", ...)` if the attach record is
+    missing or unreadable.
+
+    This is a fail-closed guard a future runtime hook (or operator
+    workflow) can call before operating against an attached target;
+    the shipped attach / detach / bootstrap surfaces do NOT change
+    behavior in this slice.
+    """
+    report = probe_external_target_attach_freshness(controller_root)
+    if not report["attached"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target freshness assertion refused: no "
+                f"attach record on disk at "
+                f"{EXTERNAL_TARGET_ATTACH_RECORD_REL}; the "
+                f"controller is not currently attached"
+            ),
+        )
+    if not report["is_fresh"]:
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_STALE_ATTACH,
+            (
+                f"external target freshness assertion refused: "
+                f"attach record and on-disk state have drifted. "
+                f"Reasons: {report['reasons']!r}. Inspect with "
+                f"`inspect-external-target` and detach + re-attach "
+                f"if the drift is intentional."
+            ),
+        )
+
+
+def inspect_external_target_attach(controller_root: Path) -> dict:
+    """Phase 10F: aggregator inspector. Returns a structured report
+    combining (1) attach-record presence, (2) the full Phase 10B/10C
+    structural validator's verdict, and (3) the Phase 10F freshness
+    probe. Never raises on observed inconsistencies; the report
+    captures the failure mode so the operator can decide. Hard
+    failures (unreadable attach record, non-dict top-level) propagate
+    via `HaltError("halted_input_missing", ...)` to match the
+    existing detach refusal vocabulary.
+
+    Report fields:
+      - `inspection_signal_version`: literal phase-10f-v1
+      - `attached`: True if attach record on disk
+      - `attach_record_path`: repo-relative path
+      - `schema_valid`: True if the structural validator passes
+      - `schema_violations`: list of HaltError reason strings from
+        the validator (empty when schema_valid is True)
+      - `freshness`: the freshness probe report
+      - `summary`: short human-readable summary
+    """
+    report = {
+        "inspection_signal_version": (
+            EXTERNAL_TARGET_INSPECTION_SIGNAL_VERSION
+        ),
+        "attached": False,
+        "attach_record_path": EXTERNAL_TARGET_ATTACH_RECORD_REL,
+        "schema_valid": False,
+        "schema_violations": [],
+        "freshness": None,
+        "summary": "",
+    }
+    attach_record_path = (
+        controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
+    )
+    if not attach_record_path.exists():
+        report["summary"] = (
+            "not attached: no attach record on disk"
+        )
+        report["freshness"] = probe_external_target_attach_freshness(
+            controller_root,
+        )
+        return report
+    report["attached"] = True
+    try:
+        raw = attach_record_path.read_text(encoding="utf-8")
+        record = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target inspection refused: attach record "
+                f"at {attach_record_path} is unreadable or malformed "
+                f"JSON ({exc})"
+            ),
+        ) from exc
+    if not isinstance(record, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target inspection refused: attach record "
+                f"at {attach_record_path} is not a JSON object"
+            ),
+        )
+    try:
+        _validate_external_target_attach_record_schema(record)
+        report["schema_valid"] = True
+    except HaltError as halt:
+        report["schema_violations"].append(halt.reason)
+    report["freshness"] = probe_external_target_attach_freshness(
+        controller_root,
+    )
+    freshness_ok = (
+        report["freshness"]["is_fresh"]
+        if report["freshness"]
+        else False
+    )
+    if report["schema_valid"] and freshness_ok:
+        report["summary"] = (
+            "attached: attach record schema-valid and fresh"
+        )
+    elif not report["schema_valid"]:
+        report["summary"] = (
+            "attached: attach record FAILS schema validation"
+        )
+    else:
+        report["summary"] = (
+            "attached: attach record schema-valid but STALE on disk"
+        )
+    return report
+
+
+def cmd_inspect_external_target(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10F operator runtime entry: print the inspector report.
+
+    Phase 7C reporter pattern: always exits 0 (the absence of an
+    attach record, observed staleness, and observed schema violations
+    are all REPORT content rather than orchestrator failures). Hard
+    failures (unreadable attach-record JSON, non-dict top-level)
+    propagate via `HaltError` -> `_halt`, matching the existing
+    detach refusal behavior.
+
+    The inspector NEVER mutates the attach record, NEVER writes to
+    the orchestrator log, NEVER advances loop-state, and NEVER
+    invokes attach / detach / bootstrap as a side effect.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        report = inspect_external_target_attach(controller_root)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    print(
+        f"[orchestrator] external target inspection report "
+        f"(signal_version="
+        f"{report['inspection_signal_version']!r})\n"
+        f"attached: {report['attached']}\n"
+        f"attach_record_path: {report['attach_record_path']}\n"
+        f"schema_valid: {report['schema_valid']}\n"
+        f"schema_violations: {report['schema_violations']}\n"
+        f"freshness.is_fresh: "
+        f"{report['freshness']['is_fresh'] if report['freshness'] else None}\n"
+        f"freshness.reasons: "
+        f"{report['freshness']['reasons'] if report['freshness'] else []}\n"
+        f"freshness.missing_target_marker_files: "
+        f"{report['freshness']['missing_target_marker_files'] if report['freshness'] else []}\n"
+        f"summary: {report['summary']}"
+    )
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -17185,6 +17688,26 @@ def build_parser() -> argparse.ArgumentParser:
             "chars. Never auto-filled from `$USER` / `whoami`."
         ),
     )
+    sub.add_parser(
+        "inspect-external-target",
+        help=(
+            "Phase 10F external target validation/refusal hardening "
+            "inspector: report the controller-owned attach record's "
+            "schema validity AND on-disk freshness without mutating "
+            "anything. Combines the full Phase 10B/10C structural "
+            "validator (which now also checks mode_selection / "
+            "stale_attach_detection / bootstrap_state internal "
+            "coherence) with a freshness probe that detects drift "
+            "between the attach record snapshot and current "
+            "controller/target on-disk state (target dir missing, "
+            "canonical path resolves differently, marker files "
+            "absent). Phase 7C reporter pattern: always exits 0; "
+            "absence / staleness / schema violations are report "
+            "content rather than orchestrator failures. Hard "
+            "failures (unreadable attach record JSON, non-dict "
+            "top-level) refuse fail-closed through `_halt`."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -17448,6 +17971,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "evaluate-final-acceptance": cmd_evaluate_final_acceptance,
     "attach-external-target": cmd_attach_external_target,
     "detach-external-target": cmd_detach_external_target,
+    "inspect-external-target": cmd_inspect_external_target,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
