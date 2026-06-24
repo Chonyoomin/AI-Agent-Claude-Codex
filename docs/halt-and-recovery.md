@@ -216,6 +216,74 @@ the script was missing, not executable, or refused at the OS level.
 executable. On Windows hosts running through Git Bash, verify the
 shebang and the file's CRLF/LF line endings.
 
+### `halted_external_target_bootstrap_input_missing`
+
+**Meaning.** The Phase 10E external-workspace bootstrap runtime
+refused fail-closed because a required input was missing, malformed,
+out of range, or contradicted another input. The accompanying reason
+names the specific field. Concrete cases include:
+missing / empty / over-bounded `--bootstrapped-by`,
+`--human-objective`, or `--project-intent`; an
+`--bootstrapped-by` value that does not match `--attached-by` (the
+Phase 10C single-operator-identity invariant); an `--approval-mode`
+outside the Phase 10B closed enumeration; and a pre-bootstrap
+target state other than `empty_target` at bootstrap time
+(`partial_target` / `malformed_target` are always refused per the
+Phase 10C bootstrap-never-overwrites guarantee; `full_target` needs
+no bootstrap and is handled by the no-bootstrap attach path).
+
+**Recovery.** Inspect the refusal message, supply the missing /
+correct input (or repair the target's pre-bootstrap state), and
+re-run the `attach-external-target --bootstrap ...` command. No
+attach record is written on a bootstrap refusal so the controller's
+state is unchanged.
+
+### `halted_external_target_bootstrap_atomicity_failure`
+
+**Meaning.** The Phase 10E bootstrap runtime started writing the
+target-side canonical artifact set but a filesystem error during the
+temp-write or rename phase forced a rollback. Every artifact already
+written in the same bootstrap call is removed before the halt fires,
+so the target is left in the original `empty_target` state.
+
+**Recovery.** Resolve the underlying filesystem issue (target root
+no longer writable, full disk, a sibling tool holding a lock on one
+of the five canonical paths, etc.), then re-run the
+`attach-external-target --bootstrap ...` command. If the rollback
+itself could not delete a partial artifact (rare; the rollback is
+best-effort), inspect the target manually and delete any leftover
+canonical artifact before retrying.
+
+### `halted_external_target_stale_attach`
+
+**Meaning.** The Phase 10F freshness assertion
+(`assert_external_target_attach_fresh(...)`) refused fail-closed
+because the controller-owned attach record's
+`stale_attach_detection` snapshot no longer matches the on-disk
+state of the controller and target roots. Specific drift signals
+include: the target directory has been moved or deleted; the
+target's canonical path now resolves to a different value than the
+attach record recorded; one or more `target_marker_files_at_attach`
+entries are missing on disk; or the running controller's canonical
+path no longer matches `controller_path_canonical`. The shipped
+production surface that persists this status is the
+`verify-external-target` CLI subcommand; the non-throwing companion
+`probe_external_target_attach_freshness(...)` and the
+`inspect-external-target` CLI subcommand never raise on drift, they
+report it (always exit 0).
+
+**Recovery.** Run
+`python scripts/agent_loop.py inspect-external-target` to see which
+specific drift signal fired. If the drift is intentional (the
+target was deliberately moved, renamed, or rebuilt), detach the
+stale attach record via
+`python scripts/agent_loop.py detach-external-target --detached-by NAME`
+and re-attach against the new target root. If the drift is
+unintentional (a tool deleted target marker files, or another
+controller wrote over the attach record), restore the target state
+or roll back the controller-side edit before retrying. The Phase
+10F hardening layer never silently repairs the drift.
+
 ## Terminal halts (human required)
 
 ### `halted_failed_requires_human`

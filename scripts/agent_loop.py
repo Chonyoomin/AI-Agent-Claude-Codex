@@ -9891,6 +9891,35 @@ EXTERNAL_TARGET_CANONICAL_PRECEDENCE_NOTE = (
     "not silently activate a phase."
 )
 
+# Phase 10E: bootstrap runtime constants. Per the Phase 10C contract,
+# bootstrap initializes the target's canonical artifact set on operator
+# opt-in. The `awaiting_first_activation` loop-state status is the
+# Phase 10E status the bootstrap runtime is the sole writer of; the
+# shipped Phase 4C activator + APPROVED_FOR_ACTIVATION human approval
+# remain the only path that advances a bootstrapped target past
+# `awaiting_first_activation`.
+EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS = (
+    "awaiting_first_activation"
+)
+EXTERNAL_TARGET_BOOTSTRAP_INITIAL_MAX_CYCLES = 3
+EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_EXCERPT_MAX_LENGTH = 200
+EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_MAX_LENGTH = 8000
+EXTERNAL_TARGET_BOOTSTRAP_PROJECT_INTENT_MAX_LENGTH = 8000
+# Phase 10E halt-status family. The Phase 10C contract reserved the
+# `halted_external_target_bootstrap_*` namespace for the bootstrap
+# runtime; this slice introduces two specific statuses paired with a
+# `docs/halt-and-recovery.md` update.
+HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING = (
+    "halted_external_target_bootstrap_input_missing"
+)
+HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE = (
+    "halted_external_target_bootstrap_atomicity_failure"
+)
+EXTERNAL_TARGET_BOOTSTRAP_HALT_STATUSES = frozenset({
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE,
+})
+
 
 def _validate_external_target_attached_by(
     value, *, field_name: str = "attached_by",
@@ -10117,6 +10146,492 @@ def classify_pre_bootstrap_target_state(target_root: Path) -> str:
     return EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL
 
 
+def _validate_external_target_bootstrap_bounded_string(
+    value, *, field_name: str, max_length: int, halt_status: str,
+) -> str:
+    """Refuse fail-closed on a missing / non-string / empty / over-bounded
+    bootstrap input string. Used for `human_objective` and
+    `project_intent`, both of which the Phase 10C contract requires
+    the operator to supply with no default.
+    """
+    if value is None:
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} is required; "
+                f"the Phase 10C contract requires the operator to "
+                f"supply this value explicitly (no default)"
+            ),
+        )
+    if not isinstance(value, str):
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} must be a "
+                f"string; got {type(value).__name__}={value!r}"
+            ),
+        )
+    stripped = value.strip()
+    if not stripped:
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} must not be "
+                f"empty or whitespace-only"
+            ),
+        )
+    if len(stripped) > max_length:
+        raise HaltError(
+            halt_status,
+            (
+                f"external target bootstrap {field_name} exceeds "
+                f"max_length={max_length} chars (got {len(stripped)})"
+            ),
+        )
+    return stripped
+
+
+def _build_external_target_bootstrap_task_md(
+    *,
+    human_objective: str,
+    project_intent: str,
+    bootstrapped_at: str,
+    bootstrapped_by: str,
+) -> str:
+    """Phase 10C-pinned initial TASK.md skeleton for a bootstrapped
+    target. Every section other than `Human Objective` and `Project
+    Intent` carries the explicit `(to be set by first Phase 4C
+    activation)` placeholder so a reviewer sees the artifact is
+    awaiting first activation. The bootstrap runtime never invents an
+    active phase / task; first-phase activation goes through the
+    shipped Phase 4C activator + APPROVED_FOR_ACTIVATION human
+    approval against the target.
+    """
+    return (
+        "# TASK.md\n"
+        "\n"
+        "## Human Objective\n"
+        "\n"
+        f"{human_objective}\n"
+        "\n"
+        "## Project Intent\n"
+        "\n"
+        f"{project_intent}\n"
+        "\n"
+        "## Active Phase\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Active Sub-Phase\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Phase Status\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Active Task\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Phase Outcome Required Now\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Next-Phase Gate\n"
+        "\n"
+        "(to be set by first Phase 4C activation)\n"
+        "\n"
+        "## Out Of Scope For Current Phase\n"
+        "\n"
+        "- (to be set by first Phase 4C activation)\n"
+        "\n"
+        f"<!-- bootstrapped_at={bootstrapped_at} "
+        f"bootstrapped_by={bootstrapped_by} "
+        f"bootstrap_signal_version="
+        f"{EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION} -->\n"
+    )
+
+
+def _build_external_target_bootstrap_initial_loop_state(
+    *,
+    approval_mode: str,
+    controller_contract_version: str,
+    controller_orchestrator_version: str,
+) -> dict:
+    """Phase 10C-pinned initial loop-state.json contents for a
+    bootstrapped target. Status is the new
+    `awaiting_first_activation` value the Phase 10E runtime introduces.
+    """
+    return {
+        "phase": None,
+        "sub_phase": None,
+        "task": None,
+        "status": (
+            EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+        ),
+        "cycle_count": 0,
+        "max_cycles": EXTERNAL_TARGET_BOOTSTRAP_INITIAL_MAX_CYCLES,
+        "last_verdict": None,
+        "last_verdict_phase": None,
+        "contract_version": controller_contract_version,
+        "claude_version": None,
+        "codex_version": None,
+        "orchestrator_version": controller_orchestrator_version,
+        "approval_mode": approval_mode,
+        "awaiting_human_for": None,
+    }
+
+
+def _bootstrap_canonical_contents(
+    *,
+    human_objective: str,
+    project_intent: str,
+    bootstrapped_at: str,
+    bootstrapped_by: str,
+    approval_mode: str,
+    controller_contract_version: str,
+    controller_orchestrator_version: str,
+) -> dict:
+    """Return a mapping of repo-relative path -> serialized bytes for
+    every canonical artifact the Phase 10C bootstrap surface writes.
+    The mapping uses the same five paths
+    `EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS` enumerates so the
+    classifier and the writer agree on the exact set.
+    """
+    task_md = _build_external_target_bootstrap_task_md(
+        human_objective=human_objective,
+        project_intent=project_intent,
+        bootstrapped_at=bootstrapped_at,
+        bootstrapped_by=bootstrapped_by,
+    )
+    initial_loop_state = (
+        _build_external_target_bootstrap_initial_loop_state(
+            approval_mode=approval_mode,
+            controller_contract_version=(
+                controller_contract_version
+            ),
+            controller_orchestrator_version=(
+                controller_orchestrator_version
+            ),
+        )
+    )
+    initial_loop_state_serialized = (
+        json.dumps(initial_loop_state, indent=2) + "\n"
+    )
+    return {
+        "TASK.md": task_md,
+        ".agent-loop/current-task.md": (
+            "# Current Task\n"
+            "\n"
+            "## Status\n"
+            "\n"
+            "Awaiting first Phase 4C activation; bootstrap "
+            f"initialized the target on {bootstrapped_at} on "
+            f"behalf of {bootstrapped_by}.\n"
+        ),
+        ".agent-loop/current-phase.md": (
+            "# Current Phase\n"
+            "\n"
+            "Awaiting first Phase 4C activation\n"
+        ),
+        ".agent-loop/phase-plan.md": (
+            "# Phase Plan\n"
+            "\n"
+            "## Active Phase\n"
+            "\n"
+            "Awaiting first Phase 4C activation\n"
+        ),
+        ".agent-loop/loop-state.json": initial_loop_state_serialized,
+    }
+
+
+def _atomic_bootstrap_write_target(
+    target_root: Path, contents_by_relpath: dict,
+) -> list:
+    """Phase 10E: write the five canonical bootstrap artifacts
+    atomically. Pre-checks every destination is absent, writes to
+    `.tmp` siblings first, then renames each in sequence. On any
+    failure (during the tmp write OR during the rename phase) every
+    artifact already written in this call is rolled back so the
+    target is left in the original `empty_target` state.
+
+    Returns the sorted list of repo-relative paths that were
+    successfully written. Raises `HaltError(
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE, ...)` on
+    write or rename failure; raises `HaltError(
+    HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING, ...)` if any
+    destination unexpectedly already exists (the classifier and the
+    writer agree on the `empty_target` invariant; a race where another
+    process planted one of the five paths between classification and
+    write surfaces as an input-missing refusal because the target is
+    no longer the state the operator opted into).
+    """
+    paths_in_order = list(
+        EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS
+    )
+    final_paths = []
+    tmp_paths = []
+    created_directories = []
+    try:
+        agent_loop_dir = target_root / ".agent-loop"
+        agent_loop_dir_existed_before = agent_loop_dir.exists()
+        if not agent_loop_dir_existed_before:
+            agent_loop_dir.mkdir(parents=True, exist_ok=False)
+            created_directories.append(agent_loop_dir)
+        for rel in paths_in_order:
+            dest = target_root / rel
+            if dest.exists():
+                raise HaltError(
+                    HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+                    (
+                        f"external target bootstrap refused: "
+                        f"destination {rel!r} already exists on "
+                        f"disk; the classifier observed "
+                        f"`empty_target` but another process must "
+                        f"have planted the artifact before the "
+                        f"write phase started. The Phase 10C "
+                        f"contract refuses to overwrite any "
+                        f"existing canonical artifact even on "
+                        f"opt-in bootstrap; re-inspect the target "
+                        f"manually before retrying."
+                    ),
+                )
+        for rel in paths_in_order:
+            tmp = target_root / (rel + ".tmp")
+            tmp.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                tmp.write_text(
+                    contents_by_relpath[rel], encoding="utf-8",
+                )
+            except OSError as exc:
+                raise HaltError(
+                    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE,
+                    (
+                        f"external target bootstrap refused: "
+                        f"atomic write failed at temp write for "
+                        f"{rel!r} ({exc}); every artifact already "
+                        f"written in this bootstrap call is rolled "
+                        f"back so the target is left in the "
+                        f"original empty_target state"
+                    ),
+                ) from exc
+            tmp_paths.append(tmp)
+        for rel, tmp in zip(paths_in_order, tmp_paths):
+            dest = target_root / rel
+            try:
+                os.replace(tmp, dest)
+            except OSError as exc:
+                raise HaltError(
+                    HALTED_EXTERNAL_TARGET_BOOTSTRAP_ATOMICITY_FAILURE,
+                    (
+                        f"external target bootstrap refused: "
+                        f"atomic rename failed at {rel!r} ({exc}); "
+                        f"every artifact already written in this "
+                        f"bootstrap call is rolled back so the "
+                        f"target is left in the original "
+                        f"empty_target state"
+                    ),
+                ) from exc
+            final_paths.append(rel)
+        return sorted(final_paths)
+    except BaseException:
+        for rel in final_paths:
+            try:
+                (target_root / rel).unlink()
+            except OSError:
+                pass
+        for tmp in tmp_paths:
+            try:
+                if tmp.exists():
+                    tmp.unlink()
+            except OSError:
+                pass
+        for directory in reversed(created_directories):
+            try:
+                directory.rmdir()
+            except OSError:
+                pass
+        raise
+
+
+def bootstrap_external_target(
+    target_root: Path,
+    *,
+    bootstrapped_by: Optional[str] = None,
+    attached_by: Optional[str] = None,
+    approval_mode: Optional[str] = None,
+    human_objective: Optional[str] = None,
+    project_intent: Optional[str] = None,
+    controller_contract_version: Optional[str] = None,
+    controller_orchestrator_version: Optional[str] = None,
+    bootstrapped_at: Optional[str] = None,
+    bootstrap_log_line: Optional[str] = None,
+) -> dict:
+    """Phase 10E: initialize the target-side canonical artifact set on
+    operator opt-in. Returns the bootstrap_state extension fields the
+    caller (typically `attach_external_target` under `--bootstrap`)
+    persists into the controller-owned attach record.
+
+    The caller is responsible for canonicalizing `target_root` (via
+    `_validate_external_target_path` or equivalent) and for verifying
+    the pre-bootstrap classification is `empty_target` BEFORE invoking
+    this function. The runtime itself performs the contract refusal
+    checks for bootstrap-specific inputs (`bootstrapped_by`,
+    `human_objective`, `project_intent`, `bootstrapped_by` ==
+    `attached_by`), classifies the target one more time
+    fail-closed, writes the five canonical artifacts atomically with
+    rollback on failure, and returns the bootstrap-state payload.
+
+    Refusal modes (all fail-closed via `HaltError`):
+      - missing / non-string / empty / over-bounded `bootstrapped_by`,
+        `attached_by`, `human_objective`, or `project_intent`
+      - `bootstrapped_by != attached_by` (Phase 10C single-operator-
+        identity invariant)
+      - `approval_mode` outside the Phase 10B closed enumeration
+      - pre-bootstrap classification is anything other than
+        `empty_target` (the contract refuses bootstrap of
+        `partial_target` / `malformed_target` / `full_target`; the
+        caller is expected to dispatch `full_target` to the no-
+        bootstrap attach path before invoking this function)
+      - atomic write or rename failure (rolled back; the target is
+        left in the original `empty_target` state)
+    """
+    stripped_bootstrapped_by = _validate_external_target_attached_by(
+        bootstrapped_by, field_name="bootstrapped_by",
+    )
+    stripped_attached_by = _validate_external_target_attached_by(
+        attached_by, field_name="attached_by",
+    )
+    if stripped_bootstrapped_by != stripped_attached_by:
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: "
+                f"bootstrapped_by={stripped_bootstrapped_by!r} does "
+                f"not match attached_by={stripped_attached_by!r}; "
+                f"the Phase 10C contract requires the attach and "
+                f"the bootstrap to record the same operator "
+                f"identity in a single attach session"
+            ),
+        )
+    validated_mode = _validate_external_target_approval_mode(
+        approval_mode,
+    )
+    stripped_human_objective = (
+        _validate_external_target_bootstrap_bounded_string(
+            human_objective,
+            field_name="human_objective",
+            max_length=(
+                EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_MAX_LENGTH
+            ),
+            halt_status=(
+                HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING
+            ),
+        )
+    )
+    stripped_project_intent = (
+        _validate_external_target_bootstrap_bounded_string(
+            project_intent,
+            field_name="project_intent",
+            max_length=(
+                EXTERNAL_TARGET_BOOTSTRAP_PROJECT_INTENT_MAX_LENGTH
+            ),
+            halt_status=(
+                HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING
+            ),
+        )
+    )
+    if not isinstance(controller_contract_version, str):
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: "
+                f"controller_contract_version must be a string "
+                f"(controller's loop-state contract_version); got "
+                f"{type(controller_contract_version).__name__}="
+                f"{controller_contract_version!r}"
+            ),
+        )
+    if not isinstance(controller_orchestrator_version, str):
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: "
+                f"controller_orchestrator_version must be a string "
+                f"(running ORCHESTRATOR_VERSION); got "
+                f"{type(controller_orchestrator_version).__name__}="
+                f"{controller_orchestrator_version!r}"
+            ),
+        )
+    # Re-classify fail-closed: the caller is expected to dispatch
+    # `full_target` to the no-bootstrap attach path before invoking
+    # this function; a non-`empty_target` here is a contract
+    # violation rather than a race-condition surface.
+    pre_bootstrap_state = classify_pre_bootstrap_target_state(
+        target_root,
+    )
+    if pre_bootstrap_state != EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY:
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_BOOTSTRAP_INPUT_MISSING,
+            (
+                f"external target bootstrap refused: pre-bootstrap "
+                f"target state is {pre_bootstrap_state!r}; the "
+                f"Phase 10C contract permits bootstrap only against "
+                f"`empty_target` (partial_target / malformed_target "
+                f"are always refused per the bootstrap-never-"
+                f"overwrites guarantee; full_target needs no "
+                f"bootstrap)"
+            ),
+        )
+    if bootstrapped_at is None:
+        bootstrapped_at = _utc_iso_now()
+    contents_by_relpath = _bootstrap_canonical_contents(
+        human_objective=stripped_human_objective,
+        project_intent=stripped_project_intent,
+        bootstrapped_at=bootstrapped_at,
+        bootstrapped_by=stripped_bootstrapped_by,
+        approval_mode=validated_mode,
+        controller_contract_version=controller_contract_version,
+        controller_orchestrator_version=(
+            controller_orchestrator_version
+        ),
+    )
+    artifacts_written = _atomic_bootstrap_write_target(
+        target_root, contents_by_relpath,
+    )
+    excerpt = stripped_human_objective[
+        :EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_EXCERPT_MAX_LENGTH
+    ]
+    if bootstrap_log_line is None:
+        bootstrap_log_line = (
+            f"{EXTERNAL_TARGET_AUDIT_NOTE_PREFIX} bootstrapped "
+            f"bootstrap_signal_version="
+            f"{EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION} "
+            f"bootstrapped_by={stripped_bootstrapped_by!r} "
+            f"pre_bootstrap_target_state={pre_bootstrap_state!r} "
+            f"target_path_canonical={target_root.as_posix()!r} "
+            f"artifacts_written={artifacts_written!r} "
+            f"initial_loop_state_status="
+            f"{EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS!r}"
+        )
+    return {
+        "status": "target_canonical_set_bootstrapped",
+        "bootstrapped_at": bootstrapped_at,
+        "bootstrapped_by": stripped_bootstrapped_by,
+        "bootstrap_signal_version": (
+            EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION
+        ),
+        "pre_bootstrap_target_state": pre_bootstrap_state,
+        "artifacts_written": artifacts_written,
+        "initial_loop_state_status": (
+            EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+        ),
+        "initial_human_objective_excerpt": excerpt,
+        "bootstrap_log_line": bootstrap_log_line,
+    }
+
+
 def _compute_external_target_repo_signature(
     canonical_path: Path,
 ) -> str:
@@ -10142,13 +10657,31 @@ def _build_external_target_attach_payload(
     controller_contract_version,
     controller_orchestrator_version,
     attach_log_line: str,
+    bootstrap_state: Optional[dict] = None,
 ) -> dict:
-    """Assemble the Phase 10B attach-record payload. Only the
-    `target_canonical_set_present` bootstrap-state branch is exercised
-    in this slice (Phase 10D refuses every other pre-bootstrap target
-    state); the Phase 10C extension fields are all `null` per the
-    Phase 10B + 10C contract invariant for the no-bootstrap case.
+    """Assemble the Phase 10B attach-record payload. If
+    `bootstrap_state` is None, the `target_canonical_set_present`
+    branch fires and every Phase 10C extension field is `null` per
+    the contract invariant for the no-bootstrap case. If
+    `bootstrap_state` is the dict returned by
+    `bootstrap_external_target(...)`, the
+    `target_canonical_set_bootstrapped` branch fires and the
+    extension fields carry the bootstrap runtime's recorded values.
     """
+    if bootstrap_state is None:
+        bootstrap_state_payload = {
+            "status": "target_canonical_set_present",
+            "bootstrapped_at": None,
+            "bootstrapped_by": None,
+            "bootstrap_signal_version": None,
+            "pre_bootstrap_target_state": pre_bootstrap_state,
+            "artifacts_written": None,
+            "initial_loop_state_status": None,
+            "initial_human_objective_excerpt": None,
+            "bootstrap_log_line": None,
+        }
+    else:
+        bootstrap_state_payload = dict(bootstrap_state)
     return {
         "attach_record_signal_version": (
             EXTERNAL_TARGET_ATTACH_SIGNAL_VERSION
@@ -10176,17 +10709,7 @@ def _build_external_target_attach_payload(
             "selected_at": attached_at,
             "selected_by": attached_by,
         },
-        "bootstrap_state": {
-            "status": "target_canonical_set_present",
-            "bootstrapped_at": None,
-            "bootstrapped_by": None,
-            "bootstrap_signal_version": None,
-            "pre_bootstrap_target_state": pre_bootstrap_state,
-            "artifacts_written": None,
-            "initial_loop_state_status": None,
-            "initial_human_objective_excerpt": None,
-            "bootstrap_log_line": None,
-        },
+        "bootstrap_state": bootstrap_state_payload,
         "stale_attach_detection": {
             "target_marker_files_at_attach": list(
                 EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS
@@ -10208,6 +10731,292 @@ def _build_external_target_attach_payload(
     }
 
 
+def _validate_external_target_attach_record_schema(
+    record: dict,
+) -> None:
+    """Phase 10D fix-cycle: validate the full Phase 10B attach-record
+    schema before any detach side-effect. Refuses fail-closed on
+    missing required top-level fields, wrong-typed required fields,
+    missing required sub-fields inside the structured top-level
+    objects (`controller_identity`, `mode_selection`,
+    `bootstrap_state`, `stale_attach_detection`, `audit`), and
+    wrong-typed required sub-fields.
+
+    The check covers schema structure only; semantic checks (signal-
+    version recognition, controller-path match) are enforced by the
+    caller. Calling this helper before deletion guarantees the
+    controller never silently clears an underspecified or partially
+    corrupted attach record.
+    """
+    required_string_top_level = (
+        "attach_record_signal_version",
+        "attached_at",
+        "attached_by",
+        "target_path_canonical",
+        "target_path_raw",
+        "controller_path_canonical",
+        "canonical_precedence_note",
+    )
+    for field in required_string_top_level:
+        value = record.get(field)
+        if not isinstance(value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {field!r} is missing or "
+                    f"non-string ({value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+    required_subobject_string_fields = (
+        ("controller_identity", "repo_signature"),
+        ("controller_identity", "orchestrator_version"),
+        ("controller_identity", "contract_version"),
+        ("mode_selection", "approval_mode"),
+        ("mode_selection", "selected_at"),
+        ("mode_selection", "selected_by"),
+        ("bootstrap_state", "status"),
+        (
+            "stale_attach_detection",
+            "target_path_canonical_at_attach",
+        ),
+        (
+            "stale_attach_detection",
+            "controller_path_canonical_at_attach",
+        ),
+        ("audit", "attach_log_line"),
+    )
+    for parent, sub in required_subobject_string_fields:
+        parent_value = record.get(parent)
+        if not isinstance(parent_value, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {parent!r} is missing or not "
+                    f"an object ({parent_value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+        sub_value = parent_value.get(sub)
+        if not isinstance(sub_value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {parent}.{sub} is missing or "
+                    f"non-string ({sub_value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+    required_subobject_list_fields = (
+        (
+            "stale_attach_detection",
+            "target_marker_files_at_attach",
+        ),
+        ("audit", "refusal_history"),
+    )
+    for parent, sub in required_subobject_list_fields:
+        parent_value = record.get(parent)
+        sub_value = parent_value.get(sub)
+        if not isinstance(sub_value, list):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach "
+                    f"record field {parent}.{sub} is missing or "
+                    f"non-list ({sub_value!r}); the record is "
+                    f"structurally invalid"
+                ),
+            )
+
+    # Phase 10D fix-cycle: refuse fail-closed on out-of-enumeration
+    # values for the two Phase 10B closed enumerations. The prior
+    # schema check only verified `mode_selection.approval_mode` and
+    # `bootstrap_state.status` were strings; a malformed record
+    # carrying e.g. `approval_mode == "bogus"` would slip through.
+    # The closed-enumeration check is the controller-side guard
+    # against another controller (or operator hand-edit) writing an
+    # out-of-vocabulary record that would silently detach.
+    approval_mode = record["mode_selection"]["approval_mode"]
+    if approval_mode not in EXTERNAL_TARGET_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"mode_selection.approval_mode={approval_mode!r} "
+                f"is not in EXTERNAL_TARGET_APPROVAL_MODES="
+                f"{sorted(EXTERNAL_TARGET_APPROVAL_MODES)!r}; the "
+                f"record is structurally invalid"
+            ),
+        )
+    bootstrap_status = record["bootstrap_state"]["status"]
+    if bootstrap_status not in EXTERNAL_TARGET_BOOTSTRAP_STATUSES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"bootstrap_state.status={bootstrap_status!r} is "
+                f"not in EXTERNAL_TARGET_BOOTSTRAP_STATUSES="
+                f"{sorted(EXTERNAL_TARGET_BOOTSTRAP_STATUSES)!r}; "
+                f"the record is structurally invalid"
+            ),
+        )
+
+    # Phase 10F: internal coherence checks. The Phase 10B + 10C
+    # contracts pin several cross-field invariants that the previous
+    # validator did not enforce. A record that satisfies the
+    # structural type / closed-enumeration checks but contradicts
+    # itself across fields is still a malformed record and must
+    # refuse fail-closed instead of being silently accepted.
+    if record["mode_selection"]["selected_by"] != record["attached_by"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"mode_selection.selected_by="
+                f"{record['mode_selection']['selected_by']!r} does "
+                f"not match attached_by={record['attached_by']!r}; "
+                f"the Phase 10B contract requires the same operator "
+                f"identity for both fields (single-attach-session "
+                f"invariant)"
+            ),
+        )
+    if record["mode_selection"]["selected_at"] != record["attached_at"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"mode_selection.selected_at="
+                f"{record['mode_selection']['selected_at']!r} does "
+                f"not match attached_at={record['attached_at']!r}; "
+                f"the Phase 10B contract requires the same timestamp "
+                f"for both fields (single-attach-session invariant)"
+            ),
+        )
+    sad = record["stale_attach_detection"]
+    if (
+        sad["target_path_canonical_at_attach"]
+        != record["target_path_canonical"]
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"stale_attach_detection.target_path_canonical_at_attach"
+                f"={sad['target_path_canonical_at_attach']!r} does "
+                f"not match target_path_canonical="
+                f"{record['target_path_canonical']!r}; the Phase 10B "
+                f"contract requires both fields to record the same "
+                f"canonical path at attach time"
+            ),
+        )
+    if (
+        sad["controller_path_canonical_at_attach"]
+        != record["controller_path_canonical"]
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target detach refused: attach record "
+                f"stale_attach_detection.controller_path_canonical_at_attach"
+                f"={sad['controller_path_canonical_at_attach']!r} "
+                f"does not match controller_path_canonical="
+                f"{record['controller_path_canonical']!r}; the "
+                f"Phase 10B contract requires both fields to record "
+                f"the same canonical path at attach time"
+            ),
+        )
+    # Phase 10C extension-field coherence: a `target_canonical_set_present`
+    # record MUST carry null for every Phase 10C extension field; a
+    # `target_canonical_set_bootstrapped` record MUST carry non-null
+    # values matching the bootstrap-runtime contract.
+    bs = record["bootstrap_state"]
+    extension_fields = (
+        "bootstrapped_at",
+        "bootstrapped_by",
+        "bootstrap_signal_version",
+        "artifacts_written",
+        "initial_loop_state_status",
+        "initial_human_objective_excerpt",
+        "bootstrap_log_line",
+    )
+    if bootstrap_status == "target_canonical_set_present":
+        for field in extension_fields:
+            if bs.get(field) is not None:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"external target detach refused: attach "
+                        f"record bootstrap_state.status="
+                        f"'target_canonical_set_present' requires "
+                        f"bootstrap_state.{field} to be null; got "
+                        f"{bs.get(field)!r}. The Phase 10B + 10C "
+                        f"no-bootstrap-branch invariant is "
+                        f"contradicted"
+                    ),
+                )
+    else:  # target_canonical_set_bootstrapped
+        for field in extension_fields:
+            if bs.get(field) is None:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"external target detach refused: attach "
+                        f"record bootstrap_state.status="
+                        f"'target_canonical_set_bootstrapped' "
+                        f"requires bootstrap_state.{field} to be "
+                        f"non-null. The Phase 10C bootstrap-runtime "
+                        f"contract is contradicted"
+                    ),
+                )
+        if (
+            bs["bootstrap_signal_version"]
+            != EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach record "
+                    f"bootstrap_state.bootstrap_signal_version="
+                    f"{bs['bootstrap_signal_version']!r}; the "
+                    f"running orchestrator only recognizes "
+                    f"{EXTERNAL_TARGET_BOOTSTRAP_SIGNAL_VERSION!r} "
+                    f"for the bootstrapped branch"
+                ),
+            )
+        if (
+            bs["pre_bootstrap_target_state"]
+            != EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach record "
+                    f"bootstrap_state.pre_bootstrap_target_state="
+                    f"{bs['pre_bootstrap_target_state']!r}; the "
+                    f"Phase 10C contract requires "
+                    f"{EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY!r} when "
+                    f"bootstrap was performed"
+                ),
+            )
+        if (
+            bs["initial_loop_state_status"]
+            != EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target detach refused: attach record "
+                    f"bootstrap_state.initial_loop_state_status="
+                    f"{bs['initial_loop_state_status']!r}; the "
+                    f"Phase 10C contract requires "
+                    f"{EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS!r}"
+                ),
+            )
+
+
 def _atomic_write_json(target: Path, payload: dict) -> None:
     """Write JSON atomically via temp-write + rename. Phase 10B
     requires the attach record to be either fully present or fully
@@ -10227,19 +11036,25 @@ def attach_external_target(
     attached_by: Optional[str] = None,
     approval_mode: Optional[str] = None,
     log_path: Optional[Path] = None,
+    bootstrap: bool = False,
+    bootstrapped_by: Optional[str] = None,
+    human_objective: Optional[str] = None,
+    project_intent: Optional[str] = None,
 ) -> Path:
-    """Phase 10D: write the controller-owned attach record at
-    `.agent-loop/external-target.json` for an external target.
+    """Phase 10D + Phase 10E: write the controller-owned attach record
+    at `.agent-loop/external-target.json` for an external target,
+    optionally bootstrapping the target's canonical artifact set in
+    the same attach call when the operator opts in.
 
     The runtime validates the operator-supplied target root against
     the Phase 10A path-resolution refusals (must exist, be a directory,
     be readable/writable, must not equal the controller root, must not
     be nested inside the controller root), classifies the target's
-    pre-bootstrap state per the Phase 10C contract, and writes the
-    Phase 10B attach record atomically when the classification is
-    `full_target`. Every other pre-bootstrap state refuses fail-closed
-    with a forward-pointer to the Phase 10E bootstrap runtime (not
-    shipped yet).
+    pre-bootstrap state per the Phase 10C contract, and either
+    attaches to a `full_target` directly OR (when `bootstrap=True`
+    and the state is `empty_target`) invokes the Phase 10E bootstrap
+    runtime to initialize the target's canonical artifact set before
+    writing the attach record.
 
     Refusal modes (all fail-closed via `HaltError`):
       - the attach record already exists on disk
@@ -10251,20 +11066,31 @@ def attach_external_target(
       - target_path canonicalizes to the controller root (same-root)
       - target_path is nested inside the controller root
       - the pre-bootstrap target-state classification is
-        `empty_target`, `partial_target`, or `malformed_target`
-        (bootstrap is Phase 10E; this slice refuses everything but
-        `full_target`)
+        `empty_target` and the operator did NOT pass `bootstrap=True`
+      - the pre-bootstrap target-state classification is
+        `partial_target` or `malformed_target` (always refused per
+        the Phase 10C bootstrap-never-overwrites guarantee)
+      - `bootstrap=True` is set but the state is `partial_target` or
+        `malformed_target` (the contract still refuses bootstrap of
+        those states)
+      - bootstrap-specific refusals from
+        `bootstrap_external_target(...)` (missing / over-bounded
+        `bootstrapped_by` / `human_objective` / `project_intent`,
+        `bootstrapped_by != attached_by`, atomicity failure)
 
     On success the attach record is written atomically to disk and a
-    `external target: attached ...` audit line is appended to
-    `log_path` (when supplied). The attach record's
-    `audit.attach_log_line` field is byte-matched to the line
-    appended to the log so a reviewer can reconstruct the audit
-    trail from either source alone.
+    `external target: attached ...` audit line (plus a separate
+    `external target: bootstrapped ...` audit line when bootstrap
+    fired) is appended to `log_path` (when supplied). The attach
+    record's `audit.attach_log_line` field is byte-matched to the
+    attach line; the bootstrap line is byte-matched to
+    `bootstrap_state.bootstrap_log_line` per the Phase 10C contract.
 
     Attach NEVER activates a target-side phase. The shipped Phase 4C
     activator + APPROVED_FOR_ACTIVATION human approval remain the
-    only path to per-target phase activation.
+    only path to per-target phase activation; a bootstrapped target
+    sits at `loop-state.status = "awaiting_first_activation"` until
+    the operator runs the shipped activator against the target.
     """
     out = controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
     if out.exists():
@@ -10304,21 +11130,93 @@ def attach_external_target(
     pre_bootstrap_state = classify_pre_bootstrap_target_state(
         target_resolved,
     )
-    if pre_bootstrap_state != EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL:
+
+    # Phase 10E: branch on (pre_bootstrap_state, bootstrap-opt-in).
+    # The Phase 10C contract pins the matrix:
+    #   full_target  + bootstrap=False  -> no-bootstrap attach path
+    #   full_target  + bootstrap=True   -> no-bootstrap attach path
+    #                                       (bootstrap is a no-op on
+    #                                        full_target; the operator
+    #                                        flag is honored by the
+    #                                        runtime checking whether
+    #                                        bootstrap is needed)
+    #   empty_target + bootstrap=True   -> Phase 10E bootstrap, then
+    #                                       attach with bootstrapped
+    #                                       extension fields
+    #   empty_target + bootstrap=False  -> refuse (no opt-in)
+    #   partial_target / malformed_target (any opt-in) -> always
+    #                                       refuse (bootstrap-never-
+    #                                       overwrites guarantee)
+    if pre_bootstrap_state in (
+        EXTERNAL_TARGET_PRE_BOOTSTRAP_PARTIAL,
+        EXTERNAL_TARGET_PRE_BOOTSTRAP_MALFORMED,
+    ):
         raise HaltError(
             "halted_input_missing",
             (
                 f"external target attach refused: pre-bootstrap "
                 f"target state is {pre_bootstrap_state!r}; this "
-                f"Phase 10D slice only attaches to a `full_target` "
-                f"(all five canonical artifacts present AND "
-                f"loop-state.json structurally valid). Bootstrap "
-                f"runtime for `empty_target` is Phase 10E; "
-                f"`partial_target` and `malformed_target` are "
-                f"always refused per the Phase 10C "
-                f"bootstrap-never-overwrites guarantee."
+                f"state is always refused per the Phase 10C "
+                f"bootstrap-never-overwrites guarantee. The "
+                f"operator must explicitly resolve the partial or "
+                f"malformed canonical set on disk (delete the "
+                f"present artifacts to reduce to `empty_target`, "
+                f"or manually complete / repair the canonical set "
+                f"to reduce to `full_target`) before re-attempting."
             ),
         )
+    if (
+        pre_bootstrap_state == EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+        and not bootstrap
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target attach refused: pre-bootstrap "
+                f"target state is {pre_bootstrap_state!r} and "
+                f"`--bootstrap` was not supplied. Bootstrap is an "
+                f"explicit per-attach opt-in under the Phase 10C "
+                f"contract; pass --bootstrap (with "
+                f"--bootstrapped-by, --human-objective, "
+                f"--project-intent) to initialize the target's "
+                f"canonical artifact set, or attach a `full_target` "
+                f"instead."
+            ),
+        )
+
+    # Phase 10D: the classifier intentionally does NOT call
+    # `check_contract_version` (a target may legitimately have a
+    # different contract_version than the running controller for
+    # FUTURE classification purposes), but ATTACH-time MUST refuse
+    # an unsupported target `contract_version` per the Phase 10A
+    # refusal contract. Equally, ATTACH-time MUST refuse a target
+    # whose loop-state.status is any `halted_*` value. Both refusals
+    # apply only to the `full_target` branch; the `empty_target` +
+    # bootstrap branch has no pre-existing target loop-state to
+    # validate (the bootstrap runtime writes it from scratch with the
+    # controller's own contract_version).
+    if pre_bootstrap_state == EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL:
+        target_state_path = (
+            target_resolved / ".agent-loop" / "loop-state.json"
+        )
+        target_state = load_loop_state(target_state_path)
+        validate_loop_state(target_state)
+        check_contract_version(target_state)
+        target_status = str(target_state.get("status") or "")
+        if target_status.startswith("halted_"):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"external target attach refused: target "
+                    f"loop-state.status={target_status!r} is a "
+                    f"halted state. Attaching to a halted target "
+                    f"would let the controller silently treat a "
+                    f"halted run as resumable; the operator must "
+                    f"resolve the halt on the target side (via the "
+                    f"shipped recovery vocabulary) before the "
+                    f"controller may attach."
+                ),
+            )
 
     # The Phase 10B attach record's `controller_identity.contract_version`
     # is captured from the running controller's loop-state at attach
@@ -10338,6 +11236,35 @@ def attach_external_target(
     controller_orchestrator_version = ORCHESTRATOR_VERSION
 
     attached_at = _utc_iso_now()
+
+    # Phase 10E: invoke the bootstrap runtime for an `empty_target`
+    # + opt-in attach BEFORE writing the attach record so the attach
+    # record carries the bootstrapped extension fields and so a
+    # bootstrap failure leaves no attach record on disk.
+    bootstrap_state = None
+    bootstrap_log_line = None
+    if (
+        bootstrap
+        and pre_bootstrap_state
+        == EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+    ):
+        bootstrap_state = bootstrap_external_target(
+            target_resolved,
+            bootstrapped_by=bootstrapped_by,
+            attached_by=stripped_attached_by,
+            approval_mode=validated_mode,
+            human_objective=human_objective,
+            project_intent=project_intent,
+            controller_contract_version=(
+                controller_contract_version
+            ),
+            controller_orchestrator_version=(
+                controller_orchestrator_version
+            ),
+            bootstrapped_at=attached_at,
+        )
+        bootstrap_log_line = bootstrap_state["bootstrap_log_line"]
+
     attach_log_line = (
         f"{EXTERNAL_TARGET_AUDIT_NOTE_PREFIX} attached "
         f"signal_version="
@@ -10363,6 +11290,7 @@ def attach_external_target(
             controller_orchestrator_version
         ),
         attach_log_line=attach_log_line,
+        bootstrap_state=bootstrap_state,
     )
 
     _atomic_write_json(out, payload)
@@ -10370,6 +11298,8 @@ def attach_external_target(
     if log_path is not None:
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a", encoding="utf-8") as fh:
+            if bootstrap_log_line is not None:
+                fh.write(bootstrap_log_line + "\n")
             fh.write(attach_log_line + "\n")
 
     return out
@@ -10466,19 +11396,15 @@ def detach_external_target(
             ),
         )
 
-    record_controller_canonical = record.get(
-        "controller_path_canonical",
-    )
-    if not isinstance(record_controller_canonical, str):
-        raise HaltError(
-            "halted_input_missing",
-            (
-                f"external target detach refused: attach record "
-                f"controller_path_canonical is missing or "
-                f"non-string ({record_controller_canonical!r}); "
-                f"the record is structurally invalid"
-            ),
-        )
+    # Phase 10D fix-cycle: validate the full Phase 10B attach-record
+    # schema before any detach side-effect. An underspecified record
+    # (e.g. one carrying only `attach_record_signal_version` +
+    # `controller_path_canonical`) used to slip past detach; the
+    # explicit schema check refuses fail-closed instead so the
+    # operator must inspect the malformed record manually.
+    _validate_external_target_attach_record_schema(record)
+
+    record_controller_canonical = record["controller_path_canonical"]
     controller_resolved = controller_root.resolve()
     if record_controller_canonical != controller_resolved.as_posix():
         raise HaltError(
@@ -10522,6 +11448,1052 @@ def detach_external_target(
             )
 
     return attach_record_path
+
+
+# ---------------------------------------------------------------------------
+# Phase 10F: External Target Validation And Refusal Hardening
+#
+# Adds three layers on top of the shipped Phase 10D/10E surfaces
+# WITHOUT changing the attach / detach / bootstrap runtime semantics:
+#
+#   - the existing `_validate_external_target_attach_record_schema(...)`
+#     gains internal-coherence checks (mode_selection identity match,
+#     stale_attach_detection canonical-path equality, bootstrap_state
+#     null-vs-non-null coherence) above the basic type checks
+#   - new freshness probe library function
+#     `probe_external_target_attach_freshness(...)` checks on-disk
+#     drift between the attach record's stale_attach_detection
+#     snapshot and the current state of both controller and target
+#     roots (target dir still exists; canonical path still resolves
+#     identically; target marker files still present on disk)
+#   - new throwing assertion `assert_external_target_attach_fresh(...)`
+#     raises HaltError("halted_external_target_stale_attach", ...)
+#     on drift so future callers can use it as a fail-closed guard
+#   - new aggregator inspector `inspect_external_target_attach(...)`
+#     combines the schema validator + bootstrap-state coherence + the
+#     freshness probe into a single structured report
+#   - new `inspect-external-target` CLI subcommand surfaces the
+#     report (Phase 7C reporter pattern: always exits 0, never
+#     mutates, never logs)
+#
+# The hardening preserves every shipped boundary: controller-owned
+# metadata stays controller-owned, target-side canonical artifacts
+# stay target-owned, no phase is silently activated, no shipped halt
+# vocabulary is repurposed, and the existing attach / detach / boot-
+# strap CLI surfaces and library APIs keep their shipped signatures.
+# ---------------------------------------------------------------------------
+
+HALTED_EXTERNAL_TARGET_STALE_ATTACH = (
+    "halted_external_target_stale_attach"
+)
+
+EXTERNAL_TARGET_INSPECTION_SIGNAL_VERSION = "phase-10f-v1"
+
+
+def probe_external_target_attach_freshness(
+    controller_root: Path,
+) -> dict:
+    """Phase 10F: probe whether the controller-owned attach record at
+    `.agent-loop/external-target.json` still agrees with the current
+    on-disk state of the controller and target roots. Returns a
+    structured report; never raises on stale or missing state (so
+    callers can render the report even on drift). Hard failures
+    (unreadable attach record JSON, malformed top-level structure)
+    raise the same `HaltError` family the detach path uses so
+    callers see consistent refusal vocabulary.
+
+    Report fields:
+      - `freshness_signal_version`: literal phase-10f-v1
+      - `attach_record_path`: repo-relative path to the attach record
+      - `attached`: True if an attach record is on disk, False otherwise
+      - `is_fresh`: True if the attach record's stale_attach_detection
+        snapshot still matches current on-disk state; False if any
+        drift was observed
+      - `reasons`: list of human-readable drift reasons; empty when
+        is_fresh is True
+      - `current_target_path_canonical`: the target's canonical path
+        as currently resolvable (None if target dir no longer exists)
+      - `current_controller_path_canonical`: the controller's
+        canonical path as currently resolvable
+      - `missing_target_marker_files`: list of repo-relative marker
+        paths the attach record snapshot expected but are no longer
+        present on disk
+    """
+    report = {
+        "freshness_signal_version": (
+            EXTERNAL_TARGET_INSPECTION_SIGNAL_VERSION
+        ),
+        "attach_record_path": EXTERNAL_TARGET_ATTACH_RECORD_REL,
+        "attached": False,
+        "is_fresh": False,
+        "reasons": [],
+        "current_target_path_canonical": None,
+        "current_controller_path_canonical": None,
+        "missing_target_marker_files": [],
+    }
+    attach_record_path = (
+        controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
+    )
+    if not attach_record_path.exists():
+        report["reasons"].append(
+            f"no attach record on disk at "
+            f"{EXTERNAL_TARGET_ATTACH_RECORD_REL}"
+        )
+        return report
+    report["attached"] = True
+    try:
+        raw = attach_record_path.read_text(encoding="utf-8")
+        record = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target freshness probe refused: attach "
+                f"record at {attach_record_path} is unreadable or "
+                f"malformed JSON ({exc})"
+            ),
+        ) from exc
+    if not isinstance(record, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target freshness probe refused: attach "
+                f"record at {attach_record_path} is not a JSON "
+                f"object"
+            ),
+        )
+    controller_resolved = controller_root.resolve()
+    report["current_controller_path_canonical"] = (
+        controller_resolved.as_posix()
+    )
+    recorded_controller = record.get("controller_path_canonical")
+    if recorded_controller != controller_resolved.as_posix():
+        report["reasons"].append(
+            f"controller_path_canonical drift: attach record says "
+            f"{recorded_controller!r} but the running controller "
+            f"resolves to {controller_resolved.as_posix()!r}"
+        )
+    recorded_target = record.get("target_path_canonical")
+    if isinstance(recorded_target, str):
+        target_path = Path(recorded_target)
+        if not target_path.exists():
+            report["reasons"].append(
+                f"target_path_canonical no longer exists on disk: "
+                f"{recorded_target!r}"
+            )
+        else:
+            try:
+                current_target_resolved = target_path.resolve()
+                report["current_target_path_canonical"] = (
+                    current_target_resolved.as_posix()
+                )
+                if (
+                    current_target_resolved.as_posix()
+                    != recorded_target
+                ):
+                    report["reasons"].append(
+                        f"target_path_canonical drift: attach "
+                        f"record says {recorded_target!r} but the "
+                        f"path now resolves to "
+                        f"{current_target_resolved.as_posix()!r}"
+                    )
+                marker_files = record.get(
+                    "stale_attach_detection", {},
+                ).get("target_marker_files_at_attach", [])
+                if isinstance(marker_files, list):
+                    for rel in marker_files:
+                        if not isinstance(rel, str):
+                            continue
+                        if not (target_path / rel).exists():
+                            report[
+                                "missing_target_marker_files"
+                            ].append(rel)
+                    if report["missing_target_marker_files"]:
+                        report["reasons"].append(
+                            f"target marker files missing on "
+                            f"disk: "
+                            f"{report['missing_target_marker_files']!r}"
+                        )
+            except OSError as exc:
+                report["reasons"].append(
+                    f"target_path_canonical cannot be resolved: "
+                    f"{exc}"
+                )
+    report["is_fresh"] = not report["reasons"]
+    return report
+
+
+def assert_external_target_attach_fresh(
+    controller_root: Path,
+) -> None:
+    """Phase 10F: throwing companion to
+    `probe_external_target_attach_freshness(...)`. Raises
+    `HaltError(HALTED_EXTERNAL_TARGET_STALE_ATTACH, ...)` on any
+    observed drift between the controller-owned attach record and
+    the current on-disk state of either root. Raises
+    `HaltError("halted_input_missing", ...)` if the attach record is
+    missing or unreadable.
+
+    This is a fail-closed guard a future runtime hook (or operator
+    workflow) can call before operating against an attached target;
+    the shipped attach / detach / bootstrap surfaces do NOT change
+    behavior in this slice.
+    """
+    report = probe_external_target_attach_freshness(controller_root)
+    if not report["attached"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target freshness assertion refused: no "
+                f"attach record on disk at "
+                f"{EXTERNAL_TARGET_ATTACH_RECORD_REL}; the "
+                f"controller is not currently attached"
+            ),
+        )
+    if not report["is_fresh"]:
+        raise HaltError(
+            HALTED_EXTERNAL_TARGET_STALE_ATTACH,
+            (
+                f"external target freshness assertion refused: "
+                f"attach record and on-disk state have drifted. "
+                f"Reasons: {report['reasons']!r}. Inspect with "
+                f"`inspect-external-target` and detach + re-attach "
+                f"if the drift is intentional."
+            ),
+        )
+
+
+def inspect_external_target_attach(controller_root: Path) -> dict:
+    """Phase 10F: aggregator inspector. Returns a structured report
+    combining (1) attach-record presence, (2) the full Phase 10B/10C
+    structural validator's verdict, and (3) the Phase 10F freshness
+    probe. Never raises on observed inconsistencies; the report
+    captures the failure mode so the operator can decide. Hard
+    failures (unreadable attach record, non-dict top-level) propagate
+    via `HaltError("halted_input_missing", ...)` to match the
+    existing detach refusal vocabulary.
+
+    Report fields:
+      - `inspection_signal_version`: literal phase-10f-v1
+      - `attached`: True if attach record on disk
+      - `attach_record_path`: repo-relative path
+      - `schema_valid`: True if the structural validator passes
+      - `schema_violations`: list of HaltError reason strings from
+        the validator (empty when schema_valid is True)
+      - `freshness`: the freshness probe report
+      - `summary`: short human-readable summary
+    """
+    report = {
+        "inspection_signal_version": (
+            EXTERNAL_TARGET_INSPECTION_SIGNAL_VERSION
+        ),
+        "attached": False,
+        "attach_record_path": EXTERNAL_TARGET_ATTACH_RECORD_REL,
+        "schema_valid": False,
+        "schema_violations": [],
+        "freshness": None,
+        "summary": "",
+    }
+    attach_record_path = (
+        controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
+    )
+    if not attach_record_path.exists():
+        report["summary"] = (
+            "not attached: no attach record on disk"
+        )
+        report["freshness"] = probe_external_target_attach_freshness(
+            controller_root,
+        )
+        return report
+    report["attached"] = True
+    try:
+        raw = attach_record_path.read_text(encoding="utf-8")
+        record = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target inspection refused: attach record "
+                f"at {attach_record_path} is unreadable or malformed "
+                f"JSON ({exc})"
+            ),
+        ) from exc
+    if not isinstance(record, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"external target inspection refused: attach record "
+                f"at {attach_record_path} is not a JSON object"
+            ),
+        )
+    try:
+        _validate_external_target_attach_record_schema(record)
+        report["schema_valid"] = True
+    except HaltError as halt:
+        report["schema_violations"].append(halt.reason)
+    report["freshness"] = probe_external_target_attach_freshness(
+        controller_root,
+    )
+    freshness_ok = (
+        report["freshness"]["is_fresh"]
+        if report["freshness"]
+        else False
+    )
+    if report["schema_valid"] and freshness_ok:
+        report["summary"] = (
+            "attached: attach record schema-valid and fresh"
+        )
+    elif not report["schema_valid"]:
+        report["summary"] = (
+            "attached: attach record FAILS schema validation"
+        )
+    else:
+        report["summary"] = (
+            "attached: attach record schema-valid but STALE on disk"
+        )
+    return report
+
+
+def cmd_inspect_external_target(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10F operator runtime entry: print the inspector report.
+
+    Phase 7C reporter pattern: always exits 0 (the absence of an
+    attach record, observed staleness, and observed schema violations
+    are all REPORT content rather than orchestrator failures). Hard
+    failures (unreadable attach-record JSON, non-dict top-level)
+    propagate via `HaltError` -> `_halt`, matching the existing
+    detach refusal behavior.
+
+    The inspector NEVER mutates the attach record, NEVER writes to
+    the orchestrator log, NEVER advances loop-state, and NEVER
+    invokes attach / detach / bootstrap as a side effect.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        report = inspect_external_target_attach(controller_root)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    print(
+        f"[orchestrator] external target inspection report "
+        f"(signal_version="
+        f"{report['inspection_signal_version']!r})\n"
+        f"attached: {report['attached']}\n"
+        f"attach_record_path: {report['attach_record_path']}\n"
+        f"schema_valid: {report['schema_valid']}\n"
+        f"schema_violations: {report['schema_violations']}\n"
+        f"freshness.is_fresh: "
+        f"{report['freshness']['is_fresh'] if report['freshness'] else None}\n"
+        f"freshness.reasons: "
+        f"{report['freshness']['reasons'] if report['freshness'] else []}\n"
+        f"freshness.missing_target_marker_files: "
+        f"{report['freshness']['missing_target_marker_files'] if report['freshness'] else []}\n"
+        f"summary: {report['summary']}"
+    )
+    return 0
+
+
+def cmd_verify_external_target(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10F operator runtime entry: fail-closed verification that
+    the controller-owned attach record agrees with current on-disk
+    state of both the controller and the target.
+
+    Calls `assert_external_target_attach_fresh(controller_root)`.
+    Routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands in `loop-state.json` and `orchestrator.log`. On
+    success prints a one-line acknowledgement and exits 0. On a
+    stale attach record exits 2 with the persisted halt status
+    `halted_external_target_stale_attach`; on a missing attach
+    record exits 2 with `halted_input_missing`. This is the
+    production runtime surface the Phase 10F slice promises - the
+    `inspect-external-target` subcommand reports drift advisorily
+    (always exits 0), this subcommand refuses fail-closed.
+
+    Never mutates the attach record; never invokes attach / detach /
+    bootstrap as a side effect; never advances loop-state past the
+    halt-status persistence the existing `_halt` path performs.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        assert_external_target_attach_fresh(controller_root)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    print(
+        f"[orchestrator] external target attach is fresh; attach "
+        f"record at {EXTERNAL_TARGET_ATTACH_RECORD_REL} agrees with "
+        f"current on-disk state of both roots."
+    )
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10H: Minimal External UI Read-Only Status Surface
+#
+# Adds the first runtime slice that satisfies the approved Phase 10G
+# documentation contract: a bounded read-only library + CLI surface
+# that builds an external UI view model from approved canonical
+# artifacts and renders active phase / task / status views.
+#
+# The view model:
+#   - reads ONLY the canonical artifacts the Phase 10G contract
+#     enumerates (controller-side: external-target.json, loop-state.json,
+#     TASK.md; target-side same set when attach is present and fresh)
+#   - distinguishes canonical mirrors (verbatim renderings attributed
+#     to source artifact) from advisory derived state (UI-computed
+#     values explicitly marked as advisory)
+#   - never executes any shipped mutating CLI; the cli_only_operations
+#     list is rendered as copyable command strings, never dispatched
+#   - never caches across calls; every call re-reads from disk via
+#     shipped library functions
+#   - never writes any canonical artifact, never appends to
+#     orchestrator.log, never mutates loop-state
+#
+# CLI surface `view-external-status` follows the Phase 7C reporter
+# pattern: always exits 0 on report content; only hard failures
+# (unreadable JSON, non-dict top-level attach record) propagate
+# through the existing `_halt` path.
+# ---------------------------------------------------------------------------
+
+EXTERNAL_UI_VIEW_SIGNAL_VERSION = "phase-10h-v1"
+
+EXTERNAL_UI_CANONICAL_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any UI rendering "
+    "of them. The view model below is a per-call read-only snapshot "
+    "of the canonical artifacts the Phase 10G contract enumerates; "
+    "no UI cache, session state, or rendered status summary is "
+    "authoritative. CLI-only operations are rendered as copyable "
+    "commands; the UI never executes them."
+)
+
+
+def _ui_advisory_status_label(status_value) -> str:
+    """Phase 10H: map a canonical loop-state.status value to a
+    short human-friendly advisory label. The label is advisory
+    derived state, not canonical; callers must mark it as such in
+    the view model.
+    """
+    if status_value is None:
+        return "unknown (status field absent)"
+    if not isinstance(status_value, str):
+        return f"unknown (non-string status: {status_value!r})"
+    if status_value.startswith("halted_"):
+        return f"halted ({status_value})"
+    if status_value.startswith("phase_complete_"):
+        return f"phase complete ({status_value})"
+    if status_value in (
+        "awaiting_claude_implementation",
+        "awaiting_codex_review",
+        "claude_implementing",
+        "claude_fixing",
+        "evidence_capture",
+    ):
+        return f"in-flight ({status_value})"
+    if status_value == (
+        EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+    ):
+        return (
+            "awaiting first Phase 4C activation "
+            f"({status_value})"
+        )
+    return f"other ({status_value})"
+
+
+def _ui_load_canonical_loop_state(state_path: Path) -> dict:
+    """Phase 10H: load a loop-state.json file as a canonical-mirror
+    sub-view. Returns `{present, error, mirror, source}`. On a
+    missing file the result is `{present=False, mirror=None}`. On a
+    malformed file the result is `{present=True, error=..., mirror=None}`
+    so the rendered view can surface the malformed state advisorily
+    instead of raising.
+    """
+    rel_source = state_path.name
+    if not state_path.exists():
+        return {
+            "present": False, "error": None, "mirror": None,
+            "source": rel_source,
+        }
+    try:
+        data = load_loop_state(state_path)
+    except HaltError as halt:
+        return {
+            "present": True, "error": halt.reason, "mirror": None,
+            "source": rel_source,
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "present": True, "error": str(exc), "mirror": None,
+            "source": rel_source,
+        }
+    return {
+        "present": True,
+        "error": None,
+        "mirror": {
+            "phase": data.get("phase"),
+            "sub_phase": data.get("sub_phase"),
+            "task": data.get("task"),
+            "status": data.get("status"),
+            "cycle_count": data.get("cycle_count"),
+            "approval_mode": data.get("approval_mode"),
+            "awaiting_human_for": data.get("awaiting_human_for"),
+            "last_verdict": data.get("last_verdict"),
+        },
+        "source": rel_source,
+    }
+
+
+def _ui_read_text_artifact(path: Path) -> dict:
+    """Phase 10H: load a Markdown / text canonical artifact as a
+    bounded canonical-mirror sub-view. Returns
+    `{present, error, byte_size, source}`; the body is not included
+    (the view model surfaces existence + size; a future Phase 10I
+    slice can extend with an excerpt block if needed). Missing /
+    unreadable files surface advisorily rather than raising.
+    """
+    try:
+        if not path.exists():
+            return {
+                "present": False, "error": None, "byte_size": None,
+                "source": path.name,
+            }
+        byte_size = path.stat().st_size
+        return {
+            "present": True, "error": None,
+            "byte_size": byte_size, "source": path.name,
+        }
+    except OSError as exc:
+        return {
+            "present": True, "error": str(exc),
+            "byte_size": None, "source": path.name,
+        }
+
+
+def _ui_cli_only_operations_card() -> list:
+    """Phase 10H: build the advisory list of CLI-only operations the
+    UI MUST NOT execute. Each entry is a copyable command string
+    plus a one-line label. The Phase 10G contract requires the UI to
+    surface the FULL CLI-only boundary (both mutating operations and
+    the read-only reporters the UI MUST render via library functions
+    rather than dispatch as subprocesses) as copy-paste-ready text
+    only. Operator-identity / free-text fields stay as `<NAME>` /
+    `<TEXT>` / `<PATH>` / `<MODE>` placeholders so the UI cannot
+    auto-fill them.
+    """
+    return [
+        # ------------------------------------------------------------
+        # External-workspace mutating operations (Phase 10B / 10D /
+        # 10E / 10F write the controller-owned attach record /
+        # bootstrap state / halt status).
+        # ------------------------------------------------------------
+        {
+            "label": "Attach an external target",
+            "command": (
+                "python scripts/agent_loop.py "
+                "attach-external-target --target-path <PATH> "
+                "--attached-by <NAME> --approval-mode <MODE>"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Attach + bootstrap an empty external target"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "attach-external-target --target-path <PATH> "
+                "--attached-by <NAME> --approval-mode <MODE> "
+                "--bootstrap --bootstrapped-by <NAME> "
+                "--human-objective <TEXT> "
+                "--project-intent <TEXT>"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": "Detach the attached external target",
+            "command": (
+                "python scripts/agent_loop.py "
+                "detach-external-target --detached-by <NAME>"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Verify the attached target is fresh "
+                "(fail-closed)"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "verify-external-target"
+            ),
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Phase 4B / 4C planner + activator (write proposed-phase.md
+        # and the active planning/loop-state artifacts).
+        # ------------------------------------------------------------
+        {
+            "label": (
+                "Generate a Phase 4B phase proposal "
+                "(planner only)"
+            ),
+            "command": "python scripts/agent_loop.py plan",
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Activate the next phase "
+                "(consume APPROVED_FOR_ACTIVATION)"
+            ),
+            "command": "python scripts/agent_loop.py activate",
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Phase 3A / 5C / 6G / 6H cycle drivers (advance loop-state).
+        # ------------------------------------------------------------
+        {
+            "label": "Execute one normal cycle",
+            "command": "python scripts/agent_loop.py run",
+            "category": "mutating",
+        },
+        {
+            "label": "Resume a strict-mode paused cycle",
+            "command": "python scripts/agent_loop.py resume",
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Auto-continue a token-exhaustion halt "
+                "(bounded chain)"
+            ),
+            "command": (
+                "python scripts/agent_loop.py auto-continue"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Run the Phase 9D long-run continuation "
+                "dispatcher"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "run-long-run-continuation"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Re-probe capacity after a Phase 9F halt"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "run-capacity-reprobe"
+            ),
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Phase 9G final acceptance (writes the canonical acceptance
+        # artifact).
+        # ------------------------------------------------------------
+        {
+            "label": "Record final human acceptance",
+            "command": (
+                "python scripts/agent_loop.py "
+                "record-final-acceptance --accepted-by <NAME>"
+            ),
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Read-only reporters from the Phase 10G contract. The UI MAY
+        # render the same library-function output directly but MUST
+        # NOT execute the CLI subcommand on the operator's behalf.
+        # ------------------------------------------------------------
+        {
+            "label": (
+                "Inspect the attached target "
+                "(read-only report)"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "inspect-external-target"
+            ),
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Inspect per-cycle review / planning / evidence "
+                "artifacts"
+            ),
+            "command": (
+                "python scripts/agent_loop.py inspect-artifacts"
+            ),
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Print the current loop-state status summary"
+            ),
+            "command": "python scripts/agent_loop.py status",
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Evaluate the Phase 9G final-acceptance signal"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "evaluate-final-acceptance"
+            ),
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Validate per-cycle artifact structure"
+            ),
+            "command": (
+                "python scripts/agent_loop.py validate-artifacts"
+            ),
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Load and validate "
+                ".agent-loop/loop-state.json"
+            ),
+            "command": "python scripts/agent_loop.py check-state",
+            "category": "read_only",
+        },
+    ]
+
+
+def build_external_ui_status_view(controller_root: Path) -> dict:
+    """Phase 10H: assemble the read-only external UI view model from
+    the canonical artifacts the Phase 10G contract enumerates.
+
+    Returns a structured dict with:
+      - `view_signal_version`: literal `phase-10h-v1`
+      - `controller`: per-call snapshot of the controller's
+        canonical loop-state + planning artifacts (canonical
+        mirrors)
+      - `attach`: the Phase 10F aggregator inspector report
+        (attached / schema_valid / schema_violations /
+        freshness sub-report)
+      - `target`: per-call snapshot of the target's canonical
+        loop-state + planning artifacts when attach is present and
+        fresh; otherwise `{rendered: False, ...}` with the reason
+      - `advisory_status_label`: a one-line human-friendly label
+        derived from the most-relevant loop-state.status; explicitly
+        marked as advisory derived state
+      - `cli_only_operations`: list of copy-paste-ready CLI command
+        cards; the UI MUST NOT execute these
+      - `advisory_notes`: list of human-readable advisory notes
+        derived from the canonical mirrors (e.g. "attach is STALE")
+      - `canonical_precedence_note`: the literal Phase 10G precedence
+        reminder
+
+    Never writes, never mutates, never executes a CLI. Hard
+    failures (unreadable attach record JSON, non-dict top-level)
+    propagate through the existing `inspect_external_target_attach`
+    `HaltError` path; soft failures (missing / malformed target
+    loop-state, missing planning artifacts) surface advisorily in
+    the rendered view.
+    """
+    view = {
+        "view_signal_version": EXTERNAL_UI_VIEW_SIGNAL_VERSION,
+        "controller": None,
+        "attach": None,
+        "target": {
+            "rendered": False,
+            "reason": "not attached",
+            "target_path_canonical": None,
+            "loop_state": None,
+            "task_md": None,
+            "current_task_md": None,
+            "current_phase_md": None,
+        },
+        "advisory_status_label": None,
+        "cli_only_operations": _ui_cli_only_operations_card(),
+        "advisory_notes": [],
+        "canonical_precedence_note": (
+            EXTERNAL_UI_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+    controller_resolved = controller_root.resolve()
+    controller_state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    view["controller"] = {
+        "controller_path_canonical": controller_resolved.as_posix(),
+        "loop_state": _ui_load_canonical_loop_state(
+            controller_state_path,
+        ),
+        "task_md": _ui_read_text_artifact(controller_root / "TASK.md"),
+        "current_task_md": _ui_read_text_artifact(
+            controller_root / ".agent-loop" / "current-task.md",
+        ),
+        "current_phase_md": _ui_read_text_artifact(
+            controller_root / ".agent-loop" / "current-phase.md",
+        ),
+    }
+    # The Phase 10F aggregator inspector is the canonical reader for
+    # attach-record schema + freshness. Calling it here keeps the UI
+    # view consistent with the operator-facing `inspect-external-target`
+    # CLI subcommand: both surface the same structured verdict.
+    attach_report = inspect_external_target_attach(controller_root)
+    view["attach"] = attach_report
+    # Advisory label is derived from the most-relevant loop-state.
+    # When attached, prefer the target's status (the operator's
+    # current focus is the attached target); otherwise fall back to
+    # the controller's own status.
+    controller_status = None
+    if view["controller"]["loop_state"]["mirror"]:
+        controller_status = view["controller"]["loop_state"][
+            "mirror"
+        ]["status"]
+    # Target-side rendering branch.
+    if attach_report["attached"] and attach_report["freshness"]:
+        freshness = attach_report["freshness"]
+        target_canonical_str = (
+            freshness.get("current_target_path_canonical")
+        )
+        if not freshness["is_fresh"]:
+            view["target"]["reason"] = (
+                f"attach present but STALE on disk: "
+                f"{freshness['reasons']!r}"
+            )
+            view["advisory_notes"].append(
+                f"attach is STALE; run "
+                f"`python scripts/agent_loop.py "
+                f"verify-external-target` to halt the cycle "
+                f"fail-closed, or "
+                f"`python scripts/agent_loop.py "
+                f"detach-external-target --detached-by <NAME>` "
+                f"if the drift is intentional"
+            )
+        elif target_canonical_str is None:
+            view["target"]["reason"] = (
+                "attach record present but target path could not "
+                "be resolved at view time"
+            )
+        else:
+            target_root = Path(target_canonical_str)
+            view["target"]["rendered"] = True
+            view["target"]["reason"] = "rendered"
+            view["target"]["target_path_canonical"] = (
+                target_canonical_str
+            )
+            view["target"]["loop_state"] = (
+                _ui_load_canonical_loop_state(
+                    target_root / ".agent-loop" / "loop-state.json",
+                )
+            )
+            view["target"]["task_md"] = _ui_read_text_artifact(
+                target_root / "TASK.md",
+            )
+            view["target"]["current_task_md"] = (
+                _ui_read_text_artifact(
+                    target_root / ".agent-loop" / "current-task.md",
+                )
+            )
+            view["target"]["current_phase_md"] = (
+                _ui_read_text_artifact(
+                    target_root / ".agent-loop"
+                    / "current-phase.md",
+                )
+            )
+            target_status = None
+            if view["target"]["loop_state"]["mirror"]:
+                target_status = view["target"]["loop_state"][
+                    "mirror"
+                ]["status"]
+            if target_status is not None:
+                view["advisory_status_label"] = (
+                    _ui_advisory_status_label(target_status)
+                )
+        if attach_report["schema_violations"]:
+            view["advisory_notes"].append(
+                f"attach record FAILS schema validation: "
+                f"{attach_report['schema_violations']!r}; do not "
+                f"trust UI-rendered attach fields until the record "
+                f"is repaired"
+            )
+    else:
+        view["target"]["reason"] = "not attached"
+    # Fallback advisory label when no target rendering happened.
+    if view["advisory_status_label"] is None:
+        view["advisory_status_label"] = (
+            _ui_advisory_status_label(controller_status)
+        )
+    return view
+
+
+def _ui_render_view_lines(view: dict) -> list:
+    """Phase 10H: format the view model as a list of human-readable
+    text lines for the CLI surface. Each canonical-mirror value is
+    attributed to its source artifact; advisory derived state is
+    explicitly tagged with `[advisory]` so a reviewer reading the
+    rendered output can tell which fields are canonical and which
+    are computed.
+    """
+    lines = []
+    lines.append(
+        f"[orchestrator] external UI read-only status view "
+        f"(signal_version={view['view_signal_version']!r})"
+    )
+    controller = view["controller"]
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"find_repo_root): "
+        f"{controller['controller_path_canonical']}"
+    )
+    cls = controller["loop_state"]
+    if cls["mirror"]:
+        m = cls["mirror"]
+        lines.append(
+            f"controller.loop_state (canonical mirror, source="
+            f".agent-loop/{cls['source']}): "
+            f"phase={m['phase']!r} sub_phase={m['sub_phase']!r} "
+            f"task={m['task']!r} status={m['status']!r} "
+            f"cycle_count={m['cycle_count']!r} "
+            f"approval_mode={m['approval_mode']!r} "
+            f"awaiting_human_for={m['awaiting_human_for']!r} "
+            f"last_verdict={m['last_verdict']!r}"
+        )
+    else:
+        lines.append(
+            f"controller.loop_state: present={cls['present']} "
+            f"error={cls['error']!r}"
+        )
+    lines.append(
+        f"controller.task_md (canonical mirror): "
+        f"present={controller['task_md']['present']} "
+        f"byte_size={controller['task_md']['byte_size']}"
+    )
+    attach = view["attach"]
+    lines.append(
+        f"attach.attached (canonical mirror, source="
+        f"{attach['attach_record_path']}): {attach['attached']}"
+    )
+    lines.append(
+        f"attach.schema_valid (canonical mirror, source=Phase 10F "
+        f"validator): {attach['schema_valid']}"
+    )
+    if attach["schema_violations"]:
+        lines.append(
+            f"attach.schema_violations: "
+            f"{attach['schema_violations']!r}"
+        )
+    if attach["freshness"]:
+        f = attach["freshness"]
+        lines.append(
+            f"attach.freshness.is_fresh (canonical mirror, source="
+            f"Phase 10F probe): {f['is_fresh']}"
+        )
+        if f["reasons"]:
+            lines.append(
+                f"attach.freshness.reasons: {f['reasons']!r}"
+            )
+    target = view["target"]
+    lines.append(
+        f"target.rendered: {target['rendered']} "
+        f"reason={target['reason']!r}"
+    )
+    if target["rendered"]:
+        lines.append(
+            f"target.target_path_canonical (canonical mirror, "
+            f"source=attach record): "
+            f"{target['target_path_canonical']}"
+        )
+        tls = target["loop_state"]
+        if tls and tls["mirror"]:
+            m = tls["mirror"]
+            lines.append(
+                f"target.loop_state (canonical mirror, source="
+                f"target/.agent-loop/{tls['source']}): "
+                f"phase={m['phase']!r} sub_phase={m['sub_phase']!r}"
+                f" task={m['task']!r} status={m['status']!r} "
+                f"cycle_count={m['cycle_count']!r} "
+                f"approval_mode={m['approval_mode']!r} "
+                f"awaiting_human_for={m['awaiting_human_for']!r} "
+                f"last_verdict={m['last_verdict']!r}"
+            )
+        if target["task_md"]:
+            lines.append(
+                f"target.task_md (canonical mirror): "
+                f"present={target['task_md']['present']} "
+                f"byte_size={target['task_md']['byte_size']}"
+            )
+    lines.append(
+        f"[advisory] advisory_status_label: "
+        f"{view['advisory_status_label']!r}"
+    )
+    for note in view["advisory_notes"]:
+        lines.append(f"[advisory] note: {note}")
+    lines.append(
+        f"cli_only_operations (advisory; copy-paste only, the UI "
+        f"does NOT execute these):"
+    )
+    for op in view["cli_only_operations"]:
+        lines.append(
+            f"  - [{op['category']}] {op['label']}: "
+            f"{op['command']}"
+        )
+    lines.append(
+        f"canonical_precedence_note: "
+        f"{view['canonical_precedence_note']}"
+    )
+    return lines
+
+
+def cmd_view_external_status(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10H operator runtime entry: print the external UI
+    read-only status view.
+
+    Phase 7C reporter pattern: always exits 0 on report content;
+    only hard failures (unreadable attach record JSON, non-dict
+    top-level attach record from the Phase 10F inspector)
+    propagate through the existing `_halt` path so the structural
+    refusal vocabulary stays consistent with the shipped
+    `inspect-external-target` behavior.
+
+    The handler NEVER mutates any canonical artifact, NEVER writes
+    to `.agent-loop/orchestrator.log`, NEVER advances loop-state,
+    and NEVER invokes attach / detach / bootstrap / verify as a
+    side effect.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        view = build_external_ui_status_view(controller_root)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    for line in _ui_render_view_lines(view):
+        print(line)
+    return 0
 
 
 # ---------------------------------------------------------------------------
@@ -14350,9 +16322,11 @@ def cmd_evaluate_final_acceptance(_args: argparse.Namespace) -> int:
 
 
 def cmd_attach_external_target(args: argparse.Namespace) -> int:
-    """Phase 10D operator runtime path: write the controller-owned
-    attach record at `.agent-loop/external-target.json` for an
-    external target.
+    """Phase 10D + Phase 10E operator runtime path: write the
+    controller-owned attach record at `.agent-loop/external-target.json`
+    for an external target, optionally bootstrapping the target's
+    canonical artifact set in the same attach call when `--bootstrap`
+    is supplied.
 
     Routes any `HaltError` through `_halt` so the structural refusal
     vocabulary lands on disk for human inspection. On success prints
@@ -14372,6 +16346,10 @@ def cmd_attach_external_target(args: argparse.Namespace) -> int:
             attached_by=args.attached_by,
             approval_mode=args.approval_mode,
             log_path=log_path,
+            bootstrap=bool(getattr(args, "bootstrap", False)),
+            bootstrapped_by=getattr(args, "bootstrapped_by", None),
+            human_objective=getattr(args, "human_objective", None),
+            project_intent=getattr(args, "project_intent", None),
         )
     except HaltError as halt:
         try:
@@ -14380,15 +16358,46 @@ def cmd_attach_external_target(args: argparse.Namespace) -> int:
             data = {}
         return _halt(state_path, data, halt, log_path)
     rel = written.relative_to(controller_root).as_posix()
-    print(
-        f"[orchestrator] external target attached; attach record at "
-        f"{rel}. See "
-        f"{log_path.relative_to(controller_root).as_posix()} for "
-        f"the `external target: attached ...` audit note. The "
-        f"shipped Phase 4C activator + APPROVED_FOR_ACTIVATION "
-        f"human approval remain the only path to per-target phase "
-        f"activation."
+    # Phase 10E fix: branch on whether bootstrap ACTUALLY ran, not
+    # just on whether `--bootstrap` was passed. The Phase 10C contract
+    # treats `--bootstrap` against a `full_target` as a no-op: the
+    # attach record carries `bootstrap_state.status =
+    # "target_canonical_set_present"` and no `external target:
+    # bootstrapped ...` audit line is written. The previous keying
+    # off `args.bootstrap` falsely told the operator to look for a
+    # nonexistent audit note in that case.
+    try:
+        record = json.loads(written.read_text(encoding="utf-8"))
+        bootstrap_status = record.get(
+            "bootstrap_state", {},
+        ).get("status")
+    except (OSError, json.JSONDecodeError):
+        bootstrap_status = None
+    bootstrap_actually_ran = (
+        bootstrap_status == "target_canonical_set_bootstrapped"
     )
+    if bootstrap_actually_ran:
+        print(
+            f"[orchestrator] external target attached and "
+            f"bootstrapped; attach record at {rel}. See "
+            f"{log_path.relative_to(controller_root).as_posix()} for "
+            f"the `external target: bootstrapped ...` and `external "
+            f"target: attached ...` audit notes. The bootstrapped "
+            f"target sits at loop-state.status="
+            f"'awaiting_first_activation'; the shipped Phase 4C "
+            f"activator + APPROVED_FOR_ACTIVATION human approval "
+            f"remain the only path to per-target phase activation."
+        )
+    else:
+        print(
+            f"[orchestrator] external target attached; attach record "
+            f"at {rel}. See "
+            f"{log_path.relative_to(controller_root).as_posix()} for "
+            f"the `external target: attached ...` audit note. The "
+            f"shipped Phase 4C activator + APPROVED_FOR_ACTIVATION "
+            f"human approval remain the only path to per-target "
+            f"phase activation."
+        )
     return 0
 
 
@@ -16273,6 +18282,74 @@ def build_parser() -> argparse.ArgumentParser:
             "default)."
         ),
     )
+    attach_external.add_argument(
+        "--bootstrap",
+        action="store_true",
+        default=False,
+        help=(
+            "Phase 10E opt-in flag for the bootstrap runtime. "
+            "Defaults OFF; an attach without --bootstrap refuses "
+            "fail-closed on any pre-bootstrap state other than "
+            "`full_target`. When supplied AND the pre-bootstrap "
+            "target state is `empty_target`, the bootstrap runtime "
+            "initializes the target's five canonical artifacts "
+            "(`TASK.md`, `.agent-loop/current-task.md`, "
+            "`.agent-loop/current-phase.md`, "
+            "`.agent-loop/phase-plan.md`, "
+            "`.agent-loop/loop-state.json`) atomically with "
+            "rollback on failure, then the attach record carries "
+            "the Phase 10C bootstrap_state extension fields. On "
+            "`full_target` the flag is a no-op (the operator's "
+            "intent is honored by the runtime checking whether "
+            "bootstrap is needed); on `partial_target` / "
+            "`malformed_target` the attach still refuses per the "
+            "Phase 10C bootstrap-never-overwrites guarantee."
+        ),
+    )
+    attach_external.add_argument(
+        "--bootstrapped-by",
+        type=str,
+        default=None,
+        help=(
+            "Phase 10E required operator identifier when "
+            "--bootstrap is supplied. MUST equal --attached-by "
+            "(the Phase 10C single-operator-identity invariant). "
+            f"Capped at {EXTERNAL_TARGET_ATTACHED_BY_MAX_LENGTH} "
+            "chars. Never auto-filled from `$USER` / `whoami` / any "
+            "environment variable; the operator must claim "
+            "identity explicitly."
+        ),
+    )
+    attach_external.add_argument(
+        "--human-objective",
+        type=str,
+        default=None,
+        help=(
+            "Phase 10E required initial `Human Objective` body for "
+            "the bootstrapped target's TASK.md when --bootstrap is "
+            "supplied. No default; the operator must supply this "
+            f"value explicitly. Capped at "
+            f"{EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_MAX_LENGTH}"
+            f" chars in the TASK.md body; the first "
+            f"{EXTERNAL_TARGET_BOOTSTRAP_HUMAN_OBJECTIVE_EXCERPT_MAX_LENGTH}"
+            " chars are captured into the attach record's "
+            "`bootstrap_state.initial_human_objective_excerpt` "
+            "field for audit."
+        ),
+    )
+    attach_external.add_argument(
+        "--project-intent",
+        type=str,
+        default=None,
+        help=(
+            "Phase 10E required initial `Project Intent` body for "
+            "the bootstrapped target's TASK.md when --bootstrap is "
+            "supplied. No default; the operator must supply this "
+            f"value explicitly. Capped at "
+            f"{EXTERNAL_TARGET_BOOTSTRAP_PROJECT_INTENT_MAX_LENGTH}"
+            " chars."
+        ),
+    )
     detach_external = sub.add_parser(
         "detach-external-target",
         help=(
@@ -16304,6 +18381,70 @@ def build_parser() -> argparse.ArgumentParser:
             "the `external target: detached ...` audit line. "
             f"Capped at {EXTERNAL_TARGET_ATTACHED_BY_MAX_LENGTH} "
             "chars. Never auto-filled from `$USER` / `whoami`."
+        ),
+    )
+    sub.add_parser(
+        "inspect-external-target",
+        help=(
+            "Phase 10F external target validation/refusal hardening "
+            "inspector: report the controller-owned attach record's "
+            "schema validity AND on-disk freshness without mutating "
+            "anything. Combines the full Phase 10B/10C structural "
+            "validator (which now also checks mode_selection / "
+            "stale_attach_detection / bootstrap_state internal "
+            "coherence) with a freshness probe that detects drift "
+            "between the attach record snapshot and current "
+            "controller/target on-disk state (target dir missing, "
+            "canonical path resolves differently, marker files "
+            "absent). Phase 7C reporter pattern: always exits 0; "
+            "absence / staleness / schema violations are report "
+            "content rather than orchestrator failures. Hard "
+            "failures (unreadable attach record JSON, non-dict "
+            "top-level) refuse fail-closed through `_halt`."
+        ),
+    )
+    sub.add_parser(
+        "verify-external-target",
+        help=(
+            "Phase 10F external target validation/refusal hardening "
+            "verifier: fail-closed companion to "
+            "`inspect-external-target`. Calls the throwing freshness "
+            "assertion and exits 2 with the halt status "
+            "`halted_external_target_stale_attach` persisted into "
+            "`loop-state.json` on any observed drift between the "
+            "attach record's `stale_attach_detection` snapshot and "
+            "the current on-disk state of both roots (target dir "
+            "missing, target canonical path resolves differently, "
+            "marker files absent, controller path drift). Exits 2 "
+            "with `halted_input_missing` when no attach record "
+            "exists or the record is unreadable / non-dict. Exits "
+            "0 with a one-line success acknowledgement on a fresh "
+            "attach. Never mutates the attach record; never invokes "
+            "attach / detach / bootstrap as a side effect."
+        ),
+    )
+    sub.add_parser(
+        "view-external-status",
+        help=(
+            "Phase 10H minimal external UI read-only status surface: "
+            "build and print a structured view model assembled from "
+            "the approved Phase 10G canonical artifact read set "
+            "(controller-side `.agent-loop/loop-state.json` + "
+            "`TASK.md` + Codex-owned planning artifacts; target-side "
+            "the same set when attach is present and fresh). "
+            "Distinguishes canonical mirrors from advisory derived "
+            "state in the rendered output (each line is attributed "
+            "to its source artifact or tagged `[advisory]`), "
+            "renders shipped mutating CLI operations as copy-paste-"
+            "only command strings (the UI does NOT execute them), "
+            "and surfaces refusal/staleness state advisorily from "
+            "the shipped Phase 10F inspector. Phase 7C reporter "
+            "pattern: always exits 0; never mutates any canonical "
+            "artifact; never writes to `.agent-loop/orchestrator.log`; "
+            "never advances loop-state. Hard failures (unreadable "
+            "attach record JSON, non-dict top-level) propagate "
+            "through `_halt` matching the existing detach / inspect "
+            "behavior."
         ),
     )
     distill = sub.add_parser(
@@ -16569,6 +18710,9 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "evaluate-final-acceptance": cmd_evaluate_final_acceptance,
     "attach-external-target": cmd_attach_external_target,
     "detach-external-target": cmd_detach_external_target,
+    "inspect-external-target": cmd_inspect_external_target,
+    "verify-external-target": cmd_verify_external_target,
+    "view-external-status": cmd_view_external_status,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
