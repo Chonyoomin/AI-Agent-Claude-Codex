@@ -11801,6 +11801,48 @@ def cmd_inspect_external_target(
     return 0
 
 
+def cmd_verify_external_target(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10F operator runtime entry: fail-closed verification that
+    the controller-owned attach record agrees with current on-disk
+    state of both the controller and the target.
+
+    Calls `assert_external_target_attach_fresh(controller_root)`.
+    Routes any `HaltError` through `_halt` so the structural refusal
+    vocabulary lands in `loop-state.json` and `orchestrator.log`. On
+    success prints a one-line acknowledgement and exits 0. On a
+    stale attach record exits 2 with the persisted halt status
+    `halted_external_target_stale_attach`; on a missing attach
+    record exits 2 with `halted_input_missing`. This is the
+    production runtime surface the Phase 10F slice promises - the
+    `inspect-external-target` subcommand reports drift advisorily
+    (always exits 0), this subcommand refuses fail-closed.
+
+    Never mutates the attach record; never invokes attach / detach /
+    bootstrap as a side effect; never advances loop-state past the
+    halt-status persistence the existing `_halt` path performs.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        assert_external_target_attach_fresh(controller_root)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    print(
+        f"[orchestrator] external target attach is fresh; attach "
+        f"record at {EXTERNAL_TARGET_ATTACH_RECORD_REL} agrees with "
+        f"current on-disk state of both roots."
+    )
+    return 0
+
+
 # ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
@@ -17708,6 +17750,26 @@ def build_parser() -> argparse.ArgumentParser:
             "top-level) refuse fail-closed through `_halt`."
         ),
     )
+    sub.add_parser(
+        "verify-external-target",
+        help=(
+            "Phase 10F external target validation/refusal hardening "
+            "verifier: fail-closed companion to "
+            "`inspect-external-target`. Calls the throwing freshness "
+            "assertion and exits 2 with the halt status "
+            "`halted_external_target_stale_attach` persisted into "
+            "`loop-state.json` on any observed drift between the "
+            "attach record's `stale_attach_detection` snapshot and "
+            "the current on-disk state of both roots (target dir "
+            "missing, target canonical path resolves differently, "
+            "marker files absent, controller path drift). Exits 2 "
+            "with `halted_input_missing` when no attach record "
+            "exists or the record is unreadable / non-dict. Exits "
+            "0 with a one-line success acknowledgement on a fresh "
+            "attach. Never mutates the attach record; never invokes "
+            "attach / detach / bootstrap as a side effect."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -17972,6 +18034,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "attach-external-target": cmd_attach_external_target,
     "detach-external-target": cmd_detach_external_target,
     "inspect-external-target": cmd_inspect_external_target,
+    "verify-external-target": cmd_verify_external_target,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

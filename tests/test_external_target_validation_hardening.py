@@ -794,5 +794,167 @@ class CmdInspectExternalTargetTests(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# CLI: verify-external-target - the production runtime path that calls
+# the throwing freshness assertion and halts fail-closed on drift.
+# ---------------------------------------------------------------------------
+class CmdVerifyExternalTargetTests(unittest.TestCase):
+    """Phase 10F fix-cycle: proves the production runtime path
+    `verify-external-target` halts fail-closed with
+    `halted_external_target_stale_attach` persisted in loop-state.json
+    on stale attach state, with `halted_input_missing` on missing
+    attach record, and exits 0 only on a verifiably fresh attach.
+    These tests exercise the shipped CLI surface, not just the
+    underlying helper function.
+    """
+
+    def _run(self, controller: Path) -> tuple:
+        args = argparse.Namespace(cmd="verify-external-target")
+        buf_out = io.StringIO()
+        buf_err = io.StringIO()
+        from contextlib import redirect_stderr
+        with mock.patch.object(
+            agent_loop, "find_repo_root", return_value=controller,
+        ):
+            with redirect_stdout(buf_out), redirect_stderr(buf_err):
+                rc = agent_loop.cmd_verify_external_target(args)
+        return rc, buf_out.getvalue(), buf_err.getvalue()
+
+    def _read_controller_state(self, controller: Path) -> dict:
+        return json.loads(
+            (controller / ".agent-loop" / "loop-state.json")
+            .read_text(encoding="utf-8"),
+        )
+
+    def test_handler_wired(self) -> None:
+        self.assertIn(
+            "verify-external-target", agent_loop.HANDLERS,
+        )
+        self.assertIs(
+            agent_loop.HANDLERS["verify-external-target"],
+            agent_loop.cmd_verify_external_target,
+        )
+
+    def test_argparse_grammar(self) -> None:
+        parser = agent_loop.build_parser()
+        args = parser.parse_args(["verify-external-target"])
+        self.assertEqual(args.cmd, "verify-external-target")
+
+    def test_exits_zero_on_fresh_attach(self) -> None:
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            target = tdp / "target"
+            target.mkdir()
+            _write_full_target(target)
+            agent_loop.attach_external_target(
+                controller,
+                target_path=str(target),
+                attached_by="alice",
+                approval_mode="review",
+            )
+            rc, out, err = self._run(controller)
+            self.assertEqual(rc, 0)
+            self.assertIn(
+                "external target attach is fresh", out,
+            )
+            # Controller loop-state remains at the pre-verify
+            # status; verify must NOT mutate it on success.
+            state = self._read_controller_state(controller)
+            self.assertEqual(
+                state["status"], "awaiting_claude_implementation",
+            )
+
+    def test_halts_fail_closed_with_stale_attach_status(self) -> None:
+        # The load-bearing fix-cycle proof: the production CLI path
+        # MUST persist `halted_external_target_stale_attach` into
+        # loop-state.json on observed drift.
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            target = tdp / "target"
+            target.mkdir()
+            _write_full_target(target)
+            agent_loop.attach_external_target(
+                controller,
+                target_path=str(target),
+                attached_by="alice",
+                approval_mode="review",
+            )
+            # Delete marker files to introduce drift.
+            (target / "TASK.md").unlink()
+            (target / ".agent-loop" / "loop-state.json").unlink()
+            rc, out, err = self._run(controller)
+            self.assertEqual(
+                rc, 2,
+                "verify-external-target must exit 2 on stale drift",
+            )
+            state = self._read_controller_state(controller)
+            self.assertEqual(
+                state["status"],
+                "halted_external_target_stale_attach",
+                "loop-state.status must be persisted to the new "
+                "halt status on stale drift",
+            )
+            self.assertIn(
+                "halted_external_target_stale_attach", err,
+            )
+            # Attach record is NOT removed by the verify halt; the
+            # operator must explicitly detach to clean up.
+            self.assertTrue(
+                (controller / ATTACH_RECORD_REL).exists(),
+            )
+            # Orchestrator log received the HALT note.
+            log_contents = (
+                controller / ".agent-loop" / "orchestrator.log"
+            ).read_text(encoding="utf-8")
+            self.assertIn(
+                "HALT halted_external_target_stale_attach",
+                log_contents,
+            )
+
+    def test_halts_fail_closed_when_target_dir_removed(self) -> None:
+        with TemporaryDirectory() as td:
+            tdp = Path(td)
+            controller = _make_controller(tdp / "controller")
+            target = tdp / "target"
+            target.mkdir()
+            _write_full_target(target)
+            agent_loop.attach_external_target(
+                controller,
+                target_path=str(target),
+                attached_by="alice",
+                approval_mode="review",
+            )
+            import shutil
+            shutil.rmtree(target)
+            rc, out, err = self._run(controller)
+            self.assertEqual(rc, 2)
+            state = self._read_controller_state(controller)
+            self.assertEqual(
+                state["status"],
+                "halted_external_target_stale_attach",
+            )
+
+    def test_halts_with_input_missing_when_no_attach_record(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "controller")
+            rc, out, err = self._run(controller)
+            self.assertEqual(
+                rc, 2,
+                "verify-external-target must exit 2 when no attach "
+                "record exists (operator-correctable refusal)",
+            )
+            state = self._read_controller_state(controller)
+            self.assertEqual(
+                state["status"], "halted_input_missing",
+            )
+            self.assertIn(
+                "not currently attached", err,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
