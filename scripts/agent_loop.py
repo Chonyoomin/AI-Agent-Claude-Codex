@@ -323,15 +323,17 @@ class ManualHandoffClaudeAdapter:
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
-        # Fail closed: if the human pressed Enter without actually saving a
-        # fresh summary for this cycle, the file's mtime will match what we
-        # captured before the handoff. Treat that as "Claude did not produce
-        # an artifact for this cycle" so the orchestrator halts rather than
-        # validating a stale summary as if it were current.
-        if summary_path.stat().st_mtime == prev_mtime:
+        # Fix Phase A: require the canonical-artifact mtime to ADVANCE
+        # past the pre-invocation snapshot, not merely differ. A wrapper
+        # that rewrites the artifact with a backdated mtime (or a human
+        # who pressed Enter without saving a fresh summary) leaves the
+        # mtime equal to or below `prev_mtime`; either case must fail
+        # closed.
+        if summary_path.stat().st_mtime <= prev_mtime:
             print(
-                f"[orchestrator] {summary_path.name} mtime unchanged - "
-                f"no fresh summary was produced for this cycle.",
+                f"[orchestrator] {summary_path.name} mtime did not "
+                f"advance - no fresh summary was produced for this "
+                f"cycle.",
                 file=sys.stderr,
             )
             return ExecutionResult(
@@ -370,13 +372,15 @@ class ManualHandoffCodexAdapter:
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
-        # Fail closed: an unchanged mtime means Codex did not produce a
-        # review for this cycle. Treat as "no review" rather than parsing
-        # a stale verdict.
-        if review_path.stat().st_mtime == prev_mtime:
+        # Fix Phase A: require the canonical-artifact mtime to ADVANCE
+        # past the pre-invocation snapshot, not merely differ. A backdated
+        # rewrite would leave the mtime <= prev_mtime; treat that as "no
+        # fresh review" rather than parsing a stale or backdated verdict.
+        if review_path.stat().st_mtime <= prev_mtime:
             print(
-                f"[orchestrator] {review_path.name} mtime unchanged - "
-                f"no fresh review was produced for this cycle.",
+                f"[orchestrator] {review_path.name} mtime did not "
+                f"advance - no fresh review was produced for this "
+                f"cycle.",
                 file=sys.stderr,
             )
             return ExecutionResult(
@@ -475,7 +479,18 @@ class SubprocessClaudeAdapter:
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
-        if summary_path.stat().st_mtime == prev_mtime:
+        # Fix Phase A: require the canonical-artifact mtime to ADVANCE
+        # past the pre-invocation snapshot. A wrapper that exits 0 but
+        # left the summary unchanged, missing the write step entirely,
+        # or backdated the file (mtime <= prev_mtime) must fail closed
+        # rather than be treated as a fresh successful invocation.
+        if summary_path.stat().st_mtime <= prev_mtime:
+            print(
+                f"[orchestrator] {summary_path.name} mtime did not "
+                f"advance after subprocess Claude adapter exit - "
+                f"refusing as stale/no-op wrapper invocation.",
+                file=sys.stderr,
+            )
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
@@ -548,7 +563,18 @@ class SubprocessCodexAdapter:
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )
-        if review_path.stat().st_mtime == prev_mtime:
+        # Fix Phase A: require the canonical-artifact mtime to ADVANCE
+        # past the pre-invocation snapshot. A wrapper that exits 0 but
+        # left the review unchanged, missing the write step entirely,
+        # or backdated the file (mtime <= prev_mtime) must fail closed
+        # rather than be treated as a fresh successful invocation.
+        if review_path.stat().st_mtime <= prev_mtime:
+            print(
+                f"[orchestrator] {review_path.name} mtime did not "
+                f"advance after subprocess Codex adapter exit - "
+                f"refusing as stale/no-op wrapper invocation.",
+                file=sys.stderr,
+            )
             return ExecutionResult(
                 exit_code=1, model_id=None, duration_seconds=duration,
             )

@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# Template wrapper for AGENT_LOOP_CLAUDE_CMD (Fix Phase A).
+#
+# Copy this file to a personal location (e.g. ~/bin/claude-wrapper.sh),
+# adjust the CLAUDE_CMD invocation for your local Claude CLI install,
+# then export:
+#
+#   export AGENT_LOOP_CLAUDE_CMD="bash /absolute/path/to/your/copy.sh"
+#
+# Contract (see docs/local-adapter-contract.md for the authoritative
+# version):
+#   - The orchestrator invokes this command with cwd already set to the
+#     repository root. Do NOT change directory.
+#   - The active prompt content (.agent-loop/claude-prompt.md or
+#     .agent-loop/fix-prompt.md as appropriate for the cycle) is piped on
+#     stdin. The wrapper MUST drive the local Claude CLI in a way that
+#     causes Claude to overwrite .agent-loop/claude-summary.md with a
+#     fresh summary for the current cycle.
+#   - The wrapper's exit code is forwarded to the orchestrator. Exit 0
+#     means "wrapper believed it succeeded"; the orchestrator additionally
+#     requires the summary file's mtime to ADVANCE past the pre-invocation
+#     snapshot. A successful exit that leaves the summary unchanged,
+#     missing, or backdated will be rejected as a stale/no-op invocation.
+#   - The wrapper MUST NOT parse Claude's stdout/stderr for the verdict.
+#     The canonical-artifact model (.agent-loop/claude-summary.md as the
+#     source of truth) is preserved.
+#   - The wrapper MUST NOT perform any Git automation, mutate
+#     orchestrator-owned artifacts beyond letting Claude write the
+#     summary, or attempt to advance loop-state directly.
+set -euo pipefail
+
+# Capture the piped prompt to a temp file so the local Claude CLI can
+# read it as a file argument if needed.
+PROMPT_FILE="$(mktemp)"
+trap 'rm -f "$PROMPT_FILE"' EXIT
+cat > "$PROMPT_FILE"
+
+# ----- REPLACE THIS BLOCK -----
+# Replace the following exec with the actual invocation of your local
+# Claude CLI. The invocation MUST cause Claude to write a fresh
+# .agent-loop/claude-summary.md before the wrapper exits.
+#
+# Example (illustrative; adjust to your installed CLI):
+#
+#   exec claude --prompt-file "$PROMPT_FILE" \
+#               --write-summary .agent-loop/claude-summary.md
+#
+# Or, if your CLI reads from stdin:
+#
+#   exec claude < "$PROMPT_FILE"
+#
+# The orchestrator does not depend on which CLI flags are used; it only
+# requires that .agent-loop/claude-summary.md is updated with a fresh
+# mtime by the time the wrapper exits.
+echo "[claude-wrapper.sh.template] No invocation configured." >&2
+echo "[claude-wrapper.sh.template] Copy this template, edit the marked block," >&2
+echo "[claude-wrapper.sh.template] and set AGENT_LOOP_CLAUDE_CMD to the copy." >&2
+exit 1
