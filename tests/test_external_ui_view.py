@@ -372,13 +372,19 @@ class CliOnlyOperationsCardsTests(unittest.TestCase):
             op["command"] for op in self.view["cli_only_operations"]
         ]
         joined = " | ".join(commands)
-        # Every operation the Phase 10G contract enumerates as
-        # CLI-only MUST appear in the rendered cards.
+        # Every mutating operation the Phase 10G contract enumerates
+        # as CLI-only MUST appear in the rendered cards.
         for shipped in (
             "attach-external-target",
             "detach-external-target",
             "verify-external-target",
+            "plan",
             "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "run-long-run-continuation",
+            "run-capacity-reprobe",
             "record-final-acceptance",
         ):
             self.assertIn(
@@ -386,6 +392,86 @@ class CliOnlyOperationsCardsTests(unittest.TestCase):
                 f"CLI-only operation card list does not surface "
                 f"shipped subcommand {shipped!r}",
             )
+
+    def test_cards_cover_required_read_only_reporters(self) -> None:
+        # The Phase 10G contract pins five read-only reporters that
+        # the UI MAY render via the library function but MUST NOT
+        # dispatch as a subprocess; the rendered card list MUST
+        # surface every one of them so the operator sees the full
+        # CLI-only boundary, not a curated subset.
+        commands = [
+            op["command"] for op in self.view["cli_only_operations"]
+        ]
+        joined = " | ".join(commands)
+        for shipped in (
+            "inspect-external-target",
+            "inspect-artifacts",
+            "status",
+            "evaluate-final-acceptance",
+            "validate-artifacts",
+            "check-state",
+        ):
+            self.assertIn(
+                shipped, joined,
+                f"CLI-only operation card list does not surface "
+                f"shipped read-only reporter {shipped!r}",
+            )
+
+    def test_cards_classify_mutating_vs_read_only_correctly(
+        self,
+    ) -> None:
+        # Each card declares a category; the Phase 10G contract
+        # separates mutating commands (write canonical artifacts /
+        # persist halt status) from read-only reporters. The UI MUST
+        # preserve this distinction so the rendered output mirrors
+        # the contract's structure.
+        mutating_required = {
+            "attach-external-target",
+            "detach-external-target",
+            "verify-external-target",
+            "plan",
+            "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "run-long-run-continuation",
+            "run-capacity-reprobe",
+            "record-final-acceptance",
+        }
+        read_only_required = {
+            "inspect-external-target",
+            "inspect-artifacts",
+            "status",
+            "evaluate-final-acceptance",
+            "validate-artifacts",
+            "check-state",
+        }
+        for op in self.view["cli_only_operations"]:
+            self.assertIn(
+                op["category"], ("mutating", "read_only"),
+                f"Card {op['label']!r} has unrecognized category "
+                f"{op['category']!r}",
+            )
+            for token in mutating_required:
+                if f" {token} " in op["command"] + " " or (
+                    op["command"].endswith(" " + token)
+                ):
+                    self.assertEqual(
+                        op["category"], "mutating",
+                        f"Card for {token!r} must be category="
+                        f"mutating per Phase 10G; got "
+                        f"{op['category']!r}",
+                    )
+            for token in read_only_required:
+                if f" {token} " in op["command"] + " " or (
+                    op["command"].endswith(" " + token)
+                ):
+                    self.assertEqual(
+                        op["category"], "read_only",
+                        f"Card for {token!r} must be category="
+                        f"read_only per Phase 10G; got "
+                        f"{op['category']!r}",
+                    )
 
     def test_mutating_cards_carry_placeholders_not_real_values(
         self,

@@ -3345,21 +3345,33 @@ class ExternalUiContractPreservesShippedHardStopsTests(
                 f"{fragment!r}",
             )
 
-    def test_contract_marks_runtime_as_not_yet_implemented(
+    def test_contract_marks_phase_10h_runtime_as_shipped(
         self,
     ) -> None:
-        # Phase 10G is documentation-only; the doc must not silently
-        # promise the UI runtime as shipped.
-        self.assertIn(
+        # Phase 10H ships the first runtime surface that satisfies
+        # this contract; the doc must announce that the bounded
+        # read-only viewer is implemented and must NOT carry the
+        # stale "No external UI runtime ships" claim. Later
+        # external-UI slices (Phase 10I+) remain deferred and the
+        # contract must say so.
+        self.assertNotIn(
             "No external UI runtime", self.collapsed,
-            "external-ui contract does not mark the UI runtime as "
-            "not-yet-shipped",
+            "external-ui contract still carries the stale "
+            "'No external UI runtime' claim after Phase 10H "
+            "shipped the read-only viewer",
         )
-        self.assertIn(
-            "Phase 10H", self.collapsed,
-            "external-ui contract does not locate the future UI "
-            "runtime in Phase 10H",
-        )
+        for fragment in (
+            "Phase 10H",
+            "SHIPPED",
+            "build_external_ui_status_view",
+            "view-external-status",
+            "Phase 10I",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"external-ui contract does not surface Phase 10H "
+                f"shipped marker {fragment!r}",
+            )
 
 
 class ExternalUiContractEnumeratesRefusalsTests(unittest.TestCase):

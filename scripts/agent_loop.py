@@ -11988,9 +11988,19 @@ def _ui_cli_only_operations_card() -> list:
     """Phase 10H: build the advisory list of CLI-only operations the
     UI MUST NOT execute. Each entry is a copyable command string
     plus a one-line label. The Phase 10G contract requires the UI to
-    surface these as copy-paste-ready text only.
+    surface the FULL CLI-only boundary (both mutating operations and
+    the read-only reporters the UI MUST render via library functions
+    rather than dispatch as subprocesses) as copy-paste-ready text
+    only. Operator-identity / free-text fields stay as `<NAME>` /
+    `<TEXT>` / `<PATH>` / `<MODE>` placeholders so the UI cannot
+    auto-fill them.
     """
     return [
+        # ------------------------------------------------------------
+        # External-workspace mutating operations (Phase 10B / 10D /
+        # 10E / 10F write the controller-owned attach record /
+        # bootstrap state / halt status).
+        # ------------------------------------------------------------
         {
             "label": "Attach an external target",
             "command": (
@@ -12033,6 +12043,87 @@ def _ui_cli_only_operations_card() -> list:
             ),
             "category": "mutating",
         },
+        # ------------------------------------------------------------
+        # Phase 4B / 4C planner + activator (write proposed-phase.md
+        # and the active planning/loop-state artifacts).
+        # ------------------------------------------------------------
+        {
+            "label": (
+                "Generate a Phase 4B phase proposal "
+                "(planner only)"
+            ),
+            "command": "python scripts/agent_loop.py plan",
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Activate the next phase "
+                "(consume APPROVED_FOR_ACTIVATION)"
+            ),
+            "command": "python scripts/agent_loop.py activate",
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Phase 3A / 5C / 6G / 6H cycle drivers (advance loop-state).
+        # ------------------------------------------------------------
+        {
+            "label": "Execute one normal cycle",
+            "command": "python scripts/agent_loop.py run",
+            "category": "mutating",
+        },
+        {
+            "label": "Resume a strict-mode paused cycle",
+            "command": "python scripts/agent_loop.py resume",
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Auto-continue a token-exhaustion halt "
+                "(bounded chain)"
+            ),
+            "command": (
+                "python scripts/agent_loop.py auto-continue"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Run the Phase 9D long-run continuation "
+                "dispatcher"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "run-long-run-continuation"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Re-probe capacity after a Phase 9F halt"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "run-capacity-reprobe"
+            ),
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Phase 9G final acceptance (writes the canonical acceptance
+        # artifact).
+        # ------------------------------------------------------------
+        {
+            "label": "Record final human acceptance",
+            "command": (
+                "python scripts/agent_loop.py "
+                "record-final-acceptance --accepted-by <NAME>"
+            ),
+            "category": "mutating",
+        },
+        # ------------------------------------------------------------
+        # Read-only reporters from the Phase 10G contract. The UI MAY
+        # render the same library-function output directly but MUST
+        # NOT execute the CLI subcommand on the operator's behalf.
+        # ------------------------------------------------------------
         {
             "label": (
                 "Inspect the attached target "
@@ -12045,17 +12136,48 @@ def _ui_cli_only_operations_card() -> list:
             "category": "read_only",
         },
         {
-            "label": "Activate the next phase",
-            "command": "python scripts/agent_loop.py activate",
-            "category": "mutating",
+            "label": (
+                "Inspect per-cycle review / planning / evidence "
+                "artifacts"
+            ),
+            "command": (
+                "python scripts/agent_loop.py inspect-artifacts"
+            ),
+            "category": "read_only",
         },
         {
-            "label": "Record final human acceptance",
+            "label": (
+                "Print the current loop-state status summary"
+            ),
+            "command": "python scripts/agent_loop.py status",
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Evaluate the Phase 9G final-acceptance signal"
+            ),
             "command": (
                 "python scripts/agent_loop.py "
-                "record-final-acceptance --accepted-by <NAME>"
+                "evaluate-final-acceptance"
             ),
-            "category": "mutating",
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Validate per-cycle artifact structure"
+            ),
+            "command": (
+                "python scripts/agent_loop.py validate-artifacts"
+            ),
+            "category": "read_only",
+        },
+        {
+            "label": (
+                "Load and validate "
+                ".agent-loop/loop-state.json"
+            ),
+            "command": "python scripts/agent_loop.py check-state",
+            "category": "read_only",
         },
     ]
 

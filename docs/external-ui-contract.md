@@ -2,10 +2,10 @@
 
 ## Status
 
-Phase 10G defines this contract. No external UI runtime, dashboard,
-or operator-facing control surface ships in this slice. The
-contract below specifies the FIRST external operator UI surface for
-external-workspace mode: which canonical controller-side and
+Phase 10G defined this contract; Phase 10H ships the first runtime
+surface that satisfies it. The contract below remains the
+load-bearing specification for every external operator UI surface
+in external-workspace mode: which canonical controller-side and
 target-side artifacts a minimal external UI may read, which
 UI-visible values are advisory mirrors rather than canonical truth,
 which operations remain CLI-only and must not be silently triggered
@@ -13,40 +13,60 @@ from a UI surface, how the UI must defer to canonical repo
 artifacts on disk instead of creating a competing control plane or
 state store, and which boundaries are preserved from the shipped
 Phase 1 - 9 system and the Phase 10A - 10F external-workspace
-slices. Implementation of an external UI runtime is deferred to
-later Phase 10 sub-phases:
+slices. The implementation status of each downstream slice:
 
-- Phase 10H: External UI Read-Only Surface Initial Slice (the
-  bounded read-only viewer that satisfies this contract by
-  rendering canonical attach-record metadata, per-target
-  loop-state, and operator-runnable CLI command transcripts; no
-  mutation, no CLI dispatch from the UI)
+- Phase 10H: External UI Read-Only Surface Initial Slice -
+  SHIPPED. The bounded read-only viewer that satisfies this
+  contract is implemented as the `build_external_ui_status_view(
+  controller_root) -> dict` library function and the
+  `view-external-status` CLI subcommand. The shipped surface
+  renders the controller-side canonical artifact read set, the
+  Phase 10F aggregator inspector report (attach + freshness),
+  and the target-side canonical artifact read set when attach is
+  present AND fresh. Every rendered line is attributed to its
+  source artifact or tagged `[advisory]`; mutating shipped CLI
+  operations and the read-only reporters are surfaced as
+  copy-paste-only command cards; the view never writes, never
+  invokes attach / detach / bootstrap / verify as a side
+  effect, and follows the Phase 7C reporter pattern (always
+  exits 0 on report content; hard failures propagate through
+  the existing `HaltError -> _halt` path).
 - Phase 10I and later: additional external-workspace UI
-  capabilities tracked in `ROADMAP.md` (concurrent-attach
-  awareness, per-target activity stream, advisory diff viewer)
+  capabilities are still deferred and tracked in `ROADMAP.md`.
+  These include any mutating UI control surface, run/resume
+  from the UI, concurrent-attach awareness, the per-target
+  activity stream, the advisory diff viewer, and any web /
+  browser / HTTP surface. The contract continues to bound those
+  future slices: each one MUST preserve the read-only,
+  CLI-only, no-auto-fill, and source-of-truth boundaries this
+  document pins.
 
 ## Scope
 
-This document is the contract the future Phase 10H minimal
-external UI runtime must satisfy when it is implemented. It is
-NOT a description of currently shipped runtime behavior. The
-shipped repository today has no external UI surface; every
-operator workflow runs through the shipped CLI
+This document is the contract the Phase 10H minimal external UI
+runtime now satisfies and that every later external-UI slice
+(Phase 10I+) MUST continue to satisfy. Phase 10H ships the
+bounded read-only viewer (`build_external_ui_status_view(...)` +
+the `view-external-status` CLI); every mutating operator workflow
+still runs through the shipped CLI
 (`python scripts/agent_loop.py ...`) and every canonical artifact
-write happens through the shipped library functions the CLI
-dispatches to.
+write still happens through the shipped library functions the CLI
+dispatches to. The view is a strict renderer: it MUST NOT execute
+a CLI subcommand on the operator's behalf, MUST NOT write any
+canonical artifact, and MUST NOT introduce a competing control
+plane or state store.
 
-The UI contract is the load-bearing specification for "what a
-future minimal external UI MAY render", "which on-disk artifacts
-it MAY read", "which values it MAY surface only as advisory
-mirrors of canonical state", and "which mutating operations the UI
-MUST NOT silently trigger". The contract pins the read-only
-artifact set the UI is allowed to consume, the advisory-vs-canonical
-mirror rule, the CLI-only operation list, the refusal behavior, and
-the boundaries the UI MUST preserve so a later Phase 10H runtime
-slice can be implemented from this contract without further design
-decisions and without collapsing the shipped CLI-first workflow into
-a parallel UI control plane.
+The UI contract is the load-bearing specification for "what the
+minimal external UI MAY render", "which on-disk artifacts it MAY
+read", "which values it MAY surface only as advisory mirrors of
+canonical state", and "which mutating operations the UI MUST NOT
+silently trigger". The contract pins the read-only artifact set
+the UI is allowed to consume, the advisory-vs-canonical mirror
+rule, the CLI-only operation list, the refusal behavior, and the
+boundaries the UI MUST preserve so the shipped Phase 10H runtime
+slice (and every later Phase 10I+ extension) honors the same
+contract without collapsing the shipped CLI-first workflow into a
+parallel UI control plane.
 
 ## Distinction From Shipped Artifacts And Surfaces
 
