@@ -11844,6 +11844,537 @@ def cmd_verify_external_target(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10H: Minimal External UI Read-Only Status Surface
+#
+# Adds the first runtime slice that satisfies the approved Phase 10G
+# documentation contract: a bounded read-only library + CLI surface
+# that builds an external UI view model from approved canonical
+# artifacts and renders active phase / task / status views.
+#
+# The view model:
+#   - reads ONLY the canonical artifacts the Phase 10G contract
+#     enumerates (controller-side: external-target.json, loop-state.json,
+#     TASK.md; target-side same set when attach is present and fresh)
+#   - distinguishes canonical mirrors (verbatim renderings attributed
+#     to source artifact) from advisory derived state (UI-computed
+#     values explicitly marked as advisory)
+#   - never executes any shipped mutating CLI; the cli_only_operations
+#     list is rendered as copyable command strings, never dispatched
+#   - never caches across calls; every call re-reads from disk via
+#     shipped library functions
+#   - never writes any canonical artifact, never appends to
+#     orchestrator.log, never mutates loop-state
+#
+# CLI surface `view-external-status` follows the Phase 7C reporter
+# pattern: always exits 0 on report content; only hard failures
+# (unreadable JSON, non-dict top-level attach record) propagate
+# through the existing `_halt` path.
+# ---------------------------------------------------------------------------
+
+EXTERNAL_UI_VIEW_SIGNAL_VERSION = "phase-10h-v1"
+
+EXTERNAL_UI_CANONICAL_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any UI rendering "
+    "of them. The view model below is a per-call read-only snapshot "
+    "of the canonical artifacts the Phase 10G contract enumerates; "
+    "no UI cache, session state, or rendered status summary is "
+    "authoritative. CLI-only operations are rendered as copyable "
+    "commands; the UI never executes them."
+)
+
+
+def _ui_advisory_status_label(status_value) -> str:
+    """Phase 10H: map a canonical loop-state.status value to a
+    short human-friendly advisory label. The label is advisory
+    derived state, not canonical; callers must mark it as such in
+    the view model.
+    """
+    if status_value is None:
+        return "unknown (status field absent)"
+    if not isinstance(status_value, str):
+        return f"unknown (non-string status: {status_value!r})"
+    if status_value.startswith("halted_"):
+        return f"halted ({status_value})"
+    if status_value.startswith("phase_complete_"):
+        return f"phase complete ({status_value})"
+    if status_value in (
+        "awaiting_claude_implementation",
+        "awaiting_codex_review",
+        "claude_implementing",
+        "claude_fixing",
+        "evidence_capture",
+    ):
+        return f"in-flight ({status_value})"
+    if status_value == (
+        EXTERNAL_TARGET_BOOTSTRAP_AWAITING_FIRST_ACTIVATION_STATUS
+    ):
+        return (
+            "awaiting first Phase 4C activation "
+            f"({status_value})"
+        )
+    return f"other ({status_value})"
+
+
+def _ui_load_canonical_loop_state(state_path: Path) -> dict:
+    """Phase 10H: load a loop-state.json file as a canonical-mirror
+    sub-view. Returns `{present, error, mirror, source}`. On a
+    missing file the result is `{present=False, mirror=None}`. On a
+    malformed file the result is `{present=True, error=..., mirror=None}`
+    so the rendered view can surface the malformed state advisorily
+    instead of raising.
+    """
+    rel_source = state_path.name
+    if not state_path.exists():
+        return {
+            "present": False, "error": None, "mirror": None,
+            "source": rel_source,
+        }
+    try:
+        data = load_loop_state(state_path)
+    except HaltError as halt:
+        return {
+            "present": True, "error": halt.reason, "mirror": None,
+            "source": rel_source,
+        }
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        return {
+            "present": True, "error": str(exc), "mirror": None,
+            "source": rel_source,
+        }
+    return {
+        "present": True,
+        "error": None,
+        "mirror": {
+            "phase": data.get("phase"),
+            "sub_phase": data.get("sub_phase"),
+            "task": data.get("task"),
+            "status": data.get("status"),
+            "cycle_count": data.get("cycle_count"),
+            "approval_mode": data.get("approval_mode"),
+            "awaiting_human_for": data.get("awaiting_human_for"),
+            "last_verdict": data.get("last_verdict"),
+        },
+        "source": rel_source,
+    }
+
+
+def _ui_read_text_artifact(path: Path) -> dict:
+    """Phase 10H: load a Markdown / text canonical artifact as a
+    bounded canonical-mirror sub-view. Returns
+    `{present, error, byte_size, source}`; the body is not included
+    (the view model surfaces existence + size; a future Phase 10I
+    slice can extend with an excerpt block if needed). Missing /
+    unreadable files surface advisorily rather than raising.
+    """
+    try:
+        if not path.exists():
+            return {
+                "present": False, "error": None, "byte_size": None,
+                "source": path.name,
+            }
+        byte_size = path.stat().st_size
+        return {
+            "present": True, "error": None,
+            "byte_size": byte_size, "source": path.name,
+        }
+    except OSError as exc:
+        return {
+            "present": True, "error": str(exc),
+            "byte_size": None, "source": path.name,
+        }
+
+
+def _ui_cli_only_operations_card() -> list:
+    """Phase 10H: build the advisory list of CLI-only operations the
+    UI MUST NOT execute. Each entry is a copyable command string
+    plus a one-line label. The Phase 10G contract requires the UI to
+    surface these as copy-paste-ready text only.
+    """
+    return [
+        {
+            "label": "Attach an external target",
+            "command": (
+                "python scripts/agent_loop.py "
+                "attach-external-target --target-path <PATH> "
+                "--attached-by <NAME> --approval-mode <MODE>"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Attach + bootstrap an empty external target"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "attach-external-target --target-path <PATH> "
+                "--attached-by <NAME> --approval-mode <MODE> "
+                "--bootstrap --bootstrapped-by <NAME> "
+                "--human-objective <TEXT> "
+                "--project-intent <TEXT>"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": "Detach the attached external target",
+            "command": (
+                "python scripts/agent_loop.py "
+                "detach-external-target --detached-by <NAME>"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Verify the attached target is fresh "
+                "(fail-closed)"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "verify-external-target"
+            ),
+            "category": "mutating",
+        },
+        {
+            "label": (
+                "Inspect the attached target "
+                "(read-only report)"
+            ),
+            "command": (
+                "python scripts/agent_loop.py "
+                "inspect-external-target"
+            ),
+            "category": "read_only",
+        },
+        {
+            "label": "Activate the next phase",
+            "command": "python scripts/agent_loop.py activate",
+            "category": "mutating",
+        },
+        {
+            "label": "Record final human acceptance",
+            "command": (
+                "python scripts/agent_loop.py "
+                "record-final-acceptance --accepted-by <NAME>"
+            ),
+            "category": "mutating",
+        },
+    ]
+
+
+def build_external_ui_status_view(controller_root: Path) -> dict:
+    """Phase 10H: assemble the read-only external UI view model from
+    the canonical artifacts the Phase 10G contract enumerates.
+
+    Returns a structured dict with:
+      - `view_signal_version`: literal `phase-10h-v1`
+      - `controller`: per-call snapshot of the controller's
+        canonical loop-state + planning artifacts (canonical
+        mirrors)
+      - `attach`: the Phase 10F aggregator inspector report
+        (attached / schema_valid / schema_violations /
+        freshness sub-report)
+      - `target`: per-call snapshot of the target's canonical
+        loop-state + planning artifacts when attach is present and
+        fresh; otherwise `{rendered: False, ...}` with the reason
+      - `advisory_status_label`: a one-line human-friendly label
+        derived from the most-relevant loop-state.status; explicitly
+        marked as advisory derived state
+      - `cli_only_operations`: list of copy-paste-ready CLI command
+        cards; the UI MUST NOT execute these
+      - `advisory_notes`: list of human-readable advisory notes
+        derived from the canonical mirrors (e.g. "attach is STALE")
+      - `canonical_precedence_note`: the literal Phase 10G precedence
+        reminder
+
+    Never writes, never mutates, never executes a CLI. Hard
+    failures (unreadable attach record JSON, non-dict top-level)
+    propagate through the existing `inspect_external_target_attach`
+    `HaltError` path; soft failures (missing / malformed target
+    loop-state, missing planning artifacts) surface advisorily in
+    the rendered view.
+    """
+    view = {
+        "view_signal_version": EXTERNAL_UI_VIEW_SIGNAL_VERSION,
+        "controller": None,
+        "attach": None,
+        "target": {
+            "rendered": False,
+            "reason": "not attached",
+            "target_path_canonical": None,
+            "loop_state": None,
+            "task_md": None,
+            "current_task_md": None,
+            "current_phase_md": None,
+        },
+        "advisory_status_label": None,
+        "cli_only_operations": _ui_cli_only_operations_card(),
+        "advisory_notes": [],
+        "canonical_precedence_note": (
+            EXTERNAL_UI_CANONICAL_PRECEDENCE_NOTE
+        ),
+    }
+    controller_resolved = controller_root.resolve()
+    controller_state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    view["controller"] = {
+        "controller_path_canonical": controller_resolved.as_posix(),
+        "loop_state": _ui_load_canonical_loop_state(
+            controller_state_path,
+        ),
+        "task_md": _ui_read_text_artifact(controller_root / "TASK.md"),
+        "current_task_md": _ui_read_text_artifact(
+            controller_root / ".agent-loop" / "current-task.md",
+        ),
+        "current_phase_md": _ui_read_text_artifact(
+            controller_root / ".agent-loop" / "current-phase.md",
+        ),
+    }
+    # The Phase 10F aggregator inspector is the canonical reader for
+    # attach-record schema + freshness. Calling it here keeps the UI
+    # view consistent with the operator-facing `inspect-external-target`
+    # CLI subcommand: both surface the same structured verdict.
+    attach_report = inspect_external_target_attach(controller_root)
+    view["attach"] = attach_report
+    # Advisory label is derived from the most-relevant loop-state.
+    # When attached, prefer the target's status (the operator's
+    # current focus is the attached target); otherwise fall back to
+    # the controller's own status.
+    controller_status = None
+    if view["controller"]["loop_state"]["mirror"]:
+        controller_status = view["controller"]["loop_state"][
+            "mirror"
+        ]["status"]
+    # Target-side rendering branch.
+    if attach_report["attached"] and attach_report["freshness"]:
+        freshness = attach_report["freshness"]
+        target_canonical_str = (
+            freshness.get("current_target_path_canonical")
+        )
+        if not freshness["is_fresh"]:
+            view["target"]["reason"] = (
+                f"attach present but STALE on disk: "
+                f"{freshness['reasons']!r}"
+            )
+            view["advisory_notes"].append(
+                f"attach is STALE; run "
+                f"`python scripts/agent_loop.py "
+                f"verify-external-target` to halt the cycle "
+                f"fail-closed, or "
+                f"`python scripts/agent_loop.py "
+                f"detach-external-target --detached-by <NAME>` "
+                f"if the drift is intentional"
+            )
+        elif target_canonical_str is None:
+            view["target"]["reason"] = (
+                "attach record present but target path could not "
+                "be resolved at view time"
+            )
+        else:
+            target_root = Path(target_canonical_str)
+            view["target"]["rendered"] = True
+            view["target"]["reason"] = "rendered"
+            view["target"]["target_path_canonical"] = (
+                target_canonical_str
+            )
+            view["target"]["loop_state"] = (
+                _ui_load_canonical_loop_state(
+                    target_root / ".agent-loop" / "loop-state.json",
+                )
+            )
+            view["target"]["task_md"] = _ui_read_text_artifact(
+                target_root / "TASK.md",
+            )
+            view["target"]["current_task_md"] = (
+                _ui_read_text_artifact(
+                    target_root / ".agent-loop" / "current-task.md",
+                )
+            )
+            view["target"]["current_phase_md"] = (
+                _ui_read_text_artifact(
+                    target_root / ".agent-loop"
+                    / "current-phase.md",
+                )
+            )
+            target_status = None
+            if view["target"]["loop_state"]["mirror"]:
+                target_status = view["target"]["loop_state"][
+                    "mirror"
+                ]["status"]
+            if target_status is not None:
+                view["advisory_status_label"] = (
+                    _ui_advisory_status_label(target_status)
+                )
+        if attach_report["schema_violations"]:
+            view["advisory_notes"].append(
+                f"attach record FAILS schema validation: "
+                f"{attach_report['schema_violations']!r}; do not "
+                f"trust UI-rendered attach fields until the record "
+                f"is repaired"
+            )
+    else:
+        view["target"]["reason"] = "not attached"
+    # Fallback advisory label when no target rendering happened.
+    if view["advisory_status_label"] is None:
+        view["advisory_status_label"] = (
+            _ui_advisory_status_label(controller_status)
+        )
+    return view
+
+
+def _ui_render_view_lines(view: dict) -> list:
+    """Phase 10H: format the view model as a list of human-readable
+    text lines for the CLI surface. Each canonical-mirror value is
+    attributed to its source artifact; advisory derived state is
+    explicitly tagged with `[advisory]` so a reviewer reading the
+    rendered output can tell which fields are canonical and which
+    are computed.
+    """
+    lines = []
+    lines.append(
+        f"[orchestrator] external UI read-only status view "
+        f"(signal_version={view['view_signal_version']!r})"
+    )
+    controller = view["controller"]
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"find_repo_root): "
+        f"{controller['controller_path_canonical']}"
+    )
+    cls = controller["loop_state"]
+    if cls["mirror"]:
+        m = cls["mirror"]
+        lines.append(
+            f"controller.loop_state (canonical mirror, source="
+            f".agent-loop/{cls['source']}): "
+            f"phase={m['phase']!r} sub_phase={m['sub_phase']!r} "
+            f"task={m['task']!r} status={m['status']!r} "
+            f"cycle_count={m['cycle_count']!r} "
+            f"approval_mode={m['approval_mode']!r} "
+            f"awaiting_human_for={m['awaiting_human_for']!r} "
+            f"last_verdict={m['last_verdict']!r}"
+        )
+    else:
+        lines.append(
+            f"controller.loop_state: present={cls['present']} "
+            f"error={cls['error']!r}"
+        )
+    lines.append(
+        f"controller.task_md (canonical mirror): "
+        f"present={controller['task_md']['present']} "
+        f"byte_size={controller['task_md']['byte_size']}"
+    )
+    attach = view["attach"]
+    lines.append(
+        f"attach.attached (canonical mirror, source="
+        f"{attach['attach_record_path']}): {attach['attached']}"
+    )
+    lines.append(
+        f"attach.schema_valid (canonical mirror, source=Phase 10F "
+        f"validator): {attach['schema_valid']}"
+    )
+    if attach["schema_violations"]:
+        lines.append(
+            f"attach.schema_violations: "
+            f"{attach['schema_violations']!r}"
+        )
+    if attach["freshness"]:
+        f = attach["freshness"]
+        lines.append(
+            f"attach.freshness.is_fresh (canonical mirror, source="
+            f"Phase 10F probe): {f['is_fresh']}"
+        )
+        if f["reasons"]:
+            lines.append(
+                f"attach.freshness.reasons: {f['reasons']!r}"
+            )
+    target = view["target"]
+    lines.append(
+        f"target.rendered: {target['rendered']} "
+        f"reason={target['reason']!r}"
+    )
+    if target["rendered"]:
+        lines.append(
+            f"target.target_path_canonical (canonical mirror, "
+            f"source=attach record): "
+            f"{target['target_path_canonical']}"
+        )
+        tls = target["loop_state"]
+        if tls and tls["mirror"]:
+            m = tls["mirror"]
+            lines.append(
+                f"target.loop_state (canonical mirror, source="
+                f"target/.agent-loop/{tls['source']}): "
+                f"phase={m['phase']!r} sub_phase={m['sub_phase']!r}"
+                f" task={m['task']!r} status={m['status']!r} "
+                f"cycle_count={m['cycle_count']!r} "
+                f"approval_mode={m['approval_mode']!r} "
+                f"awaiting_human_for={m['awaiting_human_for']!r} "
+                f"last_verdict={m['last_verdict']!r}"
+            )
+        if target["task_md"]:
+            lines.append(
+                f"target.task_md (canonical mirror): "
+                f"present={target['task_md']['present']} "
+                f"byte_size={target['task_md']['byte_size']}"
+            )
+    lines.append(
+        f"[advisory] advisory_status_label: "
+        f"{view['advisory_status_label']!r}"
+    )
+    for note in view["advisory_notes"]:
+        lines.append(f"[advisory] note: {note}")
+    lines.append(
+        f"cli_only_operations (advisory; copy-paste only, the UI "
+        f"does NOT execute these):"
+    )
+    for op in view["cli_only_operations"]:
+        lines.append(
+            f"  - [{op['category']}] {op['label']}: "
+            f"{op['command']}"
+        )
+    lines.append(
+        f"canonical_precedence_note: "
+        f"{view['canonical_precedence_note']}"
+    )
+    return lines
+
+
+def cmd_view_external_status(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10H operator runtime entry: print the external UI
+    read-only status view.
+
+    Phase 7C reporter pattern: always exits 0 on report content;
+    only hard failures (unreadable attach record JSON, non-dict
+    top-level attach record from the Phase 10F inspector)
+    propagate through the existing `_halt` path so the structural
+    refusal vocabulary stays consistent with the shipped
+    `inspect-external-target` behavior.
+
+    The handler NEVER mutates any canonical artifact, NEVER writes
+    to `.agent-loop/orchestrator.log`, NEVER advances loop-state,
+    and NEVER invokes attach / detach / bootstrap / verify as a
+    side effect.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        view = build_external_ui_status_view(controller_root)
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    for line in _ui_render_view_lines(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -17770,6 +18301,30 @@ def build_parser() -> argparse.ArgumentParser:
             "attach / detach / bootstrap as a side effect."
         ),
     )
+    sub.add_parser(
+        "view-external-status",
+        help=(
+            "Phase 10H minimal external UI read-only status surface: "
+            "build and print a structured view model assembled from "
+            "the approved Phase 10G canonical artifact read set "
+            "(controller-side `.agent-loop/loop-state.json` + "
+            "`TASK.md` + Codex-owned planning artifacts; target-side "
+            "the same set when attach is present and fresh). "
+            "Distinguishes canonical mirrors from advisory derived "
+            "state in the rendered output (each line is attributed "
+            "to its source artifact or tagged `[advisory]`), "
+            "renders shipped mutating CLI operations as copy-paste-"
+            "only command strings (the UI does NOT execute them), "
+            "and surfaces refusal/staleness state advisorily from "
+            "the shipped Phase 10F inspector. Phase 7C reporter "
+            "pattern: always exits 0; never mutates any canonical "
+            "artifact; never writes to `.agent-loop/orchestrator.log`; "
+            "never advances loop-state. Hard failures (unreadable "
+            "attach record JSON, non-dict top-level) propagate "
+            "through `_halt` matching the existing detach / inspect "
+            "behavior."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -18035,6 +18590,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "detach-external-target": cmd_detach_external_target,
     "inspect-external-target": cmd_inspect_external_target,
     "verify-external-target": cmd_verify_external_target,
+    "view-external-status": cmd_view_external_status,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
