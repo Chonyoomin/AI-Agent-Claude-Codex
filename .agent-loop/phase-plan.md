@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10H - Minimal External UI Read-Only Status Surface)
+Fix Phases - Targeted Remediation Track (sub-phase: Fix Phase A - Automatic Local Claude/Codex Invocation Reliability)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4371,9 +4371,10 @@ implemented.
 
 ### Status
 
-Active. Implementation slice under Phase 10 focused on shipping the first
-bounded read-only external UI surface that satisfies the approved 10G contract
-without introducing a mutating control plane or competing source of truth.
+Complete and approved by human to advance to Fix Phase A. Phase 10H closed with
+`APPROVED_FOR_HUMAN_REVIEW` after the runtime, focused tests, contract
+documentation, and README were aligned to the shipped read-only external UI
+surface and its full CLI-only boundary.
 
 ### Objective
 
@@ -4434,4 +4435,49 @@ adding run/resume controls or any canonical-artifact writes from the UI.
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Fix Phase A - Automatic Local Claude/Codex Invocation Reliability
+
+### Status
+
+Active. Targeted remediation slice focused on making the shipped
+Claude/Codex adapter seams reliable for real local automatic invocation
+without renumbering or disturbing the primary roadmap phases.
+
+### Objective
+
+Define and validate the real local adapter contract for
+`AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`, provide first-party
+wrapper support or templates for invoking both CLIs automatically, and
+prove that the shipped intra-phase loop can run without manual prompt
+transfer when those adapter commands are configured correctly.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md`
+  identify Fix Phase A as active
+- `ROADMAP.md` contains the Fix Phase A remediation entry describing the
+  scope of automatic local Claude/Codex invocation reliability
+- the repository documents the success/failure contract for
+  `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`
+- the repository ships first-party wrapper support or wrapper templates
+  sufficient to drive local Claude and Codex CLI invocation without
+  manual prompt transfer
+- focused validation proves the orchestrator fails closed when adapter
+  commands do not produce fresh canonical artifacts and succeeds when
+  correctly configured wrappers do
+- operator docs clearly distinguish automatic local Claude/Codex
+  invocation from the still-separate fully autonomous PRD-to-product mode
+
+### Exclusions
+
+- no fully autonomous phase-to-phase PRD execution
+- no automatic next-phase activation behavior that bypasses the shipped
+  Phase 4 planner / activation separation
+- no mutating external UI work beyond the completed 10H read-only slice
+- no concurrent Codex/Claude overlap execution work
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no rewrites of `AGENTS.md` or `CLAUDE.md`
 - no Git automation

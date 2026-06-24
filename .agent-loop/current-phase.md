@@ -1,3 +1,3 @@
 # Current Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10H - Minimal External UI Read-Only Status Surface)
+Fix Phases - Targeted Remediation Track (sub-phase: Fix Phase A - Automatic Local Claude/Codex Invocation Reliability)
