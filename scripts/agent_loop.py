@@ -12523,6 +12523,480 @@ def cmd_view_external_status(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10I: Minimal External UI Run/Resume Controls
+#
+# Adds bounded operator control affordances on top of the Phase 10H
+# read-only status surface. Two boundaries are preserved verbatim from
+# the Phase 10G contract:
+#
+#   1. The UI MUST NOT dispatch any mutating CLI subcommand on the
+#      operator's behalf. Mutating controls (`run`, `resume`,
+#      `auto-continue`, `plan`, `activate`, etc.) are surfaced as
+#      eligibility-tagged copy-paste commands; the operator runs them
+#      from a shell prompt. The new `invoke-external-control` CLI
+#      refuses fail-closed when asked to dispatch any control whose
+#      `dispatch_mode != "library_call"`.
+#   2. Read-only controls MAY be delegated by the UI through a direct
+#      library-function call (no CLI subprocess). The Phase 10G
+#      contract explicitly permits library-call delegation for the
+#      shipped read-only inspectors; this slice wires the operator-
+#      visible entry points to `build_external_ui_status_view`,
+#      `build_external_ui_control_view`, and
+#      `inspect_external_target_attach`.
+#
+# Eligibility is computed from the canonical `.agent-loop/loop-state.json`
+# `status` field. The view advises which controls are sensible to run
+# right now; the underlying CLI subcommands continue to enforce their
+# own preconditions, so a "currently_eligible" hint is advisory and not
+# a permission grant.
+# ---------------------------------------------------------------------------
+
+EXTERNAL_UI_CONTROL_VIEW_SIGNAL_VERSION = "phase-10i-v1"
+
+EXTERNAL_UI_CONTROL_DELEGATION_NOTE = (
+    "Controls below are eligibility-aware affordances computed from "
+    "the current canonical loop-state. Mutating controls "
+    "(dispatch_mode='copy_paste') MUST be executed by the operator "
+    "at a shell prompt; the UI does NOT dispatch them on the "
+    "operator's behalf, preserving the Phase 10G CLI-only boundary. "
+    "Read-only controls (dispatch_mode='library_call') MAY be "
+    "delegated by the UI via direct library-function calls (no CLI "
+    "subprocess is spawned). The shipped run/resume/inspect "
+    "subcommands remain the authoritative entry points; this view "
+    "is a per-call render of which entry points are currently "
+    "sensible to run."
+)
+
+# Closed enumeration of UI-visible controls. Each tuple field:
+#   id:                       short canonical control id
+#   label:                    human-readable one-line label
+#   command:                  copy-paste-ready CLI invocation
+#   dispatch_mode:            'library_call' | 'copy_paste'
+#   category:                 'read_only' | 'mutating'
+#   delegated_library_function: library-call delegate name; None for
+#                             copy_paste controls
+#   eligibility_states:       frozenset of loop-state.status values
+#                             where the control is currently sensible;
+#                             None means "always sensible"
+_EXTERNAL_UI_CONTROL_REGISTRY: tuple = (
+    {
+        "id": "view-external-status",
+        "label": "Render the external UI read-only status view",
+        "command": (
+            "python scripts/agent_loop.py view-external-status"
+        ),
+        "dispatch_mode": "library_call",
+        "category": "read_only",
+        "delegated_library_function": "build_external_ui_status_view",
+        "eligibility_states": None,
+    },
+    {
+        "id": "view-external-controls",
+        "label": (
+            "Render the external UI controls view (this surface)"
+        ),
+        "command": (
+            "python scripts/agent_loop.py view-external-controls"
+        ),
+        "dispatch_mode": "library_call",
+        "category": "read_only",
+        "delegated_library_function": (
+            "build_external_ui_control_view"
+        ),
+        "eligibility_states": None,
+    },
+    {
+        "id": "inspect-external-target",
+        "label": (
+            "Inspect the attached external target (read-only)"
+        ),
+        "command": (
+            "python scripts/agent_loop.py inspect-external-target"
+        ),
+        "dispatch_mode": "library_call",
+        "category": "read_only",
+        "delegated_library_function": (
+            "inspect_external_target_attach"
+        ),
+        "eligibility_states": None,
+    },
+    {
+        "id": "status",
+        "label": "Print the current loop-state status summary",
+        "command": "python scripts/agent_loop.py status",
+        "dispatch_mode": "copy_paste",
+        "category": "read_only",
+        "delegated_library_function": None,
+        "eligibility_states": None,
+    },
+    {
+        "id": "inspect-artifacts",
+        "label": (
+            "Inspect per-cycle review / planning / evidence "
+            "artifacts"
+        ),
+        "command": "python scripts/agent_loop.py inspect-artifacts",
+        "dispatch_mode": "copy_paste",
+        "category": "read_only",
+        "delegated_library_function": None,
+        "eligibility_states": None,
+    },
+    {
+        "id": "run",
+        "label": "Execute one normal cycle",
+        "command": "python scripts/agent_loop.py run",
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "delegated_library_function": None,
+        "eligibility_states": frozenset({
+            "awaiting_claude_implementation",
+        }),
+    },
+    {
+        "id": "resume",
+        "label": "Resume a strict-mode paused cycle",
+        "command": "python scripts/agent_loop.py resume",
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "delegated_library_function": None,
+        "eligibility_states": frozenset({
+            HALTED_PRE_CLAUDE_PROMPT,
+            HALTED_PRE_FIX_PROMPT,
+            HALTED_PRE_CODEX_REVIEW_NORMAL,
+            HALTED_PRE_CODEX_REVIEW_FIX,
+        }),
+    },
+    {
+        "id": "auto-continue",
+        "label": (
+            "Auto-continue a token-exhaustion halt (bounded chain)"
+        ),
+        "command": "python scripts/agent_loop.py auto-continue",
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "delegated_library_function": None,
+        "eligibility_states": frozenset({
+            "halted_awaiting_token_exhaustion_continuation",
+        }),
+    },
+)
+
+
+def _ui_control_currently_eligible(
+    spec: dict, status_value: Optional[str],
+) -> bool:
+    """Return True when the control is currently sensible given the
+    canonical loop-state status (None for always-sensible controls).
+    """
+    if spec["eligibility_states"] is None:
+        return True
+    if status_value is None:
+        return False
+    return status_value in spec["eligibility_states"]
+
+
+def _ui_control_eligibility_reason(
+    spec: dict, status_value: Optional[str], eligible: bool,
+) -> str:
+    """One-line human-readable reason for the eligibility verdict."""
+    if spec["eligibility_states"] is None:
+        return "always sensible (read-only)"
+    if status_value is None:
+        return (
+            "canonical loop-state.status is unavailable; eligibility "
+            "cannot be determined"
+        )
+    if eligible:
+        return (
+            f"current loop-state.status={status_value!r} matches "
+            f"one of the control's eligible states"
+        )
+    return (
+        f"current loop-state.status={status_value!r} is not in the "
+        f"control's eligible set "
+        f"{sorted(spec['eligibility_states'])!r}; run a CLI command "
+        f"that transitions loop-state to an eligible status first"
+    )
+
+
+def _ui_control_descriptor(
+    spec: dict, status_value: Optional[str],
+) -> dict:
+    """Return the operator-visible descriptor for a single control."""
+    eligible = _ui_control_currently_eligible(spec, status_value)
+    return {
+        "id": spec["id"],
+        "label": spec["label"],
+        "command": spec["command"],
+        "dispatch_mode": spec["dispatch_mode"],
+        "category": spec["category"],
+        "delegated_library_function": (
+            spec["delegated_library_function"]
+        ),
+        "currently_eligible": eligible,
+        "eligibility_reason": _ui_control_eligibility_reason(
+            spec, status_value, eligible,
+        ),
+    }
+
+
+def build_external_ui_control_view(controller_root: Path) -> dict:
+    """Phase 10I: assemble the bounded external UI controls view.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10i-v1`
+      - `controller_path_canonical`: resolved repo root
+      - `current_loop_state_status`: canonical status value (or None
+        when loop-state is missing / malformed); used to compute
+        per-control eligibility
+      - `controls`: list of control descriptors, each carrying id /
+        label / command / dispatch_mode / category /
+        delegated_library_function / currently_eligible /
+        eligibility_reason
+      - `delegation_note`: literal Phase 10I delegation reminder
+
+    Never writes, never mutates, never executes a CLI subprocess.
+    Soft failures (missing or malformed loop-state) surface as
+    `current_loop_state_status=None`; controls with
+    `eligibility_states=None` remain eligible, gated controls become
+    ineligible with a corresponding reason string.
+    """
+    state_path = controller_root / ".agent-loop" / "loop-state.json"
+    status_value: Optional[str] = None
+    try:
+        data = load_loop_state(state_path)
+    except HaltError:
+        data = None
+    if isinstance(data, dict):
+        candidate = data.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+    controls = [
+        _ui_control_descriptor(spec, status_value)
+        for spec in _EXTERNAL_UI_CONTROL_REGISTRY
+    ]
+    return {
+        "view_signal_version": (
+            EXTERNAL_UI_CONTROL_VIEW_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controls": controls,
+        "delegation_note": EXTERNAL_UI_CONTROL_DELEGATION_NOTE,
+    }
+
+
+def _ui_render_control_view_lines(view: dict) -> list:
+    """Phase 10I: format the control view as text lines for the CLI
+    surface. Mutating controls are explicitly tagged as
+    `copy-paste-only`; read-only library-call controls are tagged as
+    `library-call`. Each line names the canonical source (loop-state
+    for the status, registry for everything else) so a reviewer can
+    tell which fields are canonical and which are advisory derived
+    state.
+    """
+    lines = []
+    lines.append(
+        f"[orchestrator] external UI controls view "
+        f"(signal_version={view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"find_repo_root): {view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"current_loop_state_status (canonical mirror, source="
+        f".agent-loop/loop-state.json): "
+        f"{view['current_loop_state_status']!r}"
+    )
+    for control in view["controls"]:
+        eligibility_tag = (
+            "ELIGIBLE" if control["currently_eligible"]
+            else "not-eligible"
+        )
+        dispatch_tag = (
+            "library-call" if control["dispatch_mode"] == "library_call"
+            else "copy-paste-only"
+        )
+        lines.append(
+            f"  - [{control['category']}|{dispatch_tag}|"
+            f"{eligibility_tag}] {control['id']}: {control['label']}"
+        )
+        lines.append(f"      command: {control['command']}")
+        lines.append(
+            f"      [advisory] eligibility_reason: "
+            f"{control['eligibility_reason']}"
+        )
+        if control["delegated_library_function"]:
+            lines.append(
+                f"      delegated_library_function: "
+                f"{control['delegated_library_function']}"
+            )
+    lines.append(
+        f"delegation_note: {view['delegation_note']}"
+    )
+    return lines
+
+
+def cmd_view_external_controls(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10I reporter: print the bounded external UI controls view.
+
+    Phase 7C reporter pattern: always exits 0 on report content;
+    structural failures (which the view's soft-failure handling
+    already absorbs) do not raise here. NEVER mutates any canonical
+    artifact, NEVER writes to `.agent-loop/orchestrator.log`, NEVER
+    advances loop-state, and NEVER dispatches a CLI subprocess.
+    """
+    controller_root = find_repo_root()
+    view = build_external_ui_control_view(controller_root)
+    for line in _ui_render_control_view_lines(view):
+        print(line)
+    return 0
+
+
+def _audit_external_ui_control_delegation(
+    controller_root: Path, control_id: str, library_function: str,
+) -> None:
+    """Phase 10I: append a single audit line to orchestrator.log
+    recording that the UI initiated a read-only library-function
+    delegation. The line preserves the existing
+    `[orchestrator] ...` audit-line format so the canonical
+    `.agent-loop/orchestrator.log` reconstruction continues to work
+    without UI-side log inspection.
+    """
+    log_path = controller_root / ".agent-loop" / "orchestrator.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as fh:
+            fh.write(
+                f"[orchestrator] external UI control delegated: "
+                f"id={control_id!r} "
+                f"library_function={library_function!r}\n"
+            )
+    except OSError:
+        # Audit-line write failures are non-fatal; the canonical
+        # artifact that the delegated library function returned (the
+        # view dict) is still authoritative. Avoid raising so a
+        # read-only-mounted controller root does not break the UI.
+        pass
+
+
+def invoke_external_ui_control(
+    controller_root: Path, control_id: str,
+) -> dict:
+    """Phase 10I: delegate a read-only external UI control.
+
+    Looks up `control_id` in the closed `_EXTERNAL_UI_CONTROL_REGISTRY`.
+    Refuses fail-closed via `HaltError("halted_input_missing", ...)`
+    when:
+      - `control_id` is not in the registry
+      - the matched control's `dispatch_mode != "library_call"`
+        (mutating controls and copy-paste-only read-only controls
+        MUST be operator-CLI-invoked per the Phase 10G boundary)
+      - the matched control's `delegated_library_function` is not
+        wired in this slice (defensive guard; the registry currently
+        only names wired functions)
+
+    On success calls the named library function with `controller_root`,
+    writes a single audit line to `.agent-loop/orchestrator.log`, and
+    returns `{control_id, delegated_library_function, invoked: True,
+    result}` where `result` is the library function's return value.
+    """
+    spec: Optional[dict] = None
+    for candidate in _EXTERNAL_UI_CONTROL_REGISTRY:
+        if candidate["id"] == control_id:
+            spec = candidate
+            break
+    if spec is None:
+        raise HaltError(
+            "halted_input_missing",
+            f"unknown external UI control id: {control_id!r}; "
+            f"valid ids: "
+            f"{sorted(c['id'] for c in _EXTERNAL_UI_CONTROL_REGISTRY)!r}",
+        )
+    if spec["dispatch_mode"] != "library_call":
+        raise HaltError(
+            "halted_input_missing",
+            f"control {control_id!r} has dispatch_mode="
+            f"{spec['dispatch_mode']!r}; the external UI MUST NOT "
+            f"dispatch this control on the operator's behalf "
+            f"(Phase 10G CLI-only boundary). Copy and paste the "
+            f"shipped invocation manually: {spec['command']}",
+        )
+    func_name = spec["delegated_library_function"]
+    if func_name == "build_external_ui_status_view":
+        result = build_external_ui_status_view(controller_root)
+    elif func_name == "build_external_ui_control_view":
+        result = build_external_ui_control_view(controller_root)
+    elif func_name == "inspect_external_target_attach":
+        result = inspect_external_target_attach(controller_root)
+    else:
+        raise HaltError(
+            "halted_input_missing",
+            f"control {control_id!r} names library function "
+            f"{func_name!r} which is not wired in this slice",
+        )
+    _audit_external_ui_control_delegation(
+        controller_root, control_id, func_name,
+    )
+    return {
+        "control_id": control_id,
+        "delegated_library_function": func_name,
+        "invoked": True,
+        "result": result,
+    }
+
+
+def cmd_invoke_external_control(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10I operator runtime entry: delegate a read-only
+    library-callable external UI control.
+
+    Refusals (unknown control id, copy-paste-only control id) route
+    through `_halt` so the structural refusal vocabulary stays
+    consistent with the shipped Phase 10F/10H halt paths. On success
+    prints a one-line success acknowledgement plus the canonical
+    result-summary line so the operator sees both the audit-line text
+    that was written AND a one-line read of the delegated function's
+    return value.
+    """
+    controller_root = find_repo_root()
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    log_path = al / "orchestrator.log"
+    try:
+        outcome = invoke_external_ui_control(
+            controller_root, args.control,
+        )
+    except HaltError as halt:
+        try:
+            data = load_loop_state(state_path)
+        except HaltError:
+            data = {}
+        return _halt(state_path, data, halt, log_path)
+    print(
+        f"[orchestrator] external UI control delegated: "
+        f"id={outcome['control_id']!r} "
+        f"library_function={outcome['delegated_library_function']!r}"
+    )
+    # Surface a single line that names which top-level keys the
+    # delegated function returned, so the operator can verify the
+    # right surface was invoked without dumping the full payload.
+    result = outcome["result"]
+    if isinstance(result, dict):
+        top_keys = sorted(result.keys())
+        print(
+            f"[orchestrator] result keys (top-level): {top_keys!r}"
+        )
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -18473,6 +18947,57 @@ def build_parser() -> argparse.ArgumentParser:
             "behavior."
         ),
     )
+    sub.add_parser(
+        "view-external-controls",
+        help=(
+            "Phase 10I minimal external UI run/resume controls view: "
+            "build and print a structured eligibility-aware control "
+            "registry on top of the Phase 10H read-only surface. Each "
+            "control carries id / label / command / dispatch_mode "
+            "(`library_call` for read-only library delegation, "
+            "`copy_paste` for mutating CLI subcommands) / category / "
+            "currently_eligible / eligibility_reason. Mutating "
+            "controls remain copy-paste-only per the Phase 10G CLI-"
+            "only boundary; read-only library-callable controls may "
+            "be delegated via the companion `invoke-external-control` "
+            "CLI. Phase 7C reporter pattern: always exits 0; never "
+            "mutates any canonical artifact; never writes to "
+            "`.agent-loop/orchestrator.log`; never advances loop-"
+            "state; never dispatches a CLI subprocess."
+        ),
+    )
+    invoke_external_control = sub.add_parser(
+        "invoke-external-control",
+        help=(
+            "Phase 10I minimal external UI run/resume controls "
+            "delegate: dispatch a SINGLE read-only library-callable "
+            "control (`view-external-status`, `view-external-"
+            "controls`, `inspect-external-target`) via a direct "
+            "library-function call. Refuses fail-closed via `_halt` "
+            "with `halted_input_missing` when the requested control "
+            "id is unknown or when its `dispatch_mode != "
+            "'library_call'` (mutating controls MUST be operator-"
+            "CLI-invoked per the Phase 10G boundary; the refusal "
+            "message includes the shipped copy-paste invocation). On "
+            "success appends a single `[orchestrator] external UI "
+            "control delegated: ...` audit line to "
+            "`.agent-loop/orchestrator.log` and prints the audit-line "
+            "text plus a one-line summary of the delegated function's "
+            "top-level result keys."
+        ),
+    )
+    invoke_external_control.add_argument(
+        "--control",
+        type=str,
+        required=True,
+        help=(
+            "Required external UI control id to delegate. Must be one "
+            "of the library-callable read-only controls in the Phase "
+            "10I registry (`view-external-status`, `view-external-"
+            "controls`, `inspect-external-target`). Mutating control "
+            "ids are refused fail-closed."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -18739,6 +19264,8 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "inspect-external-target": cmd_inspect_external_target,
     "verify-external-target": cmd_verify_external_target,
     "view-external-status": cmd_view_external_status,
+    "view-external-controls": cmd_view_external_controls,
+    "invoke-external-control": cmd_invoke_external_control,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
