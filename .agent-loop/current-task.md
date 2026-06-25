@@ -1,25 +1,19 @@
 # Current Task
 
 ## Phase
-Fix Phases - Targeted Remediation Track
+Phase 10 - Future Product Features
 
 ## Sub-Phase
-Fix Phase A - Automatic Local Claude/Codex Invocation Reliability
+Phase 10I - Minimal External UI Run/Resume Controls
 
 ## Status
-Fix Phase A is active as a targeted remediation slice. The goal is to make the shipped Claude/Codex adapter seams reliable for real local automatic invocation: define the adapter contract, support wrapper execution, and prove the existing intra-phase loop can run without manual prompt transfer when both local commands are configured correctly.
+Phase 10H is complete. Fix Phase A is complete. Phase 10I is now active as the next mainline slice focused on adding bounded external UI run/resume controls on top of the shipped read-only surface.
 
 ## Task
-Implement Fix Phase A for the agent loop. This slice should define and validate the real local adapter contract for `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`, provide first-party wrapper support or templates for invoking both CLIs automatically, and prove that the shipped intra-phase loop can run without manual prompt transfer when those adapter commands are configured correctly.
+Implement Phase 10I for the agent loop. This slice should add bounded run/resume/inspect controls to the external UI on top of the shipped Phase 10H read-only surface, while preserving the CLI-first contract, canonical repo artifacts as the source of truth, and all existing approval and ownership boundaries.
 
 ## Notes
 
-- keep this slice narrow: implement only the local automatic invocation reliability work; do not broaden into fully autonomous PRD execution or unrelated roadmap features
-- preserve existing Phase 2A / 3A / 4A contracts unchanged
-- `.agent-loop/claude-done.json` is a routing signal, not proof of correctness
-- preserve the existing Phase 5E post-review reconciliation behavior and the Phase 5F phase-start prompt-bootstrap path unchanged
-- repo artifacts must remain the source of truth over any documentation surface
-- automatic invocation must still fail closed when adapters do not produce fresh canonical artifacts
-- do not claim that local automatic adapter execution equals fully autonomous phase-to-phase PRD completion
-- do not change the shipped `review`, `strict`, or bounded `autonomous` semantics
-- keep future autonomy work aligned with the shipped halt/refusal vocabulary, checkpoint/resume behavior, ownership boundaries, and human approval requirements
+- preserve the shipped Phase 10H read-only UI boundaries and add only the bounded run/resume/inspect controls required for this slice
+- keep the UI advisory-vs-canonical boundary intact: repo artifacts on disk remain the source of truth
+- do not widen into artifact-dashboard, controlled-concurrency, MCP, RAG, GitHub, or policy-pack work

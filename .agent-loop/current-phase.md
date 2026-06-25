@@ -1,3 +1,3 @@
 # Current Phase
 
-Fix Phases - Targeted Remediation Track (sub-phase: Fix Phase A - Automatic Local Claude/Codex Invocation Reliability)
+Phase 10 - Future Product Features (sub-phase: Phase 10I - Minimal External UI Run/Resume Controls)

@@ -16,36 +16,36 @@ The goal is to let a human provide the desired outcome once, then have the Codex
 
 ## Active Phase
 
-Fix Phases - Targeted Remediation Track
+Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Fix Phase A - Automatic Local Claude/Codex Invocation Reliability
+Phase 10I - Minimal External UI Run/Resume Controls
 
 ## Phase Status
 
-Phase 10H is complete and approved for human review. Fix Phase A is now active as a targeted remediation slice to make the shipped Claude/Codex adapter seams reliable for real local automatic invocation without renumbering or disturbing the main roadmap phases.
+Phase 10H is complete. Fix Phase A is complete. Phase 10I is now active as the next mainline slice focused on adding bounded external UI run/resume controls on top of the shipped read-only surface.
 
 ## Active Task
 
-Implement Fix Phase A for the agent loop. This slice should define and validate the real local adapter contract for `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`, provide first-party wrapper support or templates for invoking both CLIs automatically, and prove that the shipped intra-phase loop can run without manual prompt transfer when those adapter commands are configured correctly.
+Implement Phase 10I for the agent loop. This slice should add bounded run/resume/inspect controls to the external UI on top of the shipped Phase 10H read-only surface, while preserving the CLI-first contract, canonical repo artifacts as the source of truth, and all existing approval and ownership boundaries.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md` identify Fix Phase A as active
-- `.agent-loop/phase-plan.md` records Phase 10H as closed history and contains a `## Fix Phase A - Automatic Local Claude/Codex Invocation Reliability` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository documents and enforces the concrete success/failure contract for `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`
-- the repository ships first-party wrapper support or wrapper templates sufficient to drive local Claude and Codex CLI invocation without manual prompt transfer
-- focused validation proves the orchestrator fail-closes when adapter commands do not produce fresh canonical artifacts and succeeds when correctly configured wrappers do
-- `README.md` and operator docs clearly distinguish "automatic local Claude/Codex invocation" from the still-separate fully autonomous PRD-to-product mode
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10I as active
+- `.agent-loop/phase-plan.md` records Phase 10H and Fix Phase A as closed history and contains a `## Phase 10I - Minimal External UI Run/Resume Controls` section with concrete objective, done criteria, and exclusions
+- the repository adds bounded external UI controls for run/resume/inspect on top of the shipped Phase 10H read-only status surface
+- the UI preserves the shipped CLI-first and canonical-artifact-first model: repo artifacts on disk remain authoritative, and the UI must not become an unbounded alternate control plane
+- the UI preserves the existing approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` gate
+- focused validation proves the new control surface is bounded, reflects runtime state accurately, and does not widen into unrelated dashboard, concurrency, MCP, or autonomy work
 
 ## Next-Phase Gate
 
-Do not treat automatic local agent invocation as equivalent to fully autonomous PRD-to-product execution until:
+Do not treat the external UI as a general-purpose control plane until:
 
-- Fix Phase A receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the local automatic adapter path as reliable enough to use for future automation work
-- Codex updates the canonical phase/task artifacts before treating any later autonomy remediation as active work
+- Phase 10I receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the bounded run/resume control surface
+- any broader dashboard or concurrency work is activated through its own later phase instead of being folded into this slice
 
 ## Out Of Scope For Current Phase
 
@@ -56,13 +56,12 @@ Do not treat automatic local agent invocation as equivalent to fully autonomous 
 - any rewrite of current shipped behavior just to make future autonomy work easier
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
 - inventing unreviewable autonomous behavior that the repo does not currently ship just to simplify the implementation
-- collapsing future remediation or roadmap work into this planning slice
+- collapsing later Phase 10 dashboard, concurrency, MCP, RAG, GitHub, or policy-pack work into this slice
 - implementation of end-to-end fully autonomous PRD-to-product execution
-- recursive invocation of the locally installed `claude` CLI
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - any change to the Phase 2A Evidence Collection Contract
 - any change to the Phase 3A Orchestrator Contract body
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
-- adding any project-wide CI suite to the repository beyond focused retry/re-probe coverage
+- adding any project-wide CI suite beyond focused validation for the bounded UI control surface
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

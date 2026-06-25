@@ -1,31 +1,22 @@
 # Claude Code Task
 
 ## Phase
-Fix Phase A - Automatic Local Claude/Codex Invocation Reliability
+Phase 10I - Minimal External UI Run/Resume Controls
 
 ## Objective
-Implement Fix Phase A for the agent loop. This slice should define and validate the real local adapter contract for `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`, provide first-party wrapper support or templates for invoking both CLIs automatically, and prove that the shipped intra-phase loop can run without manual prompt transfer when those adapter commands are configured correctly.
+Implement Phase 10I for the agent loop. This slice should add bounded run/resume/inspect controls to the external UI on top of the shipped Phase 10H read-only surface, while preserving the CLI-first contract, canonical repo artifacts as the source of truth, and all existing approval and ownership boundaries.
 
 ## Context
-Fix Phase A is a targeted remediation slice, not a renumbering of the main roadmap. The goal is to close the gap between the shipped adapter seams and the desired real-world workflow where local Claude and Codex invocation can run automatically on a configured machine. This slice should improve the existing local invocation path without claiming that fully autonomous PRD-to-product execution is already solved.
+Phase 10I builds directly on the shipped Phase 10H read-only external UI status surface. The goal is to let an operator trigger the already-shipped run/resume/inspect flows from the external UI in a bounded way without turning the UI into a general-purpose control plane or displacing repo artifacts on disk as the source of truth.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Fix Phase A as active
-- `.agent-loop/phase-plan.md` records Phase 10H as closed history and contains a `## Fix Phase A - Automatic Local Claude/Codex Invocation Reliability` section with concrete objective, done criteria, and exclusions
-- define and implement the concrete local adapter contract for `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`:
-  - document what each command must do
-  - define which canonical artifact each command must produce
-  - preserve fail-closed behavior when a command exits but does not produce a fresh artifact
-  - preserve repo-root and working-directory assumptions explicitly rather than implicitly
-- add first-party wrapper support or wrapper templates for local Claude CLI and Codex CLI invocation so the orchestrator can drive both tools without manual prompt transfer
-- add focused validation for:
-  - missing binaries
-  - wrapper commands that exit without writing fresh artifacts
-  - stale artifact writes
-  - working-directory or repo-root mismatch assumptions
-- update operator-facing documentation so it clearly distinguishes:
-  - automatic local Claude/Codex invocation within the existing phase loop
-  - the still-separate fully autonomous PRD-to-product mode
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10I as active
+- `.agent-loop/phase-plan.md` records Phase 10H and Fix Phase A as closed history and contains a `## Phase 10I - Minimal External UI Run/Resume Controls` section with concrete objective, done criteria, and exclusions
+- add bounded external UI controls for the already-shipped run/resume/inspect flows on top of the Phase 10H read-only status surface
+- preserve the shipped CLI-first workflow and make clear which UI actions are delegating to existing runtime surfaces rather than inventing a new control plane
+- preserve the shipped artifact/source-of-truth boundary so repo artifacts on disk remain authoritative over any UI cache, session state, rendered status summary, or in-memory view model
+- preserve the shipped approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` activation gate
+- add focused validation proving the new bounded control surface is consistent with the approved Phase 10G/10H boundaries and reflected accurately in planning/docs/runtime surfaces
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -38,11 +29,10 @@ Fix Phase A is a targeted remediation slice, not a renumbering of the main roadm
 - Add or update focused tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no fully autonomous phase-to-phase PRD execution
-- no automatic next-phase activation behavior that bypasses the shipped Phase 4 planner / activation separation
-- no mutating external UI work beyond the completed 10H read-only slice
-- no concurrent Codex/Claude overlap execution work
+- no artifact dashboard, analytics, diff viewer, history explorer, or broader dashboard work
+- no controlled-concurrency, overlap-safe detection, or concurrent Codex/Claude execution work
 - no MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses the shipped Phase 4 planner / activation separation
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
