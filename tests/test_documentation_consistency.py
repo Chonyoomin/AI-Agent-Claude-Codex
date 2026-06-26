@@ -89,6 +89,14 @@ EXTERNAL_UI_CONTRACT_PATH = (
     REPO_ROOT / "docs" / "external-ui-contract.md"
 )
 PHASE_10G_DOC_PATHS = (EXTERNAL_UI_CONTRACT_PATH,)
+# Phase 10J - Artifact Dashboard Contract documentation-only slice.
+# Defines the contract a future external artifact dashboard runtime
+# (Phase 10K) must satisfy, layered on top of the binding Phase 10G
+# UI contract.
+ARTIFACT_DASHBOARD_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "artifact-dashboard-contract.md"
+)
+PHASE_10J_DOC_PATHS = (ARTIFACT_DASHBOARD_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
     PHASE_8A_DOC_PATHS
     + PHASE_8B_DOC_PATHS
@@ -97,6 +105,7 @@ ALL_OPERATOR_DOC_PATHS = (
     + PHASE_10B_DOC_PATHS
     + PHASE_10C_DOC_PATHS
     + PHASE_10G_DOC_PATHS
+    + PHASE_10J_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -3503,6 +3512,457 @@ class ReadmeMarksPhase10gAsActiveTests(unittest.TestCase):
                 f"README.md Phase 10G paragraph does not route "
                 f"future UI capability {fragment!r} to a later "
                 f"sub-phase",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10J - Artifact Dashboard Contract: documentation tests
+# ---------------------------------------------------------------------------
+class ArtifactDashboardContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10J: the artifact dashboard contract doc must exist on
+    disk, be non-empty, be ASCII-only, and carry the canonical section
+    headers a future Phase 10K implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = ARTIFACT_DASHBOARD_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10J artifact-dashboard contract doc at "
+            f"{self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/artifact-dashboard-contract.md contains "
+                f"non-ASCII bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# Artifact Dashboard Contract",
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## Dashboard Surfaces",
+            "## Advisory-Vs-Canonical Mirror Rule",
+            "## Operations That Remain CLI-Only",
+            "## Dashboard Identity And Operator Attribution",
+            "## Refusal Behavior",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Dependencies On Later Phase 10 Slices",
+            "## Out Of Scope For Phase 10J",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/artifact-dashboard-contract.md missing "
+                f"required section header {header!r}",
+            )
+
+
+class ArtifactDashboardContractEnumeratesSixSurfacesTests(
+    unittest.TestCase,
+):
+    """Phase 10J: the contract MUST enumerate the six dashboard
+    surfaces the prompt names so a Phase 10K implementer can build
+    each one without further design decisions.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARTIFACT_DASHBOARD_CONTRACT_PATH)
+
+    def test_contract_names_each_required_surface_header(self) -> None:
+        for header in (
+            "### 1. Review Summaries",
+            "### 2. Diff Views",
+            "### 3. Progress History",
+            "### 4. Approval Actions",
+            "### 5. Token / Cost Reporting",
+            "### 6. Failure Analytics",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"artifact-dashboard contract missing required "
+                f"surface header {header!r}",
+            )
+
+
+class ArtifactDashboardContractPinsSourceArtifactsTests(
+    unittest.TestCase,
+):
+    """Each surface MUST name the canonical on-disk artifacts a
+    Phase 10K runtime is permitted to read. Without this, an
+    implementer would have to guess which files to mirror.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARTIFACT_DASHBOARD_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_review_summaries_source_artifacts(self) -> None:
+        for fragment in (
+            ".agent-loop/claude-summary.md",
+            ".agent-loop/codex-review.md",
+            ".agent-loop/fix-prompt.md",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"Review Summaries surface does not name source "
+                f"artifact {fragment!r}",
+            )
+
+    def test_diff_views_source_artifacts(self) -> None:
+        for fragment in (
+            ".agent-loop/git-diff.patch",
+            ".agent-loop/git-status.log",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"Diff Views surface does not name source artifact "
+                f"{fragment!r}",
+            )
+
+    def test_progress_history_source_artifacts(self) -> None:
+        for fragment in (
+            ".agent-loop/loop-state.json",
+            ".agent-loop/phase-plan.md",
+            ".agent-loop/orchestrator.log",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"Progress History surface does not name source "
+                f"artifact {fragment!r}",
+            )
+
+    def test_approval_actions_source_artifacts(self) -> None:
+        for fragment in (
+            ".agent-loop/proposed-phase.md",
+            ".agent-loop/final-acceptance.json",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"Approval Actions surface does not name source "
+                f"artifact {fragment!r}",
+            )
+
+    def test_token_cost_source_artifacts(self) -> None:
+        for fragment in (
+            "capacity-retry-state",
+            "token-exhaustion",
+            "cycle_count",
+            "max_cycles",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"Token/Cost Reporting surface does not name source "
+                f"artifact {fragment!r}",
+            )
+
+    def test_failure_analytics_source_artifacts(self) -> None:
+        for fragment in (
+            ".agent-loop/codex-review.md",
+            ".agent-loop/test-output.log",
+            ".agent-loop/lint-output.log",
+            ".agent-loop/typecheck-output.log",
+            ".agent-loop/build-output.log",
+            "repeated-failure",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"Failure Analytics surface does not name source "
+                f"artifact {fragment!r}",
+            )
+
+
+class ArtifactDashboardContractPinsAdvisoryMirrorRuleTests(
+    unittest.TestCase,
+):
+    """The contract MUST preserve the Phase 10G UI advisory-vs-
+    canonical mirror rule and apply it to all six dashboard surfaces.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARTIFACT_DASHBOARD_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_canonical_mirror_vocabulary(self) -> None:
+        for fragment in (
+            "Canonical mirror",
+            "Advisory derived state",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not pin the "
+                f"{fragment!r} vocabulary",
+            )
+
+    def test_contract_prohibits_cross_snapshot_merging(self) -> None:
+        self.assertIn(
+            "cross-merge", self.collapsed,
+        )
+        self.assertIn(
+            "one consistent on-disk snapshot", self.collapsed,
+            "artifact-dashboard contract does not prohibit cross-"
+            "snapshot merging in a single rendered record",
+        )
+
+    def test_contract_prohibits_caching_past_poll_cycle(self) -> None:
+        for fragment in (
+            "MUST NOT serve stale mirrors",
+            "single poll cycle",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not prohibit "
+                f"caching beyond a single poll cycle via "
+                f"{fragment!r}",
+            )
+
+
+class ArtifactDashboardContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The contract MUST preserve every shipped hard stop the Phase
+    10G/10H/10I surfaces already pin: no Git automation in either
+    root, the Phase 4C activator + `APPROVED_FOR_ACTIVATION` token,
+    the Phase 9G acceptance gate, no auto-fill of operator identity,
+    no canonical-artifact writes from the dashboard process, no
+    dashboard-side databases / session stores / event queues /
+    identity tokens / cost-budget enforcement.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARTIFACT_DASHBOARD_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        for fragment in (
+            "commit, push, tag, branch, stash, reset, checkout",
+            "BOTH roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not preserve "
+                f"the no-Git-automation boundary via {fragment!r}",
+            )
+
+    def test_contract_preserves_approved_for_activation(self) -> None:
+        for fragment in (
+            "APPROVED_FOR_ACTIVATION",
+            "Phase 4C activator",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not preserve "
+                f"the activation gate via {fragment!r}",
+            )
+
+    def test_contract_preserves_phase_9g_acceptance_gate(self) -> None:
+        for fragment in (
+            "Phase 9G",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not preserve "
+                f"the Phase 9G acceptance gate via {fragment!r}",
+            )
+
+    def test_contract_refuses_silent_identity_autofill(self) -> None:
+        for fragment in (
+            "MUST NOT auto-fill",
+            "browser session",
+            "$USER",
+            "whoami",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not refuse "
+                f"silent identity auto-fill via {fragment!r}",
+            )
+
+    def test_contract_forbids_dashboard_side_state_stores(
+        self,
+    ) -> None:
+        for fragment in (
+            "MUST NOT introduce a dashboard-side database",
+            "MUST NOT introduce a dashboard-side notification queue",
+            "MUST NOT introduce a dashboard-side identity",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not forbid "
+                f"competing dashboard-side state via {fragment!r}",
+            )
+
+    def test_contract_forbids_dashboard_side_cost_enforcement(
+        self,
+    ) -> None:
+        # Phase 10J explicitly carves out cost-budget enforcement
+        # to the shipped Phase 6F / 9F runtime, not the dashboard.
+        for fragment in (
+            "enforce a \"cost budget\"",
+            "no third-party analytics SDK",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not carve out "
+                f"cost-budget enforcement via {fragment!r}",
+            )
+
+    def test_contract_marks_runtime_as_not_yet_implemented(
+        self,
+    ) -> None:
+        # Phase 10J is documentation-only; the doc must NOT silently
+        # promise the dashboard runtime as shipped.
+        self.assertIn(
+            "No artifact dashboard runtime", self.collapsed,
+            "artifact-dashboard contract does not mark the "
+            "dashboard runtime as not-yet-shipped",
+        )
+        for fragment in (
+            "Phase 10K",
+            "Phase 10L",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not locate the "
+                f"future dashboard runtime in {fragment!r}",
+            )
+
+
+class ArtifactDashboardContractPinsCliOnlyOperationsTests(
+    unittest.TestCase,
+):
+    """The contract MUST enumerate the shipped mutating CLI
+    subcommands the dashboard is not allowed to silently trigger
+    AND MUST cap the library-call delegation surface at the Phase
+    10I-pinned three controls.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(ARTIFACT_DASHBOARD_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_mutating_operations(self) -> None:
+        for op in (
+            "attach-external-target",
+            "detach-external-target",
+            "verify-external-target",
+            "plan",
+            "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                f"`{op}`", self.collapsed,
+                f"artifact-dashboard contract does not name CLI-"
+                f"only mutating operation {op!r}",
+            )
+
+    def test_contract_prohibits_dashboard_dispatch_of_mutating_cli(
+        self,
+    ) -> None:
+        self.assertIn(
+            "MUST NOT issue, dispatch, proxy, auto-trigger, "
+            "queue, or schedule", self.collapsed,
+            "artifact-dashboard contract does not explicitly "
+            "prohibit dashboard dispatch of mutating CLI ops",
+        )
+
+    def test_contract_caps_library_callable_at_phase_10i_three(
+        self,
+    ) -> None:
+        # The dashboard MUST NOT introduce additional library-
+        # callable controls beyond the three the Phase 10I registry
+        # already pins.
+        for fragment in (
+            "view-external-status",
+            "view-external-controls",
+            "inspect-external-target",
+            "MUST NOT introduce additional library-callable "
+            "controls",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"artifact-dashboard contract does not cap the "
+                f"library-call delegation surface at the Phase 10I "
+                f"three via {fragment!r}",
+            )
+
+
+class ReadmePointsAtArtifactDashboardContractDocTests(
+    unittest.TestCase,
+):
+    """Phase 10J: the README must route a reader at the new contract
+    doc and mark Phase 10J as the current active sub-phase.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(README_PATH)
+
+    def test_readme_names_artifact_dashboard_contract_doc(
+        self,
+    ) -> None:
+        self.assertIn(
+            "docs/artifact-dashboard-contract.md", self.text,
+            "README.md does not route readers at the Phase 10J "
+            "artifact-dashboard contract doc",
+        )
+
+    def test_readme_marks_phase_10j_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10J", self.text,
+            "README.md does not name Phase 10J as a current focus",
+        )
+        self.assertIn(
+            "Artifact Dashboard Contract", self.text,
+            "README.md does not name the Phase 10J sub-phase title",
+        )
+
+    def test_readme_marks_phase_10j_as_documentation_only(
+        self,
+    ) -> None:
+        for fragment in (
+            "documentation form only",
+            "Phase 10K",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10J paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
+            )
+
+    def test_readme_routes_advanced_dashboard_to_later_phases(
+        self,
+    ) -> None:
+        # Future dashboard capabilities must be routed to Phase
+        # 10K / 10L+ so a reader does not assume they ship in 10J.
+        for fragment in (
+            "Phase 10K",
+            "Phase 10L",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10J paragraph does not route "
+                f"future dashboard capability to {fragment!r}",
             )
 
 
