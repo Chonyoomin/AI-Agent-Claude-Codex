@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10I - Minimal External UI Run/Resume Controls)
+Phase 10 - Future Product Features (sub-phase: Phase 10J - Artifact Dashboard Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4488,10 +4488,10 @@ transfer when those adapter commands are configured correctly.
 
 ### Status
 
-Active. This slice builds on the shipped Phase 10H read-only external UI
-surface by adding bounded operator run/resume/inspect controls while
-preserving the CLI-first contract, canonical artifact source-of-truth model,
-and existing approval / ownership boundaries.
+Complete and approved by human to advance. This slice built on the shipped
+Phase 10H read-only external UI surface by adding bounded operator
+run/resume/inspect controls while preserving the CLI-first contract, canonical
+artifact source-of-truth model, and existing approval / ownership boundaries.
 
 ### Objective
 
@@ -4537,6 +4537,70 @@ into a general-purpose control plane.
   shipped Phase 4 planner / activation separation, or that replaces canonical
   prompt/review/checkpoint artifacts with transient runtime-only state
 - no rewrite of current shipped behavior just to make future external UI or
+  autonomy work easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10J - Artifact Dashboard Contract
+
+### Status
+
+Active. This slice defines the contract for the first external artifact
+dashboard surface, describing what the dashboard may show and how it must
+remain subordinate to canonical artifacts on disk.
+
+### Objective
+
+Define the Artifact Dashboard Contract for the agent loop. This slice should
+specify how review summaries, diff views, progress history, approval actions,
+token/cost reporting, and failure analytics should be surfaced in the external
+UI without replacing canonical artifacts on disk.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10J as active
+- `.agent-loop/phase-plan.md` records Phase 10I as closed history and contains
+  a `## Phase 10J - Artifact Dashboard Contract` section with concrete
+  objective, done criteria, and exclusions
+- the repository gains a documentation-first contract for how an external
+  artifact dashboard should surface review summaries, diff views, progress
+  history, approval actions, token/cost reporting, and failure analytics
+- the contract defines which dashboard values are canonical mirrors versus
+  advisory derived state, and preserves repo artifacts on disk as the source
+  of truth
+- the contract preserves the shipped CLI-first workflow and must not create a
+  new unbounded control plane or hidden mutation path
+- the contract preserves the shipped approval semantics, halt/refusal
+  vocabulary, checkpoint/resume behavior, controller-vs-target ownership
+  boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION`
+  activation gate
+- focused validation proves the dashboard contract is bounded, internally
+  consistent with Phase 10G through 10I, and reflected accurately in
+  planning/docs surfaces
+- `README.md` reflects that Phase 10J is active and that the artifact dashboard
+  contract is now the implementation focus
+
+### Exclusions
+
+- no artifact dashboard runtime implementation, analytics backend, diff viewer,
+  history explorer, or approval-action runtime beyond the contract itself
+  (Phase 10K)
+- no controlled-concurrency, overlap-safe detection, or concurrent
+  Codex/Claude execution work (Phase 10L / 10M / 10N)
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future dashboard or
   autonomy work easier
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
