@@ -12858,31 +12858,24 @@ def cmd_view_external_controls(
     return 0
 
 
-def _audit_external_ui_control_delegation(
-    controller_root: Path, control_id: str, library_function: str,
-) -> None:
-    """Phase 10I: append a single audit line to orchestrator.log
-    recording that the UI initiated a read-only library-function
-    delegation. The line preserves the existing
-    `[orchestrator] ...` audit-line format so the canonical
-    `.agent-loop/orchestrator.log` reconstruction continues to work
-    without UI-side log inspection.
+class ExternalUiControlRefusal(Exception):
+    """Phase 10I: non-canonical refusal raised when the external UI
+    control surface is asked to dispatch an operation it MUST NOT
+    perform (unknown control id, mutating control, copy-paste-only
+    read-only control, unwired library function).
+
+    Distinct from `HaltError` on purpose: the Phase 10G UI contract
+    forbids the UI from calling mutating helpers such as `_halt(...)`
+    or producing canonical halt records, so a UI-side refusal MUST
+    NOT be persisted into `.agent-loop/loop-state.json` and MUST NOT
+    write a canonical audit line. Callers (the `invoke-external-
+    control` CLI handler) surface this refusal as a stderr message
+    with a non-zero exit code; no canonical artifact is touched.
     """
-    log_path = controller_root / ".agent-loop" / "orchestrator.log"
-    try:
-        log_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(log_path, "a", encoding="utf-8") as fh:
-            fh.write(
-                f"[orchestrator] external UI control delegated: "
-                f"id={control_id!r} "
-                f"library_function={library_function!r}\n"
-            )
-    except OSError:
-        # Audit-line write failures are non-fatal; the canonical
-        # artifact that the delegated library function returned (the
-        # view dict) is still authoritative. Avoid raising so a
-        # read-only-mounted controller root does not break the UI.
-        pass
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
 
 
 def invoke_external_ui_control(
@@ -12891,8 +12884,7 @@ def invoke_external_ui_control(
     """Phase 10I: delegate a read-only external UI control.
 
     Looks up `control_id` in the closed `_EXTERNAL_UI_CONTROL_REGISTRY`.
-    Refuses fail-closed via `HaltError("halted_input_missing", ...)`
-    when:
+    Refuses (raises `ExternalUiControlRefusal`) when:
       - `control_id` is not in the registry
       - the matched control's `dispatch_mode != "library_call"`
         (mutating controls and copy-paste-only read-only controls
@@ -12901,10 +12893,15 @@ def invoke_external_ui_control(
         wired in this slice (defensive guard; the registry currently
         only names wired functions)
 
-    On success calls the named library function with `controller_root`,
-    writes a single audit line to `.agent-loop/orchestrator.log`, and
-    returns `{control_id, delegated_library_function, invoked: True,
-    result}` where `result` is the library function's return value.
+    On success calls the named library function with `controller_root`
+    and returns `{control_id, delegated_library_function, invoked:
+    True, result}` where `result` is the library function's return
+    value. Per the Phase 10G UI contract this surface NEVER writes
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, and NEVER invokes any throwing /
+    mutating helper such as `_halt(...)`. Successful and refused
+    invocations alike are observable only through stdout/stderr and
+    the returned-or-raised Python object.
     """
     spec: Optional[dict] = None
     for candidate in _EXTERNAL_UI_CONTROL_REGISTRY:
@@ -12912,20 +12909,18 @@ def invoke_external_ui_control(
             spec = candidate
             break
     if spec is None:
-        raise HaltError(
-            "halted_input_missing",
+        raise ExternalUiControlRefusal(
             f"unknown external UI control id: {control_id!r}; "
             f"valid ids: "
-            f"{sorted(c['id'] for c in _EXTERNAL_UI_CONTROL_REGISTRY)!r}",
+            f"{sorted(c['id'] for c in _EXTERNAL_UI_CONTROL_REGISTRY)!r}"
         )
     if spec["dispatch_mode"] != "library_call":
-        raise HaltError(
-            "halted_input_missing",
+        raise ExternalUiControlRefusal(
             f"control {control_id!r} has dispatch_mode="
             f"{spec['dispatch_mode']!r}; the external UI MUST NOT "
             f"dispatch this control on the operator's behalf "
             f"(Phase 10G CLI-only boundary). Copy and paste the "
-            f"shipped invocation manually: {spec['command']}",
+            f"shipped invocation manually: {spec['command']}"
         )
     func_name = spec["delegated_library_function"]
     if func_name == "build_external_ui_status_view":
@@ -12935,14 +12930,10 @@ def invoke_external_ui_control(
     elif func_name == "inspect_external_target_attach":
         result = inspect_external_target_attach(controller_root)
     else:
-        raise HaltError(
-            "halted_input_missing",
+        raise ExternalUiControlRefusal(
             f"control {control_id!r} names library function "
-            f"{func_name!r} which is not wired in this slice",
+            f"{func_name!r} which is not wired in this slice"
         )
-    _audit_external_ui_control_delegation(
-        controller_root, control_id, func_name,
-    )
     return {
         "control_id": control_id,
         "delegated_library_function": func_name,
@@ -12957,41 +12948,39 @@ def cmd_invoke_external_control(
     """Phase 10I operator runtime entry: delegate a read-only
     library-callable external UI control.
 
-    Refusals (unknown control id, copy-paste-only control id) route
-    through `_halt` so the structural refusal vocabulary stays
-    consistent with the shipped Phase 10F/10H halt paths. On success
-    prints a one-line success acknowledgement plus the canonical
-    result-summary line so the operator sees both the audit-line text
-    that was written AND a one-line read of the delegated function's
-    return value.
+    Per the Phase 10G UI contract this handler is purely
+    observational from the canonical-artifact perspective: it NEVER
+    writes `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER calls `_halt(...)` or any
+    other mutating helper. Refusals (unknown control id, copy-paste-
+    only control id, unwired library function) are surfaced as a
+    user-visible stderr line beginning with `[external-ui] REFUSED:`
+    and a non-zero exit code (2); no canonical halt status is
+    persisted. Successes print two stdout lines beginning with
+    `[external-ui]` reporting the delegated library function name
+    and the top-level keys of its return value.
     """
     controller_root = find_repo_root()
-    al = controller_root / ".agent-loop"
-    state_path = al / "loop-state.json"
-    log_path = al / "orchestrator.log"
     try:
         outcome = invoke_external_ui_control(
             controller_root, args.control,
         )
-    except HaltError as halt:
-        try:
-            data = load_loop_state(state_path)
-        except HaltError:
-            data = {}
-        return _halt(state_path, data, halt, log_path)
+    except ExternalUiControlRefusal as refusal:
+        print(
+            f"[external-ui] REFUSED: {refusal.reason}",
+            file=sys.stderr,
+        )
+        return 2
     print(
-        f"[orchestrator] external UI control delegated: "
+        f"[external-ui] control delegated: "
         f"id={outcome['control_id']!r} "
         f"library_function={outcome['delegated_library_function']!r}"
     )
-    # Surface a single line that names which top-level keys the
-    # delegated function returned, so the operator can verify the
-    # right surface was invoked without dumping the full payload.
     result = outcome["result"]
     if isinstance(result, dict):
         top_keys = sorted(result.keys())
         print(
-            f"[orchestrator] result keys (top-level): {top_keys!r}"
+            f"[external-ui] result keys (top-level): {top_keys!r}"
         )
     return 0
 
@@ -18973,17 +18962,20 @@ def build_parser() -> argparse.ArgumentParser:
             "delegate: dispatch a SINGLE read-only library-callable "
             "control (`view-external-status`, `view-external-"
             "controls`, `inspect-external-target`) via a direct "
-            "library-function call. Refuses fail-closed via `_halt` "
-            "with `halted_input_missing` when the requested control "
-            "id is unknown or when its `dispatch_mode != "
+            "library-function call. Refuses (non-zero exit, stderr "
+            "`[external-ui] REFUSED: ...`) when the requested "
+            "control id is unknown or when its `dispatch_mode != "
             "'library_call'` (mutating controls MUST be operator-"
             "CLI-invoked per the Phase 10G boundary; the refusal "
-            "message includes the shipped copy-paste invocation). On "
-            "success appends a single `[orchestrator] external UI "
-            "control delegated: ...` audit line to "
-            "`.agent-loop/orchestrator.log` and prints the audit-line "
-            "text plus a one-line summary of the delegated function's "
-            "top-level result keys."
+            "message includes the shipped copy-paste invocation). "
+            "Per the Phase 10G UI contract the surface NEVER writes "
+            "`.agent-loop/orchestrator.log`, NEVER mutates "
+            "`.agent-loop/loop-state.json`, NEVER invokes `_halt`, "
+            "and NEVER persists a canonical halt status; refusals "
+            "are visible only as a stderr line and a non-zero exit. "
+            "On success prints two `[external-ui]` stdout lines "
+            "reporting the delegated library function name and the "
+            "top-level keys of its return value."
         ),
     )
     invoke_external_control.add_argument(

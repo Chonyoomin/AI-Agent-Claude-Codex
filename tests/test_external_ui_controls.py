@@ -35,7 +35,10 @@ SCRIPTS = HERE.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import agent_loop  # noqa: E402
-from agent_loop import HaltError  # noqa: E402
+from agent_loop import (  # noqa: E402
+    ExternalUiControlRefusal,
+    HaltError,
+)
 
 
 CONTRACT_VERSION = "phase-3a-v2"
@@ -279,28 +282,37 @@ class InvokeLibraryDelegationTests(unittest.TestCase):
     def test_unknown_control_id_refuses(self) -> None:
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
-            with self.assertRaises(HaltError) as ctx:
+            with self.assertRaises(ExternalUiControlRefusal) as ctx:
                 agent_loop.invoke_external_ui_control(
                     controller, "no-such-control-xyzzy",
                 )
-            self.assertEqual(
-                ctx.exception.status, "halted_input_missing",
-            )
             self.assertIn(
                 "unknown external UI control id",
                 ctx.exception.reason,
             )
 
-    def test_mutating_control_refused_fail_closed(self) -> None:
+    def test_refusal_is_not_a_HaltError(self) -> None:
+        # Phase 10G UI contract: the UI MUST NOT call mutating /
+        # throwing helpers such as `_halt(...)`, and refusals MUST
+        # NOT produce a canonical halt record. Surfacing refusals as
+        # `HaltError` would risk a caller routing them through
+        # `_halt(...)`; the dedicated `ExternalUiControlRefusal`
+        # subclass keeps the two refusal vocabularies separate.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
-            with self.assertRaises(HaltError) as ctx:
+            with self.assertRaises(ExternalUiControlRefusal) as ctx:
                 agent_loop.invoke_external_ui_control(
                     controller, "run",
                 )
-            self.assertEqual(
-                ctx.exception.status, "halted_input_missing",
-            )
+            self.assertNotIsInstance(ctx.exception, HaltError)
+
+    def test_mutating_control_refused_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "controller")
+            with self.assertRaises(ExternalUiControlRefusal) as ctx:
+                agent_loop.invoke_external_ui_control(
+                    controller, "run",
+                )
             # Refusal message MUST carry the Phase 10G boundary
             # vocabulary AND the copy-paste invocation so the
             # operator sees both why they were refused and how to
@@ -319,13 +331,10 @@ class InvokeLibraryDelegationTests(unittest.TestCase):
         # subprocess to execute it either.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
-            with self.assertRaises(HaltError) as ctx:
+            with self.assertRaises(ExternalUiControlRefusal) as ctx:
                 agent_loop.invoke_external_ui_control(
                     controller, "status",
                 )
-            self.assertEqual(
-                ctx.exception.status, "halted_input_missing",
-            )
             self.assertIn(
                 "dispatch_mode='copy_paste'", ctx.exception.reason,
             )
@@ -384,23 +393,44 @@ class InvokeLibraryDelegationTests(unittest.TestCase):
             self.assertIsInstance(outcome["result"], dict)
             self.assertIn("attached", outcome["result"])
 
-    def test_successful_delegation_writes_one_audit_line(self) -> None:
+    def test_successful_delegation_does_not_write_orchestrator_log(
+        self,
+    ) -> None:
+        # Phase 10G UI contract: the UI MUST NOT write any canonical
+        # artifact it reads. `orchestrator.log` is a canonical
+        # artifact; a successful library-call delegation MUST NOT
+        # append a UI-side audit line to it.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
             log_path = (
                 controller / ".agent-loop" / "orchestrator.log"
             )
+            before = (
+                log_path.read_text(encoding="utf-8")
+                if log_path.exists() else None
+            )
             agent_loop.invoke_external_ui_control(
                 controller, "view-external-controls",
             )
-            text = log_path.read_text(encoding="utf-8")
-            self.assertIn(
-                "external UI control delegated", text,
+            after_exists = log_path.exists()
+            after = (
+                log_path.read_text(encoding="utf-8")
+                if after_exists else None
             )
-            self.assertIn("view-external-controls", text)
-            self.assertIn(
-                "build_external_ui_control_view", text,
-            )
+            if before is None:
+                self.assertFalse(
+                    after_exists,
+                    "successful library-call delegation must NOT "
+                    "create `.agent-loop/orchestrator.log` from "
+                    "scratch (Phase 10G UI contract)",
+                )
+            else:
+                self.assertEqual(
+                    before, after,
+                    "successful library-call delegation must NOT "
+                    "append to `.agent-loop/orchestrator.log` "
+                    "(Phase 10G UI contract)",
+                )
 
     def test_refusal_does_not_write_audit_line(self) -> None:
         with TemporaryDirectory() as td:
@@ -410,17 +440,43 @@ class InvokeLibraryDelegationTests(unittest.TestCase):
             )
             before = (
                 log_path.read_text(encoding="utf-8")
-                if log_path.exists() else ""
+                if log_path.exists() else None
             )
-            with self.assertRaises(HaltError):
+            with self.assertRaises(ExternalUiControlRefusal):
                 agent_loop.invoke_external_ui_control(
                     controller, "run",
                 )
+            after_exists = log_path.exists()
             after = (
                 log_path.read_text(encoding="utf-8")
-                if log_path.exists() else ""
+                if after_exists else None
             )
-            self.assertEqual(before, after)
+            if before is None:
+                self.assertFalse(after_exists)
+            else:
+                self.assertEqual(before, after)
+
+    def test_refusal_does_not_mutate_loop_state(self) -> None:
+        # The contract violation Codex flagged: a refused UI
+        # invocation MUST NOT persist `halted_input_missing` (or
+        # any other halt status) into `.agent-loop/loop-state.json`.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "controller")
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            before = state_path.read_text(encoding="utf-8")
+            with self.assertRaises(ExternalUiControlRefusal):
+                agent_loop.invoke_external_ui_control(
+                    controller, "run",
+                )
+            after = state_path.read_text(encoding="utf-8")
+            self.assertEqual(
+                before, after,
+                "refused library-call delegation must NOT mutate "
+                "`.agent-loop/loop-state.json` (Phase 10G UI "
+                "contract)",
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -528,13 +584,17 @@ class CmdInvokeExternalControlTests(unittest.TestCase):
         args = argparse.Namespace(
             cmd="invoke-external-control", control=control_id,
         )
-        buf = io.StringIO()
+        stdout_buf = io.StringIO()
+        stderr_buf = io.StringIO()
         with mock.patch.object(
             agent_loop, "find_repo_root", return_value=controller,
         ):
-            with redirect_stdout(buf):
-                rc = agent_loop.cmd_invoke_external_control(args)
-        return rc, buf.getvalue()
+            with redirect_stdout(stdout_buf):
+                with mock.patch.object(
+                    agent_loop.sys, "stderr", stderr_buf,
+                ):
+                    rc = agent_loop.cmd_invoke_external_control(args)
+        return rc, stdout_buf.getvalue(), stderr_buf.getvalue()
 
     def test_handler_wired(self) -> None:
         self.assertIn(
@@ -561,43 +621,113 @@ class CmdInvokeExternalControlTests(unittest.TestCase):
     def test_cli_exits_zero_for_library_call_control(self) -> None:
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
-            rc, output = self._run(
+            rc, stdout, _ = self._run(
                 controller, "view-external-controls",
             )
             self.assertEqual(rc, 0)
+            self.assertIn("[external-ui]", stdout)
             self.assertIn(
-                "external UI control delegated", output,
+                "control delegated", stdout,
             )
-            self.assertIn("view-external-controls", output)
+            self.assertIn("view-external-controls", stdout)
             self.assertIn(
-                "build_external_ui_control_view", output,
+                "build_external_ui_control_view", stdout,
             )
-            self.assertIn("result keys (top-level)", output)
+            self.assertIn("result keys (top-level)", stdout)
 
-    def test_cli_refuses_mutating_control_via_halt(self) -> None:
+    def test_cli_success_does_not_write_orchestrator_log(self) -> None:
+        # Phase 10G UI contract: the UI MUST NOT write any canonical
+        # artifact it reads. The CLI handler's success path also
+        # must not produce a canonical audit line, even though it
+        # prints to stdout.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
-            rc, _ = self._run(controller, "run")
-            self.assertEqual(rc, 2)
-            state = json.loads(
-                (controller / ".agent-loop" / "loop-state.json")
-                .read_text(encoding="utf-8"),
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
             )
+            log_exists_before = log_path.exists()
+            self._run(controller, "view-external-controls")
             self.assertEqual(
-                state["status"], "halted_input_missing",
+                log_path.exists(), log_exists_before,
+                "successful invoke-external-control must NOT create "
+                "or append to `.agent-loop/orchestrator.log`",
             )
 
-    def test_cli_refuses_unknown_control_via_halt(self) -> None:
+    def test_cli_success_does_not_mutate_loop_state(self) -> None:
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "controller")
-            rc, _ = self._run(controller, "no-such-control")
-            self.assertEqual(rc, 2)
-            state = json.loads(
-                (controller / ".agent-loop" / "loop-state.json")
-                .read_text(encoding="utf-8"),
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
             )
+            before = state_path.read_text(encoding="utf-8")
+            self._run(controller, "view-external-controls")
+            after = state_path.read_text(encoding="utf-8")
+            self.assertEqual(before, after)
+
+    def test_cli_refuses_mutating_control_with_nonzero_exit(
+        self,
+    ) -> None:
+        # Refusal contract: exit code 2 + stderr REFUSED message;
+        # NO canonical halt status persisted, NO orchestrator.log
+        # write.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "controller")
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
+            )
+            state_before = state_path.read_text(encoding="utf-8")
+            log_before_exists = log_path.exists()
+            rc, stdout, stderr = self._run(controller, "run")
+            self.assertEqual(rc, 2)
+            # Stderr carries the user-visible refusal message with
+            # the Phase 10G boundary vocabulary AND the copy-paste
+            # invocation.
+            self.assertIn("[external-ui] REFUSED", stderr)
+            self.assertIn(
+                "Phase 10G CLI-only boundary", stderr,
+            )
+            self.assertIn(
+                "python scripts/agent_loop.py run", stderr,
+            )
+            # Loop-state is unchanged.
+            state_after = state_path.read_text(encoding="utf-8")
+            self.assertEqual(state_before, state_after)
+            self.assertNotIn(
+                "halted_input_missing", state_after,
+                "refused invoke-external-control MUST NOT persist "
+                "`halted_input_missing` (or any halt status) into "
+                "`.agent-loop/loop-state.json` per the Phase 10G "
+                "UI contract",
+            )
+            # No new orchestrator.log written.
             self.assertEqual(
-                state["status"], "halted_input_missing",
+                log_path.exists(), log_before_exists,
+                "refused invoke-external-control MUST NOT create "
+                "`.agent-loop/orchestrator.log`",
+            )
+
+    def test_cli_refuses_unknown_control_with_nonzero_exit(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "controller")
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            state_before = state_path.read_text(encoding="utf-8")
+            rc, _, stderr = self._run(controller, "no-such-control")
+            self.assertEqual(rc, 2)
+            self.assertIn("[external-ui] REFUSED", stderr)
+            self.assertIn(
+                "unknown external UI control id", stderr,
+            )
+            state_after = state_path.read_text(encoding="utf-8")
+            self.assertEqual(state_before, state_after)
+            self.assertNotIn(
+                "halted_input_missing", state_after,
             )
 
 

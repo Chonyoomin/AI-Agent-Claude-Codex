@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10I - Minimal External UI Run/Resume Controls
+Phase 10J - Artifact Dashboard Contract
 
 ## Status
-Phase 10H is complete. Fix Phase A is complete. Phase 10I is now active as the next mainline slice focused on adding bounded external UI run/resume controls on top of the shipped read-only surface.
+Phase 10I is complete. Phase 10J is now active as the next mainline slice focused on defining the artifact dashboard contract for external UI work without replacing canonical artifacts.
 
 ## Task
-Implement Phase 10I for the agent loop. This slice should add bounded run/resume/inspect controls to the external UI on top of the shipped Phase 10H read-only surface, while preserving the CLI-first contract, canonical repo artifacts as the source of truth, and all existing approval and ownership boundaries.
+Define Phase 10J for the agent loop. This slice should specify how review summaries, diff views, progress history, approval actions, token/cost reporting, and failure analytics should be surfaced in the external UI without replacing canonical artifacts on disk.
 
 ## Notes
 
-- preserve the shipped Phase 10H read-only UI boundaries and add only the bounded run/resume/inspect controls required for this slice
-- keep the UI advisory-vs-canonical boundary intact: repo artifacts on disk remain the source of truth
-- do not widen into artifact-dashboard, controlled-concurrency, MCP, RAG, GitHub, or policy-pack work
+- keep the dashboard contract documentation-first in this slice; do not jump straight to runtime implementation
+- preserve the shipped advisory-vs-canonical boundary so dashboards remain derived views over canonical artifacts
+- do not widen into dashboard runtime implementation, controlled-concurrency, MCP, RAG, GitHub, or policy-pack work
