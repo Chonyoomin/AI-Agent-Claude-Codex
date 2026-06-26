@@ -75,6 +75,22 @@ not drive cycle execution by default.
      manual-handoff fallback applies).
    - `AGENT_LOOP_CLAUDE_MODEL` / `AGENT_LOOP_CODEX_MODEL` (optional
      model-id overrides).
+
+   For the concrete adapter contract (what each command must do, which
+   canonical artifact it must produce, success-vs-failure semantics, and
+   the mtime-must-advance freshness rule that rejects stale or backdated
+   wrapper writes), see [docs/local-adapter-contract.md](local-adapter-contract.md).
+   Starting-point wrappers ship under
+   [scripts/claude-wrapper.sh.template](../scripts/claude-wrapper.sh.template)
+   and [scripts/codex-wrapper.sh.template](../scripts/codex-wrapper.sh.template);
+   copy them to a personal location, replace the marked invocation block
+   with your local Claude/Codex CLI command, and point the env vars at
+   the copies. Configuring these wrappers enables automatic local
+   Claude/Codex invocation within the existing phase loop; it does NOT
+   enable fully autonomous PRD-to-product execution (the Phase 4 planner
+   / activator separation, the `APPROVED_FOR_ACTIVATION` token, the
+   Phase 5 approval modes, and the Phase 9G human acceptance gate
+   continue to fire as before).
 4. Decide the evidence-collection commands `scripts/run_checks.sh` runs:
    - `AGENT_LOOP_TEST_CMD`, `AGENT_LOOP_LINT_CMD`,
      `AGENT_LOOP_TYPECHECK_CMD`, `AGENT_LOOP_BUILD_CMD` (env-var

@@ -1,0 +1,48 @@
+#!/usr/bin/env bash
+# Template wrapper for AGENT_LOOP_CODEX_CMD (Fix Phase A).
+#
+# Copy this file to a personal location (e.g. ~/bin/codex-wrapper.sh),
+# adjust the CODEX_CMD invocation for your local Codex CLI install,
+# then export:
+#
+#   export AGENT_LOOP_CODEX_CMD="bash /absolute/path/to/your/copy.sh"
+#
+# Contract (see docs/local-adapter-contract.md for the authoritative
+# version):
+#   - The orchestrator invokes this command with cwd already set to the
+#     repository root. Do NOT change directory.
+#   - Stdin is empty for Codex (the orchestrator does not pipe a prompt;
+#     Codex is expected to read .agent-loop/ artifacts directly).
+#   - The wrapper MUST drive the local Codex CLI in a way that causes
+#     Codex to overwrite .agent-loop/codex-review.md with a fresh review
+#     for the current cycle.
+#   - The wrapper's exit code is forwarded to the orchestrator. Exit 0
+#     means "wrapper believed it succeeded"; the orchestrator additionally
+#     requires the review file's mtime to ADVANCE past the pre-invocation
+#     snapshot. A successful exit that leaves the review unchanged,
+#     missing, or backdated will be rejected as a stale/no-op invocation.
+#   - The wrapper MUST NOT parse Codex's stdout/stderr for the verdict.
+#     The canonical-artifact model (.agent-loop/codex-review.md as the
+#     source of truth) is preserved.
+#   - The wrapper MUST NOT perform any Git automation, mutate
+#     orchestrator-owned artifacts beyond letting Codex write the
+#     review, or attempt to advance loop-state directly.
+set -euo pipefail
+
+# ----- REPLACE THIS BLOCK -----
+# Replace the following exec with the actual invocation of your local
+# Codex CLI. The invocation MUST cause Codex to write a fresh
+# .agent-loop/codex-review.md before the wrapper exits.
+#
+# Example (illustrative; adjust to your installed CLI):
+#
+#   exec codex review --read-evidence .agent-loop/ \
+#                     --write-review .agent-loop/codex-review.md
+#
+# The orchestrator does not depend on which CLI flags are used; it only
+# requires that .agent-loop/codex-review.md is updated with a fresh
+# mtime by the time the wrapper exits.
+echo "[codex-wrapper.sh.template] No invocation configured." >&2
+echo "[codex-wrapper.sh.template] Copy this template, edit the marked block," >&2
+echo "[codex-wrapper.sh.template] and set AGENT_LOOP_CODEX_CMD to the copy." >&2
+exit 1

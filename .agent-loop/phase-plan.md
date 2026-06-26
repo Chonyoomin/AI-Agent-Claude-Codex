@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10H - Minimal External UI Read-Only Status Surface)
+Phase 10 - Future Product Features (sub-phase: Phase 10I - Minimal External UI Run/Resume Controls)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4371,9 +4371,11 @@ implemented.
 
 ### Status
 
-Active. Implementation slice under Phase 10 focused on shipping the first
-bounded read-only external UI surface that satisfies the approved 10G contract
-without introducing a mutating control plane or competing source of truth.
+Complete and restored as the current mainline reference point after the
+approved Fix Phase A remediation. Phase 10H originally closed with
+`APPROVED_FOR_HUMAN_REVIEW` after the runtime, focused tests, contract
+documentation, and README were aligned to the shipped read-only external UI
+surface and its full CLI-only boundary.
 
 ### Objective
 
@@ -4426,6 +4428,116 @@ adding run/resume controls or any canonical-artifact writes from the UI.
   prompt/review/checkpoint artifacts with transient runtime-only state
 - no rewrite of current shipped behavior just to make future external-workspace
   support easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Fix Phase A - Automatic Local Claude/Codex Invocation Reliability
+
+### Status
+
+Complete and approved by human as a targeted remediation slice. This work
+closed the gap between the shipped subprocess adapter seams and reliable
+local automatic Claude/Codex invocation without renumbering the primary
+roadmap phases.
+
+### Objective
+
+Define and validate the real local adapter contract for
+`AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`, provide first-party
+wrapper support or templates for invoking both CLIs automatically, and
+prove that the shipped intra-phase loop can run without manual prompt
+transfer when those adapter commands are configured correctly.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, and `.agent-loop/current-phase.md`
+  identify Fix Phase A as active
+- `ROADMAP.md` contains the Fix Phase A remediation entry describing the
+  scope of automatic local Claude/Codex invocation reliability
+- the repository documents the success/failure contract for
+  `AGENT_LOOP_CLAUDE_CMD` and `AGENT_LOOP_CODEX_CMD`
+- the repository ships first-party wrapper support or wrapper templates
+  sufficient to drive local Claude and Codex CLI invocation without
+  manual prompt transfer
+- focused validation proves the orchestrator fails closed when adapter
+  commands do not produce fresh canonical artifacts and succeeds when
+  correctly configured wrappers do
+- operator docs clearly distinguish automatic local Claude/Codex
+  invocation from the still-separate fully autonomous PRD-to-product mode
+
+### Exclusions
+
+- no fully autonomous phase-to-phase PRD execution
+- no automatic next-phase activation behavior that bypasses the shipped
+  Phase 4 planner / activation separation
+- no mutating external UI work beyond the completed 10H read-only slice
+- no concurrent Codex/Claude overlap execution work
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no rewrites of `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 10I - Minimal External UI Run/Resume Controls
+
+### Status
+
+Active. This slice builds on the shipped Phase 10H read-only external UI
+surface by adding bounded operator run/resume/inspect controls while
+preserving the CLI-first contract, canonical artifact source-of-truth model,
+and existing approval / ownership boundaries.
+
+### Objective
+
+Implement the Minimal External UI Run/Resume Controls for the agent loop.
+This slice should add bounded external UI controls for the already-shipped
+runtime entrypoints needed to inspect state and trigger run/resume behavior,
+while keeping repo artifacts on disk authoritative and refusing any widening
+into a general-purpose control plane.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10I as active
+- `.agent-loop/phase-plan.md` records Phase 10H and Fix Phase A as closed
+  history and contains a `## Phase 10I - Minimal External UI Run/Resume
+  Controls` section with concrete objective, done criteria, and exclusions
+- the repository adds bounded external UI controls for the already-shipped
+  run/resume/inspect flows on top of the Phase 10H read-only status surface
+- the UI preserves the shipped CLI-first workflow and makes clear which
+  operations are being delegated to existing runtime surfaces rather than
+  inventing a new control plane
+- the UI preserves the shipped artifact/source-of-truth boundary: repo
+  artifacts on disk remain authoritative over any UI cache, session state,
+  rendered status summary, or in-memory view model
+- the UI preserves the shipped approval semantics, halt/refusal vocabulary,
+  checkpoint/resume behavior, controller-vs-target ownership boundaries, and
+  the Phase 4C activator + `APPROVED_FOR_ACTIVATION` activation gate
+- focused validation proves the new bounded control surface is consistent
+  with the approved Phase 10G/10H boundaries and is reflected accurately in
+  planning/docs/runtime surfaces
+- `README.md` reflects that Phase 10I is active and that bounded external UI
+  run/resume controls are now the implementation focus
+
+### Exclusions
+
+- no artifact dashboard, analytics, diff viewer, history explorer, or
+  broader dashboard work (Phase 10J / 10K)
+- no controlled-concurrency, overlap-safe detection, or concurrent
+  Codex/Claude execution work (Phase 10L / 10M / 10N)
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future external UI or
+  autonomy work easier
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,

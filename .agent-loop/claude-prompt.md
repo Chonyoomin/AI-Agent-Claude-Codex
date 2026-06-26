@@ -1,31 +1,22 @@
 # Claude Code Task
 
 ## Phase
-Phase 10H - Minimal External UI Read-Only Status Surface
+Phase 10I - Minimal External UI Run/Resume Controls
 
 ## Objective
-Implement the Minimal External UI Read-Only Status Surface for the agent loop. This slice should add a thin external UI that can select an attached target, read the approved controller-side and target-side canonical artifacts, render active phase/task/status and related read-only views, and preserve the 10G advisory-vs-canonical, CLI-only, and source-of-truth boundaries without yet adding run/resume controls or any canonical-artifact writes from the UI.
+Implement Phase 10I for the agent loop. This slice should add bounded run/resume/inspect controls to the external UI on top of the shipped Phase 10H read-only surface, while preserving the CLI-first contract, canonical repo artifacts as the source of truth, and all existing approval and ownership boundaries.
 
 ## Context
-Phase 10 continues the future product-features track. Phase 10G completed the documentation-first UI contract slice for external-workspace mode, and Phase 10H is the first runtime slice that must satisfy that contract: a bounded read-only external UI viewer over approved canonical artifacts, without introducing mutating UI controls, a competing source of truth, or any bypass of the shipped CLI-first workflow.
+Phase 10I builds directly on the shipped Phase 10H read-only external UI status surface. The goal is to let an operator trigger the already-shipped run/resume/inspect flows from the external UI in a bounded way without turning the UI into a general-purpose control plane or displacing repo artifacts on disk as the source of truth.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10H as active
-- `.agent-loop/phase-plan.md` records Phase 10G as closed history and contains a `## Phase 10H - Minimal External UI Read-Only Status Surface` section with concrete objective, done criteria, and exclusions
-- implement the bounded read-only external UI runtime in repo code:
-  - allow selecting an attached target and loading only the approved controller-side and target-side canonical artifacts from the 10G contract
-  - render active phase/task/status and related read-only views from those artifacts
-  - preserve the canonical mirror vs advisory-derived-state boundary in the rendered UI
-  - preserve CLI-only operations as non-executing UI affordances only, such as copyable commands or guidance text
-  - preserve refusal behavior and source-of-truth precedence when artifacts are missing, stale, or malformed
-- preserve the shipped artifact/source-of-truth boundary:
-  - controller-owned attach metadata remains controller-owned
-  - target-side canonical artifacts remain target-owned
-  - the read-only UI must not silently activate a target-side phase
-  - the read-only UI must not invent advisory state as canonical truth
-- preserve the shipped CLI-first workflow, planner/activation boundaries, approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, cycle thresholds, and repo-artifact source-of-truth model
-- update `README.md` so it reflects that Phase 10H is active and that the minimal external UI read-only status surface is now the implementation focus
-- add focused validation sufficient to prove the read-only UI is bounded, consistent with the approved 10G contract, and non-drifting
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10I as active
+- `.agent-loop/phase-plan.md` records Phase 10H and Fix Phase A as closed history and contains a `## Phase 10I - Minimal External UI Run/Resume Controls` section with concrete objective, done criteria, and exclusions
+- add bounded external UI controls for the already-shipped run/resume/inspect flows on top of the Phase 10H read-only status surface
+- preserve the shipped CLI-first workflow and make clear which UI actions are delegating to existing runtime surfaces rather than inventing a new control plane
+- preserve the shipped artifact/source-of-truth boundary so repo artifacts on disk remain authoritative over any UI cache, session state, rendered status summary, or in-memory view model
+- preserve the shipped approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` activation gate
+- add focused validation proving the new bounded control surface is consistent with the approved Phase 10G/10H boundaries and reflected accurately in planning/docs/runtime surfaces
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -35,16 +26,13 @@ Phase 10 continues the future product-features track. Phase 10G completed the do
 - Do not rewrite unrelated files.
 - Do not delete files unless explicitly instructed.
 - Prefer small, testable, reversible changes.
-- Add or update tests when behavior changes.
+- Add or update focused tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no mutating external UI control, dashboard action surface, or run/resume implementation beyond the bounded read-only viewer
-- no target-side cycle dispatch, autonomous multi-target orchestration, or external control plane that can mutate canonical artifacts outside the shipped CLI surfaces
-- no concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
-- no automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
-- no regression of the shipped Phase 5 review, strict, bounded autonomous, reconciliation, or prompt-bootstrap behavior
-- no regression of the shipped Phase 6 memory, checkpoint, continuation, runtime-adapter, or LangChain support-layer behavior
-- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no artifact dashboard, analytics, diff viewer, history explorer, or broader dashboard work
+- no controlled-concurrency, overlap-safe detection, or concurrent Codex/Claude execution work
+- no MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
+- no automatic next-phase activation behavior that bypasses the shipped Phase 4 planner / activation separation
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body

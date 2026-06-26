@@ -20,52 +20,48 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10H - Minimal External UI Read-Only Status Surface
+Phase 10I - Minimal External UI Run/Resume Controls
 
 ## Phase Status
 
-Phase 10G (Minimal External UI Contract) is closed after Codex review approval and human progression. Phase 10H is now active as the next implementation slice under Phase 10. This sub-phase should implement the first bounded read-only external UI surface that satisfies the approved 10G contract without introducing a mutating control plane, UI-side source of truth, or any bypass of the shipped CLI and approval boundaries.
+Phase 10H is complete. Fix Phase A is complete. Phase 10I is now active as the next mainline slice focused on adding bounded external UI run/resume controls on top of the shipped read-only surface.
 
 ## Active Task
 
-Implement the Minimal External UI Read-Only Status Surface for the agent loop. This slice should add a thin external UI that can select an attached target, read the approved controller-side and target-side canonical artifacts, render active phase/task/status and related read-only views, and preserve the 10G advisory-vs-canonical, CLI-only, and source-of-truth boundaries without yet adding run/resume controls or any canonical-artifact writes from the UI.
+Implement Phase 10I for the agent loop. This slice should add bounded run/resume/inspect controls to the external UI on top of the shipped Phase 10H read-only surface, while preserving the CLI-first contract, canonical repo artifacts as the source of truth, and all existing approval and ownership boundaries.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10H as active
-- `.agent-loop/phase-plan.md` records Phase 10G as closed history and contains a `## Phase 10H - Minimal External UI Read-Only Status Surface` section with `### Status` / `### Objective` / `### Definition of done` / `### Exclusions`
-- the repository implements the first bounded external UI runtime slice described by the approved 10G contract rather than remaining documentation-only
-- the UI reads only the approved controller-side and target-side canonical artifacts, renders phase/task/status and related read-only views from those artifacts, and marks derived values as advisory rather than canonical
-- the UI preserves the shipped CLI-first workflow by rendering CLI-only operations as non-executing guidance or copyable commands rather than dispatching them
-- the UI preserves the shipped artifact/source-of-truth boundary: repo artifacts on disk remain authoritative over any UI cache, session state, rendered status summary, or in-memory view model
-- the UI preserves the shipped approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` activation gate
-- focused validation proves the new read-only UI surface is bounded, consistent with the approved 10G contract, and reflected accurately in planning/docs/runtime surfaces
-- `README.md` reflects that Phase 10H is active and that the minimal external UI read-only status surface is now the implementation focus
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10I as active
+- `.agent-loop/phase-plan.md` records Phase 10H and Fix Phase A as closed history and contains a `## Phase 10I - Minimal External UI Run/Resume Controls` section with concrete objective, done criteria, and exclusions
+- the repository adds bounded external UI controls for run/resume/inspect on top of the shipped Phase 10H read-only status surface
+- the UI preserves the shipped CLI-first and canonical-artifact-first model: repo artifacts on disk remain authoritative, and the UI must not become an unbounded alternate control plane
+- the UI preserves the existing approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` gate
+- focused validation proves the new control surface is bounded, reflects runtime state accurately, and does not widen into unrelated dashboard, concurrency, MCP, or autonomy work
 
 ## Next-Phase Gate
 
-Do not begin mutating external UI controls or broader control-plane expansion after Phase 10H until:
+Do not treat the external UI as a general-purpose control plane until:
 
-- this Phase 10H slice receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the read-only external UI surface as concrete enough to build the first bounded control slice on
-- Codex updates the canonical phase/task artifacts to activate the next Phase 10 sub-phase rather than treating roadmap bullets as implementation authority on their own
+- Phase 10I receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the bounded run/resume control surface
+- any broader dashboard or concurrency work is activated through its own later phase instead of being folded into this slice
 
 ## Out Of Scope For Current Phase
 
-- any mutating external UI control, dashboard action surface, or run/resume implementation beyond the bounded read-only viewer (Phase 10I and later)
-- any target-side cycle dispatch, autonomous multi-target orchestration, or external control plane that can mutate canonical artifacts outside the shipped CLI surfaces
-- any concurrent Codex/Claude execution implementation, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
-- any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation, or that replaces canonical prompt/review/checkpoint artifacts with transient runtime-only state
-- any rewrite of current shipped behavior just to make future external-workspace support easier
+- any mutating external UI control or broader Phase 10 UI expansion
+- any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation
+- any claim that fully autonomous PRD-to-product execution is already solved
+- any external-workspace target dispatch, concurrent Codex/Claude overlap execution, MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
+- any rewrite of current shipped behavior just to make future autonomy work easier
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
 - inventing unreviewable autonomous behavior that the repo does not currently ship just to simplify the implementation
-- collapsing future Phase 10 implementation work into this planning slice
-- MCP support, external UI, concurrent-agent operation, or implementation of end-to-end fully autonomous PRD-to-product execution (future phases)
-- recursive invocation of the locally installed `claude` CLI
+- collapsing later Phase 10 dashboard, concurrency, MCP, RAG, GitHub, or policy-pack work into this slice
+- implementation of end-to-end fully autonomous PRD-to-product execution
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - any change to the Phase 2A Evidence Collection Contract
 - any change to the Phase 3A Orchestrator Contract body
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
-- adding any project-wide CI suite to the repository beyond focused retry/re-probe coverage
+- adding any project-wide CI suite beyond focused validation for the bounded UI control surface
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

@@ -637,6 +637,66 @@ Phase 10 is organized as future sub-phase candidates:
 - Phase 10Z - Human-Facing Memory Vault Export Initial Slice: implement the first bounded export path for human-readable memory/decision surfaces
 - Phase 10AA - Multi-Agent Framework Evaluation Beyond The Native Loop: evaluate CrewAI, LangGraph, LangChain orchestration patterns, or similar delegated-role frameworks only after the adapter boundary, durable memory, external-workspace control, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
 
+## Fix Phases - Targeted Remediation Track
+
+Use fix phases for narrowly scoped corrective work that should be tracked
+like a phase without renumbering or disrupting the primary roadmap.
+These are remediation slices against gaps discovered in already-shipped or
+already-planned behavior.
+
+### Fix Phase A - Automatic Local Claude/Codex Invocation Reliability
+
+Close the gap between the shipped adapter seams and the desired real-world
+"Claude and Codex work automatically now" workflow on a local machine.
+
+Build:
+
+- a concrete operator-facing contract for `AGENT_LOOP_CLAUDE_CMD` and
+  `AGENT_LOOP_CODEX_CMD`, including what each command must do, what files
+  it must write, which exit-code semantics the orchestrator depends on,
+  and what counts as success vs stale/no-op invocation
+- first-party wrapper scripts or documented wrapper templates for local
+  Claude CLI and Codex CLI invocation so the orchestrator can drive both
+  tools without manual copy/paste
+- validation and refusal coverage for missing binaries, non-writing
+  wrapper commands, stale artifact writes, and mismatched working
+  directory / repo-root assumptions
+- an operator setup path that proves the existing orchestrator can run
+  intra-phase Claude implementation -> evidence capture -> Codex review ->
+  fix prompt regeneration -> Claude fix continuation automatically when
+  both adapter commands are configured
+- clear separation between:
+  - automatic local agent invocation within the existing phase loop
+  - the still-later fully autonomous PRD-to-product top-level mode
+- documentation updates that explain exactly what becomes automatic after
+  Fix Phase A and what still remains human-gated
+
+Design rules:
+
+- Fix Phase A must not renumber, replace, or invalidate the existing
+  Phase 9 or Phase 10 roadmap structure
+- the orchestrator must continue to fail closed when an adapter command
+  exits successfully but does not produce a fresh canonical artifact
+- wrapper execution must preserve the existing canonical-artifact model:
+  `.agent-loop/claude-summary.md` and `.agent-loop/codex-review.md`
+  remain the source of truth, not stdout parsing or transient wrapper
+  output
+- this fix phase must not silently claim that fully autonomous
+  phase-to-phase PRD execution is solved; it is only about making the
+  existing agent-invocation loop actually self-driving on a configured
+  local machine
+- no Git automation is introduced
+
+Success:
+
+- a configured local machine can run the existing loop without manual
+  chat-to-chat prompt transfer between Claude and Codex
+- the orchestrator can automatically invoke both agents through stable
+  local adapter commands and detect when either invocation failed to
+  produce the required fresh artifact
+- the repo clearly documents the difference between "automatic local
+  Claude/Codex invocation" and "fully autonomous PRD-to-product mode"
+
 Success:
 
 - future ideas are preserved without expanding the MVP scope
