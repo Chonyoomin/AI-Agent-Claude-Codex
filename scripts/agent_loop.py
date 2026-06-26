@@ -12986,6 +12986,705 @@ def cmd_invoke_external_control(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10K: Artifact Dashboard Initial Slice
+#
+# First runtime that satisfies the Phase 10J Artifact Dashboard
+# Contract (`docs/artifact-dashboard-contract.md`). Assembles the six
+# required dashboard surfaces (Review Summaries, Diff Views, Progress
+# History, Approval Actions, Token / Cost Reporting, Failure
+# Analytics) as a per-call view model assembled from the approved
+# Phase 10J canonical artifact read set.
+#
+# Contract preservation (Phase 10J + inherited Phase 10G boundaries):
+#   - never writes any canonical artifact (no orchestrator.log
+#     append, no loop-state.json mutation, no `_halt(...)` call)
+#   - distinguishes canonical mirrors (verbatim renderings of on-
+#     disk artifact values, attributed to the source path) from
+#     advisory derived state (dashboard-computed values explicitly
+#     tagged `[advisory]`)
+#   - mutating CLI subcommands remain copy-paste-only; no additional
+#     library-callable controls are introduced beyond the three the
+#     Phase 10I `_EXTERNAL_UI_CONTROL_REGISTRY` already pins
+#   - missing artifacts surface as advisory "not yet present" state;
+#     unreadable artifacts (OSError) surface as advisory "unreadable"
+#     state (the Phase 10J refusal contract distinguishes these and
+#     this runtime preserves the distinction without raising)
+#   - no dashboard-side cache / DB / session / event queue / identity
+#     token; every call re-reads from disk
+# ---------------------------------------------------------------------------
+
+EXTERNAL_DASHBOARD_VIEW_SIGNAL_VERSION = "phase-10k-v1"
+
+EXTERNAL_DASHBOARD_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any dashboard "
+    "rendering of them. This view is a per-call read-only snapshot "
+    "of the Phase 10J-approved canonical artifact set; no dashboard "
+    "cache, session state, or rendered summary is authoritative. "
+    "Each surface separates canonical mirrors (verbatim from a "
+    "named source artifact) from advisory derived state (computed "
+    "from those mirrors, tagged `[advisory]`). Mutating CLI "
+    "subcommands are surfaced via the shipped Phase 10I "
+    "`view-external-controls` registry as copy-paste-only "
+    "affordances; the dashboard does NOT execute them and the "
+    "dashboard does NOT introduce additional library-callable "
+    "controls beyond the three the Phase 10I registry already "
+    "pins."
+)
+
+EXTERNAL_DASHBOARD_SURFACE_IDS = (
+    "review_summaries",
+    "diff_views",
+    "progress_history",
+    "approval_actions",
+    "token_cost",
+    "failure_analytics",
+)
+
+# Orchestrator-log tail size for the Progress History surface. Bounded
+# so a long-lived controller does not balloon the rendered view; the
+# canonical record remains the full on-disk log.
+_DASHBOARD_LOG_TAIL_LINES = 10
+# Per-evidence-file tail size for the Failure Analytics surface.
+_DASHBOARD_EVIDENCE_TAIL_LINES = 5
+
+
+def _dashboard_canonical_mirror(path: Path) -> dict:
+    """Phase 10K: read a canonical artifact as a bounded source-of-
+    truth mirror entry. Returns `{path, present, byte_size, error}`
+    where `error` is a string when the file exists but is unreadable
+    (the Phase 10J refusal contract requires distinguishing
+    "missing" from "unreadable").
+    """
+    repo_rel = path.name
+    try:
+        if not path.exists():
+            return {
+                "path": repo_rel, "present": False,
+                "byte_size": None, "error": None,
+            }
+        return {
+            "path": repo_rel, "present": True,
+            "byte_size": path.stat().st_size, "error": None,
+        }
+    except OSError as exc:
+        return {
+            "path": repo_rel, "present": True,
+            "byte_size": None, "error": str(exc),
+        }
+
+
+def _dashboard_read_text_excerpt(
+    path: Path, max_lines: int,
+) -> dict:
+    """Phase 10K: read the trailing `max_lines` of a text artifact for
+    bounded rendering. Returns `{present, line_count, tail_lines,
+    error}`. Missing files surface as `present=False` with no error.
+    Unreadable / decoding-failed files surface as `error=<str>`.
+    """
+    try:
+        if not path.exists():
+            return {
+                "present": False, "line_count": 0,
+                "tail_lines": (), "error": None,
+            }
+        text = path.read_text(encoding="utf-8", errors="replace")
+        lines = text.splitlines()
+        tail = tuple(lines[-max_lines:]) if max_lines > 0 else ()
+        return {
+            "present": True, "line_count": len(lines),
+            "tail_lines": tail, "error": None,
+        }
+    except OSError as exc:
+        return {
+            "present": True, "line_count": 0,
+            "tail_lines": (), "error": str(exc),
+        }
+
+
+def _dashboard_load_loop_state_snapshot(state_path: Path) -> dict:
+    """Phase 10K: load loop-state.json as a canonical mirror with
+    soft-failure semantics. Returns `{present, error, mirror}` where
+    `mirror` is a dict of the canonical loop-state fields (or None
+    when the file is missing / malformed). Uses the shipped
+    `load_loop_state(...)` validator; HaltError is converted to a
+    soft "error" string rather than re-raised (the dashboard MUST NOT
+    propagate validator HaltErrors as canonical halt persistence).
+    """
+    if not state_path.exists():
+        return {
+            "present": False, "error": None, "mirror": None,
+        }
+    try:
+        data = load_loop_state(state_path)
+    except HaltError as halt:
+        return {
+            "present": True, "error": halt.reason, "mirror": None,
+        }
+    if not isinstance(data, dict):
+        return {
+            "present": True,
+            "error": "loop-state top-level is not a dict",
+            "mirror": None,
+        }
+    mirror = {
+        field: data.get(field)
+        for field in (
+            "phase", "sub_phase", "task", "status",
+            "cycle_count", "max_cycles", "last_verdict",
+            "approval_mode", "awaiting_human_for",
+            "claude_version", "codex_version",
+        )
+    }
+    return {"present": True, "error": None, "mirror": mirror}
+
+
+# ---- per-surface builders ----
+
+def _build_review_summaries_surface(controller_root: Path) -> dict:
+    """Phase 10K dashboard surface 1: Review Summaries.
+
+    Source artifacts: `.agent-loop/claude-summary.md`,
+    `.agent-loop/codex-review.md`, `.agent-loop/fix-prompt.md`.
+    Canonical mirrors: per-artifact presence + byte size + tail
+    excerpt. Advisory derived state: review timeline ordered by
+    last-modified UTC timestamp; current_verdict extracted from the
+    most-recent codex-review.md tail.
+    """
+    al = controller_root / ".agent-loop"
+    paths = {
+        "claude_summary": al / "claude-summary.md",
+        "codex_review": al / "codex-review.md",
+        "fix_prompt": al / "fix-prompt.md",
+    }
+    mirrors = {
+        key: _dashboard_canonical_mirror(path)
+        for key, path in paths.items()
+    }
+    excerpts = {
+        key: _dashboard_read_text_excerpt(
+            path, _DASHBOARD_LOG_TAIL_LINES,
+        )
+        for key, path in paths.items()
+    }
+    # Advisory timeline: order by mtime (oldest -> newest) when present.
+    timeline = []
+    for key, path in paths.items():
+        try:
+            if path.exists():
+                timeline.append((key, path.stat().st_mtime))
+        except OSError:
+            continue
+    timeline.sort(key=lambda entry: entry[1])
+    timeline_ids = tuple(key for key, _ in timeline)
+    # Advisory current_verdict: scan the codex-review excerpt for
+    # one of the three shipped verdict tokens. Canonical record
+    # remains the on-disk file.
+    advisory_verdict = None
+    codex_excerpt = excerpts["codex_review"]
+    if codex_excerpt["present"] and not codex_excerpt["error"]:
+        try:
+            full = (
+                paths["codex_review"]
+                .read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            full = ""
+        for token in (
+            "APPROVED_FOR_HUMAN_REVIEW",
+            "NEEDS_FIXES",
+            "FAILED_REQUIRES_HUMAN",
+        ):
+            if token in full:
+                advisory_verdict = token
+                break
+    return {
+        "surface_id": "review_summaries",
+        "label": "Review Summaries",
+        "canonical_mirrors": mirrors,
+        "canonical_excerpts": excerpts,
+        "advisory": {
+            "review_timeline_ordered_oldest_first": timeline_ids,
+            "current_verdict": advisory_verdict,
+        },
+    }
+
+
+def _build_diff_views_surface(controller_root: Path) -> dict:
+    """Phase 10K dashboard surface 2: Diff Views.
+
+    Source artifacts: `.agent-loop/git-diff.patch`,
+    `.agent-loop/git-status.log`. Canonical mirrors: per-file
+    presence + byte size + tail excerpt. Advisory derived state:
+    per-file changed-line count from the patch tail; the canonical
+    record is the on-disk patch.
+    """
+    al = controller_root / ".agent-loop"
+    paths = {
+        "git_diff_patch": al / "git-diff.patch",
+        "git_status_log": al / "git-status.log",
+    }
+    mirrors = {
+        key: _dashboard_canonical_mirror(path)
+        for key, path in paths.items()
+    }
+    excerpts = {
+        key: _dashboard_read_text_excerpt(
+            path, _DASHBOARD_LOG_TAIL_LINES,
+        )
+        for key, path in paths.items()
+    }
+    # Advisory: count "+" / "-" lines in the diff excerpt as a
+    # changed-lines hint. Canonical record is the patch itself.
+    added = 0
+    removed = 0
+    diff_excerpt = excerpts["git_diff_patch"]
+    if diff_excerpt["present"] and not diff_excerpt["error"]:
+        try:
+            full = (
+                paths["git_diff_patch"]
+                .read_text(encoding="utf-8", errors="replace")
+            )
+        except OSError:
+            full = ""
+        for line in full.splitlines():
+            if line.startswith("+") and not line.startswith("+++"):
+                added += 1
+            elif line.startswith("-") and not line.startswith("---"):
+                removed += 1
+    return {
+        "surface_id": "diff_views",
+        "label": "Diff Views",
+        "canonical_mirrors": mirrors,
+        "canonical_excerpts": excerpts,
+        "advisory": {
+            "added_line_count": added,
+            "removed_line_count": removed,
+        },
+    }
+
+
+def _build_progress_history_surface(controller_root: Path) -> dict:
+    """Phase 10K dashboard surface 3: Progress History.
+
+    Source artifacts: `.agent-loop/loop-state.json` (canonical state
+    fields), `.agent-loop/phase-plan.md` (append-only phase history),
+    `.agent-loop/orchestrator.log` (audit log tail). Canonical
+    mirrors as named; advisory derived state includes a phase-plan
+    section-header timeline and a cycle progress hint.
+    """
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    plan_path = al / "phase-plan.md"
+    log_path = al / "orchestrator.log"
+    loop_state = _dashboard_load_loop_state_snapshot(state_path)
+    plan_mirror = _dashboard_canonical_mirror(plan_path)
+    plan_excerpt = _dashboard_read_text_excerpt(
+        plan_path, _DASHBOARD_LOG_TAIL_LINES,
+    )
+    log_mirror = _dashboard_canonical_mirror(log_path)
+    log_excerpt = _dashboard_read_text_excerpt(
+        log_path, _DASHBOARD_LOG_TAIL_LINES,
+    )
+    # Advisory: list of phase-plan ## section headers, bounded.
+    phase_plan_headers: tuple = ()
+    if plan_path.exists():
+        try:
+            text = plan_path.read_text(
+                encoding="utf-8", errors="replace",
+            )
+            phase_plan_headers = tuple(
+                line for line in text.splitlines()
+                if line.startswith("## ")
+            )[-_DASHBOARD_LOG_TAIL_LINES:]
+        except OSError:
+            phase_plan_headers = ()
+    # Advisory cycle progress hint.
+    cycle_progress = None
+    if loop_state["mirror"]:
+        cycle_count = loop_state["mirror"].get("cycle_count")
+        max_cycles = loop_state["mirror"].get("max_cycles")
+        if (
+            isinstance(cycle_count, int)
+            and isinstance(max_cycles, int)
+            and max_cycles > 0
+        ):
+            cycle_progress = f"{cycle_count} of {max_cycles} used"
+    return {
+        "surface_id": "progress_history",
+        "label": "Progress History",
+        "canonical_mirrors": {
+            "loop_state": loop_state,
+            "phase_plan": plan_mirror,
+            "orchestrator_log": log_mirror,
+        },
+        "canonical_excerpts": {
+            "phase_plan": plan_excerpt,
+            "orchestrator_log": log_excerpt,
+        },
+        "advisory": {
+            "phase_plan_section_headers_tail": phase_plan_headers,
+            "cycle_progress_hint": cycle_progress,
+        },
+    }
+
+
+def _build_approval_actions_surface(controller_root: Path) -> dict:
+    """Phase 10K dashboard surface 4: Approval Actions.
+
+    Source artifacts: `.agent-loop/proposed-phase.md` (Phase 4B
+    planner output; carries the `APPROVED_FOR_ACTIVATION` token in
+    a human-edited `## Approval` section), `.agent-loop/final-
+    acceptance.json` (Phase 9G acceptance artifact). The shipped
+    Phase 10I `_EXTERNAL_UI_CONTROL_REGISTRY` is reused for
+    approval-relevant copy-paste-only CLI affordances; the dashboard
+    does NOT introduce additional controls.
+    """
+    al = controller_root / ".agent-loop"
+    proposed = al / "proposed-phase.md"
+    acceptance = al / "final-acceptance.json"
+    proposed_mirror = _dashboard_canonical_mirror(proposed)
+    proposed_excerpt = _dashboard_read_text_excerpt(
+        proposed, _DASHBOARD_LOG_TAIL_LINES,
+    )
+    acceptance_mirror = _dashboard_canonical_mirror(acceptance)
+    # Advisory: is the proposed phase token-approved? Computed from
+    # the literal `APPROVED_FOR_ACTIVATION` token presence on its
+    # own line; canonical record remains the proposed-phase.md
+    # body.
+    token_present = False
+    if proposed.exists():
+        try:
+            text = proposed.read_text(
+                encoding="utf-8", errors="replace",
+            )
+        except OSError:
+            text = ""
+        for line in text.splitlines():
+            if line.strip() == "APPROVED_FOR_ACTIVATION":
+                token_present = True
+                break
+    # Advisory CLI affordance list: copy-paste-only commands for the
+    # three approval-relevant subcommands the Phase 10J contract
+    # names. Carries the Phase 10I `dispatch_mode='copy_paste'`
+    # classification by reuse; introduces NO new library-callable
+    # control (the dashboard MUST NOT widen the library-call surface
+    # beyond the Phase 10I registry per the contract).
+    approval_affordances = [
+        {
+            "id": "plan",
+            "label": (
+                "Generate a Phase 4B phase proposal (planner only)"
+            ),
+            "command": "python scripts/agent_loop.py plan",
+            "dispatch_mode": "copy_paste",
+            "category": "mutating",
+        },
+        {
+            "id": "activate",
+            "label": (
+                "Activate the next phase "
+                "(consume APPROVED_FOR_ACTIVATION)"
+            ),
+            "command": "python scripts/agent_loop.py activate",
+            "dispatch_mode": "copy_paste",
+            "category": "mutating",
+        },
+        {
+            "id": "record-final-acceptance",
+            "label": "Record final human acceptance",
+            "command": (
+                "python scripts/agent_loop.py "
+                "record-final-acceptance --accepted-by <NAME>"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "mutating",
+        },
+    ]
+    return {
+        "surface_id": "approval_actions",
+        "label": "Approval Actions",
+        "canonical_mirrors": {
+            "proposed_phase": proposed_mirror,
+            "final_acceptance": acceptance_mirror,
+        },
+        "canonical_excerpts": {
+            "proposed_phase": proposed_excerpt,
+        },
+        "advisory": {
+            "approved_for_activation_token_present": token_present,
+            "approval_affordances": approval_affordances,
+        },
+    }
+
+
+def _build_token_cost_surface(controller_root: Path) -> dict:
+    """Phase 10K dashboard surface 5: Token / Cost Reporting.
+
+    Source artifacts: the Phase 9F capacity-retry-state file
+    (`.agent-loop/capacity-retry-state.json`) when present; loop-
+    state's `cycle_count` / `max_cycles` / `status` fields. The
+    canonical halt enforcement remains the shipped Phase 6F / 9F
+    runtime; the dashboard NEVER computes or estimates token cost
+    from agent stdout, NEVER enforces a cost budget, NEVER pipes
+    metrics to an external backend.
+    """
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    retry_path = al / "capacity-retry-state.json"
+    loop_state = _dashboard_load_loop_state_snapshot(state_path)
+    retry_mirror = _dashboard_canonical_mirror(retry_path)
+    # Advisory cycle-progress hint (same field as Progress History
+    # surface; the dashboard MAY render both since each surface is
+    # independently auditable per the Phase 10J contract).
+    cycle_progress = None
+    approaching_cap = False
+    if loop_state["mirror"]:
+        cycle_count = loop_state["mirror"].get("cycle_count")
+        max_cycles = loop_state["mirror"].get("max_cycles")
+        if (
+            isinstance(cycle_count, int)
+            and isinstance(max_cycles, int)
+            and max_cycles > 0
+        ):
+            cycle_progress = f"{cycle_count} of {max_cycles} used"
+            approaching_cap = cycle_count >= max_cycles - 1
+    return {
+        "surface_id": "token_cost",
+        "label": "Token / Cost Reporting",
+        "canonical_mirrors": {
+            "loop_state_cycle_fields": loop_state,
+            "capacity_retry_state": retry_mirror,
+        },
+        "advisory": {
+            "cycle_progress_hint": cycle_progress,
+            "approaching_cycle_cap": approaching_cap,
+        },
+    }
+
+
+def _build_failure_analytics_surface(controller_root: Path) -> dict:
+    """Phase 10K dashboard surface 6: Failure Analytics.
+
+    Source artifacts: `.agent-loop/codex-review.md` (latest verdict
+    + issues list), the four Phase 2A/2B evidence files
+    (test-output.log, lint-output.log, typecheck-output.log,
+    build-output.log) tail excerpts. Advisory derived state: a
+    "failure category" tag derived from which evidence file the
+    issue references; the canonical issue record remains the per-
+    cycle codex-review.md.
+    """
+    al = controller_root / ".agent-loop"
+    review_path = al / "codex-review.md"
+    review_mirror = _dashboard_canonical_mirror(review_path)
+    evidence_paths = {
+        "test_output": al / "test-output.log",
+        "lint_output": al / "lint-output.log",
+        "typecheck_output": al / "typecheck-output.log",
+        "build_output": al / "build-output.log",
+    }
+    evidence_mirrors = {
+        key: _dashboard_canonical_mirror(path)
+        for key, path in evidence_paths.items()
+    }
+    evidence_excerpts = {
+        key: _dashboard_read_text_excerpt(
+            path, _DASHBOARD_EVIDENCE_TAIL_LINES,
+        )
+        for key, path in evidence_paths.items()
+    }
+    # Advisory: scan the codex-review for the issues marker and
+    # surface a count. Canonical record remains the on-disk file.
+    issue_count = None
+    if review_path.exists():
+        try:
+            text = review_path.read_text(
+                encoding="utf-8", errors="replace",
+            )
+            issue_count = sum(
+                1 for line in text.splitlines()
+                if line.startswith("### Issue ")
+            )
+        except OSError:
+            issue_count = None
+    # Advisory failure-category tags: which evidence files are
+    # present and non-empty (a heuristic suggesting where to look,
+    # not a canonical issue classifier).
+    failure_categories: list = []
+    for key, mirror in evidence_mirrors.items():
+        size = mirror.get("byte_size")
+        if isinstance(size, int) and size > 0:
+            failure_categories.append(key)
+    return {
+        "surface_id": "failure_analytics",
+        "label": "Failure Analytics",
+        "canonical_mirrors": {
+            "codex_review": review_mirror,
+            "evidence_files": evidence_mirrors,
+        },
+        "canonical_excerpts": {
+            "evidence_files": evidence_excerpts,
+        },
+        "advisory": {
+            "issue_count_in_latest_review": issue_count,
+            "evidence_files_with_content": tuple(
+                sorted(failure_categories),
+            ),
+        },
+    }
+
+
+def build_artifact_dashboard_view(controller_root: Path) -> dict:
+    """Phase 10K: assemble the bounded artifact dashboard view model.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10k-v1`
+      - `controller_path_canonical`: resolved repo root
+      - `surfaces`: dict keyed by `EXTERNAL_DASHBOARD_SURFACE_IDS`,
+        each mapped to its per-surface builder's return value
+      - `precedence_note`: literal Phase 10J precedence reminder
+
+    Never writes, never mutates, never executes a CLI subprocess,
+    never invokes `_halt(...)` or any other mutating helper. Missing
+    artifacts surface as advisory "not yet present" state; unreadable
+    artifacts surface as advisory "unreadable" state. Each surface is
+    independently auditable: a reviewer can trace any rendered value
+    back to a named source artifact or to an explicit advisory tag.
+    """
+    surfaces = {
+        "review_summaries": _build_review_summaries_surface(
+            controller_root,
+        ),
+        "diff_views": _build_diff_views_surface(controller_root),
+        "progress_history": _build_progress_history_surface(
+            controller_root,
+        ),
+        "approval_actions": _build_approval_actions_surface(
+            controller_root,
+        ),
+        "token_cost": _build_token_cost_surface(controller_root),
+        "failure_analytics": _build_failure_analytics_surface(
+            controller_root,
+        ),
+    }
+    return {
+        "view_signal_version": (
+            EXTERNAL_DASHBOARD_VIEW_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "surfaces": surfaces,
+        "precedence_note": EXTERNAL_DASHBOARD_PRECEDENCE_NOTE,
+    }
+
+
+def _dashboard_render_surface_lines(surface: dict) -> list:
+    """Phase 10K: format one dashboard surface as text lines. Each
+    canonical mirror is attributed to its source artifact; each
+    advisory value is tagged `[advisory]`. The output is intended
+    for a CLI text-rendering surface (Phase 7C style).
+    """
+    lines = []
+    lines.append(
+        f"=== surface: {surface['surface_id']} "
+        f"({surface['label']}) ==="
+    )
+    mirrors = surface.get("canonical_mirrors", {})
+    for key, mirror in mirrors.items():
+        if (
+            isinstance(mirror, dict)
+            and "path" in mirror
+            and "present" in mirror
+        ):
+            lines.append(
+                f"  [canonical mirror] {key} (.agent-loop/"
+                f"{mirror['path']}): present={mirror['present']} "
+                f"byte_size={mirror['byte_size']} "
+                f"error={mirror['error']!r}"
+            )
+        elif (
+            isinstance(mirror, dict)
+            and "mirror" in mirror
+        ):
+            lines.append(
+                f"  [canonical mirror] {key} (.agent-loop/"
+                f"loop-state.json): present={mirror['present']} "
+                f"error={mirror['error']!r}"
+            )
+            if mirror.get("mirror"):
+                m = mirror["mirror"]
+                lines.append(
+                    f"    loop-state fields: phase={m.get('phase')!r}"
+                    f" sub_phase={m.get('sub_phase')!r} "
+                    f"status={m.get('status')!r} "
+                    f"cycle_count={m.get('cycle_count')!r} "
+                    f"approval_mode={m.get('approval_mode')!r}"
+                )
+        elif isinstance(mirror, dict):
+            # Nested dict of mirrors (e.g. evidence_files).
+            for sub_key, sub_mirror in mirror.items():
+                if (
+                    isinstance(sub_mirror, dict)
+                    and "path" in sub_mirror
+                ):
+                    lines.append(
+                        f"  [canonical mirror] {key}.{sub_key} "
+                        f"(.agent-loop/{sub_mirror['path']}): "
+                        f"present={sub_mirror['present']} "
+                        f"byte_size={sub_mirror['byte_size']} "
+                        f"error={sub_mirror['error']!r}"
+                    )
+    advisory = surface.get("advisory", {})
+    for adv_key, adv_value in advisory.items():
+        lines.append(
+            f"  [advisory] {adv_key}: {adv_value!r}"
+        )
+    return lines
+
+
+def _dashboard_render_view_lines(view: dict) -> list:
+    """Phase 10K: format the full dashboard view as text lines."""
+    lines = []
+    lines.append(
+        f"[artifact-dashboard] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"find_repo_root): {view['controller_path_canonical']}"
+    )
+    for surface_id in EXTERNAL_DASHBOARD_SURFACE_IDS:
+        surface = view["surfaces"].get(surface_id)
+        if surface is None:
+            continue
+        lines.extend(_dashboard_render_surface_lines(surface))
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def cmd_view_artifact_dashboard(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10K operator runtime entry: print the artifact
+    dashboard view.
+
+    Phase 7C reporter pattern: always exits 0 on report content.
+    Per the Phase 10J + Phase 10G contracts this handler NEVER
+    writes any canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`, and
+    NEVER dispatches a CLI subprocess.
+    """
+    controller_root = find_repo_root()
+    view = build_artifact_dashboard_view(controller_root)
+    for line in _dashboard_render_view_lines(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -18990,6 +19689,27 @@ def build_parser() -> argparse.ArgumentParser:
             "ids are refused fail-closed."
         ),
     )
+    sub.add_parser(
+        "view-artifact-dashboard",
+        help=(
+            "Phase 10K artifact dashboard initial slice: build and "
+            "print the bounded six-surface dashboard view (Review "
+            "Summaries, Diff Views, Progress History, Approval "
+            "Actions, Token / Cost Reporting, Failure Analytics) "
+            "assembled from the Phase 10J-approved canonical "
+            "artifact read set. Each surface separates canonical "
+            "mirrors (verbatim values from a named source artifact) "
+            "from advisory derived state (computed values tagged "
+            "`[advisory]`). Phase 7C reporter pattern: always exits "
+            "0; never mutates any canonical artifact; never appends "
+            "to `.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "dispatches a CLI subprocess; reuses the Phase 10I "
+            "control registry for approval-relevant copy-paste-only "
+            "CLI affordances without introducing any new "
+            "library-callable control."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -19258,6 +19978,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-external-status": cmd_view_external_status,
     "view-external-controls": cmd_view_external_controls,
     "invoke-external-control": cmd_invoke_external_control,
+    "view-artifact-dashboard": cmd_view_artifact_dashboard,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
