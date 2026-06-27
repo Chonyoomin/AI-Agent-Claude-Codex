@@ -105,6 +105,15 @@ DESKTOP_APP_CONTRACT_PATH = (
     REPO_ROOT / "docs" / "desktop-app-contract.md"
 )
 PHASE_10L_DOC_PATHS = (DESKTOP_APP_CONTRACT_PATH,)
+# Phase 10O - MCP Integration Contract And Safe Tool Boundary
+# documentation-only slice. Defines how a future MCP runtime
+# (Phase 10P read-only assistance; Phase 10Q+ mutation-capable
+# actions) MAY consume MCP tools without bypassing the shipped
+# evidence-review / approval-gate / ownership-boundary invariants.
+MCP_INTEGRATION_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "mcp-integration-contract.md"
+)
+PHASE_10O_DOC_PATHS = (MCP_INTEGRATION_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
     PHASE_8A_DOC_PATHS
     + PHASE_8B_DOC_PATHS
@@ -115,6 +124,7 @@ ALL_OPERATOR_DOC_PATHS = (
     + PHASE_10G_DOC_PATHS
     + PHASE_10J_DOC_PATHS
     + PHASE_10L_DOC_PATHS
+    + PHASE_10O_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -4777,6 +4787,625 @@ class DesktopAppContractRoadmapRoutingAlignmentTests(
                 f"phrase {phrase!r}; per ROADMAP.md, "
                 f"controlled-concurrency is at Phase 10AB / 10AC "
                 f"/ 10AD and Phase 10N is the Action Bridge slice",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10O - MCP Integration Contract And Safe Tool Boundary
+# documentation-only slice.
+#
+# These tests pin the canonical section headers, the contract's
+# distinction from shipped surfaces, the three closed tool categories
+# (read_only_advisory, browser_app_inspection, deferred_mutating),
+# the read-only-vs-deferred-mutating boundary, the per-tool descriptor
+# fields, the browser/app inspection hook safety boundary, the policy-
+# rule hook additive-only boundary, the CLI-only operation list, the
+# refusal cases, the evidence-review preservation, and the safety /
+# approval / audit boundaries the future MCP runtime must preserve.
+# The shipped Phase 10G - 10N surfaces remain authoritative; this
+# contract layers on top of them.
+# ---------------------------------------------------------------------------
+class McpIntegrationContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10O: the MCP integration contract doc must exist on
+    disk, be non-empty, be ASCII-only, and carry the canonical
+    section headers a future Phase 10P implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = MCP_INTEGRATION_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10O MCP integration contract doc at "
+            f"{self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/mcp-integration-contract.md contains "
+                f"non-ASCII bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# MCP Integration Contract And Safe Tool Boundary",
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## MCP Tool Categories",
+            "## MCP Tool Ownership And Routing",
+            "## Read-Only Tool Boundary",
+            "## Deferred Mutation-Capable Tool Boundary",
+            "## Browser/App Inspection Hook Boundary",
+            "## Policy Rule Hook Boundary",
+            "## Advisory-Vs-Canonical Mirror Rule",
+            "## Operations That Remain CLI-Only",
+            "## MCP Identity And Operator Attribution",
+            "## Refusal Behavior",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Evidence-Review Preservation",
+            "## Dependencies On Later Phase 10 Slices",
+            "## Out Of Scope For Phase 10O",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/mcp-integration-contract.md missing "
+                f"required section header {header!r}",
+            )
+
+
+class McpIntegrationContractPinsThreeToolCategoriesTests(
+    unittest.TestCase,
+):
+    """The contract MUST enumerate exactly three closed tool
+    categories so a Phase 10P implementer can classify every MCP
+    tool without further design decisions.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_three_required_category_headers(
+        self,
+    ) -> None:
+        for header in (
+            "### 1. Read-Only Advisory Context",
+            "### 2. Browser/App Inspection (Read-Only)",
+            "### 3. Deferred Mutation-Capable Tools",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"mcp-integration contract missing required "
+                f"category header {header!r}",
+            )
+
+    def test_contract_pins_canonical_category_id_strings(
+        self,
+    ) -> None:
+        # The per-tool descriptor's `category` field MUST carry one
+        # of three closed string values; the contract surfaces them
+        # in code-fence backticks so a Phase 10P implementer can
+        # grep for the canonical identifiers.
+        for category_id in (
+            "read_only_advisory",
+            "browser_app_inspection",
+            "deferred_mutating",
+        ):
+            self.assertIn(
+                category_id, self.collapsed,
+                f"mcp-integration contract does not pin canonical "
+                f"category id {category_id!r}",
+            )
+
+    def test_contract_defers_mutation_capable_to_phase_10q_plus(
+        self,
+    ) -> None:
+        # Phase 10O explicitly defers every mutation-capable tool to
+        # Phase 10Q+; the Phase 10P initial slice MUST refuse them.
+        for fragment in (
+            "Phase 10Q",
+            "MUST refuse fail-closed unconditionally",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not defer "
+                f"mutation-capable tools via {fragment!r}",
+            )
+
+
+class McpIntegrationContractPinsPerToolDescriptorTests(
+    unittest.TestCase,
+):
+    """Every MCP tool MUST be described by a closed-field
+    descriptor matching the Phase 10I control-registry pattern. The
+    contract pins the minimum required field set.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_required_descriptor_fields(self) -> None:
+        for field in (
+            "id",
+            "category",
+            "dispatch_mode",
+            "delegated_phase_10i_control_id",
+            "mutation_eligible",
+            "audit_note",
+            "refusal_reason_template",
+        ):
+            self.assertIn(
+                field, self.collapsed,
+                f"mcp-integration contract does not name required "
+                f"per-tool descriptor field {field!r}",
+            )
+
+    def test_contract_pins_mutation_eligible_false_in_phase_10p(
+        self,
+    ) -> None:
+        # The Phase 10P initial slice MUST refuse any tool with
+        # `mutation_eligible=True`; the contract pins this with
+        # ALWAYS `false` language.
+        self.assertIn(
+            "ALWAYS `false` in the Phase 10P initial slice",
+            self.collapsed,
+        )
+
+
+class McpIntegrationContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The contract MUST preserve every shipped hard stop the
+    Phase 10A - 10N surfaces already pin: no Git automation in
+    either root, the Phase 4C activator + `APPROVED_FOR_ACTIVATION`
+    token, the Phase 9G acceptance gate, no auto-fill of operator
+    identity, no canonical-artifact writes from the MCP runtime
+    process, no MCP-side databases / session stores / event queues
+    / identity tokens, the Phase 10I three-control library-callable
+    cap, and the evidence-review preservation.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        for fragment in (
+            "commit, push, tag, branch, stash, reset, checkout",
+            "BOTH roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not preserve the "
+                f"no-Git-automation boundary via {fragment!r}",
+            )
+
+    def test_contract_preserves_approved_for_activation(self) -> None:
+        for fragment in (
+            "APPROVED_FOR_ACTIVATION",
+            "Phase 4C activator",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not preserve the "
+                f"activation gate via {fragment!r}",
+            )
+
+    def test_contract_preserves_phase_9g_acceptance_gate(self) -> None:
+        for fragment in (
+            "Phase 9G",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not preserve the "
+                f"Phase 9G acceptance gate via {fragment!r}",
+            )
+
+    def test_contract_refuses_silent_identity_autofill(self) -> None:
+        for fragment in (
+            "MUST NOT auto-fill",
+            "$USER",
+            "whoami",
+            "browser session",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not refuse silent "
+                f"identity auto-fill via {fragment!r}",
+            )
+
+    def test_contract_forbids_mcp_side_state_stores(self) -> None:
+        for fragment in (
+            "MUST NOT introduce an MCP-side database",
+            "MUST NOT introduce an MCP-side notification queue",
+            "MUST NOT introduce an MCP-side identity",
+            "MUST NOT introduce an MCP-side memory store",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not forbid "
+                f"competing MCP-side state via {fragment!r}",
+            )
+
+    def test_contract_preserves_phase_10i_library_call_cap(
+        self,
+    ) -> None:
+        for fragment in (
+            "MUST NOT introduce additional library-callable "
+            "controls",
+            "view-external-status",
+            "view-external-controls",
+            "inspect-external-target",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not cap the "
+                f"library-callable surface at the Phase 10I three "
+                f"via {fragment!r}",
+            )
+
+    def test_contract_marks_runtime_as_not_yet_implemented(
+        self,
+    ) -> None:
+        # Phase 10O is documentation-only; the doc must NOT
+        # silently promise the MCP runtime as shipped.
+        self.assertIn(
+            "ZERO MCP integration paths", self.collapsed,
+            "mcp-integration contract does not mark MCP runtime "
+            "as not-yet-shipped",
+        )
+        for fragment in (
+            "Phase 10P",
+            "Phase 10Q",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not locate the "
+                f"future MCP runtime in {fragment!r}",
+            )
+
+
+class McpIntegrationContractPinsBrowserInspectionBoundaryTests(
+    unittest.TestCase,
+):
+    """The browser/app inspection hook MUST satisfy specific
+    safety boundaries: explicit per-session operator authorization,
+    no credential/cookie/session-token capture, no synthetic input
+    injection, no OS-level event-stream subscription, no
+    cross-session persistence.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_requires_explicit_session_authorization(
+        self,
+    ) -> None:
+        for fragment in (
+            "explicitly authorize each inspection session",
+            "MUST NOT auto-enable inspection",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not require "
+                f"explicit inspection authorization via "
+                f"{fragment!r}",
+            )
+
+    def test_contract_forbids_credential_capture(self) -> None:
+        for fragment in (
+            "no cookies",
+            "no browser session tokens",
+            "no OS-level credentials",
+            "no SSH keys",
+            "no API keys",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not forbid "
+                f"credential capture via {fragment!r}",
+            )
+
+    def test_contract_forbids_synthetic_input_injection(self) -> None:
+        for fragment in (
+            "MUST NOT inject any value back",
+            "no synthetic mouse events",
+            "no synthetic keystrokes",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not forbid "
+                f"synthetic input injection via {fragment!r}",
+            )
+
+    def test_contract_forbids_cross_session_persistence(self) -> None:
+        self.assertIn(
+            "MUST NOT persist inspection captures across",
+            self.collapsed,
+        )
+
+
+class McpIntegrationContractPinsPolicyHookAdditiveBoundaryTests(
+    unittest.TestCase,
+):
+    """The policy-rule hook MUST be additive only - a policy rule
+    MAY refuse a tool the base contract would allow, but MUST NOT
+    approve a tool the base contract refuses.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_additive_only_policy_boundary(
+        self,
+    ) -> None:
+        for fragment in (
+            "policy rules are ADDITIVE only",
+            "MUST NOT approve a tool the base contract refuses",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not pin additive-"
+                f"only policy boundary via {fragment!r}",
+            )
+
+    def test_contract_forbids_policy_widening_of_categories(
+        self,
+    ) -> None:
+        for fragment in (
+            "MUST NOT widen the read-only / deferred-mutation "
+            "boundary",
+            "cannot promote a `deferred_mutating` tool to a "
+            "permitted category",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not forbid policy-"
+                f"driven category widening via {fragment!r}",
+            )
+
+
+class McpIntegrationContractPinsEvidenceReviewPreservationTests(
+    unittest.TestCase,
+):
+    """MCP-fetched values MUST NOT substitute for the shipped
+    Phase 2A evidence files, the shipped git diff/status capture,
+    Claude's summary, or Codex's review.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_forbids_substituting_shipped_evidence(
+        self,
+    ) -> None:
+        for fragment in (
+            ".agent-loop/test-output.log",
+            ".agent-loop/lint-output.log",
+            ".agent-loop/typecheck-output.log",
+            ".agent-loop/build-output.log",
+            ".agent-loop/git-diff.patch",
+            ".agent-loop/git-status.log",
+            ".agent-loop/claude-summary.md",
+            ".agent-loop/codex-review.md",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not name canonical "
+                f"evidence artifact {fragment!r}",
+            )
+
+    def test_contract_requires_mcp_advisory_provenance_tag(
+        self,
+    ) -> None:
+        for fragment in (
+            "[mcp-advisory]",
+            "tagged `[mcp-advisory]`",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not require the "
+                f"`[mcp-advisory]` provenance tag via {fragment!r}",
+            )
+
+
+class McpIntegrationContractPinsCliOnlyOperationsTests(
+    unittest.TestCase,
+):
+    """The contract MUST enumerate the shipped mutating CLI
+    subcommands the MCP runtime is not allowed to silently trigger.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_mutating_operations(self) -> None:
+        for op in (
+            "attach-external-target",
+            "detach-external-target",
+            "verify-external-target",
+            "plan",
+            "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                op, self.collapsed,
+                f"mcp-integration contract does not enumerate "
+                f"mutating CLI subcommand {op!r}",
+            )
+
+    def test_contract_names_readonly_reporter_operations(
+        self,
+    ) -> None:
+        for op in (
+            "inspect-external-target",
+            "inspect-artifacts",
+            "status",
+            "evaluate-final-acceptance",
+            "validate-artifacts",
+            "check-state",
+            "view-artifact-dashboard",
+            "view-desktop-actions",
+        ):
+            self.assertIn(
+                op, self.collapsed,
+                f"mcp-integration contract does not enumerate "
+                f"read-only CLI reporter {op!r}",
+            )
+
+
+class McpIntegrationContractInternalConsistencyWithPriorPhasesTests(
+    unittest.TestCase,
+):
+    """The Phase 10O contract MUST stay internally consistent with
+    every prior contract / surface it layers on top of (Phase 10G
+    UI contract, Phase 10J dashboard contract, Phase 10L desktop-
+    app contract, and the shipped Phase 10H / 10I / 10K / 10M /
+    10N runtime surfaces).
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_references_external_ui_contract(self) -> None:
+        for fragment in (
+            "docs/external-ui-contract.md",
+            "Phase 10G",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not reference the "
+                f"Phase 10G UI contract via {fragment!r}",
+            )
+
+    def test_contract_references_dashboard_contract(self) -> None:
+        for fragment in (
+            "Phase 10J",
+            "Phase 10K",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not reference the "
+                f"Phase 10J/10K dashboard work via {fragment!r}",
+            )
+
+    def test_contract_references_desktop_app_contract(self) -> None:
+        # The contract uses compact range phrasing
+        # (`Phase 10L - 10N`, `Phase 10M - 10N`) so the short
+        # labels `10L` / `10M` / `10N` are what survive collapse;
+        # plus the explicit `docs/desktop-app-contract.md` link
+        # pins the source artifact.
+        for fragment in (
+            "docs/desktop-app-contract.md",
+            "10L",
+            "10M",
+            "10N",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not reference the "
+                f"Phase 10L/M/N desktop work via {fragment!r}",
+            )
+
+    def test_contract_references_phase_2a_evidence(self) -> None:
+        for fragment in (
+            "Phase 2A Evidence Collection Contract",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not reference the "
+                f"Phase 2A evidence-collection contract via "
+                f"{fragment!r}",
+            )
+
+    def test_contract_references_phase_6_memory_tree(self) -> None:
+        for fragment in (
+            ".agent-loop/memory/",
+            "Phase 6",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-integration contract does not reference the "
+                f"Phase 6 memory tree via {fragment!r}",
+            )
+
+
+class McpIntegrationContractReadmeAlignmentTests(unittest.TestCase):
+    """README.md MUST surface Phase 10O as active and route readers
+    at `docs/mcp-integration-contract.md`.
+    """
+
+    def setUp(self) -> None:
+        readme = REPO_ROOT / "README.md"
+        self.text = _read(readme)
+
+    def test_readme_routes_at_mcp_integration_contract(self) -> None:
+        self.assertIn(
+            "docs/mcp-integration-contract.md", self.text,
+            "README.md does not route readers at the Phase 10O "
+            "MCP integration contract doc",
+        )
+
+    def test_readme_marks_phase_10o_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10O", self.text,
+            "README.md does not name Phase 10O as a current focus",
+        )
+        self.assertIn(
+            "MCP Integration Contract", self.text,
+            "README.md does not name the Phase 10O sub-phase title",
+        )
+
+    def test_readme_marks_phase_10o_as_documentation_only(
+        self,
+    ) -> None:
+        for fragment in (
+            "documentation form only",
+            "Phase 10P",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10O paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
+            )
+
+    def test_readme_routes_advanced_mcp_to_later_phases(
+        self,
+    ) -> None:
+        # Future MCP runtime capabilities must be routed to Phase
+        # 10P / 10Q+ so a reader does not assume they ship in 10O.
+        for fragment in (
+            "Phase 10P",
+            "Phase 10Q",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10O paragraph does not route "
+                f"future MCP capability to {fragment!r}",
             )
 
 
