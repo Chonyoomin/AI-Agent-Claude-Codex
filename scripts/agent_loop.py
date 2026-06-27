@@ -14262,12 +14262,36 @@ def cmd_launch_desktop_app(args: argparse.Namespace) -> int:
         root validation failure: exit 2 with a stderr refusal
         message. On `ImportError` (Tk unavailable): exit 2 with a
         stderr message pointing at `--headless`.
+
+    `--controller-root <PATH>` is REQUIRED in every mode per the
+    Phase 10L Controller-Root Selection Flow; omitting it returns
+    exit 2 with an explicit refusal message. The shell MUST NOT
+    silently pick a default root.
     """
     root_arg = getattr(args, "controller_root", None)
-    if root_arg:
-        controller_root = Path(root_arg).resolve()
-    else:
-        controller_root = find_repo_root()
+    if not root_arg:
+        # Phase 10L "Controller-Root Selection Flow" requires the
+        # desktop shell to require explicit operator selection of
+        # the controller root before rendering any canonical
+        # artifact. The shell MUST NOT silently pick a default
+        # root from a recent-history list, the OS-level current
+        # working directory, an environment variable, an
+        # auto-discovered repo root, or a packaging-time configured
+        # path. Refuse fail-closed with exit 2 when --controller-
+        # root is omitted; the operator must supply it explicitly.
+        print(
+            "[desktop-app] REFUSED: --controller-root is required "
+            "per the Phase 10L Desktop App Shell Contract's "
+            "Controller-Root Selection Flow; the desktop shell "
+            "MUST NOT silently pick a default root from an "
+            "auto-discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Supply the controller "
+            "root explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
     validation = validate_desktop_controller_root(controller_root)
     if not validation["valid"]:
         missing = list(validation["missing_markers"])
@@ -20362,12 +20386,15 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help=(
-            "Path to the controller repository the desktop shell "
-            "renders against. Defaults to the auto-discovered repo "
-            "root. The Phase 10L contract requires explicit operator "
-            "selection in real desktop use; this CLI flag is the "
-            "scriptable equivalent of the contract's native folder "
-            "picker."
+            "REQUIRED path to the controller repository the desktop "
+            "shell renders against. Per the Phase 10L Controller-"
+            "Root Selection Flow the desktop shell MUST NOT silently "
+            "pick a default root from an auto-discovered repo root, "
+            "the OS-level current working directory, an environment "
+            "variable, or a packaging-time configured path; this CLI "
+            "flag is the scriptable equivalent of the contract's "
+            "native folder picker. Omitting this flag returns exit "
+            "2 with a `[desktop-app] REFUSED: ...` stderr message."
         ),
     )
     desktop.add_argument(

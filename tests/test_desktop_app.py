@@ -479,6 +479,75 @@ class CmdLaunchDesktopAppHeadlessTests(unittest.TestCase):
             self.assertIn("CLAUDE.md", err)
             self.assertIn("TASK.md", err)
 
+    def test_omitted_controller_root_refuses_explicitly(
+        self,
+    ) -> None:
+        # Phase 10L "Controller-Root Selection Flow" REQUIRES
+        # explicit operator selection of the controller root. The
+        # desktop shell MUST NOT silently pick a default root from
+        # the auto-discovered repo root, the OS-level current
+        # working directory, an environment variable, or a
+        # packaging-time configured path. Pin the explicit-refusal
+        # behavior here so a future regression (e.g. reintroducing
+        # `find_repo_root()` fallback) is caught immediately.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            # `controller_root=False` -> the Namespace's
+            # controller_root field is None, matching the case
+            # where the operator omits `--controller-root`.
+            rc, out, err = self._run(
+                controller, headless=True, controller_root=False,
+            )
+            self.assertEqual(rc, 2)
+            self.assertEqual(out, "")
+            self.assertIn("[desktop-app] REFUSED:", err)
+            self.assertIn("--controller-root is required", err)
+            # The refusal message MUST surface the contract
+            # rationale so an operator reading the stderr line
+            # understands why the shell refused (not just that it
+            # refused).
+            for fragment in (
+                "Phase 10L",
+                "Controller-Root Selection Flow",
+                "MUST NOT silently pick a default root",
+            ):
+                self.assertIn(fragment, err)
+
+    def test_omitted_controller_root_does_not_call_find_repo_root(
+        self,
+    ) -> None:
+        # Regression guard: patch `find_repo_root` to a recorder.
+        # The CLI handler MUST refuse before any auto-discovery
+        # fallback could fire.
+        with TemporaryDirectory() as td:
+            _make_controller(Path(td) / "c")
+            calls = []
+
+            def _record(*args, **kwargs):
+                calls.append((args, kwargs))
+                return Path(td) / "c"
+
+            args = argparse.Namespace(
+                cmd="launch-desktop-app",
+                controller_root=None,
+                headless=True, once=False,
+                cadence_seconds=None, operator_driven=False,
+            )
+            out, err = io.StringIO(), io.StringIO()
+            with mock.patch.object(
+                agent_loop, "find_repo_root", _record,
+            ):
+                with redirect_stdout(out), redirect_stderr(err):
+                    rc = agent_loop.cmd_launch_desktop_app(args)
+            self.assertEqual(rc, 2)
+            self.assertEqual(
+                calls, [],
+                "cmd_launch_desktop_app called find_repo_root() "
+                "when --controller-root was omitted; Phase 10L "
+                "Controller-Root Selection Flow forbids any "
+                "auto-discovered fallback",
+            )
+
 
 # ---------------------------------------------------------------------------
 # Non-mutation invariants (Phase 10L contract)
