@@ -605,7 +605,20 @@ Success:
 
 ## Phase 10 - Future Product Features
 
-Track future non-MVP features.
+Turn the future roadmap into a desktop-product roadmap.
+
+The long-term product is a local desktop application that becomes the main
+operator surface for this system: select a working folder, connect local Claude
+and Codex CLI adapters, choose approval/autonomy behavior, ingest a PRD or
+project brief, configure MCP and RAG assistance, and monitor the run without
+requiring users to manually edit repo artifacts or drive the loop from a
+terminal.
+
+The shipped Phase 10A-10N slices are the foundation for that product:
+external-workspace control, read-only UI views, dashboard/reporting surfaces,
+and the first bounded desktop action bridge. The remaining future sub-phases
+should prioritize turning those foundations into a complete desktop operator
+experience.
 
 Phase 10 is organized as future sub-phase candidates:
 
@@ -624,21 +637,22 @@ Phase 10 is organized as future sub-phase candidates:
 - Phase 10M - Desktop App Read-Only Runtime Initial Slice: implement the first local desktop app that renders the shipped external status, controls, and artifact-dashboard views without introducing a second source of truth or bypassing canonical artifacts
 - Phase 10N - Desktop App Action Bridge Initial Slice: add bounded operator-invoked desktop actions for attach/inspect/run/resume flows by delegating to shipped CLI/library surfaces with explicit refusal handling, audit visibility, and no hidden automation
 - Phase 10O - MCP Integration Contract And Safe Tool Boundary: define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review or ownership boundaries
-- Phase 10P - MCP Read-Only Tool Boundary Initial Slice: implement the first MCP-assisted read-only surfaces so external tools can assist context gathering without mutating canonical artifacts
-- Phase 10Q - MCP Runtime Action Guardrails: add the mutation boundaries, refusal behavior, auditing, and explicit allow-list rules required before any non-read-only MCP-assisted runtime action is allowed
-- Phase 10R - RAG Contract And Index Boundary: define the retrieval/indexing contract for repo-local or external knowledge sources, including provenance, freshness, and advisory-only boundaries
-- Phase 10S - RAG Local Index Initial Slice: implement the first local knowledge index and bounded retrieval flow so the loop can pull only the most relevant docs, decisions, standards, PRD sections, and failure/fix patterns into a run
-- Phase 10T - GitHub Integration Contract: define the branch/PR/review integration boundaries, rollback expectations, review-source-of-truth rules, and refusal behavior before any GitHub runtime path ships
-- Phase 10U - GitHub Review/PR Read-Only Initial Slice: implement the first read-only GitHub surfaces for branch, PR, and review context without allowing workflow mutation
-- Phase 10V - GitHub Workflow Mutation Guardrails: add the safety rules, auditing, rollback-aware checks, and explicit approval boundaries required before any GitHub-affecting workflow helper is allowed
-- Phase 10W - Model, Policy Pack, And Template Extensibility Contract: define how multi-model support, API tool execution, custom policy packs, project templates, configurable agent-role presets, and finer autonomy controls may extend the loop safely
-- Phase 10X - Policy Pack Loading Initial Slice: implement the first bounded policy-pack loading and selection flow under the approved extensibility contract
-- Phase 10Y - Human-Facing Memory Vault Export Contract: define how optional Obsidian-style memory exports and related human-readable decision or architecture views may be produced without replacing repo artifacts as the primary source of truth
-- Phase 10Z - Human-Facing Memory Vault Export Initial Slice: implement the first bounded export path for human-readable memory/decision surfaces
-- Phase 10AA - Multi-Agent Framework Evaluation Beyond The Native Loop: evaluate CrewAI, LangGraph, LangChain orchestration patterns, or similar delegated-role frameworks only after the adapter boundary, durable memory, external-workspace control, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
+- Phase 10P - Desktop App Operator Setup And CLI Onboarding: add the first guided desktop setup flow for selecting a controller root, validating a target/work folder, configuring local Claude/Codex CLI adapter commands, checking that required local tools are available, and surfacing safe refusal messages when the environment is not ready
+- Phase 10Q - Desktop App Run Profiles And Approval Controls: add a first-class desktop control surface for selecting approval mode, autonomy level, PRD-to-completion vs bounded run mode, and related execution policies through explicit buttons/toggles that map back to canonical runtime state rather than hidden UI-only settings
+- Phase 10R - Desktop App PRD Intake And Project Start Flow: add the first desktop workflow for creating or selecting a target project, attaching a PRD or product brief, choosing the target folder, and starting a run without requiring the operator to manually prepare prompt artifacts by hand
+- Phase 10S - MCP Server Selection UX Contract: define how the desktop app should present available MCP servers, permission classes, read-only vs deferred-mutating capability labels, per-server safety copy, and operator approval requirements before MCP enablement becomes user-facing
+- Phase 10T - MCP Read-Only Assistance In Desktop App: implement the first user-selectable MCP read-only assistance surfaces so operators can enable approved context-gathering tools from the desktop app without mutating canonical artifacts or bypassing evidence review
+- Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies: add the mutation boundaries, refusal behavior, auditing, per-tool allow-lists, and approval prompts required before any non-read-only MCP-assisted runtime action is allowed through the desktop app
+- Phase 10V - RAG Source Selection Contract And Desktop UX: define how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance/freshness is exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts
+- Phase 10W - RAG Local Index And Retrieval Controls: implement the first desktop-managed local knowledge index, source-selection UI, and bounded retrieval controls so the loop can pull only the most relevant PRD sections, docs, decisions, and failure/fix patterns into a run
+- Phase 10X - Autonomous Run Console And Completion Ledger: add a desktop run console that surfaces the PRD execution ledger, active step, pending steps, blocked/deferred work, fix-cycle state, and completion progress so PRD-to-completion mode is understandable and auditable from the UI
+- Phase 10Y - Capacity Recovery And Resume Console: add the desktop surface for token/rate-limit halt visibility, bounded automatic resume policy, retry/backoff state, checkpoint presence, and operator override/resume actions so long-running autonomous builds remain understandable
+- Phase 10Z - Model, Policy Pack, And Template Selection UX: define and implement the first desktop-managed selection flow for model choices, policy packs, project templates, and other high-level run presets without letting those settings become a hidden second source of truth
+- Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice: define and implement bounded human-readable exports such as optional Obsidian-style memory views, decision summaries, and architecture snapshots without replacing repo artifacts as the primary source of truth
 - Phase 10AB - Controlled Concurrent Operation Contract: define the overlap rules, ownership boundaries, stale-artifact detection, review/fix invalidation rules, and recovery behavior required before any concurrent Codex/Claude work is allowed
 - Phase 10AC - Overlap-Safe Detection Initial Slice: implement detection and refusal paths for unsafe overlap so the system can tell when concurrent work would invalidate the active task context
 - Phase 10AD - Codex-Owned Concurrent Work Initial Slice: allow Codex to continue limited Codex-owned work while Claude is implementing, only where overlap-safe detection proves the work cannot invalidate Claude's active task context
+- Phase 10AE - Framework Evaluation Beyond The Native Loop: evaluate CrewAI, LangGraph, LangChain orchestration patterns, or similar delegated-role frameworks only after the desktop product surface, MCP/RAG controls, durable memory, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
 
 ## Fix Phases - Targeted Remediation Track
 
