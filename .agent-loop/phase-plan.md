@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10K - Artifact Dashboard Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10L - Controlled Concurrent Operation Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4616,8 +4616,9 @@ UI without replacing canonical artifacts on disk.
 
 ### Status
 
-Active. This slice implements the first bounded artifact dashboard runtime on
-top of the approved Phase 10J contract while keeping dashboard data advisory.
+Complete and approved by human to advance. This slice implemented the first
+bounded artifact dashboard runtime on top of the approved Phase 10J contract
+while keeping dashboard data advisory.
 
 ### Objective
 
@@ -4663,6 +4664,64 @@ preserving the canonical-artifact-first model.
   shipped Phase 4 planner / activation separation, or that replaces canonical
   prompt/review/checkpoint artifacts with transient runtime-only state
 - no rewrite of current shipped behavior just to make future dashboard or
+  autonomy work easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10L - Controlled Concurrent Operation Contract
+
+### Status
+
+Active. This slice defines the controlled-concurrency contract that must exist
+before any concurrent Codex/Claude work is allowed.
+
+### Objective
+
+Define the Controlled Concurrent Operation Contract for the agent loop. This
+slice should specify the overlap rules, ownership boundaries, stale-artifact
+detection, review/fix invalidation rules, and recovery behavior required
+before any concurrent Codex/Claude work is allowed.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10L as active
+- `.agent-loop/phase-plan.md` records Phase 10K as closed history and contains
+  a `## Phase 10L - Controlled Concurrent Operation Contract` section with
+  concrete objective, done criteria, and exclusions
+- the repository gains a documentation-first contract defining when concurrent
+  Codex/Claude work is allowed, refused, invalidated, or requires recovery
+- the contract defines overlap rules, ownership boundaries, stale-artifact
+  detection, review/fix invalidation rules, and recovery behavior without
+  permitting concurrent runtime execution yet
+- the contract preserves the shipped CLI-first workflow, approval semantics,
+  halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target
+  ownership boundaries, and the Phase 4C activator +
+  `APPROVED_FOR_ACTIVATION` activation gate
+- focused validation proves the concurrency contract is bounded, internally
+  consistent with Phase 10G through 10K, and reflected accurately in
+  planning/docs surfaces
+- `README.md` reflects that Phase 10L is active and that the concurrency
+  contract is now the implementation focus
+
+### Exclusions
+
+- no overlap detection runtime implementation or concurrent Codex/Claude work
+  execution yet (Phase 10M / 10N)
+- no dashboard expansion beyond the shipped Phase 10K slice
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future concurrency or
   autonomy work easier
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior

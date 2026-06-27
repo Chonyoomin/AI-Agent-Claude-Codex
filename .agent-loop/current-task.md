@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10K - Artifact Dashboard Initial Slice
+Phase 10L - Controlled Concurrent Operation Contract
 
 ## Status
-Phase 10J is complete. Phase 10K is now active as the next mainline slice focused on implementing the first artifact dashboard and run-history views on top of the approved contract while keeping dashboard data advisory.
+Phase 10K is complete. Phase 10L is now active as the next mainline slice focused on defining the overlap rules and safety boundaries required before any concurrent Codex/Claude work is allowed.
 
 ## Task
-Implement Phase 10K for the agent loop. This slice should build the first artifact dashboard and run-history views on top of the approved Phase 10J contract while keeping dashboard data advisory and preserving the canonical-artifact-first model.
+Define Phase 10L for the agent loop. This slice should specify the overlap rules, ownership boundaries, stale-artifact detection, review/fix invalidation rules, and recovery behavior required before any concurrent Codex/Claude work is allowed.
 
 ## Notes
 
-- implement only the first bounded dashboard runtime the Phase 10J contract already defined
-- preserve the shipped advisory-vs-canonical boundary so dashboard views remain derived from canonical artifacts on disk
-- do not widen into controlled-concurrency, MCP, RAG, GitHub, or policy-pack work
+- keep this slice documentation-first; do not jump into concurrent runtime implementation yet
+- preserve the shipped ownership boundaries, phase gating, and canonical-artifact-first model while defining concurrency rules
+- do not widen into overlap detection runtime, MCP, RAG, GitHub, or policy-pack work
