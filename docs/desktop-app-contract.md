@@ -20,15 +20,24 @@ the Phase 10G - 10I external UI surfaces, and the Phase 10J - 10K
 artifact dashboard contract and runtime. Implementation of the
 desktop app runtime is deferred to later Phase 10 sub-phases:
 
-- Phase 10M: Desktop App Shell Runtime Initial Slice (the first
-  native window that opens against a chosen controller root, polls
-  the shipped Phase 10H / 10I / 10K view library functions, and
-  renders their bounded view-model dicts; no mutation, no
-  background orchestration, no second source of truth)
-- Phase 10N and later: additional desktop capabilities tracked in
-  `ROADMAP.md` (controlled-concurrency awareness, multi-target
-  desktop sessions, packaging / code-signing / auto-update, native
-  system-tray reminders)
+- Phase 10M: Desktop App Read-Only Runtime Initial Slice (the
+  first local desktop app that opens against a chosen controller
+  root, polls the shipped Phase 10H / 10I / 10K view library
+  functions, and renders their bounded view-model dicts; no
+  mutation, no background orchestration, no second source of
+  truth)
+- Phase 10N: Desktop App Action Bridge Initial Slice (adds
+  bounded operator-invoked desktop actions for attach / inspect /
+  run / resume flows by delegating to the shipped CLI / library
+  surfaces with explicit refusal handling, audit visibility, and
+  no hidden automation)
+- Phase 10AB / 10AC / 10AD and later: controlled-concurrency
+  awareness, overlap-safe detection, and Codex-owned concurrent
+  work tracked in `ROADMAP.md`; additional advanced desktop
+  capabilities (multi-target desktop sessions, packaging /
+  code-signing / auto-update, native system-tray reminders) each
+  land in their own later Phase 10 sub-phases tracked in
+  `ROADMAP.md`
 
 ## Scope
 
@@ -218,9 +227,10 @@ shipped Phase 10H status view. Specifically:
   `attach-external-target --bootstrap` on the operator's behalf;
   these remain copy-paste-only or operator-CLI-invoked.
 - when the desktop shell concurrently renders multiple controller
-  roots in separate windows or tabs (a Phase 10N+ capability), the
-  per-window attach visibility MUST remain isolated; the shell MUST
-  NOT cross-leak attach records between windows.
+  roots in separate windows or tabs (a later Phase 10 capability
+  beyond the Phase 10M / 10N initial slices), the per-window
+  attach visibility MUST remain isolated; the shell MUST NOT
+  cross-leak attach records between windows.
 
 ## Refresh / Polling Rules
 
@@ -580,9 +590,11 @@ The future desktop app shell MUST refuse to:
 - introduce concurrent-attach awareness, multi-target desktop
   state, packaging / code-signing / auto-update pipelines, or
   controlled-concurrency scheduling in this contract (single-
-  target, single-desktop-session); a future Phase 10N+ slice that
-  introduces concurrency-aware behavior, packaging, or
-  auto-update will extend this contract with explicit schemas
+  target, single-desktop-session); a future later Phase 10 slice
+  beyond Phase 10M / 10N (controlled-concurrency at Phase 10AB /
+  10AC / 10AD, plus the multi-target / packaging / auto-update
+  capabilities tracked separately in `ROADMAP.md`) will extend
+  this contract with explicit schemas
 
 ## Approval Gates
 
@@ -650,21 +662,31 @@ Specifically:
 The desktop-app contract is load-bearing for the following later
 Phase 10 sub-phases:
 
-- Phase 10M (Desktop App Shell Runtime Initial Slice) satisfies
-  this contract. The slice introduces the first native desktop
-  window, defines the specific shell error-state vocabulary, pins
-  the toolkit and process model, and pins the polling cadence +
-  the in-memory cache invalidation rules. Phase 10M MAY reuse the
-  shipped Phase 10H / 10I / 10K library functions verbatim; Phase
-  10M MUST NOT introduce any mutating desktop surface beyond the
-  bounded Phase 10I library-call delegation that already ships.
-- Phase 10N and later (Controlled-Concurrency, Multi-Target
-  Desktop Sessions, Packaging / Code-Signing / Auto-Update, Native
-  System-Tray Reminders) extends this contract with
-  concurrent-attach awareness, per-target window refinements,
-  packaging and distribution pipelines, auto-update behavior, and
-  any other advanced capability; each extension lands in its own
-  later Phase 10 sub-phase tracked in `ROADMAP.md`.
+- Phase 10M (Desktop App Read-Only Runtime Initial Slice)
+  satisfies this contract's read-side. The slice introduces the
+  first native desktop window, defines the specific shell
+  error-state vocabulary, pins the toolkit and process model, and
+  pins the polling cadence + the in-memory cache invalidation
+  rules. Phase 10M MAY reuse the shipped Phase 10H / 10I / 10K
+  library functions verbatim; Phase 10M MUST NOT introduce any
+  mutating desktop surface beyond the bounded Phase 10I
+  library-call delegation that already ships.
+- Phase 10N (Desktop App Action Bridge Initial Slice) extends
+  this contract with bounded operator-invoked desktop actions for
+  attach / inspect / run / resume flows, delegating to the
+  shipped CLI / library surfaces with explicit refusal handling
+  and audit visibility; Phase 10N MUST NOT widen the Phase 10I
+  library-callable cap and MUST NOT introduce hidden automation.
+- Phase 10AB / 10AC / 10AD (Controlled Concurrent Operation
+  Contract, Overlap-Safe Detection Initial Slice, Codex-Owned
+  Concurrent Work Initial Slice) extend this contract with the
+  overlap rules, ownership boundaries, stale-artifact detection,
+  review/fix invalidation rules, and recovery behavior required
+  before any concurrent Codex/Claude work is allowed. Additional
+  advanced desktop capabilities (multi-target desktop sessions,
+  packaging / code-signing / auto-update pipelines, native
+  system-tray reminders) each land in their own later Phase 10
+  sub-phases tracked in `ROADMAP.md`.
 
 The desktop-app contract is consumed by every prior Phase 10 slice
 in the following sense: the canonical artifact set the desktop
@@ -686,9 +708,14 @@ introduced. No Phase 10G / 10H / 10I / 10J / 10K surface is
 changed. No new CLI subcommand, no new library function, no new
 halt status, no new canonical artifact, no Git automation, no
 rewrite of `AGENTS.md` / `CLAUDE.md` / `ROADMAP.md` / the Phase 2A
-/ 3A / 4A contracts. Adding the desktop app runtime that satisfies
-this contract is the work of Phase 10M; controlled-concurrency
-awareness, multi-target desktop sessions, packaging /
-code-signing / auto-update pipelines, native system-tray reminders,
-and any other advanced desktop capability each land in their own
-later Phase 10 sub-phases tracked in `ROADMAP.md`.
+/ 3A / 4A contracts. Adding the desktop app read-only runtime that satisfies this
+contract's read-side is the work of Phase 10M; adding the bounded
+action bridge that lets the desktop shell delegate attach /
+inspect / run / resume flows to the shipped CLI / library
+surfaces is the work of Phase 10N; controlled-concurrency
+awareness, overlap-safe detection, and Codex-owned concurrent
+work each land at Phase 10AB / 10AC / 10AD; multi-target desktop
+sessions, packaging / code-signing / auto-update pipelines,
+native system-tray reminders, and any other advanced desktop
+capability each land in their own later Phase 10 sub-phases
+tracked in `ROADMAP.md`.

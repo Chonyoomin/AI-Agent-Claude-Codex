@@ -4618,5 +4618,167 @@ class DesktopAppContractReadmeAlignmentTests(unittest.TestCase):
             )
 
 
+class DesktopAppContractRoadmapRoutingAlignmentTests(
+    unittest.TestCase,
+):
+    """The Phase 10L contract and the README's Phase 10L
+    description MUST point implementers at the correct next slices
+    per the canonical `ROADMAP.md`:
+
+    - Phase 10M = Desktop App Read-Only Runtime Initial Slice
+    - Phase 10N = Desktop App Action Bridge Initial Slice
+    - Phase 10AB / 10AC / 10AD = controlled-concurrency work
+      (Controlled Concurrent Operation Contract, Overlap-Safe
+      Detection Initial Slice, Codex-Owned Concurrent Work Initial
+      Slice)
+
+    A prior cycle described `Phase 10N` as the bucket for
+    controlled-concurrency, multi-target desktop sessions, and
+    packaging work. That is wrong and must not silently re-appear.
+    """
+
+    def setUp(self) -> None:
+        self.contract_text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.contract_collapsed = re.sub(
+            r"\s+", " ", self.contract_text,
+        )
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.readme_collapsed = re.sub(r"\s+", " ", self.readme_text)
+        self.roadmap_text = _read(REPO_ROOT / "ROADMAP.md")
+        self.roadmap_collapsed = re.sub(
+            r"\s+", " ", self.roadmap_text,
+        )
+
+    def test_roadmap_pins_canonical_phase_10m_name(self) -> None:
+        # Anchor: the canonical roadmap line. If this test fails,
+        # ROADMAP.md was renamed and every consumer below needs
+        # updating in lockstep.
+        self.assertIn(
+            "Phase 10M - Desktop App Read-Only Runtime Initial "
+            "Slice",
+            self.roadmap_collapsed,
+        )
+
+    def test_roadmap_pins_canonical_phase_10n_name(self) -> None:
+        self.assertIn(
+            "Phase 10N - Desktop App Action Bridge Initial Slice",
+            self.roadmap_collapsed,
+        )
+
+    def test_roadmap_pins_concurrency_at_10ab_10ac_10ad(self) -> None:
+        for fragment in (
+            "Phase 10AB - Controlled Concurrent Operation Contract",
+            "Phase 10AC - Overlap-Safe Detection Initial Slice",
+            "Phase 10AD - Codex-Owned Concurrent Work Initial "
+            "Slice",
+        ):
+            self.assertIn(
+                fragment, self.roadmap_collapsed,
+                f"ROADMAP.md no longer pins controlled-concurrency "
+                f"at {fragment!r}; downstream test pins must be "
+                f"updated in lockstep",
+            )
+
+    def test_contract_names_phase_10m_as_read_only_runtime(
+        self,
+    ) -> None:
+        self.assertIn(
+            "Phase 10M (Desktop App Read-Only Runtime Initial "
+            "Slice)",
+            self.contract_collapsed,
+            "desktop-app contract does not name Phase 10M with the "
+            "canonical 'Desktop App Read-Only Runtime Initial "
+            "Slice' title from ROADMAP.md",
+        )
+
+    def test_contract_names_phase_10n_as_action_bridge(self) -> None:
+        self.assertIn(
+            "Phase 10N (Desktop App Action Bridge Initial Slice)",
+            self.contract_collapsed,
+            "desktop-app contract does not name Phase 10N with the "
+            "canonical 'Desktop App Action Bridge Initial Slice' "
+            "title from ROADMAP.md",
+        )
+
+    def test_contract_routes_concurrency_to_10ab_10ac_10ad(
+        self,
+    ) -> None:
+        # Controlled-concurrency work is at Phase 10AB / 10AC /
+        # 10AD per the canonical ROADMAP.md, NOT at Phase 10N.
+        # The contract uses both the explicit `Phase 10AB` form
+        # and the compact `Phase 10AB / 10AC / 10AD` form; checking
+        # for the short labels survives both.
+        for fragment in (
+            "10AB",
+            "10AC",
+            "10AD",
+        ):
+            self.assertIn(
+                fragment, self.contract_collapsed,
+                f"desktop-app contract does not route "
+                f"controlled-concurrency work to "
+                f"Phase {fragment!r}",
+            )
+
+    def test_contract_does_not_misroute_concurrency_to_10n(
+        self,
+    ) -> None:
+        # Phase 10N is the Action Bridge slice; it MUST NOT be
+        # described as the controlled-concurrency bucket.
+        forbidden_phrases = (
+            "Phase 10N controlled-concurrency",
+            "Phase 10N+ controlled-concurrency",
+            "Phase 10N: Controlled-Concurrency",
+            "Phase 10N (Controlled-Concurrency",
+            "Phase 10N and later (Controlled-Concurrency",
+        )
+        for phrase in forbidden_phrases:
+            self.assertNotIn(
+                phrase, self.contract_collapsed,
+                f"desktop-app contract still misroutes "
+                f"controlled-concurrency to Phase 10N via the "
+                f"phrase {phrase!r}; per ROADMAP.md, "
+                f"controlled-concurrency is at Phase 10AB / 10AC "
+                f"/ 10AD and Phase 10N is the Action Bridge slice",
+            )
+
+    def test_readme_routes_concurrency_to_10ab_10ac_10ad(self) -> None:
+        # The README's Phase 10L paragraph must route
+        # controlled-concurrency to Phase 10AB / 10AC / 10AD, not
+        # to Phase 10N. The README uses the compact form
+        # `Phase 10AB / 10AC / 10AD`, so the short-form labels
+        # `10AB` / `10AC` / `10AD` are what survive collapse.
+        for fragment in (
+            "10AB",
+            "10AC",
+            "10AD",
+        ):
+            self.assertIn(
+                fragment, self.readme_collapsed,
+                f"README.md does not route "
+                f"controlled-concurrency work to "
+                f"Phase {fragment!r}",
+            )
+
+    def test_readme_does_not_misroute_concurrency_to_10n(
+        self,
+    ) -> None:
+        for phrase in (
+            "Phase 10N controlled-concurrency",
+            "Phase 10N+ controlled-concurrency",
+            "Phase 10N: Controlled-Concurrency",
+            "Phase 10N (Controlled-Concurrency",
+            "Phase 10N and later (Controlled-Concurrency",
+        ):
+            self.assertNotIn(
+                phrase, self.readme_collapsed,
+                f"README.md still misroutes "
+                f"controlled-concurrency to Phase 10N via the "
+                f"phrase {phrase!r}; per ROADMAP.md, "
+                f"controlled-concurrency is at Phase 10AB / 10AC "
+                f"/ 10AD and Phase 10N is the Action Bridge slice",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
