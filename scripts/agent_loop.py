@@ -13046,6 +13046,12 @@ EXTERNAL_DASHBOARD_SURFACE_IDS = (
 _DASHBOARD_LOG_TAIL_LINES = 10
 # Per-evidence-file tail size for the Failure Analytics surface.
 _DASHBOARD_EVIDENCE_TAIL_LINES = 5
+# Per-category memory-entry cap for the Phase 6I distillation /
+# Phase 6L repeated-failure synthesis / Phase 6F token-exhaustion
+# checkpoint enumerations. The canonical record remains the full
+# `.agent-loop/memory/<category>/` directory; the dashboard surfaces
+# only a bounded newest-first slice.
+_DASHBOARD_MEMORY_ENTRY_TAIL = 5
 
 
 def _dashboard_canonical_mirror(path: Path) -> dict:
@@ -13138,7 +13144,94 @@ def _dashboard_load_loop_state_snapshot(state_path: Path) -> dict:
     return {"present": True, "error": None, "mirror": mirror}
 
 
+def _dashboard_scan_memory_category(
+    controller_root: Path,
+    *,
+    category: str,
+    body_predicate,
+    max_entries: int = _DASHBOARD_MEMORY_ENTRY_TAIL,
+) -> dict:
+    """Phase 10K: enumerate matching memory entries under
+    `.agent-loop/memory/<category>/` as a bounded canonical mirror.
+
+    `body_predicate` is a callable `(body_dict) -> bool` that selects
+    which entries are mirrored (e.g. Phase 6I distillation marker,
+    Phase 6L synthesis marker, Phase 6F token-exhaustion suspension
+    reason). Soft-failure semantics throughout: unreadable / non-JSON
+    / non-dict envelopes are skipped silently; a directory-read
+    `OSError` surfaces as `error=<str>`. The function never raises and
+    never mutates anything.
+
+    Returns `{path, present, entry_count, entries, error}` where
+    `entries` is a newest-first tuple of `{filename, byte_size,
+    phase, sub_phase, cycle_count}` dicts capped to `max_entries`.
+    The canonical record remains the on-disk directory; this mirror
+    is purely a bounded read-side enumeration.
+    """
+    rel = f"memory/{category}"
+    cat_dir = controller_root / ".agent-loop" / "memory" / category
+    if not cat_dir.exists():
+        return {
+            "path": rel, "present": False, "entry_count": 0,
+            "entries": (), "error": None,
+        }
+    try:
+        candidates = sorted(cat_dir.iterdir())
+    except OSError as exc:
+        return {
+            "path": rel, "present": True, "entry_count": 0,
+            "entries": (), "error": str(exc),
+        }
+    matches: list = []
+    for entry_path in candidates:
+        if entry_path.suffix != ".json":
+            continue
+        try:
+            raw = entry_path.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        try:
+            envelope = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(envelope, dict):
+            continue
+        body_raw = envelope.get("body")
+        if not isinstance(body_raw, str):
+            continue
+        try:
+            body = json.loads(body_raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(body, dict):
+            continue
+        try:
+            keep = bool(body_predicate(body))
+        except Exception:
+            keep = False
+        if not keep:
+            continue
+        try:
+            size = entry_path.stat().st_size
+        except OSError:
+            size = None
+        matches.append({
+            "filename": entry_path.name,
+            "byte_size": size,
+            "phase": envelope.get("phase"),
+            "sub_phase": envelope.get("sub_phase"),
+            "cycle_count": envelope.get("cycle_count"),
+        })
+    matches.sort(key=lambda m: m["filename"], reverse=True)
+    tail = tuple(matches[:max_entries]) if max_entries > 0 else ()
+    return {
+        "path": rel, "present": True, "entry_count": len(matches),
+        "entries": tail, "error": None,
+    }
+
+
 # ---- per-surface builders ----
+
 
 def _build_review_summaries_surface(controller_root: Path) -> dict:
     """Phase 10K dashboard surface 1: Review Summaries.
@@ -13268,9 +13361,11 @@ def _build_progress_history_surface(controller_root: Path) -> dict:
 
     Source artifacts: `.agent-loop/loop-state.json` (canonical state
     fields), `.agent-loop/phase-plan.md` (append-only phase history),
-    `.agent-loop/orchestrator.log` (audit log tail). Canonical
-    mirrors as named; advisory derived state includes a phase-plan
-    section-header timeline and a cycle progress hint.
+    `.agent-loop/orchestrator.log` (audit log tail), and the per-phase
+    Phase 6I distillation entries under
+    `.agent-loop/memory/{summary,decision,failure}/` when present.
+    Canonical mirrors as named; advisory derived state includes a
+    phase-plan section-header timeline and a cycle progress hint.
     """
     al = controller_root / ".agent-loop"
     state_path = al / "loop-state.json"
@@ -13284,6 +13379,30 @@ def _build_progress_history_surface(controller_root: Path) -> dict:
     log_mirror = _dashboard_canonical_mirror(log_path)
     log_excerpt = _dashboard_read_text_excerpt(
         log_path, _DASHBOARD_LOG_TAIL_LINES,
+    )
+    # Phase 6I distillation entries live in three memory categories
+    # (`summary`, `decision`, `failure`); each carries the
+    # `distillation_signal_version` body marker. The dashboard mirrors
+    # all three categories as bounded canonical enumerations so a
+    # reviewer can see the distilled phase-boundary history without
+    # reading the on-disk memory tree.
+    def _is_distillation(body: dict) -> bool:
+        return (
+            body.get(DISTILLATION_BODY_MARKER_FIELD)
+            == DISTILLATION_SIGNAL_VERSION
+        )
+
+    distillation_summary = _dashboard_scan_memory_category(
+        controller_root, category=MEMORY_CATEGORY_SUMMARY,
+        body_predicate=_is_distillation,
+    )
+    distillation_decision = _dashboard_scan_memory_category(
+        controller_root, category=MEMORY_CATEGORY_DECISION,
+        body_predicate=_is_distillation,
+    )
+    distillation_failure = _dashboard_scan_memory_category(
+        controller_root, category=MEMORY_CATEGORY_FAILURE,
+        body_predicate=_is_distillation,
     )
     # Advisory: list of phase-plan ## section headers, bounded.
     phase_plan_headers: tuple = ()
@@ -13309,6 +13428,11 @@ def _build_progress_history_surface(controller_root: Path) -> dict:
             and max_cycles > 0
         ):
             cycle_progress = f"{cycle_count} of {max_cycles} used"
+    distilled_total = (
+        distillation_summary["entry_count"]
+        + distillation_decision["entry_count"]
+        + distillation_failure["entry_count"]
+    )
     return {
         "surface_id": "progress_history",
         "label": "Progress History",
@@ -13316,6 +13440,9 @@ def _build_progress_history_surface(controller_root: Path) -> dict:
             "loop_state": loop_state,
             "phase_plan": plan_mirror,
             "orchestrator_log": log_mirror,
+            "distillation_summary_entries": distillation_summary,
+            "distillation_decision_entries": distillation_decision,
+            "distillation_failure_entries": distillation_failure,
         },
         "canonical_excerpts": {
             "phase_plan": plan_excerpt,
@@ -13324,6 +13451,7 @@ def _build_progress_history_surface(controller_root: Path) -> dict:
         "advisory": {
             "phase_plan_section_headers_tail": phase_plan_headers,
             "cycle_progress_hint": cycle_progress,
+            "distillation_entry_total": distilled_total,
         },
     }
 
@@ -13420,7 +13548,11 @@ def _build_approval_actions_surface(controller_root: Path) -> dict:
 def _build_token_cost_surface(controller_root: Path) -> dict:
     """Phase 10K dashboard surface 5: Token / Cost Reporting.
 
-    Source artifacts: the Phase 9F capacity-retry-state file
+    Source artifacts: the Phase 6F token-exhaustion checkpoint files
+    under `.agent-loop/memory/checkpoint/` (entries whose body carries
+    `suspension_reason == "token_exhaustion"`) and the Phase 6G/6H
+    continuation-context file (`.agent-loop/continuation-context.json`)
+    when present; the Phase 9F capacity-retry-state file
     (`.agent-loop/capacity-retry-state.json`) when present; loop-
     state's `cycle_count` / `max_cycles` / `status` fields. The
     canonical halt enforcement remains the shipped Phase 6F / 9F
@@ -13431,8 +13563,28 @@ def _build_token_cost_surface(controller_root: Path) -> dict:
     al = controller_root / ".agent-loop"
     state_path = al / "loop-state.json"
     retry_path = al / "capacity-retry-state.json"
+    continuation_path = (
+        controller_root / CONTINUATION_CONTEXT_OUTPUT_REL
+    )
     loop_state = _dashboard_load_loop_state_snapshot(state_path)
     retry_mirror = _dashboard_canonical_mirror(retry_path)
+    continuation_mirror = _dashboard_canonical_mirror(
+        continuation_path,
+    )
+    # Phase 6F token-exhaustion checkpoint files: bounded enumeration
+    # of checkpoint memory entries whose body suspension_reason is
+    # `token_exhaustion`. Newest-first; canonical record remains the
+    # on-disk `.agent-loop/memory/checkpoint/` tree.
+    def _is_token_exhaustion_checkpoint(body: dict) -> bool:
+        return (
+            body.get("suspension_reason")
+            == TOKEN_EXHAUSTION_SUSPENSION_REASON
+        )
+
+    token_exhaustion_checkpoints = _dashboard_scan_memory_category(
+        controller_root, category=MEMORY_CATEGORY_CHECKPOINT,
+        body_predicate=_is_token_exhaustion_checkpoint,
+    )
     # Advisory cycle-progress hint (same field as Progress History
     # surface; the dashboard MAY render both since each surface is
     # independently auditable per the Phase 10J contract).
@@ -13454,10 +13606,17 @@ def _build_token_cost_surface(controller_root: Path) -> dict:
         "canonical_mirrors": {
             "loop_state_cycle_fields": loop_state,
             "capacity_retry_state": retry_mirror,
+            "continuation_context": continuation_mirror,
+            "token_exhaustion_checkpoints": (
+                token_exhaustion_checkpoints
+            ),
         },
         "advisory": {
             "cycle_progress_hint": cycle_progress,
             "approaching_cycle_cap": approaching_cap,
+            "token_exhaustion_checkpoint_count": (
+                token_exhaustion_checkpoints["entry_count"]
+            ),
         },
     }
 
@@ -13466,16 +13625,39 @@ def _build_failure_analytics_surface(controller_root: Path) -> dict:
     """Phase 10K dashboard surface 6: Failure Analytics.
 
     Source artifacts: `.agent-loop/codex-review.md` (latest verdict
-    + issues list), the four Phase 2A/2B evidence files
-    (test-output.log, lint-output.log, typecheck-output.log,
-    build-output.log) tail excerpts. Advisory derived state: a
-    "failure category" tag derived from which evidence file the
-    issue references; the canonical issue record remains the per-
-    cycle codex-review.md.
+    + issues list), the Phase 6L repeated-failure synthesis entries
+    under `.agent-loop/memory/failure/` (entries whose body carries
+    `synthesis_signal_version`), the `last_verdict` / `status` fields
+    from `.agent-loop/loop-state.json`, and the four Phase 2A/2B
+    evidence files (test-output.log, lint-output.log, typecheck-
+    output.log, build-output.log) tail excerpts. Advisory derived
+    state: a "failure category" tag derived from which evidence file
+    the issue references; the canonical issue record remains the
+    per-cycle codex-review.md.
     """
     al = controller_root / ".agent-loop"
     review_path = al / "codex-review.md"
+    state_path = al / "loop-state.json"
     review_mirror = _dashboard_canonical_mirror(review_path)
+    loop_state_failure_context = (
+        _dashboard_load_loop_state_snapshot(state_path)
+    )
+    # Phase 6L repeated-failure synthesis entries: bounded enumeration
+    # of failure memory entries whose body carries
+    # `synthesis_signal_version`. Canonical record remains the on-disk
+    # `.agent-loop/memory/failure/` tree.
+    def _is_repeated_failure_synthesis(body: dict) -> bool:
+        return (
+            body.get(REPEATED_FAILURE_BODY_MARKER_FIELD)
+            == REPEATED_FAILURE_SIGNAL_VERSION
+        )
+
+    repeated_failure_synthesis_entries = (
+        _dashboard_scan_memory_category(
+            controller_root, category=MEMORY_CATEGORY_FAILURE,
+            body_predicate=_is_repeated_failure_synthesis,
+        )
+    )
     evidence_paths = {
         "test_output": al / "test-output.log",
         "lint_output": al / "lint-output.log",
@@ -13514,12 +13696,29 @@ def _build_failure_analytics_surface(controller_root: Path) -> dict:
         size = mirror.get("byte_size")
         if isinstance(size, int) and size > 0:
             failure_categories.append(key)
+    # Advisory: the canonical loop-state `last_verdict` / `status`
+    # surfaced explicitly so a reviewer reading the rendered failure-
+    # analytics output does not need to cross-walk to the Progress
+    # History surface for failure context.
+    last_verdict_advisory = None
+    status_advisory = None
+    if loop_state_failure_context["mirror"]:
+        last_verdict_advisory = (
+            loop_state_failure_context["mirror"].get("last_verdict")
+        )
+        status_advisory = (
+            loop_state_failure_context["mirror"].get("status")
+        )
     return {
         "surface_id": "failure_analytics",
         "label": "Failure Analytics",
         "canonical_mirrors": {
             "codex_review": review_mirror,
+            "loop_state_failure_context": loop_state_failure_context,
             "evidence_files": evidence_mirrors,
+            "repeated_failure_synthesis_entries": (
+                repeated_failure_synthesis_entries
+            ),
         },
         "canonical_excerpts": {
             "evidence_files": evidence_excerpts,
@@ -13528,6 +13727,11 @@ def _build_failure_analytics_surface(controller_root: Path) -> dict:
             "issue_count_in_latest_review": issue_count,
             "evidence_files_with_content": tuple(
                 sorted(failure_categories),
+            ),
+            "loop_state_last_verdict": last_verdict_advisory,
+            "loop_state_status": status_advisory,
+            "repeated_failure_synthesis_count": (
+                repeated_failure_synthesis_entries["entry_count"]
             ),
         },
     }
@@ -13592,6 +13796,24 @@ def _dashboard_render_surface_lines(surface: dict) -> list:
     mirrors = surface.get("canonical_mirrors", {})
     for key, mirror in mirrors.items():
         if (
+            isinstance(mirror, dict)
+            and "entries" in mirror
+            and "entry_count" in mirror
+        ):
+            lines.append(
+                f"  [canonical mirror] {key} (.agent-loop/"
+                f"{mirror['path']}/): present={mirror['present']} "
+                f"entry_count={mirror['entry_count']} "
+                f"error={mirror['error']!r}"
+            )
+            for entry in mirror.get("entries", ()):
+                lines.append(
+                    f"    entry: filename={entry['filename']!r} "
+                    f"byte_size={entry['byte_size']!r} "
+                    f"phase={entry.get('phase')!r} "
+                    f"cycle_count={entry.get('cycle_count')!r}"
+                )
+        elif (
             isinstance(mirror, dict)
             and "path" in mirror
             and "present" in mirror

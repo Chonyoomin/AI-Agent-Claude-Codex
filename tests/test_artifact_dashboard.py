@@ -720,5 +720,534 @@ class CmdViewArtifactDashboardTests(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# Contract-mandated source-artifact coverage (Phase 10K fix cycle):
+#
+# The Phase 10J contract names additional canonical source artifacts for
+# three surfaces that the initial Phase 10K slice did not yet mirror.
+# These tests pin the coverage so a future change cannot silently drop
+# the contract-mandated mirrors.
+# ---------------------------------------------------------------------------
+
+
+def _write_raw_memory_entry(
+    controller: Path, *, category: str, filename: str,
+    phase: str, sub_phase: str, cycle_count: int, body: dict,
+) -> Path:
+    cat_dir = (
+        controller / ".agent-loop" / "memory" / category
+    )
+    cat_dir.mkdir(parents=True, exist_ok=True)
+    envelope = {
+        "signal_version": "phase-6b-v1",
+        "category": category,
+        "phase": phase,
+        "sub_phase": sub_phase,
+        "cycle_count": cycle_count,
+        "source_artifact_path": ".agent-loop/codex-review.md",
+        "created_at": "2026-06-26T00:00:00Z",
+        "supersedes": None,
+        "body": json.dumps(body),
+    }
+    path = cat_dir / filename
+    path.write_text(json.dumps(envelope, indent=2), encoding="utf-8")
+    return path
+
+
+class ProgressHistoryDistillationCoverageTests(unittest.TestCase):
+    """Phase 10J contract: Progress History MUST mirror the per-phase
+    Phase 6I distillation entries under `.agent-loop/memory/` when
+    present.
+    """
+
+    def test_surface_mirrors_distillation_summary_entries(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_SUMMARY,
+                filename="20260626T000000Z-aaaaaaaa.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=1,
+                body={
+                    agent_loop.DISTILLATION_BODY_MARKER_FIELD: (
+                        agent_loop.DISTILLATION_SIGNAL_VERSION
+                    ),
+                    "summary": "distilled phase boundary",
+                },
+            )
+            surface = (
+                agent_loop._build_progress_history_surface(controller)
+            )
+            mirror = surface["canonical_mirrors"][
+                "distillation_summary_entries"
+            ]
+            self.assertTrue(mirror["present"])
+            self.assertEqual(mirror["entry_count"], 1)
+            self.assertEqual(
+                mirror["entries"][0]["filename"],
+                "20260626T000000Z-aaaaaaaa.json",
+            )
+
+    def test_surface_mirrors_distillation_in_all_three_categories(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            for cat, fname in (
+                (agent_loop.MEMORY_CATEGORY_SUMMARY,
+                 "20260626T000000Z-aaaaaaaa.json"),
+                (agent_loop.MEMORY_CATEGORY_DECISION,
+                 "20260626T000000Z-bbbbbbbb.json"),
+                (agent_loop.MEMORY_CATEGORY_FAILURE,
+                 "20260626T000000Z-cccccccc.json"),
+            ):
+                _write_raw_memory_entry(
+                    controller, category=cat, filename=fname,
+                    phase="Phase 10", sub_phase="Phase 10K",
+                    cycle_count=1,
+                    body={
+                        agent_loop.DISTILLATION_BODY_MARKER_FIELD: (
+                            agent_loop.DISTILLATION_SIGNAL_VERSION
+                        ),
+                    },
+                )
+            surface = (
+                agent_loop._build_progress_history_surface(controller)
+            )
+            mirrors = surface["canonical_mirrors"]
+            self.assertEqual(
+                mirrors["distillation_summary_entries"][
+                    "entry_count"
+                ], 1,
+            )
+            self.assertEqual(
+                mirrors["distillation_decision_entries"][
+                    "entry_count"
+                ], 1,
+            )
+            self.assertEqual(
+                mirrors["distillation_failure_entries"][
+                    "entry_count"
+                ], 1,
+            )
+            self.assertEqual(
+                surface["advisory"]["distillation_entry_total"], 3,
+            )
+
+    def test_surface_skips_non_distillation_memory_entries(
+        self,
+    ) -> None:
+        # A failure-category entry that is NOT a Phase 6I distillation
+        # entry (e.g. a Phase 6L synthesis entry) MUST NOT appear in
+        # the distillation_failure_entries mirror.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_FAILURE,
+                filename="20260626T000000Z-dddddddd.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=2,
+                body={
+                    agent_loop.REPEATED_FAILURE_BODY_MARKER_FIELD: (
+                        agent_loop.REPEATED_FAILURE_SIGNAL_VERSION
+                    ),
+                },
+            )
+            surface = (
+                agent_loop._build_progress_history_surface(controller)
+            )
+            self.assertEqual(
+                surface["canonical_mirrors"][
+                    "distillation_failure_entries"
+                ]["entry_count"], 0,
+            )
+
+    def test_surface_handles_missing_memory_dir(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            surface = (
+                agent_loop._build_progress_history_surface(controller)
+            )
+            for key in (
+                "distillation_summary_entries",
+                "distillation_decision_entries",
+                "distillation_failure_entries",
+            ):
+                mirror = surface["canonical_mirrors"][key]
+                self.assertFalse(mirror["present"])
+                self.assertEqual(mirror["entry_count"], 0)
+            self.assertEqual(
+                surface["advisory"]["distillation_entry_total"], 0,
+            )
+
+
+class TokenCostExhaustionCoverageTests(unittest.TestCase):
+    """Phase 10J contract: Token / Cost Reporting MUST mirror the
+    Phase 6F token-exhaustion checkpoint files AND the Phase 6G/6H
+    continuation context.
+    """
+
+    def test_surface_mirrors_token_exhaustion_checkpoint(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+                filename="20260626T000000Z-eeeeeeee.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=1,
+                body={
+                    "checkpoint_signal_version": (
+                        agent_loop.CHECKPOINT_SIGNAL_VERSION
+                    ),
+                    "task": "t",
+                    "status": (
+                        agent_loop.HALTED_TOKEN_EXHAUSTION
+                    ),
+                    "approval_mode": "review",
+                    "awaiting_human_for": None,
+                    "active_prompt_path": (
+                        ".agent-loop/claude-prompt.md"
+                    ),
+                    "suspension_reason": (
+                        agent_loop.TOKEN_EXHAUSTION_SUSPENSION_REASON
+                    ),
+                    "continuation_budget": 2,
+                },
+            )
+            surface = agent_loop._build_token_cost_surface(controller)
+            mirror = surface["canonical_mirrors"][
+                "token_exhaustion_checkpoints"
+            ]
+            self.assertTrue(mirror["present"])
+            self.assertEqual(mirror["entry_count"], 1)
+            self.assertEqual(
+                surface["advisory"][
+                    "token_exhaustion_checkpoint_count"
+                ], 1,
+            )
+
+    def test_surface_skips_non_token_exhaustion_checkpoints(
+        self,
+    ) -> None:
+        # A checkpoint with a non-token-exhaustion suspension reason
+        # (e.g. strict-mode halt) MUST NOT appear in the
+        # token-exhaustion enumeration.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_CHECKPOINT,
+                filename="20260626T000000Z-ffffffff.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=1,
+                body={
+                    "checkpoint_signal_version": (
+                        agent_loop.CHECKPOINT_SIGNAL_VERSION
+                    ),
+                    "task": "t",
+                    "status": (
+                        "halted_awaiting_human_pre_codex_review_normal"
+                    ),
+                    "approval_mode": "strict",
+                    "awaiting_human_for": "pre_codex_review",
+                    "active_prompt_path": (
+                        ".agent-loop/claude-prompt.md"
+                    ),
+                    "suspension_reason": (
+                        "halted_awaiting_human_pre_codex_review_normal"
+                    ),
+                    "continuation_budget": 0,
+                },
+            )
+            surface = agent_loop._build_token_cost_surface(controller)
+            self.assertEqual(
+                surface["canonical_mirrors"][
+                    "token_exhaustion_checkpoints"
+                ]["entry_count"], 0,
+            )
+
+    def test_surface_mirrors_continuation_context_file(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (
+                controller / agent_loop.CONTINUATION_CONTEXT_OUTPUT_REL
+            ).write_text("{\"k\": 1}", encoding="utf-8")
+            surface = agent_loop._build_token_cost_surface(controller)
+            mirror = surface["canonical_mirrors"][
+                "continuation_context"
+            ]
+            self.assertTrue(mirror["present"])
+            self.assertGreater(mirror["byte_size"], 0)
+
+    def test_surface_continuation_context_missing_is_advisory(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            surface = agent_loop._build_token_cost_surface(controller)
+            mirror = surface["canonical_mirrors"][
+                "continuation_context"
+            ]
+            self.assertFalse(mirror["present"])
+
+
+class FailureAnalyticsExtendedCoverageTests(unittest.TestCase):
+    """Phase 10J contract: Failure Analytics MUST mirror the Phase 6L
+    repeated-failure synthesis entries AND the `last_verdict` /
+    `status` fields from `loop-state.json` as canonical inputs.
+    """
+
+    def test_surface_mirrors_repeated_failure_synthesis(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_FAILURE,
+                filename="20260626T000000Z-66666666.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=3,
+                body={
+                    agent_loop.REPEATED_FAILURE_BODY_MARKER_FIELD: (
+                        agent_loop.REPEATED_FAILURE_SIGNAL_VERSION
+                    ),
+                    "source_memory_entries": [
+                        "memory/failure/a.json",
+                        "memory/failure/b.json",
+                    ],
+                },
+            )
+            surface = (
+                agent_loop._build_failure_analytics_surface(controller)
+            )
+            mirror = surface["canonical_mirrors"][
+                "repeated_failure_synthesis_entries"
+            ]
+            self.assertTrue(mirror["present"])
+            self.assertEqual(mirror["entry_count"], 1)
+            self.assertEqual(
+                surface["advisory"][
+                    "repeated_failure_synthesis_count"
+                ], 1,
+            )
+
+    def test_surface_skips_non_synthesis_failure_entries(self) -> None:
+        # A Phase 6I distillation `failure` entry must NOT count
+        # toward the Phase 6L synthesis enumeration.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_FAILURE,
+                filename="20260626T000000Z-77777777.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=1,
+                body={
+                    agent_loop.DISTILLATION_BODY_MARKER_FIELD: (
+                        agent_loop.DISTILLATION_SIGNAL_VERSION
+                    ),
+                },
+            )
+            surface = (
+                agent_loop._build_failure_analytics_surface(controller)
+            )
+            self.assertEqual(
+                surface["canonical_mirrors"][
+                    "repeated_failure_synthesis_entries"
+                ]["entry_count"], 0,
+            )
+
+    def test_surface_mirrors_loop_state_failure_context(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            controller.mkdir()
+            (controller / ".agent-loop").mkdir()
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).write_text(
+                json.dumps({
+                    "phase": "Phase 10",
+                    "sub_phase": "Phase 10K",
+                    "task": "t",
+                    "status": "halted_awaiting_human_review",
+                    "cycle_count": 2, "max_cycles": 3,
+                    "last_verdict": "NEEDS_FIXES",
+                    "last_verdict_phase": "Phase 10K",
+                    "contract_version": CONTRACT_VERSION,
+                    "claude_version": "claude-opus-4-7",
+                    "codex_version": None,
+                    "orchestrator_version": "phase-3d-v0",
+                    "approval_mode": "review",
+                    "awaiting_human_for": None,
+                }),
+                encoding="utf-8",
+            )
+            surface = (
+                agent_loop._build_failure_analytics_surface(controller)
+            )
+            ls = surface["canonical_mirrors"][
+                "loop_state_failure_context"
+            ]
+            self.assertTrue(ls["present"])
+            self.assertEqual(
+                ls["mirror"]["last_verdict"], "NEEDS_FIXES",
+            )
+            self.assertEqual(
+                ls["mirror"]["status"], "halted_awaiting_human_review",
+            )
+            self.assertEqual(
+                surface["advisory"]["loop_state_last_verdict"],
+                "NEEDS_FIXES",
+            )
+            self.assertEqual(
+                surface["advisory"]["loop_state_status"],
+                "halted_awaiting_human_review",
+            )
+
+    def test_surface_handles_missing_loop_state(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            controller.mkdir()
+            (controller / ".agent-loop").mkdir()
+            surface = (
+                agent_loop._build_failure_analytics_surface(controller)
+            )
+            ls = surface["canonical_mirrors"][
+                "loop_state_failure_context"
+            ]
+            self.assertFalse(ls["present"])
+            self.assertIsNone(
+                surface["advisory"]["loop_state_last_verdict"],
+            )
+            self.assertIsNone(
+                surface["advisory"]["loop_state_status"],
+            )
+
+
+class DashboardScanMemoryHelperTests(unittest.TestCase):
+    """The shared `_dashboard_scan_memory_category` helper backs the
+    three new mirrors. These tests pin its read-only soft-failure
+    semantics so a future change cannot accidentally raise from the
+    dashboard build path.
+    """
+
+    def test_missing_directory_returns_present_false(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            controller.mkdir()
+            result = agent_loop._dashboard_scan_memory_category(
+                controller, category="summary",
+                body_predicate=lambda body: True,
+            )
+            self.assertFalse(result["present"])
+            self.assertEqual(result["entry_count"], 0)
+            self.assertEqual(result["entries"], ())
+            self.assertIsNone(result["error"])
+
+    def test_malformed_json_entries_are_skipped(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            cat_dir = (
+                controller / ".agent-loop" / "memory" / "summary"
+            )
+            cat_dir.mkdir(parents=True)
+            (cat_dir / "broken.json").write_text(
+                "not json", encoding="utf-8",
+            )
+            result = agent_loop._dashboard_scan_memory_category(
+                controller, category="summary",
+                body_predicate=lambda body: True,
+            )
+            self.assertTrue(result["present"])
+            self.assertEqual(result["entry_count"], 0)
+
+    def test_predicate_filters_entries(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            _write_raw_memory_entry(
+                controller, category="summary",
+                filename="20260626T000000Z-99999999.json",
+                phase="P", sub_phase="S", cycle_count=1,
+                body={"keep": True},
+            )
+            _write_raw_memory_entry(
+                controller, category="summary",
+                filename="20260626T000000Z-88888888.json",
+                phase="P", sub_phase="S", cycle_count=1,
+                body={"keep": False},
+            )
+            result = agent_loop._dashboard_scan_memory_category(
+                controller, category="summary",
+                body_predicate=lambda body: body.get("keep") is True,
+            )
+            self.assertEqual(result["entry_count"], 1)
+            self.assertEqual(
+                result["entries"][0]["filename"],
+                "20260626T000000Z-99999999.json",
+            )
+
+    def test_results_are_capped_at_max_entries(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            for i in range(8):
+                _write_raw_memory_entry(
+                    controller, category="summary",
+                    filename=(
+                        f"20260626T00000{i}Z-aaaaaaaa.json"
+                    ),
+                    phase="P", sub_phase="S", cycle_count=i,
+                    body={"k": True},
+                )
+            result = agent_loop._dashboard_scan_memory_category(
+                controller, category="summary",
+                body_predicate=lambda body: True,
+                max_entries=3,
+            )
+            self.assertEqual(result["entry_count"], 8)
+            self.assertEqual(len(result["entries"]), 3)
+
+
+class DashboardRendererMemoryMirrorTests(unittest.TestCase):
+    """The renderer MUST attribute each memory-entries mirror to its
+    on-disk source directory and tag it as `[canonical mirror]`.
+    """
+
+    def test_rendered_output_includes_distillation_attribution(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            _write_raw_memory_entry(
+                controller,
+                category=agent_loop.MEMORY_CATEGORY_SUMMARY,
+                filename="20260626T000000Z-aaaaaaaa.json",
+                phase="Phase 10", sub_phase="Phase 10K",
+                cycle_count=1,
+                body={
+                    agent_loop.DISTILLATION_BODY_MARKER_FIELD: (
+                        agent_loop.DISTILLATION_SIGNAL_VERSION
+                    ),
+                },
+            )
+            view = agent_loop.build_artifact_dashboard_view(controller)
+            lines = agent_loop._dashboard_render_view_lines(view)
+            output = "\n".join(lines)
+            self.assertIn(
+                "[canonical mirror] distillation_summary_entries "
+                "(.agent-loop/memory/summary/):",
+                output,
+            )
+            self.assertIn(
+                "entry: filename='20260626T000000Z-aaaaaaaa.json'",
+                output,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
