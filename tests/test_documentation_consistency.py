@@ -107,7 +107,7 @@ DESKTOP_APP_CONTRACT_PATH = (
 PHASE_10L_DOC_PATHS = (DESKTOP_APP_CONTRACT_PATH,)
 # Phase 10O - MCP Integration Contract And Safe Tool Boundary
 # documentation-only slice. Defines how a future MCP runtime
-# (Phase 10P read-only assistance; Phase 10Q+ mutation-capable
+# (Phase 10T read-only assistance; Phase 10U+ mutation-capable
 # actions) MAY consume MCP tools without bypassing the shipped
 # evidence-review / approval-gate / ownership-boundary invariants.
 MCP_INTEGRATION_CONTRACT_PATH = (
@@ -4810,7 +4810,7 @@ class McpIntegrationContractDocExistsAndIsWellFormedTests(
 ):
     """Phase 10O: the MCP integration contract doc must exist on
     disk, be non-empty, be ASCII-only, and carry the canonical
-    section headers a future Phase 10P implementer reads.
+    section headers a future Phase 10T implementer reads.
     """
 
     def setUp(self) -> None:
@@ -4870,7 +4870,7 @@ class McpIntegrationContractPinsThreeToolCategoriesTests(
     unittest.TestCase,
 ):
     """The contract MUST enumerate exactly three closed tool
-    categories so a Phase 10P implementer can classify every MCP
+    categories so a Phase 10T implementer can classify every MCP
     tool without further design decisions.
     """
 
@@ -4897,7 +4897,7 @@ class McpIntegrationContractPinsThreeToolCategoriesTests(
     ) -> None:
         # The per-tool descriptor's `category` field MUST carry one
         # of three closed string values; the contract surfaces them
-        # in code-fence backticks so a Phase 10P implementer can
+        # in code-fence backticks so a Phase 10T implementer can
         # grep for the canonical identifiers.
         for category_id in (
             "read_only_advisory",
@@ -4910,13 +4910,13 @@ class McpIntegrationContractPinsThreeToolCategoriesTests(
                 f"category id {category_id!r}",
             )
 
-    def test_contract_defers_mutation_capable_to_phase_10q_plus(
+    def test_contract_defers_mutation_capable_to_phase_10u_plus(
         self,
     ) -> None:
         # Phase 10O explicitly defers every mutation-capable tool to
-        # Phase 10Q+; the Phase 10P initial slice MUST refuse them.
+        # Phase 10U+; the Phase 10T initial slice MUST refuse them.
         for fragment in (
-            "Phase 10Q",
+            "Phase 10U",
             "MUST refuse fail-closed unconditionally",
         ):
             self.assertIn(
@@ -4954,14 +4954,14 @@ class McpIntegrationContractPinsPerToolDescriptorTests(
                 f"per-tool descriptor field {field!r}",
             )
 
-    def test_contract_pins_mutation_eligible_false_in_phase_10p(
+    def test_contract_pins_mutation_eligible_false_in_phase_10t(
         self,
     ) -> None:
-        # The Phase 10P initial slice MUST refuse any tool with
+        # The Phase 10T initial slice MUST refuse any tool with
         # `mutation_eligible=True`; the contract pins this with
         # ALWAYS `false` language.
         self.assertIn(
-            "ALWAYS `false` in the Phase 10P initial slice",
+            "ALWAYS `false` in the Phase 10T initial slice",
             self.collapsed,
         )
 
@@ -5070,8 +5070,8 @@ class McpIntegrationContractPreservesShippedHardStopsTests(
             "as not-yet-shipped",
         )
         for fragment in (
-            "Phase 10P",
-            "Phase 10Q",
+            "Phase 10T",
+            "Phase 10U",
         ):
             self.assertIn(
                 fragment, self.collapsed,
@@ -5384,7 +5384,7 @@ class McpIntegrationContractReadmeAlignmentTests(unittest.TestCase):
     ) -> None:
         for fragment in (
             "documentation form only",
-            "Phase 10P",
+            "Phase 10T",
         ):
             self.assertIn(
                 fragment, self.text,
@@ -5397,16 +5397,204 @@ class McpIntegrationContractReadmeAlignmentTests(unittest.TestCase):
         self,
     ) -> None:
         # Future MCP runtime capabilities must be routed to Phase
-        # 10P / 10Q+ so a reader does not assume they ship in 10O.
+        # 10T / 10U+ so a reader does not assume they ship in 10O.
         for fragment in (
-            "Phase 10P",
-            "Phase 10Q",
+            "Phase 10T",
+            "Phase 10U",
         ):
             self.assertIn(
                 fragment, self.text,
                 f"README.md Phase 10O paragraph does not route "
                 f"future MCP capability to {fragment!r}",
             )
+
+
+class McpIntegrationContractRoadmapRoutingAlignmentTests(
+    unittest.TestCase,
+):
+    """The Phase 10O MCP integration contract and the README's
+    Phase 10O description MUST point implementers at the correct
+    successor MCP runtime slices per the canonical `ROADMAP.md`:
+
+    - Phase 10T = MCP Read-Only Assistance In Desktop App (the
+      first MCP runtime slice; category 1 and category 2 only)
+    - Phase 10U = MCP Action Guardrails And Per-Tool Approval
+      Policies (first mutation-capable MCP work)
+
+    A prior cycle described `Phase 10P` / `Phase 10Q` as the
+    successor MCP runtime buckets. That is wrong per the current
+    ROADMAP.md (Phase 10P is Desktop App Operator Setup, Phase 10Q
+    is Desktop App Run Profiles) and must not silently re-appear.
+    """
+
+    def setUp(self) -> None:
+        self.contract_text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.contract_collapsed = re.sub(
+            r"\s+", " ", self.contract_text,
+        )
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.readme_collapsed = re.sub(r"\s+", " ", self.readme_text)
+        self.roadmap_text = _read(REPO_ROOT / "ROADMAP.md")
+        self.roadmap_collapsed = re.sub(
+            r"\s+", " ", self.roadmap_text,
+        )
+
+    def test_roadmap_pins_canonical_phase_10t_name(self) -> None:
+        # Anchor: the canonical roadmap line. If this test fails,
+        # ROADMAP.md was renamed and every consumer below needs
+        # updating in lockstep.
+        self.assertIn(
+            "Phase 10T - MCP Read-Only Assistance In Desktop App",
+            self.roadmap_collapsed,
+        )
+
+    def test_roadmap_pins_canonical_phase_10u_name(self) -> None:
+        self.assertIn(
+            "Phase 10U - MCP Action Guardrails And Per-Tool "
+            "Approval Policies",
+            self.roadmap_collapsed,
+        )
+
+    def test_roadmap_does_not_route_mcp_runtime_to_10p_or_10q(
+        self,
+    ) -> None:
+        # Phase 10P / 10Q are reserved for desktop-app operator
+        # setup and run-profile work respectively per ROADMAP.md.
+        # They MUST NOT carry an "MCP" runtime title.
+        for stale in (
+            "Phase 10P - MCP",
+            "Phase 10Q - MCP",
+        ):
+            self.assertNotIn(
+                stale, self.roadmap_collapsed,
+                f"ROADMAP.md still routes MCP runtime work to "
+                f"{stale!r}; the canonical MCP runtime slices are "
+                f"Phase 10T and Phase 10U+",
+            )
+
+    def test_contract_names_phase_10t_as_first_mcp_runtime(
+        self,
+    ) -> None:
+        # The contract MUST name Phase 10T using the canonical
+        # ROADMAP.md title so a future implementer can grep across
+        # both files for the same identifier.
+        self.assertIn(
+            "Phase 10T", self.contract_collapsed,
+            "mcp-integration contract does not name Phase 10T as "
+            "the first MCP runtime slice",
+        )
+        self.assertIn(
+            "MCP Read-Only Assistance In Desktop App",
+            self.contract_collapsed,
+            "mcp-integration contract does not carry the canonical "
+            "Phase 10T title 'MCP Read-Only Assistance In Desktop "
+            "App' from ROADMAP.md",
+        )
+
+    def test_contract_names_phase_10u_as_mutation_capable_slice(
+        self,
+    ) -> None:
+        self.assertIn(
+            "Phase 10U", self.contract_collapsed,
+            "mcp-integration contract does not name Phase 10U as "
+            "the first mutation-capable MCP runtime slice",
+        )
+
+    def test_contract_does_not_misroute_mcp_runtime_to_10p_or_10q(
+        self,
+    ) -> None:
+        # Stale phrasing that previously mislabeled the successor
+        # MCP runtime slices. None of these forms may re-appear in
+        # the contract once the canonical routing is Phase 10T /
+        # 10U+. The check is intentionally narrow to MCP-runtime
+        # phrasings (Phase 10P / Phase 10Q on their own remain
+        # legal text elsewhere because they are the canonical
+        # desktop-app phase names).
+        forbidden_phrases = (
+            "Phase 10P initial slice",
+            "Phase 10P read-only",
+            "Phase 10P runtime",
+            "Phase 10P MCP",
+            "Phase 10P (MCP",
+            "Phase 10Q+",
+            "Phase 10Q mutation",
+            "Phase 10Q MCP",
+            "Phase 10Q (MCP",
+        )
+        for phrase in forbidden_phrases:
+            self.assertNotIn(
+                phrase, self.contract_collapsed,
+                f"mcp-integration contract still routes MCP "
+                f"runtime work via the stale phrase {phrase!r}; "
+                f"per ROADMAP.md the canonical successor slices "
+                f"are Phase 10T (read-only) and Phase 10U+ "
+                f"(mutation-capable)",
+            )
+
+    def test_readme_names_phase_10t_for_mcp_routing(self) -> None:
+        # The README's Phase 10O paragraph MUST route the reader
+        # at Phase 10T for the first MCP runtime slice.
+        self.assertIn(
+            "Phase 10T", self.readme_collapsed,
+            "README.md does not route MCP runtime readers at "
+            "Phase 10T",
+        )
+
+    def test_readme_names_phase_10u_for_mcp_mutation_routing(
+        self,
+    ) -> None:
+        self.assertIn(
+            "Phase 10U", self.readme_collapsed,
+            "README.md does not route MCP mutation-capable "
+            "readers at Phase 10U+",
+        )
+
+    def test_readme_does_not_misroute_mcp_runtime_to_10p_or_10q(
+        self,
+    ) -> None:
+        # Same narrow MCP-runtime phrasing guard as the contract.
+        # Bare "Phase 10P" / "Phase 10Q" remain legal because the
+        # README may surface them later as the desktop-app
+        # operator-setup / run-profile slices.
+        forbidden_phrases = (
+            "Phase 10P initial slice",
+            "Phase 10P read-only",
+            "Phase 10P MCP",
+            "Phase 10P (MCP",
+            "later Phase 10P/10Q",
+            "later Phase 10P / 10Q",
+            "Phase 10Q+",
+            "Phase 10Q mutation",
+            "Phase 10Q MCP",
+            "Phase 10Q (MCP",
+        )
+        for phrase in forbidden_phrases:
+            self.assertNotIn(
+                phrase, self.readme_collapsed,
+                f"README.md still routes MCP runtime work via "
+                f"the stale phrase {phrase!r}; per ROADMAP.md the "
+                f"canonical successor slices are Phase 10T "
+                f"(read-only) and Phase 10U+ (mutation-capable)",
+            )
+
+    def test_contract_and_readme_agree_on_phase_10t_title(
+        self,
+    ) -> None:
+        # Both the contract and the README must use the canonical
+        # "MCP Read-Only Assistance In Desktop App" title for
+        # Phase 10T so a reader following either path lands on the
+        # same identifier in ROADMAP.md.
+        canonical = "MCP Read-Only Assistance In Desktop App"
+        self.assertIn(
+            canonical, self.contract_collapsed,
+            "mcp-integration contract does not carry the "
+            "canonical Phase 10T title",
+        )
+        self.assertIn(
+            canonical, self.readme_collapsed,
+            "README.md does not carry the canonical Phase 10T "
+            "title",
+        )
 
 
 if __name__ == "__main__":
