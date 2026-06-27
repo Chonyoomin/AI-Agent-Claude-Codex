@@ -14043,9 +14043,9 @@ def _desktop_safe_call_view(fn, controller_root):
 
 
 def assemble_desktop_app_view(controller_root: Path) -> dict:
-    """Phase 10M / Phase 10P: assemble the bounded desktop view by
-    delegating to the shipped Phase 10H / 10I / 10K / 10P library
-    functions verbatim.
+    """Phase 10M / 10P / 10Q: assemble the bounded desktop view by
+    delegating to the shipped Phase 10H / 10I / 10K / 10P / 10Q
+    library functions verbatim.
 
     Returns a structured dict carrying:
       - `view_signal_version`: literal `phase-10m-v1`
@@ -14065,6 +14065,11 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         soft-error envelope (added Phase 10P fix cycle so the
         shipped desktop app actually exposes the onboarding
         surface alongside the Phase 10H / 10I / 10K surfaces)
+      - `run_profiles_view`: the Phase 10Q view dict returned by
+        `build_desktop_run_profiles_view(controller_root)`, OR a
+        soft-error envelope (added Phase 10Q so the shipped
+        desktop app exposes the run-profile and approval-controls
+        surface alongside the other sub-views)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14084,6 +14089,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     setup_view = _desktop_safe_call_view(
         build_desktop_setup_view, controller_root,
     )
+    run_profiles_view = _desktop_safe_call_view(
+        build_desktop_run_profiles_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14093,6 +14101,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "controls_view": controls_view,
         "dashboard_view": dashboard_view,
         "setup_view": setup_view,
+        "run_profiles_view": run_profiles_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14132,6 +14141,14 @@ def _desktop_render_sub_view_lines(
         # consistent with the standalone `view-desktop-setup`
         # output.
         lines.extend(render_desktop_setup_text(sub_view))
+        return lines
+    if key == "run_profiles_view":
+        # Re-use the shipped Phase 10Q renderer verbatim so the
+        # run-profile attribution tags ([canonical mirror] /
+        # [advisory] / [affordance] / [ineligible]) stay
+        # consistent with the standalone
+        # `view-desktop-run-profiles` output.
+        lines.extend(render_desktop_run_profiles_text(sub_view))
         return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
@@ -14195,6 +14212,7 @@ def render_desktop_app_text(view: dict) -> list:
         ("controls_view", "Controls (Phase 10I)"),
         ("dashboard_view", "Dashboard (Phase 10K)"),
         ("setup_view", "Setup (Phase 10P)"),
+        ("run_profiles_view", "Run Profiles (Phase 10Q)"),
     ):
         sub = view.get(key, {})
         lines.extend(_desktop_render_sub_view_lines(key, label, sub))
@@ -15465,6 +15483,607 @@ def cmd_view_desktop_setup(args: argparse.Namespace) -> int:
         return 2
     view = build_desktop_setup_view(controller_root)
     for line in render_desktop_setup_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10Q - Desktop App Run Profiles And Approval Controls.
+#
+# First desktop run-profile and approval-controls surface. Lets an
+# operator INSPECT the current canonical run-profile state and
+# DELIBERATELY choose the next approval mode / autonomy level /
+# PRD-to-completion-vs-bounded run policy through explicit
+# affordances that map back to canonical mutating CLIs. The
+# affordances are copy-paste only - the bridge NEVER silently
+# mutates loop-state `approval_mode`, NEVER auto-runs `plan` /
+# `activate` / `run` / `auto-continue` / `attach-external-target`
+# on the operator's behalf, NEVER widens the Phase 10I library-
+# callable control surface beyond its three-control cap, and
+# NEVER introduces a parallel persisted config plane.
+#
+# Run-profile dimensions surfaced as canonical mirrors:
+#   - `approval_mode`           (mirror of loop-state.approval_mode;
+#                                allowed values from
+#                                `ALLOWED_APPROVAL_MODES`)
+#   - `max_cycles`              (mirror of loop-state.max_cycles)
+#   - `cycle_count`             (mirror of loop-state.cycle_count)
+#   - `current_phase_sub_task`  (mirrors of loop-state.phase /
+#                                .sub_phase / .task)
+#   - `status`                  (mirror of loop-state.status; used
+#                                for affordance eligibility)
+#   - `runtime_adapter`         (mirror of the persisted Phase 6N
+#                                runtime-config selection, falling
+#                                back to RUNTIME_ADAPTER_DEFAULT;
+#                                via `read_runtime_config(...)`)
+#
+# Affordances surfaced as bounded copy-paste commands:
+#   - `select_approval_mode_review`     -> `plan` (approval-mode is
+#                                          set on activation per the
+#                                          shipped Phase 4C contract;
+#                                          the affordance points the
+#                                          operator at the canonical
+#                                          mutating entry rather than
+#                                          inventing a new in-flight
+#                                          mutating subcommand)
+#   - `select_approval_mode_strict`     -> `plan`
+#   - `select_approval_mode_autonomous` -> `plan`
+#   - `set_attach_approval_mode`        -> `attach-external-target
+#                                          --target-path <PATH>
+#                                          --attached-by <NAME>
+#                                          --approval-mode <MODE>`
+#                                          (the only shipped CLI that
+#                                          carries `--approval-mode`
+#                                          as a direct flag today;
+#                                          operator-decision only)
+#   - `select_run_policy_bounded`       -> `run` (single cycle)
+#   - `select_run_policy_prd_to_completion`
+#                                       -> `auto-continue` (chained
+#                                          continuation hops bounded
+#                                          by AUTO_CONTINUE_MAX_HOPS;
+#                                          NOT a claim that the
+#                                          deferred fully-autonomous
+#                                          PRD-to-product mode ships)
+#
+# The surface is a Phase 7C reporter: always exits 0 on report
+# content once the controller-root selection succeeds. Per the
+# Phase 10L Desktop App Shell Contract this handler NEVER mutates
+# any canonical artifact, NEVER appends to
+# `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
+# network socket, NEVER auto-fills any `--*-by` operator-identity
+# argument, NEVER rewrites `runtime-config.json` /
+# `external-target.json` / the wrapper templates / the operator's
+# shell rc, and NEVER widens the Phase 10I library-callable
+# control surface.
+#
+# `--controller-root <PATH>` is REQUIRED per the Phase 10L
+# Controller-Root Selection Flow (matching the Phase 10M / 10N /
+# 10P contracts); omitting it returns exit 2 with an explicit
+# `[desktop-run-profiles] REFUSED: ...` stderr line.
+#
+# Out of scope for this slice (deferred to later Phase 10 sub-
+# phases tracked in `ROADMAP.md`):
+#   - guided PRD intake / project-start flow (Phase 10R)
+#   - MCP server selection / read-only MCP runtime (Phase 10S /
+#     10T)
+#   - MCP mutation-capable runtime (Phase 10U+)
+#   - controlled-concurrency / overlap-safe detection / Codex-
+#     owned concurrent work (Phase 10AB / 10AC / 10AD)
+#   - packaging / code-signing / auto-update / system-tray work
+#   - any persisted control plane parallel to the shipped
+#     `runtime-config.json`, the shipped `external-target.json`,
+#     loop-state.json, and the operator's own shell environment
+#   - in-flight mutation of loop-state `approval_mode` outside the
+#     existing Phase 4C activation path and the existing
+#     `attach-external-target --approval-mode` write path
+
+DESKTOP_RUN_PROFILES_SIGNAL_VERSION = "phase-10q-v1"
+
+DESKTOP_RUN_PROFILES_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any desktop "
+    "run-profiles rendering. The run-profiles surface mirrors "
+    "loop-state.approval_mode / max_cycles / cycle_count / "
+    "phase / sub_phase / task / status as canonical mirrors and "
+    "the persisted Phase 6N runtime-config selection as an "
+    "advisory, and surfaces approval-mode and run-policy choices "
+    "as bounded copy-paste affordances. The surface NEVER "
+    "silently mutates `approval_mode` or any other canonical "
+    "loop-state field, NEVER auto-runs `plan` / `activate` / "
+    "`run` / `auto-continue` / `attach-external-target` on the "
+    "operator's behalf, NEVER auto-fills any `--*-by` operator-"
+    "identity argument, NEVER widens the Phase 10I library-"
+    "callable control cap, NEVER introduces hidden background "
+    "automation, NEVER introduces a persisted control plane "
+    "parallel to loop-state.json / runtime-config.json / "
+    "external-target.json, NEVER spawns a subprocess (no "
+    "`subprocess.Popen`, no `os.system`, no shell-out path), "
+    "and NEVER opens a network socket. "
+    "Ineligible affordances surface fail-closed as `[ineligible]` "
+    "in the rendered output, NOT silently hidden."
+)
+
+DESKTOP_RUN_PROFILE_DIMENSION_IDS = (
+    "approval_mode",
+    "max_cycles",
+    "cycle_count",
+    "phase",
+    "sub_phase",
+    "task",
+    "status",
+    "runtime_adapter",
+)
+
+DESKTOP_RUN_PROFILE_AFFORDANCE_IDS = (
+    "select_approval_mode_review",
+    "select_approval_mode_strict",
+    "select_approval_mode_autonomous",
+    "set_attach_approval_mode",
+    "select_run_policy_bounded",
+    "select_run_policy_prd_to_completion",
+)
+
+# Each affordance maps a desktop run-profile choice onto a shipped
+# CLI surface. The registry is closed: extending it requires a
+# future Phase 10 sub-phase that updates this tuple AND
+# `DESKTOP_RUN_PROFILE_AFFORDANCE_IDS` in lockstep.
+_DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
+    {
+        "id": "select_approval_mode_review",
+        "label": (
+            "Select the `review` approval mode for the next "
+            "activation (operator approves each verdict)"
+        ),
+        "dimension": "approval_mode",
+        "target_value": APPROVAL_MODE_REVIEW,
+        "command": (
+            "python scripts/agent_loop.py plan  "
+            "# then edit `.agent-loop/proposed-phase.md` so the "
+            "next phase's approval_mode is 'review', then run "
+            "`python scripts/agent_loop.py activate`"
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "audit_note": (
+            "approval_mode is set on activation per the shipped "
+            "Phase 4C contract; this affordance does NOT mutate "
+            "in-flight loop-state. Activation writes "
+            "`.agent-loop/loop-state.json` and emits planner / "
+            "activation transitions to "
+            "`.agent-loop/planner.log` / "
+            "`.agent-loop/orchestrator.log`"
+        ),
+    },
+    {
+        "id": "select_approval_mode_strict",
+        "label": (
+            "Select the `strict` approval mode for the next "
+            "activation (operator approves at every Phase 5C "
+            "pause)"
+        ),
+        "dimension": "approval_mode",
+        "target_value": APPROVAL_MODE_STRICT,
+        "command": (
+            "python scripts/agent_loop.py plan  "
+            "# then edit `.agent-loop/proposed-phase.md` so the "
+            "next phase's approval_mode is 'strict', then run "
+            "`python scripts/agent_loop.py activate`"
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "audit_note": (
+            "approval_mode is set on activation per the shipped "
+            "Phase 4C contract; this affordance does NOT mutate "
+            "in-flight loop-state"
+        ),
+    },
+    {
+        "id": "select_approval_mode_autonomous",
+        "label": (
+            "Select the `autonomous` approval mode for the next "
+            "activation (Phase 5D bounded autonomous mode)"
+        ),
+        "dimension": "approval_mode",
+        "target_value": APPROVAL_MODE_AUTONOMOUS,
+        "command": (
+            "python scripts/agent_loop.py plan  "
+            "# then edit `.agent-loop/proposed-phase.md` so the "
+            "next phase's approval_mode is 'autonomous', then run "
+            "`python scripts/agent_loop.py activate`"
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "audit_note": (
+            "approval_mode is set on activation per the shipped "
+            "Phase 4C contract; this affordance does NOT mutate "
+            "in-flight loop-state"
+        ),
+    },
+    {
+        "id": "set_attach_approval_mode",
+        "label": (
+            "Set the external-target attach `--approval-mode "
+            "<MODE>` (the only shipped CLI that carries "
+            "`--approval-mode` as a direct flag today)"
+        ),
+        "dimension": "approval_mode",
+        "target_value": None,
+        "command": (
+            "python scripts/agent_loop.py "
+            "attach-external-target "
+            "--target-path <PATH> --attached-by <NAME> "
+            "--approval-mode <MODE>"
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "audit_note": (
+            "writes `.agent-loop/external-target.json`; emits "
+            "`external target: attached ...` to "
+            "`.agent-loop/orchestrator.log`. Operator-identity "
+            "argument `--attached-by` is NEVER auto-filled by "
+            "the desktop run-profiles surface"
+        ),
+    },
+    {
+        "id": "select_run_policy_bounded",
+        "label": (
+            "Run one bounded cycle (operator-driven; "
+            "phase-level cycle cap remains loop-state.max_cycles)"
+        ),
+        "dimension": "run_policy",
+        "target_value": "bounded",
+        "command": "python scripts/agent_loop.py run",
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": frozenset({
+            "awaiting_claude_implementation",
+        }),
+        "audit_note": (
+            "advances cycle state; emits run-state transitions to "
+            "`.agent-loop/orchestrator.log`. This is NOT a claim "
+            "that fully autonomous PRD-to-product execution ships"
+        ),
+    },
+    {
+        "id": "select_run_policy_prd_to_completion",
+        "label": (
+            "Run chained continuation hops to PRD-to-completion "
+            "(bounded by AUTO_CONTINUE_MAX_HOPS; not the "
+            "deferred fully-autonomous PRD-to-product mode)"
+        ),
+        "dimension": "run_policy",
+        "target_value": "prd_to_completion",
+        "command": (
+            "python scripts/agent_loop.py auto-continue"
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": frozenset({
+            HALTED_TOKEN_EXHAUSTION,
+        }),
+        "audit_note": (
+            "chains bounded token-exhaustion continuation hops "
+            "via the shipped Phase 6G AUTO_CONTINUE_MAX_HOPS cap; "
+            "emits hop transitions to "
+            "`.agent-loop/orchestrator.log`. This is NOT a claim "
+            "that the deferred fully-autonomous PRD-to-product "
+            "mode ships in this slice"
+        ),
+    },
+)
+
+
+def _desktop_run_profile_eligibility(
+    spec: dict, status_value: Optional[str],
+) -> tuple:
+    """Return `(eligible, reason)` for one run-profile affordance.
+
+    Mirrors the Phase 10N action-bridge eligibility shape so the
+    two surfaces stay semantically aligned. Eligibility is
+    recomputed per-call from the current `status_value`; stale
+    state cannot survive a poll cycle.
+    """
+    if spec["eligibility_states"] is None:
+        return True, (
+            "always operator-decision (no loop-state gate)"
+        )
+    if status_value is None:
+        return False, (
+            "canonical loop-state.status is unavailable; "
+            "eligibility cannot be determined"
+        )
+    if status_value in spec["eligibility_states"]:
+        return True, (
+            f"current loop-state.status={status_value!r} matches "
+            f"one of the affordance's eligible states"
+        )
+    return False, (
+        f"current loop-state.status={status_value!r} is not in "
+        f"the affordance's eligible set "
+        f"{sorted(spec['eligibility_states'])!r}; run a CLI "
+        f"command that transitions loop-state to an eligible "
+        f"status first"
+    )
+
+
+def _desktop_run_profile_affordance_descriptor(
+    spec: dict, status_value: Optional[str],
+) -> dict:
+    """Return the operator-visible descriptor for one affordance."""
+    eligible, reason = _desktop_run_profile_eligibility(
+        spec, status_value,
+    )
+    return {
+        "id": spec["id"],
+        "label": spec["label"],
+        "dimension": spec["dimension"],
+        "target_value": spec["target_value"],
+        "command": spec["command"],
+        "dispatch_mode": spec["dispatch_mode"],
+        "category": spec["category"],
+        "currently_eligible": eligible,
+        "eligibility_reason": reason,
+        "audit_note": spec["audit_note"],
+    }
+
+
+def _desktop_run_profile_mirror(
+    loop_state: Optional[dict], runtime_adapter: str,
+) -> dict:
+    """Assemble the closed mirror dict over the run-profile
+    dimensions. `loop_state` is the canonical loop-state.json
+    dict (or None when the on-disk file is missing / malformed).
+    `runtime_adapter` is the persisted Phase 6N runtime-config
+    selection, falling back to `RUNTIME_ADAPTER_DEFAULT` when
+    absent. The mirror is read-only and is recomputed per call.
+    """
+    if not isinstance(loop_state, dict):
+        loop_state = {}
+    return {
+        "approval_mode": loop_state.get("approval_mode"),
+        "approval_mode_allowed_values": sorted(
+            ALLOWED_APPROVAL_MODES
+        ),
+        "max_cycles": loop_state.get("max_cycles"),
+        "cycle_count": loop_state.get("cycle_count"),
+        "phase": loop_state.get("phase"),
+        "sub_phase": loop_state.get("sub_phase"),
+        "task": loop_state.get("task"),
+        "status": loop_state.get("status"),
+        "runtime_adapter": runtime_adapter,
+        "runtime_adapter_default": RUNTIME_ADAPTER_DEFAULT,
+        "runtime_adapter_supported": sorted(
+            RUNTIME_ADAPTERS_SUPPORTED
+        ),
+    }
+
+
+def build_desktop_run_profiles_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10Q: assemble the bounded desktop run-profiles view.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10q-v1`
+      - `controller_path_canonical`: resolved controller root
+      - `current_loop_state_status`: canonical loop-state.status
+        (or None on a HaltError soft-fail; used for affordance
+        eligibility computation)
+      - `mirror`: closed run-profile-dimension mirror dict
+        assembled by `_desktop_run_profile_mirror(...)`
+      - `affordances`: list of affordance descriptors, one per
+        `DESKTOP_RUN_PROFILE_AFFORDANCE_IDS` entry, carrying id /
+        label / dimension / target_value / command /
+        dispatch_mode / category / currently_eligible /
+        eligibility_reason / audit_note
+      - `precedence_note`: literal
+        `DESKTOP_RUN_PROFILES_PRECEDENCE_NOTE`
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never widens the Phase 10I library-
+    callable control cap. HaltError from `load_loop_state(...)`
+    soft-fails to `loop_state=None`; HaltError from
+    `read_runtime_config(...)` soft-fails to
+    `runtime_adapter=RUNTIME_ADAPTER_DEFAULT`. Per the Phase 10L
+    contract the desktop shell MUST NOT propagate validator
+    HaltErrors as canonical halt persistence.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    try:
+        persisted_runtime = read_runtime_config(controller_root)
+    except HaltError:
+        persisted_runtime = None
+    runtime_adapter = (
+        persisted_runtime
+        if persisted_runtime is not None
+        else RUNTIME_ADAPTER_DEFAULT
+    )
+    status_value: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+    mirror = _desktop_run_profile_mirror(
+        loop_state, runtime_adapter,
+    )
+    affordances = [
+        _desktop_run_profile_affordance_descriptor(
+            spec, status_value,
+        )
+        for spec in _DESKTOP_RUN_PROFILE_AFFORDANCES
+    ]
+    return {
+        "view_signal_version": (
+            DESKTOP_RUN_PROFILES_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "mirror": mirror,
+        "affordances": affordances,
+        "precedence_note": (
+            DESKTOP_RUN_PROFILES_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_run_profiles_text(view: dict) -> list:
+    """Phase 10Q: format the assembled run-profiles view as text
+    lines. Each line is attributed (`[canonical mirror]`,
+    `[advisory]`, `[affordance]`, `[ineligible]`) so a reviewer
+    can tell which lines are canonical mirrors, which are
+    advisory, which are eligible affordances, and which
+    affordances refused fail-closed.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-run-profiles] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    mirror = view["mirror"]
+    lines.append(
+        f"  [canonical mirror] approval_mode "
+        f"(.agent-loop/loop-state.json): "
+        f"{mirror['approval_mode']!r} "
+        f"(allowed values: "
+        f"{mirror['approval_mode_allowed_values']!r})"
+    )
+    lines.append(
+        f"  [canonical mirror] max_cycles "
+        f"(.agent-loop/loop-state.json): "
+        f"{mirror['max_cycles']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] cycle_count "
+        f"(.agent-loop/loop-state.json): "
+        f"{mirror['cycle_count']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] phase / sub_phase / task "
+        f"(.agent-loop/loop-state.json): "
+        f"phase={mirror['phase']!r} "
+        f"sub_phase={mirror['sub_phase']!r} "
+        f"task={mirror['task']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status "
+        f"(.agent-loop/loop-state.json): "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [advisory] runtime_adapter (mirrors persisted "
+        f"`.agent-loop/runtime-config.json` per the Phase 6N "
+        f"contract; falls back to default when absent): "
+        f"{mirror['runtime_adapter']!r} "
+        f"(default={mirror['runtime_adapter_default']!r}; "
+        f"supported={mirror['runtime_adapter_supported']!r})"
+    )
+    for descriptor in view.get("affordances", []):
+        tag = (
+            "[affordance]"
+            if descriptor["currently_eligible"]
+            else "[ineligible]"
+        )
+        lines.append(
+            f"  {tag} id={descriptor['id']!r} "
+            f"dimension={descriptor['dimension']!r} "
+            f"target_value={descriptor['target_value']!r} "
+            f"dispatch_mode={descriptor['dispatch_mode']!r} "
+            f"category={descriptor['category']!r} "
+            f"currently_eligible="
+            f"{descriptor['currently_eligible']!r}"
+        )
+        lines.append(
+            f"    command: {descriptor['command']}"
+        )
+        lines.append(
+            f"    label: {descriptor['label']}"
+        )
+        lines.append(
+            f"    [advisory] eligibility_reason: "
+            f"{descriptor['eligibility_reason']}"
+        )
+        lines.append(
+            f"    [advisory] audit_note: "
+            f"{descriptor['audit_note']}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def cmd_view_desktop_run_profiles(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10Q operator entry: print the desktop run-profiles
+    view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase 10L
+    Desktop App Shell Contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess (no `subprocess.Popen`, no
+    `os.system`, no shell-out path), NEVER opens a network socket,
+    NEVER widens the Phase 10I library-callable control cap,
+    NEVER auto-fills any `--*-by` operator-identity argument, and
+    NEVER rewrites `runtime-config.json` / `external-target.json`.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow (matching the Phase 10M / 10N
+    / 10P contracts); omitting it returns exit 2 with an explicit
+    `[desktop-run-profiles] REFUSED: ...` stderr line.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-run-profiles] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop run-profiles surface MUST NOT silently pick "
+            "a default root from an auto-discovered repo root, "
+            "the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Supply the controller root "
+            "explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-run-profiles] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires AGENTS.md "
+            f"/ CLAUDE.md / TASK.md / .agent-loop/ to be present "
+            f"before any canonical artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_run_profiles_view(controller_root)
+    for line in render_desktop_run_profiles_text(view):
         print(line)
     return 0
 
@@ -21649,6 +22268,54 @@ def build_parser() -> argparse.ArgumentParser:
             "...` stderr message."
         ),
     )
+    run_profiles = sub.add_parser(
+        "view-desktop-run-profiles",
+        help=(
+            "Phase 10Q desktop app run profiles and approval "
+            "controls initial slice: render a bounded read-only "
+            "run-profiles view covering canonical mirrors of "
+            "loop-state.approval_mode / max_cycles / cycle_count "
+            "/ phase / sub_phase / task / status plus an "
+            "advisory mirror of the persisted Phase 6N "
+            "runtime-config selection, and surface six closed "
+            "copy-paste affordances (three approval-mode "
+            "selections via the canonical Phase 4C "
+            "plan-then-activate path, the existing "
+            "`attach-external-target --approval-mode <MODE>` "
+            "flag, and two run-policy choices "
+            "bounded `run` vs PRD-to-completion `auto-continue` "
+            "bounded by AUTO_CONTINUE_MAX_HOPS). Phase 7C "
+            "reporter pattern: always exits 0 on report "
+            "content; never mutates any canonical artifact; "
+            "never appends to `.agent-loop/orchestrator.log`; "
+            "never advances loop-state; never invokes "
+            "`_halt(...)`; never spawns a subprocess; never "
+            "auto-runs `plan` / `activate` / `run` / "
+            "`auto-continue` / `attach-external-target` on the "
+            "operator's behalf; never auto-fills any --*-by "
+            "operator-identity argument; never widens the "
+            "Phase 10I library-callable control cap; never "
+            "rewrites runtime-config.json / external-target.json; "
+            "never opens a network socket."
+        ),
+    )
+    run_profiles.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop run-profiles view renders against. Per the "
+            "Phase 10L Controller-Root Selection Flow the "
+            "desktop shell MUST NOT silently pick a default "
+            "root from an auto-discovered repo root, the OS-"
+            "level current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Omitting this flag returns exit 2 with a "
+            "`[desktop-run-profiles] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -21921,6 +22588,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "launch-desktop-app": cmd_launch_desktop_app,
     "view-desktop-actions": cmd_view_desktop_actions,
     "view-desktop-setup": cmd_view_desktop_setup,
+    "view-desktop-run-profiles": cmd_view_desktop_run_profiles,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
