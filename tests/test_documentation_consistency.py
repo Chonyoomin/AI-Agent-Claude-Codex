@@ -97,6 +97,14 @@ ARTIFACT_DASHBOARD_CONTRACT_PATH = (
     REPO_ROOT / "docs" / "artifact-dashboard-contract.md"
 )
 PHASE_10J_DOC_PATHS = (ARTIFACT_DASHBOARD_CONTRACT_PATH,)
+# Phase 10L - Desktop App Shell Contract documentation-only slice.
+# Defines the contract a future native desktop-app shell runtime
+# (Phase 10M) must satisfy, layered on top of the binding Phase 10G
+# UI contract and the Phase 10J dashboard contract.
+DESKTOP_APP_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "desktop-app-contract.md"
+)
+PHASE_10L_DOC_PATHS = (DESKTOP_APP_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
     PHASE_8A_DOC_PATHS
     + PHASE_8B_DOC_PATHS
@@ -106,6 +114,7 @@ ALL_OPERATOR_DOC_PATHS = (
     + PHASE_10C_DOC_PATHS
     + PHASE_10G_DOC_PATHS
     + PHASE_10J_DOC_PATHS
+    + PHASE_10L_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -3963,6 +3972,649 @@ class ReadmePointsAtArtifactDashboardContractDocTests(
                 fragment, self.text,
                 f"README.md Phase 10J paragraph does not route "
                 f"future dashboard capability to {fragment!r}",
+            )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10L - Desktop App Shell Contract documentation-only slice.
+#
+# These tests pin the canonical section headers, the contract's
+# distinction from shipped surfaces, the desktop-process boundary,
+# the controller-root selection flow, attach visibility, refresh /
+# polling rules, artifact-opening behavior, the safe bridge to the
+# shipped Python orchestrator / view surfaces, the CLI-only operation
+# list, the refusal cases, and the safety / approval / audit
+# boundaries the desktop runtime must preserve. The shipped Phase
+# 10G - 10K surfaces remain authoritative; this contract layers on
+# top of them.
+# ---------------------------------------------------------------------------
+class DesktopAppContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10L: the desktop-app contract doc must exist on disk,
+    be non-empty, be ASCII-only, and carry the canonical section
+    headers a future Phase 10M implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = DESKTOP_APP_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10L desktop-app contract doc at "
+            f"{self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/desktop-app-contract.md contains non-ASCII "
+                f"bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# Desktop App Shell Contract",
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## Desktop Process Boundary And Toolkit",
+            "## Controller-Root Selection Flow",
+            "## Attach Visibility",
+            "## Refresh / Polling Rules",
+            "## Artifact-Opening Behavior",
+            "## Bridge To Shipped Python Orchestrator And View "
+            "Surfaces",
+            "## Advisory-Vs-Canonical Mirror Rule",
+            "## Operations That Remain CLI-Only",
+            "## Desktop Identity And Operator Attribution",
+            "## Refusal Behavior",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Dependencies On Later Phase 10 Slices",
+            "## Out Of Scope For Phase 10L",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/desktop-app-contract.md missing required "
+                f"section header {header!r}",
+            )
+
+
+class DesktopAppContractPinsProcessBoundaryTests(unittest.TestCase):
+    """The contract MUST pin a local-only, read-mostly, native
+    desktop process that does NOT introduce a remote server, hosted
+    SaaS endpoint, or shared multi-user backend.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_local_only_process(self) -> None:
+        for fragment in (
+            "thin local-only native window process",
+            "same machine as the controller repository",
+            "MUST NOT introduce a remote server",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin the local-only "
+                f"process via {fragment!r}",
+            )
+
+    def test_contract_forbids_background_mutating_daemon(self) -> None:
+        for fragment in (
+            "MUST NOT bundle, fork, or auto-start a background "
+            "daemon",
+            "shipped CLI remains the only mutating writer",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not forbid background "
+                f"mutating daemons via {fragment!r}",
+            )
+
+    def test_contract_does_not_pin_specific_toolkit(self) -> None:
+        # Phase 10M is free to pick any toolkit so long as it
+        # satisfies the other invariants; the contract MUST NOT
+        # pin Electron / Tauri / Qt / native at this layer.
+        self.assertIn(
+            "intentionally NOT pinned by this contract",
+            self.collapsed,
+        )
+
+    def test_contract_pins_renderer_process_safety(self) -> None:
+        # For toolkits with a separate renderer process the
+        # renderer MUST NOT have direct filesystem write access
+        # to any canonical artifact.
+        for fragment in (
+            "renderer process separate from the main process",
+            "MUST NOT have direct filesystem write access",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin renderer "
+                f"safety via {fragment!r}",
+            )
+
+
+class DesktopAppContractPinsControllerRootSelectionTests(
+    unittest.TestCase,
+):
+    """The contract MUST require explicit operator selection of the
+    controller root before any canonical artifact is rendered.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_requires_explicit_selection(self) -> None:
+        for fragment in (
+            "require explicit operator selection",
+            "MUST NOT silently pick a default root",
+            "native folder picker",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not require explicit "
+                f"controller-root selection via {fragment!r}",
+            )
+
+    def test_contract_validates_controller_repository(self) -> None:
+        for fragment in (
+            "AGENTS.md",
+            "CLAUDE.md",
+            "TASK.md",
+            ".agent-loop/",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not name "
+                f"controller-root validation marker {fragment!r}",
+            )
+
+    def test_contract_treats_root_switch_as_clean_reset(self) -> None:
+        for fragment in (
+            "switch the controller root mid-session",
+            "clean reset",
+            "MUST NOT cross-merge artifacts from two different "
+            "controller roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin clean-reset "
+                f"on root switch via {fragment!r}",
+            )
+
+    def test_contract_does_not_auto_create_controller_root(
+        self,
+    ) -> None:
+        self.assertIn(
+            "MUST NOT auto-create the controller root",
+            self.collapsed,
+        )
+
+
+class DesktopAppContractPinsRefreshAndPollingTests(unittest.TestCase):
+    """The contract MUST bound poll cadence, prohibit parallel
+    event-stream / webhook surfaces, and require canonical-mirror
+    refresh per poll cycle.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_bounded_poll_cadence(self) -> None:
+        for fragment in (
+            "at least 2 seconds between polls",
+            "at least 1 second under operator-driven refresh",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin bounded poll "
+                f"cadence via {fragment!r}",
+            )
+
+    def test_contract_pins_per_poll_cache_invalidation(self) -> None:
+        for fragment in (
+            "MUST NOT serve stale mirrors",
+            "cache invalidation per poll is required",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin per-poll cache "
+                f"invalidation via {fragment!r}",
+            )
+
+    def test_contract_forbids_parallel_event_stream(self) -> None:
+        for fragment in (
+            "MUST NOT introduce a long-poll",
+            "WebSocket subscription",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not forbid parallel "
+                f"event-stream surfaces via {fragment!r}",
+            )
+
+    def test_contract_permits_filesystem_watch_as_optimization(
+        self,
+    ) -> None:
+        # A FS watch is permitted as a polling optimization but
+        # MUST NOT bypass the shipped view library functions.
+        for fragment in (
+            "file-system watch on `.agent-loop/`",
+            "MUST NOT bypass the shipped view library functions",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin FS-watch "
+                f"safety via {fragment!r}",
+            )
+
+
+class DesktopAppContractPinsArtifactOpeningTests(unittest.TestCase):
+    """The contract MUST pin artifact-opening behavior as read-only
+    from the shell's perspective, using the operating system's
+    default file-open mechanism.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_os_default_open_mechanism(self) -> None:
+        for fragment in (
+            "operating system's default file-open mechanism",
+            "MUST NOT bundle its own editor",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin OS-default "
+                f"open via {fragment!r}",
+            )
+
+    def test_contract_forbids_git_side_effects(self) -> None:
+        for fragment in (
+            "MUST NOT auto-stage, auto-format, or auto-rewrite",
+            "MUST NOT invoke `git add`",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not forbid Git side "
+                f"effects on artifact-open via {fragment!r}",
+            )
+
+    def test_contract_pins_codex_owned_artifact_readonly_open(
+        self,
+    ) -> None:
+        # The Codex-owned planning artifacts must not be opened
+        # for editing as a side effect of any dashboard render.
+        for fragment in (
+            "MUST NOT silently open a Codex-owned planning "
+            "artifact",
+            ".agent-loop/current-task.md",
+            ".agent-loop/current-phase.md",
+            ".agent-loop/phase-plan.md",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin Codex-owned "
+                f"read-only-open via {fragment!r}",
+            )
+
+
+class DesktopAppContractPinsBridgeTests(unittest.TestCase):
+    """The contract MUST pin exactly two bridge modes to the shipped
+    Python surfaces (library-call for reads, CLI-spawn for mutations)
+    and MUST forbid re-implementing the shipped library functions or
+    bypassing them via direct on-disk reads.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_pins_library_call_bridge(self) -> None:
+        for fragment in (
+            "Library-call bridge",
+            "build_external_ui_status_view",
+            "build_external_ui_control_view",
+            "build_artifact_dashboard_view",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin the library-"
+                f"call bridge via {fragment!r}",
+            )
+
+    def test_contract_pins_cli_spawn_bridge(self) -> None:
+        for fragment in (
+            "CLI-spawn bridge",
+            "copy-paste affordance",
+            "MUST NOT silently `Popen`",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not pin the CLI-spawn "
+                f"bridge via {fragment!r}",
+            )
+
+    def test_contract_forbids_reimplementing_view_functions(
+        self,
+    ) -> None:
+        self.assertIn(
+            "MUST NOT re-implement the shipped library functions",
+            self.collapsed,
+        )
+
+    def test_contract_forbids_custom_ipc_protocol(self) -> None:
+        for fragment in (
+            "MUST NOT introduce a custom IPC protocol",
+            "named pipe",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not forbid custom "
+                f"IPC via {fragment!r}",
+            )
+
+
+class DesktopAppContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """The contract MUST preserve every shipped hard stop the Phase
+    10G/10H/10I/10J/10K surfaces already pin: no Git automation in
+    either root, the Phase 4C activator + `APPROVED_FOR_ACTIVATION`
+    token, the Phase 9G acceptance gate, no auto-fill of operator
+    identity, no canonical-artifact writes from the desktop shell
+    process, no desktop-side databases / session stores / event
+    queues / identity tokens.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        for fragment in (
+            "commit, push, tag, branch, stash, reset, checkout",
+            "BOTH roots",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not preserve the "
+                f"no-Git-automation boundary via {fragment!r}",
+            )
+
+    def test_contract_preserves_approved_for_activation(self) -> None:
+        for fragment in (
+            "APPROVED_FOR_ACTIVATION",
+            "Phase 4C activator",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not preserve the "
+                f"activation gate via {fragment!r}",
+            )
+
+    def test_contract_preserves_phase_9g_acceptance_gate(self) -> None:
+        for fragment in (
+            "Phase 9G",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not preserve the "
+                f"Phase 9G acceptance gate via {fragment!r}",
+            )
+
+    def test_contract_refuses_silent_identity_autofill(self) -> None:
+        for fragment in (
+            "MUST NOT auto-fill",
+            "browser session",
+            "$USER",
+            "whoami",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not refuse silent "
+                f"identity auto-fill via {fragment!r}",
+            )
+
+    def test_contract_forbids_desktop_side_state_stores(self) -> None:
+        for fragment in (
+            "MUST NOT introduce a shell-side database",
+            "MUST NOT introduce a shell-side notification queue",
+            "MUST NOT introduce a shell-side identity",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not forbid competing "
+                f"desktop-side state via {fragment!r}",
+            )
+
+    def test_contract_preserves_phase_10i_library_call_cap(
+        self,
+    ) -> None:
+        for fragment in (
+            "MUST NOT introduce additional library-callable "
+            "controls",
+            "view-external-status",
+            "view-external-controls",
+            "inspect-external-target",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not cap the "
+                f"library-callable surface at the Phase 10I "
+                f"three via {fragment!r}",
+            )
+
+    def test_contract_marks_runtime_as_not_yet_implemented(
+        self,
+    ) -> None:
+        # Phase 10L is documentation-only; the doc must NOT
+        # silently promise the desktop runtime as shipped.
+        self.assertIn(
+            "No desktop app runtime", self.collapsed,
+            "desktop-app contract does not mark the desktop "
+            "runtime as not-yet-shipped",
+        )
+        for fragment in (
+            "Phase 10M",
+            "Phase 10N",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not locate the future "
+                f"desktop runtime in {fragment!r}",
+            )
+
+
+class DesktopAppContractPinsCliOnlyOperationsTests(unittest.TestCase):
+    """The contract MUST enumerate the shipped mutating CLI
+    subcommands the desktop shell is not allowed to silently trigger.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_mutating_operations(self) -> None:
+        for op in (
+            "attach-external-target",
+            "detach-external-target",
+            "verify-external-target",
+            "plan",
+            "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                op, self.collapsed,
+                f"desktop-app contract does not enumerate "
+                f"mutating CLI subcommand {op!r}",
+            )
+
+    def test_contract_names_readonly_reporter_operations(self) -> None:
+        for op in (
+            "inspect-external-target",
+            "inspect-artifacts",
+            "status",
+            "evaluate-final-acceptance",
+            "validate-artifacts",
+            "check-state",
+            "view-artifact-dashboard",
+        ):
+            self.assertIn(
+                op, self.collapsed,
+                f"desktop-app contract does not enumerate "
+                f"read-only CLI reporter {op!r}",
+            )
+
+
+class DesktopAppContractInternalConsistencyWithPriorPhasesTests(
+    unittest.TestCase,
+):
+    """The Phase 10L contract MUST stay internally consistent with
+    the Phase 10G UI contract, the Phase 10J dashboard contract, and
+    the shipped Phase 10K runtime: it MAY extend the boundaries but
+    MUST NOT relax any of them.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(DESKTOP_APP_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_references_external_ui_contract(self) -> None:
+        for fragment in (
+            "docs/external-ui-contract.md",
+            "Phase 10G",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not reference the "
+                f"Phase 10G UI contract via {fragment!r}",
+            )
+
+    def test_contract_references_dashboard_contract(self) -> None:
+        for fragment in (
+            "docs/artifact-dashboard-contract.md",
+            "Phase 10J",
+            "Phase 10K",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not reference the "
+                f"Phase 10J/10K dashboard work via {fragment!r}",
+            )
+
+    def test_contract_references_phase_10h_view_surface(self) -> None:
+        for fragment in (
+            "view-external-status",
+            "build_external_ui_status_view",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not reference the "
+                f"Phase 10H view surface via {fragment!r}",
+            )
+
+    def test_contract_references_phase_10i_control_surface(
+        self,
+    ) -> None:
+        for fragment in (
+            "view-external-controls",
+            "invoke-external-control",
+            "ExternalUiControlRefusal",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not reference the "
+                f"Phase 10I control surface via {fragment!r}",
+            )
+
+    def test_contract_references_phase_10k_dashboard_runtime(
+        self,
+    ) -> None:
+        for fragment in (
+            "view-artifact-dashboard",
+            "build_artifact_dashboard_view",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"desktop-app contract does not reference the "
+                f"Phase 10K dashboard runtime via {fragment!r}",
+            )
+
+
+class DesktopAppContractReadmeAlignmentTests(unittest.TestCase):
+    """README.md MUST surface Phase 10L as active and route readers
+    at `docs/desktop-app-contract.md`.
+    """
+
+    def setUp(self) -> None:
+        readme = REPO_ROOT / "README.md"
+        self.text = _read(readme)
+
+    def test_readme_routes_at_desktop_app_contract(self) -> None:
+        self.assertIn(
+            "docs/desktop-app-contract.md", self.text,
+            "README.md does not route readers at the Phase 10L "
+            "desktop-app contract doc",
+        )
+
+    def test_readme_marks_phase_10l_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10L", self.text,
+            "README.md does not name Phase 10L as a current focus",
+        )
+        self.assertIn(
+            "Desktop App Shell Contract", self.text,
+            "README.md does not name the Phase 10L sub-phase title",
+        )
+
+    def test_readme_marks_phase_10l_as_documentation_only(
+        self,
+    ) -> None:
+        for fragment in (
+            "documentation form only",
+            "Phase 10M",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10L paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
+            )
+
+    def test_readme_routes_advanced_desktop_to_later_phases(
+        self,
+    ) -> None:
+        # Future desktop capabilities must be routed to Phase
+        # 10M / 10N+ so a reader does not assume they ship in 10L.
+        for fragment in (
+            "Phase 10M",
+            "Phase 10N",
+        ):
+            self.assertIn(
+                fragment, self.text,
+                f"README.md Phase 10L paragraph does not route "
+                f"future desktop capability to {fragment!r}",
             )
 
 
