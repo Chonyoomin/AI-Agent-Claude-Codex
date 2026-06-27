@@ -1,40 +1,39 @@
 # Claude Code Task
 
 ## Phase
-Phase 10N - Desktop App Action Bridge Initial Slice
+Phase 10O - MCP Integration Contract And Safe Tool Boundary
 
 ## Objective
-Implement Phase 10N for the agent loop. This slice should add the first bounded desktop action bridge for attach, inspect, run, and resume flows by delegating only to shipped CLI and library surfaces with explicit refusal handling, audit visibility, and no hidden automation or silent mutation path.
+Implement Phase 10O for the agent loop. This slice should define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review, approval gates, or ownership boundaries.
 
 ## Context
-Implement the Desktop App Action Bridge Initial Slice for the agent loop. This
-slice should add the first bounded desktop action bridge for attach, inspect,
-run, and resume flows by delegating only to shipped CLI and library surfaces
-with explicit refusal handling, audit visibility, and no hidden automation or
-silent mutation path.
+Implement the MCP Integration Contract And Safe Tool Boundary slice for the
+agent loop. This slice should define how MCP server support, scoped tool
+categories, browser/app inspection hooks, and policy rules may assist
+planning, implementation, and review without bypassing evidence review,
+approval gates, or ownership boundaries.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10N as active
-- `.agent-loop/phase-plan.md` records Phase 10M as closed history and contains
-  a `## Phase 10N - Desktop App Action Bridge Initial Slice` section with
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10O as active
+- `.agent-loop/phase-plan.md` records Phase 10N as closed history and contains
+  a `## Phase 10O - MCP Integration Contract And Safe Tool Boundary` section with
   concrete objective, done criteria, and exclusions
-- the repository adds bounded desktop-side action affordances for attach,
-  inspect, run, and resume flows while preserving the shipped CLI/library
-  surfaces as the source of execution truth
-- desktop actions remain explicit, operator-visible, and fail-closed: no
-  hidden background automation, no silent mutating subprocess dispatch, and no
-  widened library-callable control surface beyond what the approved phase
-  allows
-- the action bridge preserves audit visibility, approval semantics,
-  controller-vs-target ownership boundaries, and the canonical-artifact-first
-  model established by Phases 10L and 10M
-- focused validation proves the action bridge is bounded, routes only through
-  approved shipped surfaces, and does not widen into packaging, multi-target
-  sessions, concurrency runtime, MCP, RAG, GitHub, or other later Phase 10
-  work
-- `README.md` reflects that Phase 10N is active and that the desktop action
-  bridge is now the implementation focus
+- the repository adds a concrete MCP integration contract, ideally in a
+  dedicated docs artifact, that defines safe tool categories, ownership
+  boundaries, refusal rules, audit expectations, and source-of-truth
+  preservation before any MCP runtime path ships
+- the contract preserves the shipped evidence-review model, approval gating,
+  external-workspace boundaries, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of allowing MCP tools to bypass them
+- the contract distinguishes read-only assistance from still-deferred
+  mutation-capable MCP actions and defines what later phases must add before
+  any non-read-only MCP-assisted runtime behavior is allowed
+- focused validation or review coverage proves the new MCP contract/docs match
+  the actual repo state and do not claim that MCP runtime integration already
+  ships
+- `README.md` reflects that Phase 10O is active and that the MCP integration
+  contract is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,16 +46,17 @@ silent mutation path.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no packaging, installer, code-signing, auto-update, or system-tray work yet
-- no multi-target desktop sessions or controlled-concurrency work
-- no hidden background UI-side orchestration or second source of truth
-- no MCP integration, RAG layer, GitHub integration, or model-policy
-  extensibility work
+- no actual MCP runtime integration, no tool-execution path, and no networked
+  tool orchestration in this slice
+- no mutation-capable MCP actions, no MCP-driven writes to canonical
+  artifacts, and no bypass of the shipped CLI/library/runtime boundaries
+- no RAG, GitHub, policy-pack, packaging, system-tray, or controlled-
+  concurrency runtime work
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation, or that replaces canonical
   prompt/review/checkpoint artifacts with transient runtime-only state
-- no rewrite of current shipped behavior just to make future desktop-app,
-  concurrency, or autonomy work easier
+- no rewrite of current shipped behavior just to make future MCP or autonomy
+  work easier
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,
