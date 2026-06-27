@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10M - Desktop App Read-Only Runtime Initial Slice
+Phase 10N - Desktop App Action Bridge Initial Slice
 
 ## Status
-Phase 10L is complete and approved to advance. Phase 10M is now active as the next mainline slice focused on building the first local read-only desktop app shell over the shipped external UI and dashboard view surfaces.
+Phase 10M is complete and approved to advance. Phase 10N is now active as the next mainline slice focused on adding bounded desktop actions for attach, inspect, run, and resume flows without violating the desktop shell safety boundaries.
 
 ## Task
-Implement Phase 10M for the agent loop. This slice should build the first local read-only desktop app that opens against a chosen controller root, renders the shipped Phase 10H status view, Phase 10I controls view, and Phase 10K artifact dashboard view, and preserves the canonical-artifact-first model without introducing hidden orchestration or mutation paths.
+Implement Phase 10N for the agent loop. This slice should add the first bounded desktop action bridge for attach, inspect, run, and resume flows by delegating only to shipped CLI and library surfaces with explicit refusal handling, audit visibility, and no hidden automation or silent mutation path.
 
 ## Notes
 
-- keep this slice bounded to the first read-only desktop runtime; do not jump into mutating desktop actions yet
-- preserve the shipped ownership boundaries, phase gating, and canonical-artifact-first model while rendering the desktop shell
+- keep this slice bounded to the first desktop action bridge; do not jump into packaging, multi-target sessions, or concurrency work yet
+- preserve the shipped ownership boundaries, phase gating, audit visibility, and canonical-artifact-first model while adding desktop actions
 - do not widen into hidden UI-side orchestration, controlled-concurrency runtime, MCP, RAG, GitHub, policy-pack, packaging, or auto-update work
