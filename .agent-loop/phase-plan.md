@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10P - Desktop App Operator Setup And CLI Onboarding)
+Phase 10 - Future Product Features (sub-phase: Phase 10Q - Desktop App Run Profiles And Approval Controls)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4926,8 +4926,10 @@ approval gates, or ownership boundaries.
 
 ### Status
 
-Active. This slice adds the first guided desktop setup flow for controller
-selection, workspace validation, and local Claude/Codex CLI onboarding.
+Complete and approved by human to advance to Phase 10Q. Phase 10P closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the desktop setup surface,
+integrated desktop-app setup view, and bounded adapter-command validation were
+verified in the current repo state.
 
 ### Objective
 
@@ -4967,6 +4969,68 @@ is not ready.
   no networked tool orchestration in this slice
 - no credential capture, no hidden background config plane, and no bypass of
   the shipped CLI/library/runtime boundaries
+- no RAG, policy-pack, packaging, system-tray, or controlled-concurrency
+  runtime work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no rewrite of current shipped behavior just to make future desktop or
+  autonomy work easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10Q - Desktop App Run Profiles And Approval Controls
+
+### Status
+
+Active. This slice adds the first desktop control surface for selecting run
+profiles, approval mode, autonomy level, and PRD-to-completion vs bounded-run
+execution policy without introducing hidden UI-only state.
+
+### Objective
+
+Implement the Desktop App Run Profiles And Approval Controls slice for the
+agent loop. This slice should add a first-class desktop control surface for
+selecting approval mode, autonomy level, PRD-to-completion vs bounded-run
+mode, and related execution policies through explicit buttons/toggles that map
+back to canonical runtime state rather than hidden UI-only settings.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10Q as active
+- `.agent-loop/phase-plan.md` records Phase 10P as closed history and contains
+  a `## Phase 10Q - Desktop App Run Profiles And Approval Controls` section
+  with concrete objective, done criteria, and exclusions
+- the repository adds the first desktop run-profile and approval-controls
+  surface that lets an operator inspect and deliberately choose approval mode,
+  autonomy level, PRD-to-completion vs bounded-run execution policy, and
+  related guardrails through explicit desktop controls
+- the controls map back to canonical runtime state or clearly bounded existing
+  mutating surfaces rather than introducing hidden UI-only settings or a
+  parallel configuration plane
+- the phase preserves the shipped controller-vs-target boundary, no-auto-fill
+  identity rules, approval semantics, canonical-artifact-first model, and
+  existing CLI/runtime contracts instead of silently mutating in-flight loop
+  state
+- focused validation proves the run-profile and approval-controls surface is
+  bounded, auditable, and does not widen into PRD intake, MCP runtime
+  execution, RAG runtime, packaging, or controlled-concurrency work
+- `README.md` reflects that Phase 10Q is active and that desktop run profiles
+  and approval controls are now the implementation focus
+
+### Exclusions
+
+- no PRD intake flow, no MCP runtime integration, no tool-execution path, and
+  no networked tool orchestration in this slice
+- no hidden background control plane, no parallel config plane, and no bypass
+  of the shipped CLI/library/runtime boundaries
+- no silent mutation of in-flight loop-state approval_mode or other canonical
+  fields outside explicit approved mutating surfaces
 - no RAG, policy-pack, packaging, system-tray, or controlled-concurrency
   runtime work
 - no automatic next-phase activation behavior that bypasses or rewrites the
