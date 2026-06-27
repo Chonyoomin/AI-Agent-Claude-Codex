@@ -14416,7 +14416,8 @@ _DESKTOP_ACTION_BRIDGE_AFFORDANCES: tuple = (
         "command": (
             "python scripts/agent_loop.py "
             "attach-external-target "
-            "--target-root <PATH> --attached-by <NAME>"
+            "--target-path <PATH> --attached-by <NAME> "
+            "--approval-mode <MODE>"
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",

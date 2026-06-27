@@ -189,7 +189,12 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
 
     def test_attach_command_uses_placeholder_identity(self) -> None:
         # Targeted: the attach affordance specifically must surface
-        # both `<PATH>` and `<NAME>` as placeholder text.
+        # `<PATH>`, `<NAME>`, and `<MODE>` as placeholder text. The
+        # shipped attach-external-target parser requires all three
+        # arguments (--target-path, --attached-by, --approval-mode);
+        # an operator copy-pasting the affordance command must see
+        # placeholders for each so no identity / mode value is
+        # silently auto-filled by the desktop shell.
         attach = next(
             spec for spec in (
                 agent_loop._DESKTOP_ACTION_BRIDGE_AFFORDANCES
@@ -197,6 +202,80 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
             if spec["id"] == "attach"
         )
         self.assertIn("<PATH>", attach["command"])
+        self.assertIn("<NAME>", attach["command"])
+        self.assertIn("<MODE>", attach["command"])
+
+    def test_attach_command_matches_shipped_parser_contract(
+        self,
+    ) -> None:
+        # The shipped `attach-external-target` parser requires
+        # exactly --target-path / --attached-by / --approval-mode
+        # (Phase 10B / Phase 10D contract). A prior cycle rendered
+        # `--target-root` which does not exist on the shipped
+        # parser and omitted the required `--approval-mode`,
+        # producing a command that argparse rejects at run time.
+        # Pin the affordance command against the real parser so
+        # this divergence cannot silently re-appear.
+        attach = next(
+            spec for spec in (
+                agent_loop._DESKTOP_ACTION_BRIDGE_AFFORDANCES
+            )
+            if spec["id"] == "attach"
+        )
+        self.assertIn("--target-path", attach["command"])
+        self.assertIn("--attached-by", attach["command"])
+        self.assertIn("--approval-mode", attach["command"])
+        # Negative: the prior misnamed flag must be absent.
+        self.assertNotIn(
+            "--target-root", attach["command"],
+            "attach affordance must NOT render the obsolete "
+            "`--target-root` flag; the shipped parser uses "
+            "`--target-path`",
+        )
+
+    def test_attach_command_parses_against_shipped_parser(
+        self,
+    ) -> None:
+        # End-to-end: feed the affordance command (with placeholder
+        # values resolved to concrete-looking strings) into the
+        # actual `build_parser()` and confirm the shipped argparse
+        # surface accepts it without error. This catches any
+        # divergence between the affordance template and the real
+        # CLI grammar, including the previously-shipped --target-
+        # root / missing --approval-mode pair.
+        attach = next(
+            spec for spec in (
+                agent_loop._DESKTOP_ACTION_BRIDGE_AFFORDANCES
+            )
+            if spec["id"] == "attach"
+        )
+        # Tokenize the command and skip the leading
+        # `python scripts/agent_loop.py` prefix; substitute
+        # placeholder tokens with concrete values that the parser
+        # will accept (--approval-mode is choice-constrained).
+        tokens = attach["command"].split()
+        self.assertEqual(tokens[:3], [
+            "python", "scripts/agent_loop.py",
+        ] + tokens[2:3])
+        cli_tokens = tokens[2:]
+        substituted = []
+        for tok in cli_tokens:
+            if tok == "<PATH>":
+                substituted.append("/tmp/example-target")
+            elif tok == "<NAME>":
+                substituted.append("test-operator")
+            elif tok == "<MODE>":
+                # Choose any valid mode from the closed
+                # enumeration; argparse will accept it.
+                substituted.append("review")
+            else:
+                substituted.append(tok)
+        parser = agent_loop.build_parser()
+        args = parser.parse_args(substituted)
+        self.assertEqual(args.cmd, "attach-external-target")
+        self.assertEqual(args.target_path, "/tmp/example-target")
+        self.assertEqual(args.attached_by, "test-operator")
+        self.assertEqual(args.approval_mode, "review")
         self.assertIn("<NAME>", attach["command"])
 
 
