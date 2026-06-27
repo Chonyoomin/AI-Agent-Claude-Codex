@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10O - MCP Integration Contract And Safe Tool Boundary
+Phase 10P - Desktop App Operator Setup And CLI Onboarding
 
 ## Status
-Phase 10N is complete and approved to advance. Phase 10O is now active as the next mainline slice focused on defining the MCP integration contract, safe tool categories, refusal boundaries, and audit expectations before any MCP-assisted runtime path is allowed.
+Phase 10O is complete and approved to advance. Phase 10P is now active as the next mainline slice focused on adding guided desktop setup for controller-root selection, target/work-folder validation, and local Claude/Codex CLI onboarding without weakening the shipped safety and artifact boundaries.
 
 ## Task
-Implement Phase 10O for the agent loop. This slice should define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review, approval gates, or ownership boundaries.
+Implement Phase 10P for the agent loop. This slice should add the first guided desktop setup flow for selecting a controller root, validating a target/work folder, configuring local Claude/Codex CLI adapter commands, checking required local-tool availability, and surfacing fail-closed refusal messages when the environment is not ready.
 
 ## Notes
 
-- keep this slice bounded to the MCP integration contract; do not jump into MCP runtime implementation, mutation-capable tools, or concurrency work yet
-- preserve the shipped ownership boundaries, phase gating, audit visibility, desktop-app boundaries, and canonical-artifact-first model while defining future MCP usage
-- do not widen into hidden orchestration, read/write MCP runtime actions, RAG, GitHub, policy-pack, packaging, or auto-update work
+- keep this slice bounded to guided desktop setup and CLI onboarding; do not jump into PRD intake, MCP runtime, RAG runtime, or concurrency work yet
+- preserve the shipped ownership boundaries, phase gating, audit visibility, desktop-app boundaries, and canonical-artifact-first model while adding setup UX
+- do not widen into hidden orchestration, credential capture, MCP runtime actions, RAG, policy-pack, packaging, or auto-update work
