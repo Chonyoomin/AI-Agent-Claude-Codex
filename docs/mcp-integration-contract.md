@@ -23,12 +23,12 @@ runtime, and the Phase 10L - 10N desktop app contract / runtime /
 action-bridge slices. Implementation of MCP runtime support is
 deferred to later Phase 10 sub-phases:
 
-- Phase 10P: MCP Read-Only Assistance Runtime Initial Slice (the
+- Phase 10T: MCP Read-Only Assistance In Desktop App (the
   first MCP server consumer that fetches read-only advisory
   context from a configured MCP server, surfaces it as advisory
   derived state alongside canonical mirrors, and never mutates
   any canonical artifact)
-- Phase 10Q and later: bounded mutation-capable MCP actions plus
+- Phase 10U and later: bounded mutation-capable MCP actions plus
   the additional safety gates required before any non-read-only
   MCP-assisted runtime behavior is allowed, tracked in
   `ROADMAP.md`
@@ -65,7 +65,7 @@ read-only-vs-deferred-mutating boundary, the ownership-and-routing
 rules, the browser/app inspection hook boundary, the policy-rule
 hook boundary, the refusal vocabulary, and the safety / approval /
 audit boundaries every future MCP runtime slice MUST preserve so
-later Phase 10P+ slices can be implemented from this contract
+later Phase 10T+ slices can be implemented from this contract
 without further design decisions and without collapsing the
 shipped CLI-first, evidence-review-driven workflow into a parallel
 MCP control plane.
@@ -239,7 +239,7 @@ What this category MUST NOT do:
   initiated by an explicit operator action per session
 - capture any value (cookies, browser session tokens, OS-level
   credentials, environment variables) that could be replayed to
-  impersonate the operator; the future Phase 10P runtime slice
+  impersonate the operator; the future Phase 10T runtime slice
   MUST enumerate a closed list of capture-eligible fields and
   refuse fail-closed on any field outside that list
 - persist inspection data across sessions; inspection captures
@@ -252,8 +252,8 @@ What this category MUST NOT do:
 Tools in this category COULD in principle mutate canonical
 artifacts, target-side state, external services, or external
 infrastructure. This contract DEFERS every mutation-capable MCP
-tool to a later Phase 10 slice (Phase 10Q+); the FIRST MCP
-runtime slice (Phase 10P) ships ONLY category 1 and category 2
+tool to a later Phase 10 slice (Phase 10U+); the FIRST MCP
+runtime slice (Phase 10T) ships ONLY category 1 and category 2
 tools. Examples of tools this contract explicitly defers:
 
 - an MCP tool that writes / edits files on the controller or
@@ -272,15 +272,15 @@ tools. Examples of tools this contract explicitly defers:
   pipelines, deployment pipelines, or any production
   infrastructure
 
-What this category MUST NOT do in the Phase 10P initial slice:
+What this category MUST NOT do in the Phase 10T initial slice:
 
-- ship at all; the Phase 10P runtime MUST refuse fail-closed on
+- ship at all; the Phase 10T runtime MUST refuse fail-closed on
   any MCP tool whose declared category is `deferred_mutating`
   and MUST surface the refusal as an explicit error state
   pointing the operator at the contract paragraph that defers
   the category
 
-What later Phase 10Q+ slices MUST add before enabling any tool
+What later Phase 10U+ slices MUST add before enabling any tool
 from this category:
 
 - a mutation-capable MCP action contract that pins per-action
@@ -319,7 +319,7 @@ control-registry descriptor shape) carrying at minimum:
   a Phase 10I-style controls-view entry, the matching Phase 10I
   control id (or `null`); the MCP runtime MUST NOT widen the
   Phase 10I three-control library-callable cap
-- `mutation_eligible`: bool; ALWAYS `false` in the Phase 10P
+- `mutation_eligible`: bool; ALWAYS `false` in the Phase 10T
   initial slice
 - `audit_note`: text describing the audit-log visibility the
   tool's use will produce
@@ -355,11 +355,11 @@ For category 1 (read-only advisory context) and category 2
   Phase 6I distillation excerpt-byte-limit pattern)
 - enforce a bounded per-cycle MCP-call count so a single cycle
   cannot saturate the MCP server; the cap is pinned by the
-  future Phase 10P runtime slice
+  future Phase 10T runtime slice
 
 ## Deferred Mutation-Capable Tool Boundary
 
-For category 3 (deferred mutation-capable) tools, the Phase 10P
+For category 3 (deferred mutation-capable) tools, the Phase 10T
 initial slice MUST refuse fail-closed unconditionally. The
 runtime MUST NOT silently downgrade a `deferred_mutating` tool to
 `read_only_advisory` based on a heuristic about whether the
@@ -367,7 +367,7 @@ tool "actually" mutates. Tool categorization is the tool author's
 declared property; the runtime trusts the declaration and
 refuses on any value other than the two read-only categories.
 
-Adding any tool from this category requires a future Phase 10Q+
+Adding any tool from this category requires a future Phase 10U+
 slice that:
 
 - updates this contract with the per-action mutation rules,
@@ -543,7 +543,7 @@ identity rules.
 The future MCP runtime MUST refuse fail-closed (render an error
 state, NOT silently proceed) in at least the following cases.
 The specific runtime error-state vocabulary will be defined by
-the Phase 10P runtime slice; this contract pins the
+the Phase 10T runtime slice; this contract pins the
 refusal-eligibility:
 
 - an MCP tool descriptor is missing, malformed, or carries an
@@ -769,20 +769,20 @@ review verdict) remains the on-disk shipped artifact set.
 The MCP integration contract is load-bearing for the following
 later Phase 10 sub-phases:
 
-- Phase 10P (MCP Read-Only Assistance Runtime Initial Slice)
+- Phase 10T (MCP Read-Only Assistance In Desktop App)
   satisfies this contract's read-only path. The slice
   introduces the first MCP server consumer (covering category
   1 and category 2 tools only), pins the per-tool descriptor
   schema, the bounded response-size cap, the per-cycle call
   count cap, the per-poll cache invalidation rule, and the
-  `[mcp-advisory]` line-tag attribution. Phase 10P MAY surface
+  `[mcp-advisory]` line-tag attribution. Phase 10T MAY surface
   advisory context inside Claude's prompt, Codex's prompt, the
   Phase 10K dashboard's `advisory` sections, and the Phase 10M
-  desktop shell's rendered view; Phase 10P MUST NOT widen the
+  desktop shell's rendered view; Phase 10T MUST NOT widen the
   Phase 10I library-callable cap, MUST NOT auto-fill any
   operator-identity, and MUST NOT introduce any
   `deferred_mutating` tool.
-- Phase 10Q and later: bounded mutation-capable MCP actions
+- Phase 10U and later: bounded mutation-capable MCP actions
   plus the additional safety gates required before any tool
   from category 3 is allowed (per-action approval gates, audit-
   log entry shape, closed eligibility enumeration, rollback
@@ -816,6 +816,6 @@ new halt status, no new canonical artifact, no Git automation,
 no rewrite of `AGENTS.md` / `CLAUDE.md` / `ROADMAP.md` / the
 Phase 2A / 3A / 4A contracts. Adding the MCP read-only
 assistance runtime that satisfies this contract is the work of
-Phase 10P; bounded mutation-capable MCP actions and any other
+Phase 10T; bounded mutation-capable MCP actions and any other
 advanced MCP capability each land in their own later Phase 10
 sub-phases tracked in `ROADMAP.md`.
