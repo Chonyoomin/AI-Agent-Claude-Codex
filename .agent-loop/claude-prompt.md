@@ -1,28 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 10J - Artifact Dashboard Contract
+Phase 10L - Desktop App Shell Contract
 
 ## Objective
-Define Phase 10J for the agent loop. This slice should specify how review summaries, diff views, progress history, approval actions, token/cost reporting, and failure analytics should be surfaced in the external UI without replacing canonical artifacts on disk.
+Define Phase 10L for the agent loop. This slice should specify the desktop-app shell boundaries, controller/target selection flow, polling model, artifact-opening behavior, and the safe bridge between the desktop shell and the shipped Python orchestrator/view surfaces.
 
 ## Context
-Phase 10J builds directly on the shipped Phase 10G through 10I external UI work. The goal in this slice is not to implement a dashboard runtime yet, but to define the contract that a future dashboard implementation must satisfy: what information it may surface, which values are canonical mirrors versus advisory derived state, how it should present review and progress artifacts, and how it must remain subordinate to the existing CLI-first and canonical-artifact-first workflow.
+Define the Desktop App Shell Contract for the agent loop. This slice should
+specify the first native desktop-app shell for the external UI, including the
+desktop process boundary, controller/target selection flow, refresh/polling
+rules, artifact-opening behavior, and the safe bridge to the shipped Python
+orchestrator/view surfaces.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10J as active
-- `.agent-loop/phase-plan.md` records Phase 10I as closed history and contains a `## Phase 10J - Artifact Dashboard Contract` section with concrete objective, done criteria, and exclusions
-- add a documentation-first contract for how an external artifact dashboard should surface review summaries, diff views, progress history, approval actions, token/cost reporting, and failure analytics
-- define clearly which dashboard values are canonical mirrors versus advisory derived state, and preserve repo artifacts on disk as the source of truth
-- preserve the shipped CLI-first workflow and make clear that the dashboard must not become a new unbounded control plane or hidden mutation path
-- preserve the shipped approval semantics, halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target ownership boundaries, and the Phase 4C activator + `APPROVED_FOR_ACTIVATION` activation gate
-- update `README.md` so it reflects that Phase 10J is active and that the artifact dashboard contract is now the implementation focus
-- add focused validation proving the dashboard contract is bounded, internally consistent with Phase 10G through 10I, and reflected accurately in planning/docs surfaces
-
-Recommended implementation shape for this slice:
-- add a new contract doc under `docs/` for the artifact dashboard surface
-- use the existing external UI docs and README language as the style/contract baseline
-- keep the contract concrete enough that Phase 10K can implement against it without needing another design pass
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10L as active
+- `.agent-loop/phase-plan.md` records Phase 10K as closed history and contains
+  a `## Phase 10L - Desktop App Shell Contract` section with concrete
+  objective, done criteria, and exclusions
+- the repository gains a documentation-first contract defining the first
+  native desktop app as a thin local operator shell over the shipped Python
+  runtime and canonical artifacts
+- the contract defines the desktop toolkit/process boundary, controller-root
+  selection flow, attach visibility, refresh/poll rules, artifact-opening
+  behavior, and explicit refusal cases without shipping the desktop runtime
+  yet
+- the contract preserves the shipped CLI-first workflow, approval semantics,
+  halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target
+  ownership boundaries, and the Phase 4C activator +
+  `APPROVED_FOR_ACTIVATION` activation gate
+- focused validation proves the desktop-app contract is bounded, internally
+  consistent with Phase 10G through 10K, and reflected accurately in
+  planning/docs surfaces
+- `README.md` reflects that Phase 10L is active and that the desktop-app
+  contract is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -32,13 +44,24 @@ Recommended implementation shape for this slice:
 - Do not rewrite unrelated files.
 - Do not delete files unless explicitly instructed.
 - Prefer small, testable, reversible changes.
-- Add or update focused tests when behavior changes.
+- Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no artifact dashboard runtime implementation, analytics backend, diff viewer, history explorer, or approval-action runtime beyond the contract itself
-- no controlled-concurrency, overlap-safe detection, or concurrent Codex/Claude execution work
-- no MCP integration, RAG layer, GitHub integration, or model-policy extensibility work
-- no automatic next-phase activation behavior that bypasses the shipped Phase 4 planner / activation separation
+- no desktop runtime implementation yet (Phase 10M / 10N)
+- no dashboard expansion beyond the shipped Phase 10K slice
+- no hidden background UI-side orchestration or second source of truth
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future desktop-app,
+  concurrency, or autonomy work easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
