@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10L - Desktop App Shell Contract
+Phase 10O - MCP Integration Contract And Safe Tool Boundary
 
 ## Status
-Phase 10K is complete. Phase 10L is now active as the next mainline slice focused on defining the first native desktop-app shell for the external UI so operation no longer depends on terminal-only workflows.
+Phase 10N is complete and approved to advance. Phase 10O is now active as the next mainline slice focused on defining the MCP integration contract, safe tool categories, refusal boundaries, and audit expectations before any MCP-assisted runtime path is allowed.
 
 ## Task
-Define Phase 10L for the agent loop. This slice should specify the desktop-app shell boundaries, controller/target selection flow, polling model, artifact-opening behavior, and the safe bridge between the desktop shell and the shipped Python orchestrator/view surfaces.
+Implement Phase 10O for the agent loop. This slice should define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review, approval gates, or ownership boundaries.
 
 ## Notes
 
-- keep this slice documentation-first; do not jump into desktop runtime implementation yet
-- preserve the shipped ownership boundaries, phase gating, and canonical-artifact-first model while defining the desktop shell
-- do not widen into hidden UI-side orchestration, controlled-concurrency runtime, MCP, RAG, GitHub, or policy-pack work
+- keep this slice bounded to the MCP integration contract; do not jump into MCP runtime implementation, mutation-capable tools, or concurrency work yet
+- preserve the shipped ownership boundaries, phase gating, audit visibility, desktop-app boundaries, and canonical-artifact-first model while defining future MCP usage
+- do not widen into hidden orchestration, read/write MCP runtime actions, RAG, GitHub, policy-pack, packaging, or auto-update work

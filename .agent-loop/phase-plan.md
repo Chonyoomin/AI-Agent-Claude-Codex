@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10L - Desktop App Shell Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10O - MCP Integration Contract And Safe Tool Boundary)
 
 ## Phase 0 - Instruction Foundation
 
@@ -4679,8 +4679,8 @@ preserving the canonical-artifact-first model.
 
 ### Status
 
-Active. This slice defines the desktop-app shell contract that must exist
-before a native external UI runtime is implemented.
+Complete and approved by human to advance to Phase 10M. Terminal verdict:
+`APPROVED_FOR_HUMAN_REVIEW`.
 
 ### Objective
 
@@ -4734,4 +4734,188 @@ orchestrator/view surfaces.
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10M - Desktop App Read-Only Runtime Initial Slice
+
+### Status
+
+Complete and approved by human to advance to Phase 10N. Terminal verdict:
+`APPROVED_FOR_HUMAN_REVIEW`.
+
+### Objective
+
+Implement the Desktop App Read-Only Runtime Initial Slice for the agent loop.
+This slice should build the first local desktop app that opens against a chosen
+controller root, renders the shipped Phase 10H status view, Phase 10I controls
+view, and Phase 10K artifact dashboard view, and preserves the canonical-
+artifact-first model without introducing hidden orchestration or mutation
+paths.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10M as active
+- `.agent-loop/phase-plan.md` records Phase 10L as closed history and contains
+  a `## Phase 10M - Desktop App Read-Only Runtime Initial Slice` section with
+  concrete objective, done criteria, and exclusions
+- the repository ships the first local desktop app runtime that opens against
+  an operator-selected controller root and renders the shipped Phase 10H
+  status, Phase 10I controls, and Phase 10K artifact dashboard views
+- the desktop runtime preserves the Phase 10L contract boundaries: local-only
+  process, canonical-artifact-first rendering, bounded refresh/poll behavior,
+  advisory-vs-canonical tagging, and no second source of truth
+- the desktop runtime remains read-only apart from the already-shipped Phase
+  10I three-control library-call delegation surface and does not dispatch
+  mutating CLI operations on the operator's behalf
+- focused validation proves the desktop runtime is bounded, reads the shipped
+  Python view surfaces rather than re-implementing them, and does not widen
+  into hidden orchestration, action-bridge behavior, concurrency runtime, or
+  other later Phase 10 work
+- `README.md` reflects that Phase 10M is active and that the read-only desktop
+  runtime is now the implementation focus
+
+### Exclusions
+
+- no mutating desktop action dispatch beyond the already-shipped Phase 10I
+  three-control read-only delegation surface
+- no packaging, installer, code-signing, auto-update, or system-tray work yet
+- no multi-target desktop sessions or controlled-concurrency work
+- no hidden background UI-side orchestration or second source of truth
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future desktop-app,
+  concurrency, or autonomy work easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10N - Desktop App Action Bridge Initial Slice
+
+### Status
+
+Complete and approved by human to advance to Phase 10O. Phase 10N closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the desktop action bridge,
+parser-aligned attach affordance, and focused action-bridge validation were
+verified in the current repo state.
+
+### Objective
+
+Implement the Desktop App Action Bridge Initial Slice for the agent loop. This
+slice should add the first bounded desktop action bridge for attach, inspect,
+run, and resume flows by delegating only to shipped CLI and library surfaces
+with explicit refusal handling, audit visibility, and no hidden automation or
+silent mutation path.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10N as active
+- `.agent-loop/phase-plan.md` records Phase 10M as closed history and contains
+  a `## Phase 10N - Desktop App Action Bridge Initial Slice` section with
+  concrete objective, done criteria, and exclusions
+- the repository adds bounded desktop-side action affordances for attach,
+  inspect, run, and resume flows while preserving the shipped CLI/library
+  surfaces as the source of execution truth
+- desktop actions remain explicit, operator-visible, and fail-closed: no
+  hidden background automation, no silent mutating subprocess dispatch, and no
+  widened library-callable control surface beyond what the approved phase
+  allows
+- the action bridge preserves audit visibility, approval semantics,
+  controller-vs-target ownership boundaries, and the canonical-artifact-first
+  model established by Phases 10L and 10M
+- focused validation proves the action bridge is bounded, routes only through
+  approved shipped surfaces, and does not widen into packaging, multi-target
+  sessions, concurrency runtime, MCP, RAG, GitHub, or other later Phase 10
+  work
+- `README.md` reflects that Phase 10N is active and that the desktop action
+  bridge is now the implementation focus
+
+### Exclusions
+
+- no packaging, installer, code-signing, auto-update, or system-tray work yet
+- no multi-target desktop sessions or controlled-concurrency work
+- no hidden background UI-side orchestration or second source of truth
+- no MCP integration, RAG layer, GitHub integration, or model-policy
+  extensibility work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation, or that replaces canonical
+  prompt/review/checkpoint artifacts with transient runtime-only state
+- no rewrite of current shipped behavior just to make future desktop-app,
+  concurrency, or autonomy work easier
+- no regression of the shipped Phase 5 review, strict, bounded autonomous,
+  reconciliation, or prompt-bootstrap behavior
+- no regression of the shipped Phase 6 memory, checkpoint, continuation,
+  runtime-adapter, or LangChain support-layer behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no Git automation
+
+## Phase 10O - MCP Integration Contract And Safe Tool Boundary
+
+### Status
+
+Active. This slice defines the MCP integration contract, safe tool categories,
+and refusal boundaries before any MCP-assisted runtime path is allowed.
+
+### Objective
+
+Implement the MCP Integration Contract And Safe Tool Boundary slice for the
+agent loop. This slice should define how MCP server support, scoped tool
+categories, browser/app inspection hooks, and policy rules may assist
+planning, implementation, and review without bypassing evidence review,
+approval gates, or ownership boundaries.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10O as active
+- `.agent-loop/phase-plan.md` records Phase 10N as closed history and contains
+  a `## Phase 10O - MCP Integration Contract And Safe Tool Boundary` section
+  with concrete objective, done criteria, and exclusions
+- the repository adds a concrete MCP integration contract, ideally in a
+  dedicated docs artifact, that defines safe tool categories, ownership
+  boundaries, refusal rules, audit expectations, and source-of-truth
+  preservation before any MCP runtime path ships
+- the contract preserves the shipped evidence-review model, approval gating,
+  external-workspace boundaries, desktop/UI boundaries, and
+  canonical-artifact-first model instead of allowing MCP tools to bypass them
+- the contract distinguishes read-only assistance from still-deferred
+  mutation-capable MCP actions and defines what later phases must add before
+  any non-read-only MCP-assisted runtime behavior is allowed
+- focused validation or review coverage proves the new MCP contract/docs match
+  the actual repo state and do not claim that MCP runtime integration already
+  ships
+- `README.md` reflects that Phase 10O is active and that the MCP integration
+  contract is now the implementation focus
+
+### Exclusions
+
+- no actual MCP runtime integration, no tool-execution path, and no networked
+  tool orchestration in this slice
+- no mutation-capable MCP actions, no MCP-driven writes to canonical
+  artifacts, and no bypass of the shipped CLI/library/runtime boundaries
+- no RAG, GitHub, policy-pack, packaging, system-tray, or controlled-
+  concurrency runtime work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no rewrite of current shipped behavior just to make future MCP or autonomy
+  work easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
 - no Git automation

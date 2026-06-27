@@ -13907,6 +13907,821 @@ def cmd_view_artifact_dashboard(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10M - Desktop App Read-Only Runtime Initial Slice.
+#
+# Implements the FIRST local desktop app over the shipped Phase 10H
+# status view (`build_external_ui_status_view`), the Phase 10I
+# controls view (`build_external_ui_control_view`), and the Phase 10K
+# artifact dashboard view (`build_artifact_dashboard_view`). The
+# runtime satisfies the Phase 10L Desktop App Shell Contract:
+#
+#   - thin local-only native window process (Tkinter from the Python
+#     stdlib; the toolkit is intentionally not pinned at the contract
+#     layer but stdlib Tk is the lightest choice that satisfies the
+#     "native window" + "locally inspectable" requirements)
+#   - controller-root selection: the operator supplies an explicit
+#     path via `--controller-root <PATH>`; missing controller-root
+#     markers (`AGENTS.md`, `CLAUDE.md`, `TASK.md`, `.agent-loop/`)
+#     refuse fail-closed with a Phase 10L refusal vocabulary message
+#   - bounded polling cadence floors (`_DESKTOP_APP_MIN_IDLE_CADENCE`
+#     and `_DESKTOP_APP_MIN_OPERATOR_CADENCE` seconds); the cadence
+#     supplied by the operator is clamped to the floor before the
+#     polling loop fires
+#   - per-poll-cycle cache invalidation: every poll re-invokes
+#     `assemble_desktop_app_view(...)` so the shipped view library
+#     functions' per-call freshness semantics are preserved
+#   - library-call bridge: the desktop process imports `agent_loop`
+#     and invokes the shipped view library functions verbatim; the
+#     returned dict is rendered without mutation and without
+#     injecting additional fields
+#   - read-only: no mutation, no CLI dispatch, no new library-
+#     callable control beyond the Phase 10I three already shipped,
+#     no Git automation
+#
+# Modes:
+#   - `--once` or `--headless`: render the assembled view to stdout
+#     and exit 0 (used by CI, tests, and operators on machines
+#     without a display server)
+#   - default (GUI): lazy-import Tkinter and open a ScrolledText
+#     window that re-polls every `cadence_seconds` (clamped to the
+#     contract floor). On `ImportError` (no Tk available) the
+#     handler refuses fail-closed with a message pointing the
+#     operator at `--headless`.
+#
+# Out of scope for this slice (deferred to later Phase 10 sub-phases
+# per the Phase 10L contract):
+#   - mutating desktop action dispatch beyond the Phase 10I three-
+#     control library-callable surface (Phase 10N Action Bridge)
+#   - controlled-concurrency / overlap-safe detection / Codex-owned
+#     concurrent work (Phase 10AB / 10AC / 10AD)
+#   - multi-target desktop sessions, packaging, code-signing,
+#     auto-update, native system-tray reminders (later Phase 10
+#     sub-phases tracked in `ROADMAP.md`)
+
+DESKTOP_APP_VIEW_SIGNAL_VERSION = "phase-10m-v1"
+
+DESKTOP_APP_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any desktop "
+    "shell rendering of them. This view is a per-poll read-only "
+    "assembly of the shipped Phase 10H external UI status view, "
+    "Phase 10I external UI controls view, and Phase 10K artifact "
+    "dashboard view; no desktop cache, session state, or rendered "
+    "summary is authoritative. The desktop shell delegates to the "
+    "shipped library functions verbatim and does NOT mutate the "
+    "returned view dicts, does NOT inject additional fields, does "
+    "NOT introduce a parallel state store or alternate audit "
+    "record, and does NOT widen the Phase 10I library-callable "
+    "control surface beyond its three-control cap."
+)
+
+# Contract floor cadences (seconds) the Phase 10L contract pins.
+# The operator MAY supply a longer cadence; a shorter cadence is
+# clamped up to the floor so the desktop shell cannot accidentally
+# starve the shipped view library functions of bounded read latency.
+_DESKTOP_APP_MIN_IDLE_CADENCE_SECONDS = 2
+_DESKTOP_APP_MIN_OPERATOR_CADENCE_SECONDS = 1
+
+_DESKTOP_APP_CONTROLLER_ROOT_MARKERS = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "TASK.md",
+    ".agent-loop",
+)
+
+_DESKTOP_APP_WINDOW_TITLE = (
+    "Agent Loop Desktop (Phase 10M Read-Only Runtime)"
+)
+
+
+def validate_desktop_controller_root(path: Path) -> dict:
+    """Phase 10M: validate that `path` is a controller repository
+    per the Phase 10L contract's "Controller-Root Selection Flow"
+    section. The desktop shell MUST validate that the selected
+    folder is a controller repository BEFORE rendering any view.
+
+    Returns `{valid, missing_markers, root_path}`. A folder that
+    fails this check MUST surface as an explicit refusal in the
+    caller; this helper returns the soft-failure shape rather than
+    raising so the caller decides between exit-with-message vs
+    in-window error state.
+    """
+    missing: list = []
+    for marker in _DESKTOP_APP_CONTROLLER_ROOT_MARKERS:
+        if not (path / marker).exists():
+            missing.append(marker)
+    try:
+        resolved = path.resolve().as_posix()
+    except OSError:
+        resolved = str(path)
+    return {
+        "valid": not missing,
+        "missing_markers": tuple(missing),
+        "root_path": resolved,
+    }
+
+
+def _desktop_safe_call_view(fn, controller_root):
+    """Soft-failure wrapper around a shipped view library function.
+    `HaltError` converts to `{error: str, view: None}`; other
+    exceptions also surface as `{error: str, view: None}` so the
+    desktop shell can render an error state per the Phase 10L
+    refusal vocabulary without re-raising as canonical halt
+    persistence. The shipped view library functions rarely raise
+    (they use the Phase 7C reporter pattern), but the contract
+    requires the desktop shell to be defensive.
+    """
+    try:
+        return fn(controller_root)
+    except HaltError as halt:
+        return {"error": halt.reason, "view": None}
+    except Exception as exc:
+        return {
+            "error": f"{type(exc).__name__}: {exc}",
+            "view": None,
+        }
+
+
+def assemble_desktop_app_view(controller_root: Path) -> dict:
+    """Phase 10M: assemble the bounded desktop view by delegating
+    to the shipped Phase 10H / 10I / 10K library functions verbatim.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10m-v1`
+      - `controller_path_canonical`: resolved repo root
+      - `status_view`: the Phase 10H view dict returned by
+        `build_external_ui_status_view(controller_root)`, OR a
+        soft-error `{error, view: None}` envelope when that call
+        raises
+      - `controls_view`: the Phase 10I view dict returned by
+        `build_external_ui_control_view(controller_root)`, OR a
+        soft-error envelope
+      - `dashboard_view`: the Phase 10K view dict returned by
+        `build_artifact_dashboard_view(controller_root)`, OR a
+        soft-error envelope
+      - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
+
+    The desktop shell MUST NOT mutate the returned sub-view dicts
+    before rendering. The shell MUST NOT inject additional fields
+    into a sub-view dict (per the Phase 10L Bridge contract). The
+    shell MUST NOT call `_halt(...)` or any other mutating helper.
+    """
+    status_view = _desktop_safe_call_view(
+        build_external_ui_status_view, controller_root,
+    )
+    controls_view = _desktop_safe_call_view(
+        build_external_ui_control_view, controller_root,
+    )
+    dashboard_view = _desktop_safe_call_view(
+        build_artifact_dashboard_view, controller_root,
+    )
+    return {
+        "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "status_view": status_view,
+        "controls_view": controls_view,
+        "dashboard_view": dashboard_view,
+        "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
+    }
+
+
+def _desktop_render_sub_view_lines(
+    key: str, label: str, sub_view: dict,
+) -> list:
+    """Render one sub-view (status / controls / dashboard) as text
+    lines. The dashboard sub-view re-uses the shipped Phase 10K
+    renderer (`_dashboard_render_view_lines`) so the canonical-
+    mirror + advisory attribution stays consistent. The status and
+    controls sub-views are rendered as their top-level keys plus a
+    structural summary; full per-field rendering for those two
+    surfaces is deferred to a later slice (the Phase 10H / 10I CLI
+    reporters already cover that today).
+    """
+    lines = [f"=== {label} ==="]
+    if (
+        isinstance(sub_view, dict)
+        and sub_view.get("view") is None
+        and "error" in sub_view
+    ):
+        lines.append(f"  [error] {sub_view['error']!r}")
+        return lines
+    if not isinstance(sub_view, dict):
+        lines.append(f"  [error] sub-view is not a dict: {sub_view!r}")
+        return lines
+    if key == "dashboard_view":
+        # Re-use the shipped Phase 10K renderer verbatim so the
+        # advisory-vs-canonical tagging stays consistent.
+        lines.extend(_dashboard_render_view_lines(sub_view))
+        return lines
+    signal = sub_view.get("view_signal_version")
+    lines.append(
+        f"  [canonical mirror] view_signal_version: {signal!r}"
+    )
+    lines.append(
+        f"  [structural summary] top-level keys: "
+        f"{sorted(sub_view.keys())!r}"
+    )
+    if key == "status_view":
+        ls_mirror = sub_view.get("controller_loop_state")
+        if isinstance(ls_mirror, dict):
+            lines.append(
+                f"  [canonical mirror] controller_loop_state "
+                f"keys: {sorted(ls_mirror.keys())!r}"
+            )
+        advisory_label = sub_view.get("advisory_status_label")
+        if advisory_label is not None:
+            lines.append(
+                f"  [advisory] advisory_status_label: "
+                f"{advisory_label!r}"
+            )
+    elif key == "controls_view":
+        controls = sub_view.get("controls")
+        if isinstance(controls, list):
+            lines.append(
+                f"  [canonical mirror] controls count: "
+                f"{len(controls)}"
+            )
+            for ctrl in controls:
+                if isinstance(ctrl, dict):
+                    lines.append(
+                        f"    control: id={ctrl.get('id')!r} "
+                        f"dispatch_mode="
+                        f"{ctrl.get('dispatch_mode')!r} "
+                        f"currently_eligible="
+                        f"{ctrl.get('currently_eligible')!r}"
+                    )
+    return lines
+
+
+def render_desktop_app_text(view: dict) -> list:
+    """Phase 10M: format the assembled desktop view as text lines
+    for the `--headless` rendering surface and for the GUI window's
+    text widget. Each line is attributed (`[canonical mirror]`,
+    `[advisory]`, `[error]`, `[structural summary]`) so a reviewer
+    can tell which lines are canonical vs derived.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-app] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    for key, label in (
+        ("status_view", "Status (Phase 10H)"),
+        ("controls_view", "Controls (Phase 10I)"),
+        ("dashboard_view", "Dashboard (Phase 10K)"),
+    ):
+        sub = view.get(key, {})
+        lines.extend(_desktop_render_sub_view_lines(key, label, sub))
+    lines.append(f"precedence_note: {view['precedence_note']}")
+    return lines
+
+
+def _desktop_clamp_cadence(
+    requested: Optional[float],
+    *,
+    operator_driven: bool = False,
+) -> float:
+    """Clamp the requested poll cadence (seconds) to the Phase 10L
+    contract floor. `None` returns the floor; a numeric value below
+    the floor is clamped UP to the floor.
+    """
+    floor = (
+        _DESKTOP_APP_MIN_OPERATOR_CADENCE_SECONDS
+        if operator_driven
+        else _DESKTOP_APP_MIN_IDLE_CADENCE_SECONDS
+    )
+    if requested is None:
+        return float(floor)
+    try:
+        value = float(requested)
+    except (TypeError, ValueError):
+        return float(floor)
+    if value < floor:
+        return float(floor)
+    return value
+
+
+def _launch_desktop_app_window(
+    controller_root: Path,
+    *,
+    cadence_seconds: float,
+) -> None:
+    """Phase 10M: lazy-import Tkinter and open the polling desktop
+    window. Each `after(...)` tick re-invokes
+    `assemble_desktop_app_view(...)` so the per-poll cache
+    invalidation invariant is preserved. The window MUST NOT mutate
+    any canonical artifact and MUST NOT introduce a parallel state
+    store. The `ImportError` raised when Tk is unavailable
+    propagates so the caller can refuse fail-closed with an
+    informative message pointing the operator at `--headless`.
+    """
+    import tkinter as tk
+    from tkinter import scrolledtext
+    root = tk.Tk()
+    root.title(_DESKTOP_APP_WINDOW_TITLE)
+    text = scrolledtext.ScrolledText(
+        root, width=120, height=40, wrap=tk.WORD,
+    )
+    text.pack(fill=tk.BOTH, expand=True)
+
+    def _refresh() -> None:
+        view = assemble_desktop_app_view(controller_root)
+        text.delete("1.0", tk.END)
+        for line in render_desktop_app_text(view):
+            text.insert(tk.END, line + "\n")
+        root.after(int(cadence_seconds * 1000), _refresh)
+
+    _refresh()
+    root.mainloop()
+
+
+def cmd_launch_desktop_app(args: argparse.Namespace) -> int:
+    """Phase 10M operator entry: launch the read-only desktop app.
+
+    Per the Phase 10L contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER dispatches a CLI subprocess, and NEVER widens the
+    Phase 10I library-callable control surface beyond its three-
+    control cap.
+
+    Modes:
+      - `--headless` / `--once`: render the assembled view to
+        stdout once and exit 0 (used by CI, tests, and headless
+        operators). Phase 7C reporter pattern: always exits 0 on
+        report content.
+      - default (GUI): lazy-import Tkinter and open a ScrolledText
+        window that re-polls every cadence_seconds. On controller-
+        root validation failure: exit 2 with a stderr refusal
+        message. On `ImportError` (Tk unavailable): exit 2 with a
+        stderr message pointing at `--headless`.
+
+    `--controller-root <PATH>` is REQUIRED in every mode per the
+    Phase 10L Controller-Root Selection Flow; omitting it returns
+    exit 2 with an explicit refusal message. The shell MUST NOT
+    silently pick a default root.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        # Phase 10L "Controller-Root Selection Flow" requires the
+        # desktop shell to require explicit operator selection of
+        # the controller root before rendering any canonical
+        # artifact. The shell MUST NOT silently pick a default
+        # root from a recent-history list, the OS-level current
+        # working directory, an environment variable, an
+        # auto-discovered repo root, or a packaging-time configured
+        # path. Refuse fail-closed with exit 2 when --controller-
+        # root is omitted; the operator must supply it explicitly.
+        print(
+            "[desktop-app] REFUSED: --controller-root is required "
+            "per the Phase 10L Desktop App Shell Contract's "
+            "Controller-Root Selection Flow; the desktop shell "
+            "MUST NOT silently pick a default root from an "
+            "auto-discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Supply the controller "
+            "root explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-app] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires AGENTS.md "
+            f"/ CLAUDE.md / TASK.md / .agent-loop/ to be present "
+            f"before any canonical artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    once = getattr(args, "once", False)
+    headless = getattr(args, "headless", False)
+    if once or headless:
+        view = assemble_desktop_app_view(controller_root)
+        for line in render_desktop_app_text(view):
+            print(line)
+        return 0
+    operator_driven = getattr(args, "operator_driven", False)
+    requested_cadence = getattr(args, "cadence_seconds", None)
+    cadence = _desktop_clamp_cadence(
+        requested_cadence, operator_driven=operator_driven,
+    )
+    try:
+        _launch_desktop_app_window(
+            controller_root, cadence_seconds=cadence,
+        )
+    except ImportError as exc:
+        print(
+            f"[desktop-app] REFUSED: cannot open native window "
+            f"({exc}); the Phase 10M slice requires Tkinter from "
+            f"the Python stdlib. Run with `--headless` (or "
+            f"`--once`) to render the assembled view to stdout "
+            f"instead.",
+            file=sys.stderr,
+        )
+        return 2
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10N - Desktop App Action Bridge Initial Slice.
+#
+# Extends the Phase 10M read-only desktop runtime with the FIRST
+# bounded operator-decision action bridge over four desktop verbs:
+#   - `attach`  -> copy-paste `attach-external-target ...` CLI command
+#   - `inspect` -> Phase 10I library-call delegation of
+#                  `inspect-external-target`
+#   - `run`     -> copy-paste `run` CLI command (eligible only when
+#                  loop-state.status == "awaiting_claude_implementation")
+#   - `resume`  -> copy-paste `resume` CLI command (eligible only when
+#                  loop-state.status is in the Phase 5C strict-mode
+#                  halt set)
+#
+# The bridge satisfies the Phase 10L Desktop App Shell Contract's
+# "Bridge To Shipped Python Orchestrator And View Surfaces" section:
+#   - mutating affordances ALWAYS carry `dispatch_mode="copy_paste"`
+#     and ALWAYS produce a copy-paste-ready CLI command for the
+#     operator to run in their own shell
+#   - read-only affordances carry `dispatch_mode="library_call"` AND
+#     delegate to an existing Phase 10I library-callable control id
+#     (the cap stays at the Phase 10I three: view-external-status,
+#     view-external-controls, inspect-external-target)
+#   - the bridge NEVER silently spawns the mutating CLI subprocess
+#     (no `subprocess.Popen`, no `os.system`, no shell-out path)
+#   - the bridge NEVER auto-fills any operator-identity argument
+#     (`--attached-by`, `--accepted-by`, `--bootstrapped-by`,
+#     `--detached-by`); identity placeholders stay as literal
+#     `<NAME>` / `<PATH>` text
+#   - ineligible affordances surface fail-closed in the rendered
+#     output as `[ineligible] ...`; the bridge MUST NOT silently
+#     hide them
+#   - per-affordance `audit_note` text surfaces the audit-log
+#     visibility the operator-CLI invocation will produce, so the
+#     operator can see at a glance whether running the affordance
+#     leaves a canonical audit trail
+#
+# Out of scope for this slice (deferred to later Phase 10 sub-phases):
+#   - widening the library-callable control surface beyond the
+#     Phase 10I three
+#   - integrating the action bridge into the Phase 10M Tkinter
+#     window (the Phase 10N runtime is CLI-callable via
+#     `view-desktop-actions`; a future Phase 10 follow-up MAY
+#     splice the bridge into the desktop window)
+#   - multi-target desktop sessions (Phase 10AB / 10AC / 10AD or
+#     later)
+#   - packaging / code-signing / auto-update / system-tray work
+
+DESKTOP_ACTION_BRIDGE_SIGNAL_VERSION = "phase-10n-v1"
+
+DESKTOP_ACTION_BRIDGE_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any desktop "
+    "action bridge rendering. The action bridge surfaces four "
+    "operator-decision action verbs (attach, inspect, run, "
+    "resume) as copy-paste-ready CLI commands or library-call "
+    "delegations into the shipped Phase 10I three-control "
+    "surface. The bridge NEVER silently spawns a mutating "
+    "subprocess on the operator's behalf, NEVER auto-fills any "
+    "operator-identity argument (`--attached-by`, "
+    "`--accepted-by`, `--bootstrapped-by`, `--detached-by`), "
+    "NEVER widens the Phase 10I library-callable control cap, "
+    "and NEVER introduces hidden background automation. "
+    "Ineligible affordances surface fail-closed as `[ineligible]` "
+    "in the rendered output, NOT silently hidden."
+)
+
+DESKTOP_ACTION_BRIDGE_AFFORDANCE_IDS = (
+    "attach", "inspect", "run", "resume",
+)
+
+# Each affordance maps a desktop verb onto a shipped CLI surface or
+# Phase 10I library-callable control id. The registry is closed:
+# extending it requires a future Phase 10 sub-phase that updates
+# this tuple AND the Phase 10I `_EXTERNAL_UI_CONTROL_REGISTRY` in
+# lockstep when a new library-callable delegation is involved.
+_DESKTOP_ACTION_BRIDGE_AFFORDANCES: tuple = (
+    {
+        "id": "attach",
+        "label": "Attach an external target to this controller",
+        "command": (
+            "python scripts/agent_loop.py "
+            "attach-external-target "
+            "--target-path <PATH> --attached-by <NAME> "
+            "--approval-mode <MODE>"
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "delegated_library_function": None,
+        "delegated_phase_10i_control_id": None,
+        "eligibility_states": None,
+        "audit_note": (
+            "writes `.agent-loop/external-target.json`; emits "
+            "`external target: attached ...` to "
+            "`.agent-loop/orchestrator.log`"
+        ),
+    },
+    {
+        "id": "inspect",
+        "label": (
+            "Inspect the attached external target (read-only)"
+        ),
+        "command": (
+            "python scripts/agent_loop.py inspect-external-target"
+        ),
+        "dispatch_mode": "library_call",
+        "category": "read_only",
+        "delegated_library_function": (
+            "inspect_external_target_attach"
+        ),
+        "delegated_phase_10i_control_id": (
+            "inspect-external-target"
+        ),
+        "eligibility_states": None,
+        "audit_note": (
+            "library-call delegation through the shipped Phase 10I "
+            "registry; no canonical mutation; no audit-log entry"
+        ),
+    },
+    {
+        "id": "run",
+        "label": "Execute one normal cycle (mutating)",
+        "command": "python scripts/agent_loop.py run",
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "delegated_library_function": None,
+        "delegated_phase_10i_control_id": "run",
+        "eligibility_states": frozenset({
+            "awaiting_claude_implementation",
+        }),
+        "audit_note": (
+            "advances cycle state; emits run-state transitions to "
+            "`.agent-loop/orchestrator.log`"
+        ),
+    },
+    {
+        "id": "resume",
+        "label": "Resume a strict-mode paused cycle (mutating)",
+        "command": "python scripts/agent_loop.py resume",
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "delegated_library_function": None,
+        "delegated_phase_10i_control_id": "resume",
+        "eligibility_states": frozenset({
+            HALTED_PRE_CLAUDE_PROMPT,
+            HALTED_PRE_FIX_PROMPT,
+            HALTED_PRE_CODEX_REVIEW_NORMAL,
+            HALTED_PRE_CODEX_REVIEW_FIX,
+        }),
+        "audit_note": (
+            "resumes a strict-mode paused cycle; emits resume "
+            "transitions to `.agent-loop/orchestrator.log`"
+        ),
+    },
+)
+
+
+def _desktop_action_eligibility(
+    spec: dict, status_value: Optional[str],
+) -> tuple:
+    """Return `(eligible, reason)` for one action-bridge affordance.
+
+    Mirrors the Phase 10I eligibility computation shape so the
+    desktop action bridge and the Phase 10I controls view stay
+    semantically aligned. The bridge does NOT cache eligibility
+    across polls: each call recomputes from the current
+    `status_value` so stale state cannot survive a poll cycle.
+    """
+    if spec["eligibility_states"] is None:
+        return True, "always operator-decision (no loop-state gate)"
+    if status_value is None:
+        return False, (
+            "canonical loop-state.status is unavailable; "
+            "eligibility cannot be determined"
+        )
+    if status_value in spec["eligibility_states"]:
+        return True, (
+            f"current loop-state.status={status_value!r} matches "
+            f"one of the affordance's eligible states"
+        )
+    return False, (
+        f"current loop-state.status={status_value!r} is not in "
+        f"the affordance's eligible set "
+        f"{sorted(spec['eligibility_states'])!r}; run a CLI "
+        f"command that transitions loop-state to an eligible "
+        f"status first"
+    )
+
+
+def _desktop_action_descriptor(
+    spec: dict, status_value: Optional[str],
+) -> dict:
+    """Return the operator-visible descriptor for one affordance."""
+    eligible, reason = _desktop_action_eligibility(
+        spec, status_value,
+    )
+    return {
+        "id": spec["id"],
+        "label": spec["label"],
+        "command": spec["command"],
+        "dispatch_mode": spec["dispatch_mode"],
+        "category": spec["category"],
+        "delegated_library_function": (
+            spec["delegated_library_function"]
+        ),
+        "delegated_phase_10i_control_id": (
+            spec["delegated_phase_10i_control_id"]
+        ),
+        "currently_eligible": eligible,
+        "eligibility_reason": reason,
+        "audit_note": spec["audit_note"],
+    }
+
+
+def build_desktop_action_bridge_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10N: assemble the bounded desktop action bridge view.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10n-v1`
+      - `controller_path_canonical`: resolved repo root
+      - `current_loop_state_status`: canonical status value (or
+        None when loop-state is missing / malformed); used for
+        eligibility computation
+      - `affordances`: list of action affordance descriptors, one
+        per `DESKTOP_ACTION_BRIDGE_AFFORDANCE_IDS` entry, carrying
+        id / label / command / dispatch_mode / category /
+        delegated_library_function /
+        delegated_phase_10i_control_id / currently_eligible /
+        eligibility_reason / audit_note
+      - `precedence_note`: literal Phase 10N precedence reminder
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never widens the Phase 10I library-
+    callable control cap. Loads loop-state via the shipped
+    `load_loop_state(...)` validator; a `HaltError` from the
+    validator soft-fails to `status_value=None` (per the Phase 10L
+    contract the desktop shell MUST NOT propagate validator
+    HaltErrors as canonical halt persistence).
+    """
+    state_path = controller_root / ".agent-loop" / "loop-state.json"
+    status_value: Optional[str] = None
+    try:
+        data = load_loop_state(state_path)
+    except HaltError:
+        data = None
+    if isinstance(data, dict):
+        candidate = data.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+    affordances = [
+        _desktop_action_descriptor(spec, status_value)
+        for spec in _DESKTOP_ACTION_BRIDGE_AFFORDANCES
+    ]
+    return {
+        "view_signal_version": (
+            DESKTOP_ACTION_BRIDGE_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "affordances": affordances,
+        "precedence_note": (
+            DESKTOP_ACTION_BRIDGE_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_action_bridge_text(view: dict) -> list:
+    """Phase 10N: format the assembled action-bridge view as text
+    lines. Each line is attributed (`[canonical mirror]`,
+    `[advisory]`, `[affordance]`, `[ineligible]`) so a reviewer can
+    tell which lines are canonical, which are computed, which are
+    operator-visible affordances, and which affordances refused
+    fail-closed.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-action-bridge] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status "
+        f"(.agent-loop/loop-state.json): "
+        f"{view['current_loop_state_status']!r}"
+    )
+    for descriptor in view.get("affordances", []):
+        tag = (
+            "[affordance]"
+            if descriptor["currently_eligible"]
+            else "[ineligible]"
+        )
+        lines.append(
+            f"  {tag} id={descriptor['id']!r} "
+            f"dispatch_mode={descriptor['dispatch_mode']!r} "
+            f"category={descriptor['category']!r} "
+            f"currently_eligible="
+            f"{descriptor['currently_eligible']!r}"
+        )
+        lines.append(
+            f"    command: {descriptor['command']}"
+        )
+        lines.append(
+            f"    label: {descriptor['label']}"
+        )
+        if descriptor["delegated_library_function"]:
+            lines.append(
+                f"    delegated_library_function: "
+                f"{descriptor['delegated_library_function']!r} "
+                f"(Phase 10I control id "
+                f"{descriptor['delegated_phase_10i_control_id']!r})"
+            )
+        lines.append(
+            f"    [advisory] eligibility_reason: "
+            f"{descriptor['eligibility_reason']}"
+        )
+        lines.append(
+            f"    [advisory] audit_note: "
+            f"{descriptor['audit_note']}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def cmd_view_desktop_actions(args: argparse.Namespace) -> int:
+    """Phase 10N operator entry: print the desktop action bridge
+    view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase 10L
+    Desktop App Shell Contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess (no `subprocess.Popen`, no
+    `os.system`, no shell-out path), and NEVER widens the
+    Phase 10I library-callable control cap.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow (matching the Phase 10M
+    `launch-desktop-app` contract); omitting it returns exit 2
+    with an explicit `[desktop-action-bridge] REFUSED: ...`
+    stderr line.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-action-bridge] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop action bridge MUST NOT silently pick a "
+            "default root from an auto-discovered repo root, the "
+            "OS-level current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-action-bridge] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires AGENTS.md "
+            f"/ CLAUDE.md / TASK.md / .agent-loop/ to be present "
+            f"before any canonical artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_action_bridge_view(controller_root)
+    for line in render_desktop_action_bridge_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -19932,6 +20747,120 @@ def build_parser() -> argparse.ArgumentParser:
             "library-callable control."
         ),
     )
+    desktop = sub.add_parser(
+        "launch-desktop-app",
+        help=(
+            "Phase 10M desktop app read-only runtime initial slice: "
+            "open the first local desktop window that polls the "
+            "shipped Phase 10H status view, Phase 10I controls "
+            "view, and Phase 10K artifact dashboard view through "
+            "the library-call bridge. Validates the operator-"
+            "selected controller root (`AGENTS.md` / `CLAUDE.md` / "
+            "`TASK.md` / `.agent-loop/` markers) before any render. "
+            "Read-only: never mutates any canonical artifact, "
+            "never appends to `.agent-loop/orchestrator.log`, "
+            "never advances loop-state, never invokes `_halt(...)`, "
+            "never dispatches a CLI subprocess, never widens the "
+            "Phase 10I library-callable control surface. Modes: "
+            "default opens a Tkinter window that re-polls every "
+            "`cadence_seconds` (clamped to the Phase 10L floor); "
+            "`--headless` / `--once` renders the assembled view "
+            "to stdout once and exits 0."
+        ),
+    )
+    desktop.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the desktop "
+            "shell renders against. Per the Phase 10L Controller-"
+            "Root Selection Flow the desktop shell MUST NOT silently "
+            "pick a default root from an auto-discovered repo root, "
+            "the OS-level current working directory, an environment "
+            "variable, or a packaging-time configured path; this CLI "
+            "flag is the scriptable equivalent of the contract's "
+            "native folder picker. Omitting this flag returns exit "
+            "2 with a `[desktop-app] REFUSED: ...` stderr message."
+        ),
+    )
+    desktop.add_argument(
+        "--headless",
+        action="store_true",
+        help=(
+            "Render the assembled view to stdout once and exit 0 "
+            "without opening a native window. Required on machines "
+            "without a display server."
+        ),
+    )
+    desktop.add_argument(
+        "--once",
+        action="store_true",
+        help=(
+            "Alias for `--headless`: render the assembled view to "
+            "stdout once and exit 0 without entering the polling "
+            "loop."
+        ),
+    )
+    desktop.add_argument(
+        "--cadence-seconds",
+        dest="cadence_seconds",
+        type=float,
+        default=None,
+        help=(
+            "Polling cadence (seconds) between desktop refreshes. "
+            "Clamped to the Phase 10L floor "
+            f"({_DESKTOP_APP_MIN_IDLE_CADENCE_SECONDS}s idle; "
+            f"{_DESKTOP_APP_MIN_OPERATOR_CADENCE_SECONDS}s under "
+            "`--operator-driven`)."
+        ),
+    )
+    desktop.add_argument(
+        "--operator-driven",
+        action="store_true",
+        help=(
+            "Treat the poll cadence as operator-driven (the lower "
+            "Phase 10L floor applies)."
+        ),
+    )
+    actions = sub.add_parser(
+        "view-desktop-actions",
+        help=(
+            "Phase 10N desktop app action bridge initial slice: "
+            "render the four operator-decision action verbs "
+            "(`attach`, `inspect`, `run`, `resume`) as a bounded "
+            "copy-paste-or-library-call affordance list. Each "
+            "affordance carries `dispatch_mode` (`copy_paste` for "
+            "mutating CLIs; `library_call` for the three Phase 10I "
+            "library-callable controls), `currently_eligible` "
+            "(derived from canonical loop-state.status against the "
+            "affordance's eligibility set), `eligibility_reason`, "
+            "and `audit_note` (audit-log visibility the operator-"
+            "CLI invocation will produce). Phase 7C reporter "
+            "pattern: always exits 0 on report content; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances loop-"
+            "state; never invokes `_halt(...)`; never spawns a "
+            "subprocess; never widens the Phase 10I library-"
+            "callable control cap."
+        ),
+    )
+    actions.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the desktop "
+            "action bridge renders against. Per the Phase 10L "
+            "Controller-Root Selection Flow the desktop shell MUST "
+            "NOT silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current working "
+            "directory, an environment variable, or a packaging-"
+            "time configured path. Omitting this flag returns exit "
+            "2 with a `[desktop-action-bridge] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -20201,6 +21130,8 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-external-controls": cmd_view_external_controls,
     "invoke-external-control": cmd_invoke_external_control,
     "view-artifact-dashboard": cmd_view_artifact_dashboard,
+    "launch-desktop-app": cmd_launch_desktop_app,
+    "view-desktop-actions": cmd_view_desktop_actions,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

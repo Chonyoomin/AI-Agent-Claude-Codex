@@ -1,39 +1,38 @@
 # Claude Code Task
 
 ## Phase
-Phase 10L - Desktop App Shell Contract
+Phase 10O - MCP Integration Contract And Safe Tool Boundary
 
 ## Objective
-Define Phase 10L for the agent loop. This slice should specify the desktop-app shell boundaries, controller/target selection flow, polling model, artifact-opening behavior, and the safe bridge between the desktop shell and the shipped Python orchestrator/view surfaces.
+Implement Phase 10O for the agent loop. This slice should define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review, approval gates, or ownership boundaries.
 
 ## Context
-Define the Desktop App Shell Contract for the agent loop. This slice should
-specify the first native desktop-app shell for the external UI, including the
-desktop process boundary, controller/target selection flow, refresh/polling
-rules, artifact-opening behavior, and the safe bridge to the shipped Python
-orchestrator/view surfaces.
+Implement the MCP Integration Contract And Safe Tool Boundary slice for the
+agent loop. This slice should define how MCP server support, scoped tool
+categories, browser/app inspection hooks, and policy rules may assist
+planning, implementation, and review without bypassing evidence review,
+approval gates, or ownership boundaries.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10L as active
-- `.agent-loop/phase-plan.md` records Phase 10K as closed history and contains
-  a `## Phase 10L - Desktop App Shell Contract` section with concrete
-  objective, done criteria, and exclusions
-- the repository gains a documentation-first contract defining the first
-  native desktop app as a thin local operator shell over the shipped Python
-  runtime and canonical artifacts
-- the contract defines the desktop toolkit/process boundary, controller-root
-  selection flow, attach visibility, refresh/poll rules, artifact-opening
-  behavior, and explicit refusal cases without shipping the desktop runtime
-  yet
-- the contract preserves the shipped CLI-first workflow, approval semantics,
-  halt/refusal vocabulary, checkpoint/resume behavior, controller-vs-target
-  ownership boundaries, and the Phase 4C activator +
-  `APPROVED_FOR_ACTIVATION` activation gate
-- focused validation proves the desktop-app contract is bounded, internally
-  consistent with Phase 10G through 10K, and reflected accurately in
-  planning/docs surfaces
-- `README.md` reflects that Phase 10L is active and that the desktop-app
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10O as active
+- `.agent-loop/phase-plan.md` records Phase 10N as closed history and contains
+  a `## Phase 10O - MCP Integration Contract And Safe Tool Boundary` section with
+  concrete objective, done criteria, and exclusions
+- the repository adds a concrete MCP integration contract, ideally in a
+  dedicated docs artifact, that defines safe tool categories, ownership
+  boundaries, refusal rules, audit expectations, and source-of-truth
+  preservation before any MCP runtime path ships
+- the contract preserves the shipped evidence-review model, approval gating,
+  external-workspace boundaries, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of allowing MCP tools to bypass them
+- the contract distinguishes read-only assistance from still-deferred
+  mutation-capable MCP actions and defines what later phases must add before
+  any non-read-only MCP-assisted runtime behavior is allowed
+- focused validation or review coverage proves the new MCP contract/docs match
+  the actual repo state and do not claim that MCP runtime integration already
+  ships
+- `README.md` reflects that Phase 10O is active and that the MCP integration
   contract is now the implementation focus
 
 ## Constraints
@@ -47,16 +46,17 @@ orchestrator/view surfaces.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no desktop runtime implementation yet (Phase 10M / 10N)
-- no dashboard expansion beyond the shipped Phase 10K slice
-- no hidden background UI-side orchestration or second source of truth
-- no MCP integration, RAG layer, GitHub integration, or model-policy
-  extensibility work
+- no actual MCP runtime integration, no tool-execution path, and no networked
+  tool orchestration in this slice
+- no mutation-capable MCP actions, no MCP-driven writes to canonical
+  artifacts, and no bypass of the shipped CLI/library/runtime boundaries
+- no RAG, GitHub, policy-pack, packaging, system-tray, or controlled-
+  concurrency runtime work
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation, or that replaces canonical
   prompt/review/checkpoint artifacts with transient runtime-only state
-- no rewrite of current shipped behavior just to make future desktop-app,
-  concurrency, or autonomy work easier
+- no rewrite of current shipped behavior just to make future MCP or autonomy
+  work easier
 - no regression of the shipped Phase 5 review, strict, bounded autonomous,
   reconciliation, or prompt-bootstrap behavior
 - no regression of the shipped Phase 6 memory, checkpoint, continuation,
