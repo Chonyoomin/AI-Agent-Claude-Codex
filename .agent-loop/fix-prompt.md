@@ -1,10 +1,10 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix only the remaining Claude-owned Phase 10I review issue found by Codex.
+Fix only the current Claude-owned Phase 10K review issues found by Codex.
 
 ## Context
-The latest Phase 10I fix cycle was reviewed by Codex and still received the verdict `NEEDS_FIXES` because one README inconsistency remains.
+The latest Phase 10K implementation was reviewed by Codex and received the verdict `NEEDS_FIXES`.
 
 Read:
 - `CLAUDE.md`
@@ -17,16 +17,18 @@ Read:
 - `.agent-loop/build-output.log`
 
 ## Required fixes
-- Fix the remaining README inconsistency in `README.md`.
-  The runtime and tests now correctly show that the Phase 10I `invoke-external-control` surface does NOT append an `[orchestrator] ...` line to `.agent-loop/orchestrator.log` and does NOT route refusals through `_halt(...)` / `halted_input_missing`. However, the active Phase 10I paragraph in `README.md` still describes that old behavior.
-- Rewrite only the stale Phase 10I paragraph so it matches the shipped runtime exactly.
-  The updated paragraph should reflect that:
-  - `invoke-external-control --control <ID>` delegates only the allowed read-only library-call controls
-  - success is surfaced through `[external-ui] ...` stdout lines, not canonical audit-log writes
-  - refusal is surfaced through `[external-ui] REFUSED: ...` on stderr with non-zero exit, not via `_halt(...)`
-  - neither success nor refusal mutates `.agent-loop/orchestrator.log` or `.agent-loop/loop-state.json`
-- Keep the edit narrow.
-  Do not rewrite unrelated README sections, and do not make any runtime/code/test changes unless a tiny wording-alignment test absolutely requires it.
+- Fix the contract/runtime mismatch in the Phase 10K `progress_history` surface.
+  The approved Phase 10J contract says Progress History's canonical sources include the per-phase Phase 6I distillation entries under `.agent-loop/memory/` when present. The current `scripts/agent_loop.py` implementation only mirrors `loop-state.json`, `phase-plan.md`, and `orchestrator.log`.
+  Update the Phase 10K runtime so the `progress_history` surface actually incorporates the Phase 6I distillation memory entries in a bounded, contract-preserving way. Keep the surface read-only, preserve the canonical-mirror vs advisory distinction, and add focused tests proving this coverage.
+- Fix the contract/runtime mismatch in the Phase 10K `token_cost` surface.
+  The approved Phase 10J contract says Token / Cost Reporting should mirror the Phase 6F token-exhaustion checkpoint files and continuation context in addition to `capacity-retry-state.json` and loop-state cycle fields. The current implementation only mirrors `capacity-retry-state.json` plus loop-state.
+  Update the Phase 10K runtime so the `token_cost` surface includes the token-exhaustion checkpoint / continuation-context information the contract requires, in a bounded read-only form, and add focused tests proving this coverage.
+- Fix the contract/runtime mismatch in the Phase 10K `failure_analytics` surface.
+  The approved Phase 10J contract says Failure Analytics includes the Phase 6L repeated-failure synthesis entries under `.agent-loop/memory/` and the `last_verdict` / `status` fields from `loop-state.json` as canonical inputs. The current implementation only mirrors `codex-review.md` and the four evidence files.
+  Update the Phase 10K runtime so the `failure_analytics` surface includes the repeated-failure synthesis entries and loop-state failure context the contract requires, and add focused tests proving this coverage.
+- Keep the fixes bounded to Phase 10K.
+  Do not widen the dashboard into advanced runtime work, new mutating controls, new library-callable controls, or any broader Phase 10 feature. This is a contract-conformance fix for the existing six-surface dashboard runtime.
+- Update `README.md` only if needed to keep the Phase 10K description accurate after the runtime/test fixes.
 
 ## Constraints
 - Fix only the listed issues.
@@ -37,7 +39,7 @@ Read:
 - Do not edit `.agent-loop/loop-state.json` or `.agent-loop/orchestrator.log` by hand.
 - Do not delete files unless explicitly required and approved.
 - Preserve the original task objective.
-- Update tests only if documentation wording assertions require it.
+- Update focused tests to prove the repaired contract coverage.
 - Prefer minimal, targeted changes.
 
 ## Required output

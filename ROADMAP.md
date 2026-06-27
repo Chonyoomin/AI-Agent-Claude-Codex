@@ -620,9 +620,9 @@ Phase 10 is organized as future sub-phase candidates:
 - Phase 10I - Minimal External UI Run/Resume Controls: add bounded run/resume/inspect controls to the external UI while preserving the CLI-first contract and canonical repo artifacts as the source of truth
 - Phase 10J - Artifact Dashboard Contract: define how review summaries, diff views, progress history, approval actions, token/cost reporting, and failure analytics should be surfaced without replacing canonical artifacts
 - Phase 10K - Artifact Dashboard Initial Slice: implement the first artifact dashboard and run-history views on top of the approved contract, keeping dashboard data advisory
-- Phase 10L - Controlled Concurrent Operation Contract: define the overlap rules, ownership boundaries, stale-artifact detection, review/fix invalidation rules, and recovery behavior required before any concurrent Codex/Claude work is allowed
-- Phase 10M - Overlap-Safe Detection Initial Slice: implement detection and refusal paths for unsafe overlap so the system can tell when concurrent work would invalidate the active task context
-- Phase 10N - Codex-Owned Concurrent Work Initial Slice: allow Codex to continue limited Codex-owned work while Claude is implementing, only where overlap-safe detection proves the work cannot invalidate Claude's active task context
+- Phase 10L - Desktop App Shell Contract: define the first native desktop-app shell for the external UI, including toolkit choice, process model, controller-root selection flow, polling/refresh rules, artifact-opening behavior, and the safety boundary between the desktop shell and the shipped Python orchestrator/view functions
+- Phase 10M - Desktop App Read-Only Runtime Initial Slice: implement the first local desktop app that renders the shipped external status, controls, and artifact-dashboard views without introducing a second source of truth or bypassing canonical artifacts
+- Phase 10N - Desktop App Action Bridge Initial Slice: add bounded operator-invoked desktop actions for attach/inspect/run/resume flows by delegating to shipped CLI/library surfaces with explicit refusal handling, audit visibility, and no hidden automation
 - Phase 10O - MCP Integration Contract And Safe Tool Boundary: define how MCP server support, scoped tool categories, browser/app inspection hooks, and policy rules may assist planning, implementation, and review without bypassing evidence review or ownership boundaries
 - Phase 10P - MCP Read-Only Tool Boundary Initial Slice: implement the first MCP-assisted read-only surfaces so external tools can assist context gathering without mutating canonical artifacts
 - Phase 10Q - MCP Runtime Action Guardrails: add the mutation boundaries, refusal behavior, auditing, and explicit allow-list rules required before any non-read-only MCP-assisted runtime action is allowed
@@ -636,6 +636,9 @@ Phase 10 is organized as future sub-phase candidates:
 - Phase 10Y - Human-Facing Memory Vault Export Contract: define how optional Obsidian-style memory exports and related human-readable decision or architecture views may be produced without replacing repo artifacts as the primary source of truth
 - Phase 10Z - Human-Facing Memory Vault Export Initial Slice: implement the first bounded export path for human-readable memory/decision surfaces
 - Phase 10AA - Multi-Agent Framework Evaluation Beyond The Native Loop: evaluate CrewAI, LangGraph, LangChain orchestration patterns, or similar delegated-role frameworks only after the adapter boundary, durable memory, external-workspace control, and controlled-concurrency model are stable, and only where they add value beyond the current Codex/Claude ownership model
+- Phase 10AB - Controlled Concurrent Operation Contract: define the overlap rules, ownership boundaries, stale-artifact detection, review/fix invalidation rules, and recovery behavior required before any concurrent Codex/Claude work is allowed
+- Phase 10AC - Overlap-Safe Detection Initial Slice: implement detection and refusal paths for unsafe overlap so the system can tell when concurrent work would invalidate the active task context
+- Phase 10AD - Codex-Owned Concurrent Work Initial Slice: allow Codex to continue limited Codex-owned work while Claude is implementing, only where overlap-safe detection proves the work cannot invalidate Claude's active task context
 
 ## Fix Phases - Targeted Remediation Track
 

@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10J - Artifact Dashboard Contract
+Phase 10L - Desktop App Shell Contract
 
 ## Status
-Phase 10I is complete. Phase 10J is now active as the next mainline slice focused on defining the artifact dashboard contract for external UI work without replacing canonical artifacts.
+Phase 10K is complete. Phase 10L is now active as the next mainline slice focused on defining the first native desktop-app shell for the external UI so operation no longer depends on terminal-only workflows.
 
 ## Task
-Define Phase 10J for the agent loop. This slice should specify how review summaries, diff views, progress history, approval actions, token/cost reporting, and failure analytics should be surfaced in the external UI without replacing canonical artifacts on disk.
+Define Phase 10L for the agent loop. This slice should specify the desktop-app shell boundaries, controller/target selection flow, polling model, artifact-opening behavior, and the safe bridge between the desktop shell and the shipped Python orchestrator/view surfaces.
 
 ## Notes
 
-- keep the dashboard contract documentation-first in this slice; do not jump straight to runtime implementation
-- preserve the shipped advisory-vs-canonical boundary so dashboards remain derived views over canonical artifacts
-- do not widen into dashboard runtime implementation, controlled-concurrency, MCP, RAG, GitHub, or policy-pack work
+- keep this slice documentation-first; do not jump into desktop runtime implementation yet
+- preserve the shipped ownership boundaries, phase gating, and canonical-artifact-first model while defining the desktop shell
+- do not widen into hidden UI-side orchestration, controlled-concurrency runtime, MCP, RAG, GitHub, or policy-pack work
