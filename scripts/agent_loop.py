@@ -67,6 +67,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import time
@@ -14722,6 +14723,599 @@ def cmd_view_desktop_actions(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Phase 10P - Desktop App Operator Setup And CLI Onboarding.
+#
+# First guided desktop setup view that surfaces, in one bounded
+# read-only report:
+#   - controller-root validity (Phase 10L "Controller-Root Selection
+#     Flow" markers AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/)
+#   - target/work folder status (delegates to the shipped Phase 10F
+#     `inspect_external_target_attach(...)` aggregator inspector
+#     verbatim; never mutates the attach record)
+#   - local Claude/Codex CLI adapter environment status
+#     (AGENT_LOOP_CLAUDE_CMD / AGENT_LOOP_CODEX_CMD plus the
+#     optional *_MODEL identifiers from the Fix Phase A local
+#     adapter contract); env vars are READ ONLY - the setup view
+#     NEVER mutates `os.environ`, NEVER writes a shell rc file,
+#     NEVER persists adapter commands to a hidden config plane
+#   - persisted runtime-config status (delegates to the shipped
+#     Phase 6N `read_runtime_config(...)` validator verbatim)
+#   - first-party wrapper-template availability under
+#     `scripts/` so the operator can find the starting points the
+#     Fix Phase A local adapter contract recommends
+#   - required-local-tool availability (Python and git; checked via
+#     `shutil.which(...)` only; no version-string parsing of stdout
+#     from a spawned subprocess)
+#
+# The setup view is the Phase 7C reporter pattern: always exits 0
+# on report content once the controller-root selection succeeds.
+# Per the Phase 10L Desktop App Shell Contract this handler:
+#   - NEVER mutates any canonical artifact
+#   - NEVER appends to `.agent-loop/orchestrator.log`
+#   - NEVER mutates `.agent-loop/loop-state.json`
+#   - NEVER invokes `_halt(...)`
+#   - NEVER spawns a subprocess (`shutil.which` is a path lookup,
+#     not a subprocess spawn)
+#   - NEVER auto-fills any `--*-by` operator-identity argument
+#   - NEVER widens the Phase 10I library-callable control surface
+#     beyond its three-control cap
+#   - NEVER writes to or rewrites `runtime-config.json`,
+#     `external-target.json`, the wrapper templates, or any other
+#     persisted artifact (set-runtime-config + attach-external-
+#     target + the operator's own shell rc remain the only mutating
+#     paths)
+#   - NEVER opens a network socket
+#
+# `--controller-root <PATH>` is REQUIRED per the Phase 10L
+# Controller-Root Selection Flow (matching the Phase 10M
+# `launch-desktop-app` and Phase 10N `view-desktop-actions`
+# contracts); omitting it returns exit 2 with an explicit
+# `[desktop-setup] REFUSED: ...` stderr line.
+#
+# Out of scope for this slice (deferred to later Phase 10 sub-
+# phases per the Phase 10L contract and ROADMAP.md):
+#   - mutating PRD intake / project-start flow (Phase 10R)
+#   - run-profile / approval-mode selection UX (Phase 10Q)
+#   - MCP server selection / read-only MCP runtime (Phase 10S /
+#     10T)
+#   - MCP mutation-capable runtime (Phase 10U+)
+#   - controlled-concurrency / overlap-safe detection / Codex-
+#     owned concurrent work (Phase 10AB / 10AC / 10AD)
+#   - packaging / code-signing / auto-update / system-tray work
+#   - any persisted config plane parallel to runtime-config.json
+#     and the operator's own shell env
+
+DESKTOP_SETUP_SIGNAL_VERSION = "phase-10p-v1"
+
+DESKTOP_SETUP_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk and the operator's own shell "
+    "environment always win over any desktop setup rendering. The "
+    "setup view is a per-poll read-only assembly of (a) the "
+    "Phase 10L controller-root validation, (b) the shipped "
+    "Phase 10F external target inspector, (c) a read-only "
+    "snapshot of the Fix Phase A local adapter environment "
+    "variables, (d) the shipped Phase 6N runtime-config "
+    "validator, (e) wrapper-template presence under scripts/, "
+    "and (f) required local-tool availability via shutil.which. "
+    "The setup view NEVER mutates os.environ, NEVER writes a "
+    "shell rc file, NEVER persists adapter commands to a hidden "
+    "config plane, NEVER auto-fills any --*-by operator-identity "
+    "argument, NEVER widens the Phase 10I library-callable "
+    "control cap, NEVER spawns a subprocess, and NEVER opens a "
+    "network socket."
+)
+
+_DESKTOP_SETUP_REQUIRED_LOCAL_TOOLS = ("git",)
+
+_DESKTOP_SETUP_ENV_ADAPTERS = (
+    {
+        "adapter": "claude",
+        "command_env_var": ENV_CLAUDE_CMD,
+        "model_env_var": ENV_CLAUDE_MODEL,
+        "wrapper_template_rel": (
+            "scripts/claude-wrapper.sh.template"
+        ),
+    },
+    {
+        "adapter": "codex",
+        "command_env_var": ENV_CODEX_CMD,
+        "model_env_var": ENV_CODEX_MODEL,
+        "wrapper_template_rel": (
+            "scripts/codex-wrapper.sh.template"
+        ),
+    },
+)
+
+
+def _desktop_setup_controller_root_section(
+    controller_root: Path,
+) -> dict:
+    validation = validate_desktop_controller_root(controller_root)
+    if validation["valid"]:
+        status = "ok"
+        summary = (
+            "controller root markers present "
+            "(AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/)"
+        )
+    else:
+        status = "refused"
+        summary = (
+            f"controller root missing required markers "
+            f"{list(validation['missing_markers'])!r}; per the "
+            f"Phase 10L Desktop App Shell Contract the desktop "
+            f"shell requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered"
+        )
+    return {
+        "status": status,
+        "summary": summary,
+        "root_path": validation["root_path"],
+        "missing_markers": list(validation["missing_markers"]),
+    }
+
+
+def _desktop_setup_target_section(controller_root: Path) -> dict:
+    try:
+        report = inspect_external_target_attach(controller_root)
+    except HaltError as halt:
+        return {
+            "status": "refused",
+            "summary": (
+                f"target inspection refused fail-closed: "
+                f"{halt.reason}"
+            ),
+            "attach_record_path": (
+                EXTERNAL_TARGET_ATTACH_RECORD_REL
+            ),
+            "attached": False,
+            "schema_valid": False,
+            "schema_violations": [halt.reason],
+        }
+    if not report.get("attached"):
+        status = "missing"
+    elif not report.get("schema_valid"):
+        status = "refused"
+    else:
+        freshness = report.get("freshness") or {}
+        status = "ok" if freshness.get("is_fresh") else "stale"
+    return {
+        "status": status,
+        "summary": report.get("summary", ""),
+        "attach_record_path": report.get(
+            "attach_record_path",
+            EXTERNAL_TARGET_ATTACH_RECORD_REL,
+        ),
+        "attached": bool(report.get("attached")),
+        "schema_valid": bool(report.get("schema_valid")),
+        "schema_violations": list(
+            report.get("schema_violations") or []
+        ),
+    }
+
+
+def _desktop_setup_adapter_env_section(
+    controller_root: Path, environ: dict,
+) -> dict:
+    adapters: list = []
+    any_missing = False
+    for spec in _DESKTOP_SETUP_ENV_ADAPTERS:
+        command_value = environ.get(spec["command_env_var"])
+        model_value = environ.get(spec["model_env_var"])
+        command_set = bool(command_value)
+        wrapper_template_path = (
+            controller_root / spec["wrapper_template_rel"]
+        )
+        wrapper_template_present = wrapper_template_path.is_file()
+        if command_set:
+            adapter_status = "ok"
+            adapter_summary = (
+                f"{spec['command_env_var']} is set; the "
+                f"Fix Phase A subprocess adapter for the "
+                f"{spec['adapter']} side is configured for "
+                f"automatic local invocation"
+            )
+        else:
+            adapter_status = "missing"
+            adapter_summary = (
+                f"{spec['command_env_var']} is NOT set; "
+                f"automatic local invocation for the "
+                f"{spec['adapter']} side falls back to the "
+                f"manual handoff adapter (operator copies the "
+                f"prompt into a separate shell). Use "
+                f"`{spec['wrapper_template_rel']}` as a "
+                f"starting point per the Fix Phase A local "
+                f"adapter contract."
+            )
+            any_missing = True
+        adapters.append({
+            "adapter": spec["adapter"],
+            "status": adapter_status,
+            "summary": adapter_summary,
+            "command_env_var": spec["command_env_var"],
+            "command_set": command_set,
+            "model_env_var": spec["model_env_var"],
+            "model_set": bool(model_value),
+            "wrapper_template_rel": spec["wrapper_template_rel"],
+            "wrapper_template_present": wrapper_template_present,
+        })
+    if any_missing:
+        overall_status = "missing"
+        overall_summary = (
+            "at least one of AGENT_LOOP_CLAUDE_CMD / "
+            "AGENT_LOOP_CODEX_CMD is unset; manual handoff "
+            "adapters remain active for those sides"
+        )
+    else:
+        overall_status = "ok"
+        overall_summary = (
+            "both AGENT_LOOP_CLAUDE_CMD and AGENT_LOOP_CODEX_CMD "
+            "are set; subprocess adapters are configured for "
+            "automatic local invocation"
+        )
+    return {
+        "status": overall_status,
+        "summary": overall_summary,
+        "adapters": adapters,
+    }
+
+
+def _desktop_setup_runtime_config_section(
+    controller_root: Path,
+) -> dict:
+    config_path_rel = RUNTIME_CONFIG_REL
+    try:
+        selected = read_runtime_config(controller_root)
+    except HaltError as halt:
+        return {
+            "status": "refused",
+            "summary": (
+                f"runtime-config refused fail-closed: "
+                f"{halt.reason}"
+            ),
+            "config_path_rel": config_path_rel,
+            "selected_runtime": None,
+            "default_runtime": RUNTIME_ADAPTER_DEFAULT,
+            "supported_runtimes": sorted(
+                RUNTIME_ADAPTERS_SUPPORTED
+            ),
+        }
+    if selected is None:
+        return {
+            "status": "default",
+            "summary": (
+                f"no persisted runtime-config; default "
+                f"`{RUNTIME_ADAPTER_DEFAULT}` runtime is active "
+                f"(per the Phase 6M `Default-runtime and "
+                f"evaluation constraints` subsubsection)"
+            ),
+            "config_path_rel": config_path_rel,
+            "selected_runtime": None,
+            "default_runtime": RUNTIME_ADAPTER_DEFAULT,
+            "supported_runtimes": sorted(
+                RUNTIME_ADAPTERS_SUPPORTED
+            ),
+        }
+    return {
+        "status": "ok",
+        "summary": (
+            f"runtime-config selects {selected!r} (pin via "
+            f"`set-runtime-config --selected-runtime <ID>`; "
+            f"clear via `set-runtime-config --clear`)"
+        ),
+        "config_path_rel": config_path_rel,
+        "selected_runtime": selected,
+        "default_runtime": RUNTIME_ADAPTER_DEFAULT,
+        "supported_runtimes": sorted(RUNTIME_ADAPTERS_SUPPORTED),
+    }
+
+
+def _desktop_setup_wrapper_template_section(
+    controller_root: Path,
+) -> dict:
+    templates: list = []
+    any_missing = False
+    for spec in _DESKTOP_SETUP_ENV_ADAPTERS:
+        rel = spec["wrapper_template_rel"]
+        present = (controller_root / rel).is_file()
+        if not present:
+            any_missing = True
+        templates.append({
+            "template_rel": rel,
+            "adapter": spec["adapter"],
+            "present": present,
+        })
+    if any_missing:
+        status = "missing"
+        summary = (
+            "at least one of the Fix Phase A wrapper-template "
+            "starting points is missing from scripts/; if you "
+            "are working in a fresh clone, confirm the templates "
+            "shipped with the repository"
+        )
+    else:
+        status = "ok"
+        summary = (
+            "both Fix Phase A wrapper templates are present "
+            "under scripts/ as starting points; copy each to a "
+            "non-template path before editing"
+        )
+    return {
+        "status": status,
+        "summary": summary,
+        "templates": templates,
+    }
+
+
+def _desktop_setup_local_tool_section() -> dict:
+    tools: list = []
+    any_missing = False
+    for tool_name in _DESKTOP_SETUP_REQUIRED_LOCAL_TOOLS:
+        resolved = shutil.which(tool_name)
+        present = bool(resolved)
+        if not present:
+            any_missing = True
+        tools.append({
+            "name": tool_name,
+            "present": present,
+            "resolved_path": resolved,
+        })
+    if any_missing:
+        status = "missing"
+        summary = (
+            "at least one required local tool is missing from "
+            "PATH; install it before running automatic Claude/"
+            "Codex invocation cycles"
+        )
+    else:
+        status = "ok"
+        summary = (
+            "every required local tool is resolvable on PATH "
+            "via shutil.which"
+        )
+    python_info = {
+        "name": "python",
+        "version": sys.version.split()[0],
+        "executable": sys.executable,
+    }
+    return {
+        "status": status,
+        "summary": summary,
+        "required_tools": tools,
+        "python": python_info,
+    }
+
+
+def build_desktop_setup_view(
+    controller_root: Path,
+    *,
+    environ: Optional[dict] = None,
+) -> dict:
+    """Phase 10P: assemble the bounded desktop setup view by
+    delegating to the shipped Phase 10L / 10F / 6N validators
+    verbatim and reporting `os.environ` adapter state read-only.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10p-v1`
+      - `controller_path_canonical`: resolved controller root
+      - `controller_root`: section dict
+      - `target`: section dict
+      - `adapter_env`: section dict
+      - `runtime_config`: section dict
+      - `wrapper_templates`: section dict
+      - `local_tools`: section dict
+      - `precedence_note`: literal Phase 10P precedence reminder
+
+    `environ` defaults to a snapshot of `os.environ` taken at call
+    time. Tests pass an explicit dict; the view MUST NOT mutate
+    `environ` regardless of source.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never widens the Phase 10I library-
+    callable control cap. HaltError raised by a delegate validator
+    is converted to a soft-fail `status="refused"` shape on the
+    corresponding section so the setup view can render without
+    propagating as canonical halt persistence.
+    """
+    if environ is None:
+        env_snapshot: dict = dict(os.environ)
+    else:
+        env_snapshot = dict(environ)
+    return {
+        "view_signal_version": DESKTOP_SETUP_SIGNAL_VERSION,
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "controller_root": _desktop_setup_controller_root_section(
+            controller_root,
+        ),
+        "target": _desktop_setup_target_section(controller_root),
+        "adapter_env": _desktop_setup_adapter_env_section(
+            controller_root, env_snapshot,
+        ),
+        "runtime_config": _desktop_setup_runtime_config_section(
+            controller_root,
+        ),
+        "wrapper_templates": (
+            _desktop_setup_wrapper_template_section(controller_root)
+        ),
+        "local_tools": _desktop_setup_local_tool_section(),
+        "precedence_note": DESKTOP_SETUP_PRECEDENCE_NOTE,
+    }
+
+
+def render_desktop_setup_text(view: dict) -> list:
+    """Phase 10P: format the assembled setup view as text lines.
+    Each line is attributed (`[canonical mirror]`, `[advisory]`,
+    `[setup]`, `[refused]`, `[missing]`, `[stale]`, `[default]`)
+    so a reviewer can tell which lines come from canonical
+    artifacts, which are computed setup-state, and which sections
+    refused fail-closed.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-setup] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+
+    def _section_tag(status: str) -> str:
+        if status == "ok":
+            return "[setup]"
+        if status == "default":
+            return "[default]"
+        if status == "stale":
+            return "[stale]"
+        if status == "missing":
+            return "[missing]"
+        return "[refused]"
+
+    root = view["controller_root"]
+    lines.append(
+        f"  {_section_tag(root['status'])} controller_root "
+        f"status={root['status']!r}: {root['summary']}"
+    )
+
+    target = view["target"]
+    lines.append(
+        f"  {_section_tag(target['status'])} target "
+        f"status={target['status']!r} attached="
+        f"{target['attached']!r} schema_valid="
+        f"{target['schema_valid']!r}: {target['summary']}"
+    )
+
+    adapter = view["adapter_env"]
+    lines.append(
+        f"  {_section_tag(adapter['status'])} adapter_env "
+        f"status={adapter['status']!r}: {adapter['summary']}"
+    )
+    for entry in adapter["adapters"]:
+        lines.append(
+            f"    {_section_tag(entry['status'])} "
+            f"adapter={entry['adapter']!r} "
+            f"command_env_var={entry['command_env_var']!r} "
+            f"command_set={entry['command_set']!r} "
+            f"model_env_var={entry['model_env_var']!r} "
+            f"model_set={entry['model_set']!r}"
+        )
+        lines.append(
+            f"      [advisory] wrapper_template_rel="
+            f"{entry['wrapper_template_rel']!r} "
+            f"wrapper_template_present="
+            f"{entry['wrapper_template_present']!r}"
+        )
+        lines.append(
+            f"      [advisory] summary: {entry['summary']}"
+        )
+
+    runtime = view["runtime_config"]
+    lines.append(
+        f"  {_section_tag(runtime['status'])} runtime_config "
+        f"status={runtime['status']!r} selected_runtime="
+        f"{runtime['selected_runtime']!r} default_runtime="
+        f"{runtime['default_runtime']!r}: {runtime['summary']}"
+    )
+
+    wrappers = view["wrapper_templates"]
+    lines.append(
+        f"  {_section_tag(wrappers['status'])} "
+        f"wrapper_templates status={wrappers['status']!r}: "
+        f"{wrappers['summary']}"
+    )
+    for template in wrappers["templates"]:
+        lines.append(
+            f"    [advisory] template_rel="
+            f"{template['template_rel']!r} "
+            f"adapter={template['adapter']!r} "
+            f"present={template['present']!r}"
+        )
+
+    tools = view["local_tools"]
+    lines.append(
+        f"  {_section_tag(tools['status'])} local_tools "
+        f"status={tools['status']!r}: {tools['summary']}"
+    )
+    for tool in tools["required_tools"]:
+        lines.append(
+            f"    [advisory] tool={tool['name']!r} "
+            f"present={tool['present']!r} resolved_path="
+            f"{tool['resolved_path']!r}"
+        )
+    lines.append(
+        f"    [advisory] python version="
+        f"{tools['python']['version']!r} executable="
+        f"{tools['python']['executable']!r}"
+    )
+
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def cmd_view_desktop_setup(args: argparse.Namespace) -> int:
+    """Phase 10P operator entry: print the desktop setup view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase 10L
+    Desktop App Shell Contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess (no `subprocess.Popen`, no
+    `os.system`, no shell-out path), NEVER writes to or rewrites
+    `runtime-config.json` / `external-target.json` / the wrapper
+    templates / the operator's shell rc, NEVER auto-fills any
+    `--*-by` operator-identity argument, NEVER opens a network
+    socket, and NEVER widens the Phase 10I library-callable
+    control cap.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow (matching the Phase 10M
+    `launch-desktop-app` and Phase 10N `view-desktop-actions`
+    contracts); omitting it returns exit 2 with an explicit
+    `[desktop-setup] REFUSED: ...` stderr line.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-setup] REFUSED: --controller-root is "
+            "required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop setup view MUST NOT silently pick a default "
+            "root from an auto-discovered repo root, the OS-"
+            "level current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-setup] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires AGENTS.md "
+            f"/ CLAUDE.md / TASK.md / .agent-loop/ to be present "
+            f"before any canonical artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_setup_view(controller_root)
+    for line in render_desktop_setup_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -20861,6 +21455,46 @@ def build_parser() -> argparse.ArgumentParser:
             "message."
         ),
     )
+    setup = sub.add_parser(
+        "view-desktop-setup",
+        help=(
+            "Phase 10P desktop app operator setup and CLI "
+            "onboarding initial slice: render a bounded "
+            "read-only setup view covering controller-root "
+            "validity, target/work folder attach status, local "
+            "Claude/Codex CLI adapter environment "
+            "(AGENT_LOOP_CLAUDE_CMD / AGENT_LOOP_CODEX_CMD plus "
+            "the optional *_MODEL identifiers), persisted "
+            "runtime-config, first-party wrapper-template "
+            "presence under scripts/, and required local-tool "
+            "availability (Python and git). Phase 7C reporter "
+            "pattern: always exits 0 on report content; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never writes runtime-config "
+            "or the shell environment; never auto-fills any "
+            "--*-by operator-identity argument; never widens "
+            "the Phase 10I library-callable control cap; never "
+            "opens a network socket."
+        ),
+    )
+    setup.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop setup view renders against. Per the Phase "
+            "10L Controller-Root Selection Flow the desktop "
+            "shell MUST NOT silently pick a default root from "
+            "an auto-discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Omitting this flag "
+            "returns exit 2 with a `[desktop-setup] REFUSED: "
+            "...` stderr message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -21132,6 +21766,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-artifact-dashboard": cmd_view_artifact_dashboard,
     "launch-desktop-app": cmd_launch_desktop_app,
     "view-desktop-actions": cmd_view_desktop_actions,
+    "view-desktop-setup": cmd_view_desktop_setup,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
