@@ -208,9 +208,189 @@ class TargetSectionTests(unittest.TestCase):
             )
 
 
+class ValidateAdapterCommandTests(unittest.TestCase):
+    """Phase 10P fix: bounded structural validation of the
+    AGENT_LOOP_CLAUDE_CMD / AGENT_LOOP_CODEX_CMD command strings.
+    The validation MUST be a structural reachability check only
+    (shlex parse + shutil.which) and MUST NOT spawn a subprocess,
+    evaluate the shell, open a network socket, or write to a
+    persisted artifact.
+    """
+
+    def test_empty_string_is_not_resolvable(self) -> None:
+        result = agent_loop._desktop_setup_validate_adapter_command(
+            "",
+        )
+        self.assertFalse(result["command_resolvable"])
+        self.assertIsNone(result["executable_token"])
+        self.assertIsNone(result["resolved_path"])
+        self.assertIn("empty", result["reason"])
+
+    def test_none_is_not_resolvable(self) -> None:
+        result = agent_loop._desktop_setup_validate_adapter_command(
+            None,
+        )
+        self.assertFalse(result["command_resolvable"])
+        self.assertIsNone(result["executable_token"])
+        self.assertIn("empty", result["reason"])
+
+    def test_non_string_is_not_resolvable(self) -> None:
+        result = agent_loop._desktop_setup_validate_adapter_command(
+            12345,
+        )
+        self.assertFalse(result["command_resolvable"])
+        self.assertIn("not a string", result["reason"])
+
+    def test_whitespace_only_is_not_resolvable(self) -> None:
+        result = agent_loop._desktop_setup_validate_adapter_command(
+            "   \t  ",
+        )
+        self.assertFalse(result["command_resolvable"])
+        self.assertIn("zero shell tokens", result["reason"])
+
+    def test_unparseable_shell_tokens_carry_parse_error(
+        self,
+    ) -> None:
+        result = agent_loop._desktop_setup_validate_adapter_command(
+            'foo "unterminated',
+        )
+        self.assertFalse(result["command_resolvable"])
+        self.assertIsNotNone(result["parse_error"])
+        self.assertIn("does not parse", result["reason"])
+
+    def test_unresolvable_first_token_returns_reason(self) -> None:
+        with mock.patch.object(
+            agent_loop.shutil, "which", return_value=None,
+        ):
+            result = (
+                agent_loop
+                ._desktop_setup_validate_adapter_command(
+                    "/no/such/wrapper --flag arg",
+                )
+            )
+        self.assertFalse(result["command_resolvable"])
+        self.assertEqual(
+            result["executable_token"], "/no/such/wrapper",
+        )
+        self.assertIsNone(result["resolved_path"])
+        self.assertIn("does not resolve", result["reason"])
+
+    def test_resolvable_first_token_returns_path(self) -> None:
+        with mock.patch.object(
+            agent_loop.shutil, "which",
+            return_value="/resolved/path/to/wrapper",
+        ):
+            result = (
+                agent_loop
+                ._desktop_setup_validate_adapter_command(
+                    "wrapper --foo bar",
+                )
+            )
+        self.assertTrue(result["command_resolvable"])
+        self.assertEqual(result["executable_token"], "wrapper")
+        self.assertEqual(
+            result["resolved_path"], "/resolved/path/to/wrapper",
+        )
+        self.assertIsNone(result["reason"])
+
+    def test_quoted_path_with_spaces_parses_correctly(self) -> None:
+        with mock.patch.object(
+            agent_loop.shutil, "which",
+            return_value="/Program Files/Tools/wrapper.exe",
+        ) as which_mock:
+            result = (
+                agent_loop
+                ._desktop_setup_validate_adapter_command(
+                    '"/Program Files/Tools/wrapper.exe" --x'
+                )
+            )
+        self.assertTrue(result["command_resolvable"])
+        self.assertEqual(
+            result["executable_token"],
+            "/Program Files/Tools/wrapper.exe",
+        )
+        which_mock.assert_called_once_with(
+            "/Program Files/Tools/wrapper.exe",
+        )
+
+    def test_validation_does_not_spawn_subprocess(self) -> None:
+        with mock.patch(
+            "subprocess.Popen",
+        ) as popen_mock, mock.patch(
+            "subprocess.run",
+        ) as run_mock, mock.patch(
+            "os.system",
+        ) as system_mock:
+            agent_loop._desktop_setup_validate_adapter_command(
+                "echo hello",
+            )
+        popen_mock.assert_not_called()
+        run_mock.assert_not_called()
+        system_mock.assert_not_called()
+
+
 class AdapterEnvSectionTests(unittest.TestCase):
 
-    def test_both_env_vars_set_returns_ok(self) -> None:
+    def test_both_env_vars_resolvable_returns_ok(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop.shutil, "which",
+                side_effect=lambda name: f"/resolved/{name}",
+            ):
+                section = (
+                    agent_loop._desktop_setup_adapter_env_section(
+                        controller,
+                        {
+                            agent_loop.ENV_CLAUDE_CMD: (
+                                "claude-wrapper"
+                            ),
+                            agent_loop.ENV_CODEX_CMD: (
+                                "codex-wrapper"
+                            ),
+                        },
+                    )
+                )
+            self.assertEqual(section["status"], "ok")
+            for entry in section["adapters"]:
+                self.assertEqual(entry["status"], "ok")
+                self.assertTrue(entry["command_set"])
+                self.assertTrue(entry["command_resolvable"])
+                self.assertIsNotNone(entry["resolved_path"])
+
+    def test_set_but_unresolvable_command_returns_refused(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop.shutil, "which", return_value=None,
+            ):
+                section = (
+                    agent_loop._desktop_setup_adapter_env_section(
+                        controller,
+                        {
+                            agent_loop.ENV_CLAUDE_CMD: (
+                                "/no/such/path/claude-wrapper"
+                            ),
+                            agent_loop.ENV_CODEX_CMD: (
+                                "/no/such/path/codex-wrapper"
+                            ),
+                        },
+                    )
+                )
+            self.assertEqual(section["status"], "refused")
+            for entry in section["adapters"]:
+                self.assertEqual(entry["status"], "refused")
+                self.assertTrue(entry["command_set"])
+                self.assertFalse(entry["command_resolvable"])
+                self.assertIsNone(entry["resolved_path"])
+                self.assertIn(
+                    "does not resolve",
+                    entry["validation_reason"],
+                )
+
+    def test_unparseable_shell_tokens_returns_refused(self) -> None:
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
             section = (
@@ -218,18 +398,24 @@ class AdapterEnvSectionTests(unittest.TestCase):
                     controller,
                     {
                         agent_loop.ENV_CLAUDE_CMD: (
-                            "/usr/local/bin/claude-wrapper"
-                        ),
-                        agent_loop.ENV_CODEX_CMD: (
-                            "/usr/local/bin/codex-wrapper"
+                            'unterminated "quote'
                         ),
                     },
                 )
             )
-            self.assertEqual(section["status"], "ok")
-            for entry in section["adapters"]:
-                self.assertEqual(entry["status"], "ok")
-                self.assertTrue(entry["command_set"])
+            self.assertEqual(section["status"], "refused")
+            claude_entry = next(
+                e for e in section["adapters"]
+                if e["adapter"] == "claude"
+            )
+            self.assertEqual(claude_entry["status"], "refused")
+            self.assertFalse(
+                claude_entry["command_resolvable"],
+            )
+            self.assertIn(
+                "does not parse",
+                claude_entry["validation_reason"],
+            )
 
     def test_missing_env_vars_returns_missing(self) -> None:
         with TemporaryDirectory() as td:
@@ -243,21 +429,26 @@ class AdapterEnvSectionTests(unittest.TestCase):
             for entry in section["adapters"]:
                 self.assertEqual(entry["status"], "missing")
                 self.assertFalse(entry["command_set"])
+                self.assertFalse(entry["command_resolvable"])
                 self.assertFalse(entry["model_set"])
 
-    def test_one_set_one_unset_returns_missing(self) -> None:
+    def test_one_resolvable_one_unset_returns_missing(self) -> None:
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
-            section = (
-                agent_loop._desktop_setup_adapter_env_section(
-                    controller,
-                    {
-                        agent_loop.ENV_CLAUDE_CMD: (
-                            "/usr/bin/claude"
-                        ),
-                    },
+            with mock.patch.object(
+                agent_loop.shutil, "which",
+                side_effect=lambda name: f"/resolved/{name}",
+            ):
+                section = (
+                    agent_loop._desktop_setup_adapter_env_section(
+                        controller,
+                        {
+                            agent_loop.ENV_CLAUDE_CMD: (
+                                "claude-wrapper"
+                            ),
+                        },
+                    )
                 )
-            )
             self.assertEqual(section["status"], "missing")
             statuses = {
                 entry["adapter"]: entry["status"]
@@ -265,6 +456,43 @@ class AdapterEnvSectionTests(unittest.TestCase):
             }
             self.assertEqual(statuses["claude"], "ok")
             self.assertEqual(statuses["codex"], "missing")
+
+    def test_one_resolvable_one_unresolvable_returns_refused(
+        self,
+    ) -> None:
+        # Resolvable + unresolvable mix: overall MUST be `refused`
+        # (refused beats missing), so the operator sees the worse
+        # error at the section-summary level.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop.shutil, "which",
+                side_effect=lambda name: (
+                    "/resolved/claude-wrapper"
+                    if name == "claude-wrapper"
+                    else None
+                ),
+            ):
+                section = (
+                    agent_loop._desktop_setup_adapter_env_section(
+                        controller,
+                        {
+                            agent_loop.ENV_CLAUDE_CMD: (
+                                "claude-wrapper"
+                            ),
+                            agent_loop.ENV_CODEX_CMD: (
+                                "/no/such/codex"
+                            ),
+                        },
+                    )
+                )
+            self.assertEqual(section["status"], "refused")
+            statuses = {
+                entry["adapter"]: entry["status"]
+                for entry in section["adapters"]
+            }
+            self.assertEqual(statuses["claude"], "ok")
+            self.assertEqual(statuses["codex"], "refused")
 
     def test_wrapper_template_presence_is_reflected(self) -> None:
         with TemporaryDirectory() as td:

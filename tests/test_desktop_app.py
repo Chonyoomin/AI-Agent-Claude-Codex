@@ -385,11 +385,136 @@ class RenderDesktopAppTextTests(unittest.TestCase):
                 "surfaces": {},
                 "precedence_note": "x",
             },
+            "setup_view": {
+                "error": "test setup error", "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
         output = "\n".join(lines)
         self.assertIn("[error] 'test status error'", output)
+        self.assertIn("[error] 'test setup error'", output)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10P integration into the Phase 10M desktop app view
+# (the Phase 10P fix cycle requires assemble_desktop_app_view to
+# expose the onboarding surface alongside the Phase 10H / 10I /
+# 10K sub-views, not as a separate CLI-only reporter)
+# ---------------------------------------------------------------------------
+class DesktopAppViewIncludesSetupViewTests(unittest.TestCase):
+
+    def test_assemble_includes_setup_view_key(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = agent_loop.assemble_desktop_app_view(controller)
+            self.assertIn("setup_view", view)
+            setup = view["setup_view"]
+            self.assertIsInstance(setup, dict)
+            self.assertEqual(
+                setup["view_signal_version"],
+                agent_loop.DESKTOP_SETUP_SIGNAL_VERSION,
+            )
+
+    def test_assemble_delegates_to_build_desktop_setup_view(
+        self,
+    ) -> None:
+        sentinel = {
+            "view_signal_version": "phase-10p-v1",
+            "_sentinel": "setup",
+            "controller_path_canonical": "/tmp/c",
+            "controller_root": {"status": "ok", "summary": ""},
+            "target": {"status": "missing", "summary": ""},
+            "adapter_env": {
+                "status": "missing",
+                "summary": "",
+                "adapters": [],
+            },
+            "runtime_config": {
+                "status": "default",
+                "summary": "",
+                "selected_runtime": None,
+                "default_runtime": "local",
+            },
+            "wrapper_templates": {
+                "status": "ok",
+                "summary": "",
+                "templates": [],
+            },
+            "local_tools": {
+                "status": "ok",
+                "summary": "",
+                "required_tools": [],
+                "python": {
+                    "name": "python", "version": "x",
+                    "executable": "x",
+                },
+            },
+            "precedence_note": "x",
+        }
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop, "build_desktop_setup_view",
+                return_value=sentinel,
+            ):
+                view = agent_loop.assemble_desktop_app_view(
+                    controller,
+                )
+            self.assertIs(view["setup_view"], sentinel)
+
+    def test_setup_view_halt_does_not_break_other_sub_views(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+
+            def _raise_halt(_root, *args, **kwargs):
+                raise agent_loop.HaltError(
+                    "halted_input_missing", "setup halt",
+                )
+
+            with mock.patch.object(
+                agent_loop, "build_desktop_setup_view",
+                side_effect=_raise_halt,
+            ):
+                view = agent_loop.assemble_desktop_app_view(
+                    controller,
+                )
+            self.assertIsNone(view["setup_view"]["view"])
+            self.assertIn("setup halt", view["setup_view"]["error"])
+            for key in ("status_view", "controls_view",
+                        "dashboard_view"):
+                self.assertIn(
+                    "view_signal_version", view[key],
+                )
+
+    def test_render_includes_setup_phase_10p_label(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = agent_loop.assemble_desktop_app_view(controller)
+            lines = agent_loop.render_desktop_app_text(view)
+            output = "\n".join(lines)
+            self.assertIn("Setup (Phase 10P)", output)
+            self.assertIn(
+                "[desktop-setup] view "
+                "(signal_version='phase-10p-v1')",
+                output,
+            )
+
+    def test_render_includes_setup_section_attribution(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = agent_loop.assemble_desktop_app_view(controller)
+            lines = agent_loop.render_desktop_app_text(view)
+            output = "\n".join(lines)
+            for fragment in (
+                "controller_root status=",
+                "adapter_env status=",
+                "runtime_config status=",
+                "local_tools status=",
+            ):
+                self.assertIn(fragment, output)
 
 
 # ---------------------------------------------------------------------------

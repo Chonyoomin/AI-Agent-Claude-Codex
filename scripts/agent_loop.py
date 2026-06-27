@@ -14043,8 +14043,9 @@ def _desktop_safe_call_view(fn, controller_root):
 
 
 def assemble_desktop_app_view(controller_root: Path) -> dict:
-    """Phase 10M: assemble the bounded desktop view by delegating
-    to the shipped Phase 10H / 10I / 10K library functions verbatim.
+    """Phase 10M / Phase 10P: assemble the bounded desktop view by
+    delegating to the shipped Phase 10H / 10I / 10K / 10P library
+    functions verbatim.
 
     Returns a structured dict carrying:
       - `view_signal_version`: literal `phase-10m-v1`
@@ -14059,6 +14060,11 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
       - `dashboard_view`: the Phase 10K view dict returned by
         `build_artifact_dashboard_view(controller_root)`, OR a
         soft-error envelope
+      - `setup_view`: the Phase 10P view dict returned by
+        `build_desktop_setup_view(controller_root)`, OR a
+        soft-error envelope (added Phase 10P fix cycle so the
+        shipped desktop app actually exposes the onboarding
+        surface alongside the Phase 10H / 10I / 10K surfaces)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14075,6 +14081,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     dashboard_view = _desktop_safe_call_view(
         build_artifact_dashboard_view, controller_root,
     )
+    setup_view = _desktop_safe_call_view(
+        build_desktop_setup_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14083,6 +14092,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "status_view": status_view,
         "controls_view": controls_view,
         "dashboard_view": dashboard_view,
+        "setup_view": setup_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14114,6 +14124,14 @@ def _desktop_render_sub_view_lines(
         # Re-use the shipped Phase 10K renderer verbatim so the
         # advisory-vs-canonical tagging stays consistent.
         lines.extend(_dashboard_render_view_lines(sub_view))
+        return lines
+    if key == "setup_view":
+        # Re-use the shipped Phase 10P renderer verbatim so the
+        # setup-section attribution tags ([setup] / [default] /
+        # [stale] / [missing] / [refused] / [advisory]) stay
+        # consistent with the standalone `view-desktop-setup`
+        # output.
+        lines.extend(render_desktop_setup_text(sub_view))
         return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
@@ -14176,6 +14194,7 @@ def render_desktop_app_text(view: dict) -> list:
         ("status_view", "Status (Phase 10H)"),
         ("controls_view", "Controls (Phase 10I)"),
         ("dashboard_view", "Dashboard (Phase 10K)"),
+        ("setup_view", "Setup (Phase 10P)"),
     ):
         sub = view.get(key, {})
         lines.extend(_desktop_render_sub_view_lines(key, label, sub))
@@ -14894,11 +14913,98 @@ def _desktop_setup_target_section(controller_root: Path) -> dict:
     }
 
 
+def _desktop_setup_validate_adapter_command(value) -> dict:
+    """Phase 10P bounded adapter-command validation.
+
+    Returns a structured envelope:
+      - `command_resolvable`: True only when shell-parsing succeeds,
+        the first token (the executable) is non-empty, and
+        `shutil.which(token)` resolves it on PATH
+      - `executable_token`: the first shell token from the value, or
+        None when shell-parsing failed
+      - `resolved_path`: the PATH-resolved executable, or None
+      - `parse_error`: shlex error string, or None
+      - `reason`: short human-readable refusal string when
+        `command_resolvable` is False, else None
+
+    NEVER spawns a subprocess, NEVER executes the command, NEVER
+    evaluates the shell, NEVER opens a network socket, NEVER writes
+    to a persisted artifact. This is a structural reachability
+    check only; "the command parses as shell tokens and the first
+    token resolves on PATH" is the strongest claim the setup view
+    is allowed to make without crossing into subprocess execution.
+    """
+    if value is None or value == "":
+        return {
+            "command_resolvable": False,
+            "executable_token": None,
+            "resolved_path": None,
+            "parse_error": None,
+            "reason": "command value is empty / unset",
+        }
+    if not isinstance(value, str):
+        return {
+            "command_resolvable": False,
+            "executable_token": None,
+            "resolved_path": None,
+            "parse_error": None,
+            "reason": (
+                f"command value is not a string "
+                f"(type={type(value).__name__!r})"
+            ),
+        }
+    try:
+        tokens = shlex.split(value, posix=True)
+    except ValueError as exc:
+        return {
+            "command_resolvable": False,
+            "executable_token": None,
+            "resolved_path": None,
+            "parse_error": str(exc),
+            "reason": (
+                f"command value does not parse as shell tokens "
+                f"({exc})"
+            ),
+        }
+    if not tokens:
+        return {
+            "command_resolvable": False,
+            "executable_token": None,
+            "resolved_path": None,
+            "parse_error": None,
+            "reason": (
+                "command value parsed to zero shell tokens "
+                "(whitespace-only)"
+            ),
+        }
+    executable_token = tokens[0]
+    resolved = shutil.which(executable_token)
+    if not resolved:
+        return {
+            "command_resolvable": False,
+            "executable_token": executable_token,
+            "resolved_path": None,
+            "parse_error": None,
+            "reason": (
+                f"first shell token {executable_token!r} does not "
+                f"resolve via shutil.which on PATH"
+            ),
+        }
+    return {
+        "command_resolvable": True,
+        "executable_token": executable_token,
+        "resolved_path": resolved,
+        "parse_error": None,
+        "reason": None,
+    }
+
+
 def _desktop_setup_adapter_env_section(
     controller_root: Path, environ: dict,
 ) -> dict:
     adapters: list = []
     any_missing = False
+    any_refused = False
     for spec in _DESKTOP_SETUP_ENV_ADAPTERS:
         command_value = environ.get(spec["command_env_var"])
         model_value = environ.get(spec["model_env_var"])
@@ -14907,15 +15013,10 @@ def _desktop_setup_adapter_env_section(
             controller_root / spec["wrapper_template_rel"]
         )
         wrapper_template_present = wrapper_template_path.is_file()
-        if command_set:
-            adapter_status = "ok"
-            adapter_summary = (
-                f"{spec['command_env_var']} is set; the "
-                f"Fix Phase A subprocess adapter for the "
-                f"{spec['adapter']} side is configured for "
-                f"automatic local invocation"
-            )
-        else:
+        validation = _desktop_setup_validate_adapter_command(
+            command_value,
+        )
+        if not command_set:
             adapter_status = "missing"
             adapter_summary = (
                 f"{spec['command_env_var']} is NOT set; "
@@ -14928,18 +15029,59 @@ def _desktop_setup_adapter_env_section(
                 f"adapter contract."
             )
             any_missing = True
+        elif not validation["command_resolvable"]:
+            adapter_status = "refused"
+            adapter_summary = (
+                f"{spec['command_env_var']} is set but the "
+                f"configured command is NOT realistically "
+                f"invokable: {validation['reason']}. The "
+                f"Fix Phase A subprocess adapter for the "
+                f"{spec['adapter']} side will fail to launch; "
+                f"correct the env var to point at a resolvable "
+                f"local wrapper executable (see "
+                f"`{spec['wrapper_template_rel']}` for a "
+                f"starting point)."
+            )
+            any_refused = True
+        else:
+            adapter_status = "ok"
+            adapter_summary = (
+                f"{spec['command_env_var']} is set AND the first "
+                f"shell token "
+                f"({validation['executable_token']!r}) resolves "
+                f"on PATH at {validation['resolved_path']!r}; "
+                f"the Fix Phase A subprocess adapter for the "
+                f"{spec['adapter']} side is configured for "
+                f"automatic local invocation"
+            )
         adapters.append({
             "adapter": spec["adapter"],
             "status": adapter_status,
             "summary": adapter_summary,
             "command_env_var": spec["command_env_var"],
             "command_set": command_set,
+            "command_resolvable": validation[
+                "command_resolvable"
+            ],
+            "executable_token": validation["executable_token"],
+            "resolved_path": validation["resolved_path"],
+            "validation_reason": validation["reason"],
             "model_env_var": spec["model_env_var"],
             "model_set": bool(model_value),
             "wrapper_template_rel": spec["wrapper_template_rel"],
             "wrapper_template_present": wrapper_template_present,
         })
-    if any_missing:
+    if any_refused:
+        overall_status = "refused"
+        overall_summary = (
+            "at least one of AGENT_LOOP_CLAUDE_CMD / "
+            "AGENT_LOOP_CODEX_CMD is set but the configured "
+            "command does not parse as shell tokens or its first "
+            "token does not resolve on PATH; the Fix Phase A "
+            "subprocess adapter for that side will fail to "
+            "launch"
+        )
+    elif any_missing:
         overall_status = "missing"
         overall_summary = (
             "at least one of AGENT_LOOP_CLAUDE_CMD / "
@@ -14950,8 +15092,9 @@ def _desktop_setup_adapter_env_section(
         overall_status = "ok"
         overall_summary = (
             "both AGENT_LOOP_CLAUDE_CMD and AGENT_LOOP_CODEX_CMD "
-            "are set; subprocess adapters are configured for "
-            "automatic local invocation"
+            "are set AND each first shell token resolves on PATH; "
+            "subprocess adapters are configured for automatic "
+            "local invocation"
         )
     return {
         "status": overall_status,
@@ -15199,9 +15342,20 @@ def render_desktop_setup_text(view: dict) -> list:
             f"adapter={entry['adapter']!r} "
             f"command_env_var={entry['command_env_var']!r} "
             f"command_set={entry['command_set']!r} "
+            f"command_resolvable={entry['command_resolvable']!r} "
             f"model_env_var={entry['model_env_var']!r} "
             f"model_set={entry['model_set']!r}"
         )
+        lines.append(
+            f"      [advisory] executable_token="
+            f"{entry['executable_token']!r} resolved_path="
+            f"{entry['resolved_path']!r}"
+        )
+        if entry["validation_reason"]:
+            lines.append(
+                f"      [advisory] validation_reason: "
+                f"{entry['validation_reason']}"
+            )
         lines.append(
             f"      [advisory] wrapper_template_rel="
             f"{entry['wrapper_template_rel']!r} "
