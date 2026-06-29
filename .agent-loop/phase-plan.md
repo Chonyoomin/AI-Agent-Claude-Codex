@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10S - MCP Server Selection UX Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10T - MCP Read-Only Assistance In Desktop App)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5113,10 +5113,10 @@ prepare prompt artifacts by hand.
 
 ### Status
 
-Active. This slice defines how the desktop app should present available MCP
-servers, permission classes, read-only versus deferred-mutating capability
-labels, per-server safety copy, and operator approval requirements before MCP
-enablement becomes user-facing.
+Complete and approved by human to advance to Phase 10T. Phase 10S closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the MCP server selection UX
+contract, README alignment, and active-phase regression coverage were verified
+in the current repo state.
 
 ### Objective
 
@@ -5156,6 +5156,62 @@ ships.
 
 - no actual MCP runtime integration, no tool-execution path, and no networked
   tool orchestration in this slice
+- no mutation-capable MCP actions, no MCP-driven writes to canonical artifacts,
+  and no bypass of the shipped CLI/library/runtime boundaries
+- no RAG, GitHub, policy-pack, packaging, system-tray, or controlled-
+  concurrency runtime work
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no rewrite of current shipped behavior just to make future MCP or autonomy
+  work easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10T - MCP Read-Only Assistance In Desktop App
+
+### Status
+
+Active. This slice implements the first user-selectable MCP read-only
+assistance surfaces in the desktop app without mutating canonical artifacts or
+bypassing evidence review.
+
+### Objective
+
+Implement the MCP Read-Only Assistance In Desktop App slice for the agent loop.
+This slice should add the first user-selectable MCP read-only assistance
+surfaces so operators can enable approved context-gathering tools from the
+desktop app without mutating canonical artifacts or bypassing evidence review.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10T as active
+- `.agent-loop/phase-plan.md` records Phase 10S as closed history and contains
+  a `## Phase 10T - MCP Read-Only Assistance In Desktop App` section with
+  concrete objective, done criteria, and exclusions
+- the repository adds the first user-selectable MCP read-only assistance
+  surfaces so operators can enable approved context-gathering tools from the
+  desktop app without mutating canonical artifacts or bypassing evidence review
+- the implementation follows the shipped Phase 10O MCP integration contract and
+  Phase 10S MCP server selection UX contract, preserving the read-only versus
+  deferred-mutating boundary and the canonical-artifact-first model
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, and the Phase 10I
+  library-callable cap instead of introducing hidden automation or a parallel
+  state store
+- focused validation proves the first MCP read-only assistance surface is
+  bounded, auditable, and does not widen into mutation-capable MCP actions, RAG
+  runtime, packaging, or controlled-concurrency work
+- `README.md` reflects that Phase 10T is active and that MCP read-only
+  assistance in the desktop app is now the implementation focus
+
+### Exclusions
+
 - no mutation-capable MCP actions, no MCP-driven writes to canonical artifacts,
   and no bypass of the shipped CLI/library/runtime boundaries
 - no RAG, GitHub, policy-pack, packaging, system-tray, or controlled-
