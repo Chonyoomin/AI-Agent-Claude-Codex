@@ -14250,14 +14250,31 @@ def _launch_desktop_app_window(
     *,
     cadence_seconds: float,
 ) -> None:
-    """Phase 10M: lazy-import Tkinter and open the polling desktop
-    window. Each `after(...)` tick re-invokes
+    """Phase 10M / Phase 10Q fix cycle: lazy-import Tkinter and
+    open the polling desktop window with a Phase 10Q control
+    panel of real desktop buttons attached to the right of the
+    ScrolledText surface.
+
+    Each `after(...)` tick re-invokes
     `assemble_desktop_app_view(...)` so the per-poll cache
-    invalidation invariant is preserved. The window MUST NOT mutate
-    any canonical artifact and MUST NOT introduce a parallel state
-    store. The `ImportError` raised when Tk is unavailable
-    propagates so the caller can refuse fail-closed with an
-    informative message pointing the operator at `--headless`.
+    invalidation invariant is preserved AND re-renders the Phase
+    10Q button row from `build_desktop_run_profile_controls(...)`
+    so eligibility changes (driven by canonical loop-state.status
+    transitions) propagate to button `state="disabled"` /
+    `"normal"` between polls.
+
+    The window MUST NOT mutate any canonical artifact and MUST
+    NOT introduce a parallel state store. Each Phase 10Q button
+    click is a PURE clipboard-copy operation rendered by the Tk
+    runtime: the desktop shell calls `root.clipboard_clear()` +
+    `root.clipboard_append(payload)` and updates a non-canonical
+    status caption widget; it NEVER spawns a subprocess, NEVER
+    evaluates the payload as shell, NEVER writes the payload to
+    a persisted artifact, and NEVER widens the Phase 10I library-
+    callable control cap. The `ImportError` raised when Tk is
+    unavailable propagates so the caller can refuse fail-closed
+    with an informative message pointing the operator at
+    `--headless`.
     """
     import tkinter as tk
     from tkinter import scrolledtext
@@ -14266,13 +14283,71 @@ def _launch_desktop_app_window(
     text = scrolledtext.ScrolledText(
         root, width=120, height=40, wrap=tk.WORD,
     )
-    text.pack(fill=tk.BOTH, expand=True)
+    text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    control_frame = tk.Frame(root)
+    control_frame.pack(side=tk.RIGHT, fill=tk.Y)
+    tk.Label(
+        control_frame,
+        text="Run Profiles (Phase 10Q)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
+    status_caption = tk.Label(
+        control_frame, text="", wraplength=240, justify=tk.LEFT,
+        anchor=tk.W,
+    )
+    status_caption.pack(
+        side=tk.BOTTOM, fill=tk.X, padx=4, pady=(2, 4),
+    )
+
+    def _copy_to_clipboard(payload: str, button_label: str) -> None:
+        root.clipboard_clear()
+        root.clipboard_append(payload)
+        status_caption.config(
+            text=(
+                f"Copied to clipboard: {button_label} "
+                f"({len(payload.splitlines())} step(s)). Paste "
+                f"into your terminal to run."
+            ),
+        )
+
+    button_widgets: list = []
+
+    def _rebuild_buttons(controls: list) -> None:
+        for widget in button_widgets:
+            widget.destroy()
+        button_widgets.clear()
+        for control in controls:
+            button = tk.Button(
+                control_frame,
+                text=control["label"],
+                wraplength=240,
+                justify=tk.LEFT,
+                anchor=tk.W,
+                state=("normal" if control["enabled"] else "disabled"),
+                command=lambda c=control: _copy_to_clipboard(
+                    c["clipboard_payload"], c["label"],
+                ),
+            )
+            button.pack(fill=tk.X, padx=4, pady=2)
+            button_widgets.append(button)
 
     def _refresh() -> None:
         view = assemble_desktop_app_view(controller_root)
         text.delete("1.0", tk.END)
         for line in render_desktop_app_text(view):
             text.insert(tk.END, line + "\n")
+        run_profiles_sub_view = view.get("run_profiles_view") or {}
+        if (
+            isinstance(run_profiles_sub_view, dict)
+            and "affordances" in run_profiles_sub_view
+        ):
+            controls = build_desktop_run_profile_controls(
+                run_profiles_sub_view,
+            )
+        else:
+            controls = []
+        _rebuild_buttons(controls)
         root.after(int(cadence_seconds * 1000), _refresh)
 
     _refresh()
@@ -15623,10 +15698,52 @@ DESKTOP_RUN_PROFILE_AFFORDANCE_IDS = (
     "select_run_policy_prd_to_completion",
 )
 
+DESKTOP_RUN_PROFILE_STEP_TYPES = (
+    # `cli`: a copy-paste-ready shell command line. Each entry MUST
+    # be runnable verbatim once the operator substitutes any
+    # `<PLACEHOLDER>` tokens it carries.
+    "cli",
+    # `manual_edit`: a human-supplied file edit instruction (e.g.
+    # set `approval_mode: review` in the proposed-phase.md). The
+    # rendered output prefixes these with `[manual-edit]` so the
+    # operator cannot mistake them for runnable shell.
+    "manual_edit",
+)
+
+
+def _desktop_run_profile_command_summary(steps: tuple) -> str:
+    """Derive a single-line summary of a multi-step affordance.
+
+    Each step is rendered with its explicit `[cli]` / `[manual-edit]`
+    type tag and joined with ` && `. This is intentionally NOT a
+    runnable shell pipeline (the `[manual-edit]` segments cannot
+    execute); it is a one-line summary the renderer can fall back
+    on when full step-by-step rendering is not wanted. The Phase
+    10Q fix cycle replaces the previous misleading single-string
+    `command` field with this derived summary so an operator
+    scanning a single line still sees every step plus its kind.
+    """
+    parts = []
+    for step in steps:
+        tag = "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        parts.append(f"{tag} {step['content']}")
+    return " && ".join(parts)
+
+
 # Each affordance maps a desktop run-profile choice onto a shipped
 # CLI surface. The registry is closed: extending it requires a
 # future Phase 10 sub-phase that updates this tuple AND
 # `DESKTOP_RUN_PROFILE_AFFORDANCE_IDS` in lockstep.
+#
+# Phase 10Q fix cycle: each affordance now carries a structured
+# `steps` tuple instead of a single misleading `command` string.
+# The renderer surfaces each step with an explicit `[cli]` /
+# `[manual-edit]` tag so a multi-step recipe (plan -> proposal
+# edit -> activate) cannot be mistaken for a single runnable
+# shell command. The `command` field is still derived (via
+# `_desktop_run_profile_command_summary(...)`) so existing
+# downstream consumers that scan it as a single line see every
+# step + its kind tag instead of a partial misleading command.
 _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
     {
         "id": "select_approval_mode_review",
@@ -15636,11 +15753,24 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
         "dimension": "approval_mode",
         "target_value": APPROVAL_MODE_REVIEW,
-        "command": (
-            "python scripts/agent_loop.py plan  "
-            "# then edit `.agent-loop/proposed-phase.md` so the "
-            "next phase's approval_mode is 'review', then run "
-            "`python scripts/agent_loop.py activate`"
+        "steps": (
+            {
+                "type": "cli",
+                "content": "python scripts/agent_loop.py plan",
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "in `.agent-loop/proposed-phase.md`, set the "
+                    "next-phase `approval_mode` line to `review`"
+                ),
+            },
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py activate"
+                ),
+            },
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
@@ -15664,11 +15794,24 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
         "dimension": "approval_mode",
         "target_value": APPROVAL_MODE_STRICT,
-        "command": (
-            "python scripts/agent_loop.py plan  "
-            "# then edit `.agent-loop/proposed-phase.md` so the "
-            "next phase's approval_mode is 'strict', then run "
-            "`python scripts/agent_loop.py activate`"
+        "steps": (
+            {
+                "type": "cli",
+                "content": "python scripts/agent_loop.py plan",
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "in `.agent-loop/proposed-phase.md`, set the "
+                    "next-phase `approval_mode` line to `strict`"
+                ),
+            },
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py activate"
+                ),
+            },
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
@@ -15687,11 +15830,25 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
         "dimension": "approval_mode",
         "target_value": APPROVAL_MODE_AUTONOMOUS,
-        "command": (
-            "python scripts/agent_loop.py plan  "
-            "# then edit `.agent-loop/proposed-phase.md` so the "
-            "next phase's approval_mode is 'autonomous', then run "
-            "`python scripts/agent_loop.py activate`"
+        "steps": (
+            {
+                "type": "cli",
+                "content": "python scripts/agent_loop.py plan",
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "in `.agent-loop/proposed-phase.md`, set the "
+                    "next-phase `approval_mode` line to "
+                    "`autonomous`"
+                ),
+            },
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py activate"
+                ),
+            },
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
@@ -15711,11 +15868,16 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
         "dimension": "approval_mode",
         "target_value": None,
-        "command": (
-            "python scripts/agent_loop.py "
-            "attach-external-target "
-            "--target-path <PATH> --attached-by <NAME> "
-            "--approval-mode <MODE>"
+        "steps": (
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py "
+                    "attach-external-target "
+                    "--target-path <PATH> --attached-by <NAME> "
+                    "--approval-mode <MODE>"
+                ),
+            },
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
@@ -15736,7 +15898,12 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
         "dimension": "run_policy",
         "target_value": "bounded",
-        "command": "python scripts/agent_loop.py run",
+        "steps": (
+            {
+                "type": "cli",
+                "content": "python scripts/agent_loop.py run",
+            },
+        ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
         "eligibility_states": frozenset({
@@ -15757,8 +15924,13 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
         "dimension": "run_policy",
         "target_value": "prd_to_completion",
-        "command": (
-            "python scripts/agent_loop.py auto-continue"
+        "steps": (
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py auto-continue"
+                ),
+            },
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
@@ -15775,6 +15947,23 @@ _DESKTOP_RUN_PROFILE_AFFORDANCES: tuple = (
         ),
     },
 )
+
+
+def _desktop_run_profile_clipboard_payload(steps: tuple) -> str:
+    """Multi-line text the desktop control widget copies to the
+    OS clipboard when the operator activates an affordance.
+
+    Each step is rendered on its own line with an explicit
+    `[cli]` / `[manual-edit]` tag prefix so once the operator
+    pastes the payload into a terminal or text editor every step
+    is visible AND its kind is unambiguous (a `[manual-edit]`
+    line cannot be accidentally executed as a shell command).
+    """
+    lines = []
+    for step in steps:
+        tag = "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        lines.append(f"{tag} {step['content']}")
+    return "\n".join(lines)
 
 
 def _desktop_run_profile_eligibility(
@@ -15813,22 +16002,87 @@ def _desktop_run_profile_eligibility(
 def _desktop_run_profile_affordance_descriptor(
     spec: dict, status_value: Optional[str],
 ) -> dict:
-    """Return the operator-visible descriptor for one affordance."""
+    """Return the operator-visible descriptor for one affordance.
+
+    The descriptor carries the closed `steps` tuple verbatim plus
+    a derived `command` summary and a `clipboard_payload` ready
+    for the Phase 10Q desktop-control widget to copy on click.
+    """
     eligible, reason = _desktop_run_profile_eligibility(
         spec, status_value,
     )
+    steps = spec["steps"]
     return {
         "id": spec["id"],
         "label": spec["label"],
         "dimension": spec["dimension"],
         "target_value": spec["target_value"],
-        "command": spec["command"],
+        "steps": tuple(dict(step) for step in steps),
+        "command": _desktop_run_profile_command_summary(steps),
+        "clipboard_payload": (
+            _desktop_run_profile_clipboard_payload(steps)
+        ),
         "dispatch_mode": spec["dispatch_mode"],
         "category": spec["category"],
         "currently_eligible": eligible,
         "eligibility_reason": reason,
         "audit_note": spec["audit_note"],
     }
+
+
+def build_desktop_run_profile_controls(view: dict) -> list:
+    """Phase 10Q desktop control surface (Phase 10Q fix cycle):
+    return a closed list of widget descriptors ready for binding
+    to actual desktop-side controls (buttons / toggles).
+
+    Each descriptor carries:
+      - `id`: matches the affordance id
+      - `label`: short button label (one line, fits in a Tk button)
+      - `dimension`: which run-profile dimension this widget acts on
+      - `target_value`: pre-filled target value for the dimension
+        (or None for affordances that require operator-supplied
+        placeholders)
+      - `enabled`: bool, mirrors `currently_eligible`; the desktop
+        shell MUST render the widget as `state="disabled"` when
+        `enabled` is False so the ineligible affordance cannot be
+        silently dispatched
+      - `eligibility_reason`: one-line reason surfaced as a tooltip
+        / status-line caption when the operator hovers
+      - `clipboard_payload`: multi-line text the widget copies to
+        the OS clipboard on activation - NEVER executed as shell;
+        the desktop shell MUST treat the click as a clipboard copy
+        only and NEVER spawn a subprocess or evaluate the payload
+      - `audit_note`: per-affordance audit-log expectation the
+        operator-CLI invocation will produce
+      - `dispatch_mode` / `category`: passthrough from the spec
+        for consistency with the Phase 10I / 10N descriptor shape
+
+    This library function lets a desktop shell render real Tk
+    buttons (or any equivalent desktop control) WITHOUT widening
+    the Phase 10I library-callable control cap and WITHOUT
+    introducing a subprocess-spawning side-effect on widget
+    activation: every click is a pure clipboard-copy operation
+    rendered by the Tk runtime, NOT a CLI dispatch.
+    """
+    controls: list = []
+    for descriptor in view.get("affordances", []):
+        controls.append({
+            "id": descriptor["id"],
+            "label": descriptor["label"],
+            "dimension": descriptor["dimension"],
+            "target_value": descriptor["target_value"],
+            "enabled": bool(descriptor["currently_eligible"]),
+            "eligibility_reason": (
+                descriptor["eligibility_reason"]
+            ),
+            "clipboard_payload": (
+                descriptor["clipboard_payload"]
+            ),
+            "audit_note": descriptor["audit_note"],
+            "dispatch_mode": descriptor["dispatch_mode"],
+            "category": descriptor["category"],
+        })
+    return controls
 
 
 def _desktop_run_profile_mirror(
@@ -16011,11 +16265,24 @@ def render_desktop_run_profiles_text(view: dict) -> list:
             f"{descriptor['currently_eligible']!r}"
         )
         lines.append(
-            f"    command: {descriptor['command']}"
-        )
-        lines.append(
             f"    label: {descriptor['label']}"
         )
+        steps = descriptor.get("steps") or ()
+        if len(steps) == 1:
+            lines.append("    steps (1 step):")
+        else:
+            lines.append(
+                f"    steps ({len(steps)} steps; copy-paste each "
+                f"in order):"
+            )
+        for index, step in enumerate(steps, start=1):
+            step_tag = (
+                "[cli]" if step["type"] == "cli"
+                else "[manual-edit]"
+            )
+            lines.append(
+                f"      {index}. {step_tag} {step['content']}"
+            )
         lines.append(
             f"    [advisory] eligibility_reason: "
             f"{descriptor['eligibility_reason']}"

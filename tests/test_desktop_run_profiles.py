@@ -148,8 +148,12 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
         )
 
     def test_every_spec_carries_required_fields(self) -> None:
+        # Phase 10Q fix cycle: `command` was replaced by `steps`
+        # (a structured tuple of `[cli]` / `[manual_edit]` step
+        # dicts) so the misleading single-string command can no
+        # longer hide a manual edit inside a `#` shell comment.
         required = {
-            "id", "label", "dimension", "target_value", "command",
+            "id", "label", "dimension", "target_value", "steps",
             "dispatch_mode", "category", "eligibility_states",
             "audit_note",
         }
@@ -160,6 +164,23 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
                 f"affordance {spec.get('id')!r} missing fields "
                 f"{missing!r}",
             )
+
+    def test_every_step_carries_typed_content(self) -> None:
+        for spec in agent_loop._DESKTOP_RUN_PROFILE_AFFORDANCES:
+            steps = spec["steps"]
+            self.assertGreaterEqual(len(steps), 1)
+            for step in steps:
+                self.assertIn(
+                    step["type"],
+                    agent_loop.DESKTOP_RUN_PROFILE_STEP_TYPES,
+                    f"{spec['id']!r} has unknown step type "
+                    f"{step['type']!r}",
+                )
+                self.assertTrue(
+                    isinstance(step["content"], str)
+                    and step["content"].strip(),
+                    f"{spec['id']!r} has empty step content",
+                )
 
     def test_every_affordance_is_mutating_copy_paste(self) -> None:
         # Phase 10Q ships ZERO library-callable controls. Every
@@ -175,13 +196,39 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
                 f"{spec['id']!r} category is not mutating",
             )
 
-    def test_approval_mode_affordances_route_through_plan(
+    def test_approval_mode_affordances_route_through_plan_steps(
         self,
     ) -> None:
+        # Phase 10Q fix cycle: each `select_approval_mode_*`
+        # affordance MUST encode the full multi-step recipe as
+        # typed steps - `[cli] plan` + `[manual_edit] set
+        # approval_mode` + `[cli] activate` - so the operator
+        # sees three distinct actions rather than a single
+        # misleading shell command that hides the proposal edit
+        # inside a `#` comment.
         for spec in agent_loop._DESKTOP_RUN_PROFILE_AFFORDANCES:
-            if spec["id"].startswith("select_approval_mode_"):
-                self.assertIn("plan", spec["command"])
-                self.assertIn("activate", spec["command"])
+            if not spec["id"].startswith("select_approval_mode_"):
+                continue
+            steps = spec["steps"]
+            self.assertEqual(
+                len(steps), 3,
+                f"{spec['id']!r} does not encode a three-step "
+                f"plan/edit/activate recipe; got {len(steps)} "
+                f"steps",
+            )
+            self.assertEqual(steps[0]["type"], "cli")
+            self.assertIn("plan", steps[0]["content"])
+            self.assertEqual(steps[1]["type"], "manual_edit")
+            self.assertIn("approval_mode", steps[1]["content"])
+            # The manual-edit step MUST include the literal
+            # target value (review / strict / autonomous) so the
+            # operator does not have to derive it from the
+            # affordance id.
+            self.assertIn(
+                spec["target_value"], steps[1]["content"],
+            )
+            self.assertEqual(steps[2]["type"], "cli")
+            self.assertIn("activate", steps[2]["content"])
 
     def test_attach_affordance_uses_real_attach_external_target_grammar(
         self,
@@ -191,13 +238,20 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
         # Phase 10N fix-cycle regression: target-path /
         # attached-by / approval-mode are all REQUIRED). A
         # placeholder-substituted parse against the real
-        # `build_parser()` must succeed.
+        # `build_parser()` must succeed. Phase 10Q fix cycle: the
+        # CLI text now lives inside the structured `steps` tuple,
+        # not in a `command` string.
         spec = next(
             s for s in agent_loop._DESKTOP_RUN_PROFILE_AFFORDANCES
             if s["id"] == "set_attach_approval_mode"
         )
+        cli_steps = [
+            step for step in spec["steps"]
+            if step["type"] == "cli"
+        ]
+        self.assertEqual(len(cli_steps), 1)
         cmd = (
-            spec["command"]
+            cli_steps[0]["content"]
             .replace("<PATH>", "/tmp/target")
             .replace("<NAME>", "tester")
             .replace("<MODE>", "review")
@@ -211,6 +265,12 @@ class AffordanceRegistryShapeTests(unittest.TestCase):
         self.assertEqual(ns.target_path, "/tmp/target")
         self.assertEqual(ns.attached_by, "tester")
         self.assertEqual(ns.approval_mode, "review")
+
+    def test_step_types_constant_is_closed(self) -> None:
+        self.assertEqual(
+            set(agent_loop.DESKTOP_RUN_PROFILE_STEP_TYPES),
+            {"cli", "manual_edit"},
+        )
 
     def test_run_policy_eligibility_states_match_shipped_statuses(
         self,
@@ -469,6 +529,190 @@ class BuildRunProfilesViewTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 # Renderer
 # ---------------------------------------------------------------------------
+class AffordanceDescriptorTests(unittest.TestCase):
+    """Phase 10Q fix cycle: the per-affordance descriptor MUST
+    surface the structured `steps` tuple verbatim, plus a derived
+    `command` summary that tags each step with `[cli]` /
+    `[manual-edit]` (so a downstream consumer scanning a single
+    line still sees every step + its kind) and a multi-line
+    `clipboard_payload` ready for the desktop control widget.
+    """
+
+    def _descriptors(self) -> list:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_run_profiles_view(
+                    controller,
+                )
+            )
+            return list(view["affordances"])
+
+    def test_descriptor_carries_steps_tuple(self) -> None:
+        for descriptor in self._descriptors():
+            self.assertIn("steps", descriptor)
+            self.assertGreaterEqual(len(descriptor["steps"]), 1)
+            for step in descriptor["steps"]:
+                self.assertIn(
+                    step["type"],
+                    agent_loop.DESKTOP_RUN_PROFILE_STEP_TYPES,
+                )
+
+    def test_descriptor_command_summary_tags_each_step(self) -> None:
+        for descriptor in self._descriptors():
+            summary = descriptor["command"]
+            for step in descriptor["steps"]:
+                tag = (
+                    "[cli]" if step["type"] == "cli"
+                    else "[manual-edit]"
+                )
+                self.assertIn(tag, summary)
+                self.assertIn(step["content"], summary)
+
+    def test_descriptor_clipboard_payload_is_multi_line(
+        self,
+    ) -> None:
+        for descriptor in self._descriptors():
+            payload = descriptor["clipboard_payload"]
+            self.assertIsInstance(payload, str)
+            lines = payload.splitlines()
+            self.assertEqual(len(lines), len(descriptor["steps"]))
+            for line, step in zip(lines, descriptor["steps"]):
+                tag = (
+                    "[cli]" if step["type"] == "cli"
+                    else "[manual-edit]"
+                )
+                self.assertTrue(line.startswith(tag))
+                self.assertIn(step["content"], line)
+
+    def test_approval_mode_clipboard_payload_includes_target_value(
+        self,
+    ) -> None:
+        # The clipboard payload is the canonical artifact the
+        # desktop button copies; an operator pasting it MUST see
+        # the literal target value (review / strict / autonomous)
+        # without having to remember which button they clicked.
+        for descriptor in self._descriptors():
+            if not descriptor["id"].startswith(
+                "select_approval_mode_",
+            ):
+                continue
+            self.assertIn(
+                descriptor["target_value"],
+                descriptor["clipboard_payload"],
+            )
+
+
+class BuildDesktopRunProfileControlsTests(unittest.TestCase):
+    """Phase 10Q fix cycle: a closed library function returns the
+    widget descriptors a desktop shell (Tkinter or otherwise)
+    binds to real desktop-side controls (buttons / toggles).
+    """
+
+    def _view(self) -> dict:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            return (
+                agent_loop.build_desktop_run_profiles_view(
+                    controller,
+                )
+            )
+
+    def test_controls_match_affordance_id_tuple(self) -> None:
+        controls = agent_loop.build_desktop_run_profile_controls(
+            self._view(),
+        )
+        ids = tuple(c["id"] for c in controls)
+        self.assertEqual(
+            ids, agent_loop.DESKTOP_RUN_PROFILE_AFFORDANCE_IDS,
+        )
+
+    def test_each_control_carries_required_widget_fields(
+        self,
+    ) -> None:
+        required = {
+            "id", "label", "dimension", "target_value", "enabled",
+            "eligibility_reason", "clipboard_payload",
+            "audit_note", "dispatch_mode", "category",
+        }
+        for control in (
+            agent_loop.build_desktop_run_profile_controls(
+                self._view(),
+            )
+        ):
+            missing = required - set(control.keys())
+            self.assertEqual(
+                missing, set(),
+                f"control {control.get('id')!r} missing fields "
+                f"{missing!r}",
+            )
+
+    def test_enabled_mirrors_currently_eligible(self) -> None:
+        view = self._view()
+        controls = agent_loop.build_desktop_run_profile_controls(
+            view,
+        )
+        eligibility_by_id = {
+            a["id"]: a["currently_eligible"]
+            for a in view["affordances"]
+        }
+        for control in controls:
+            self.assertEqual(
+                control["enabled"],
+                bool(eligibility_by_id[control["id"]]),
+            )
+
+    def test_clipboard_payload_is_multi_line(self) -> None:
+        for control in (
+            agent_loop.build_desktop_run_profile_controls(
+                self._view(),
+            )
+        ):
+            payload = control["clipboard_payload"]
+            self.assertIsInstance(payload, str)
+            self.assertTrue(payload.strip())
+            for line in payload.splitlines():
+                self.assertTrue(
+                    line.startswith("[cli]")
+                    or line.startswith("[manual-edit]"),
+                    f"clipboard payload line {line!r} missing "
+                    f"step-type tag",
+                )
+
+    def test_eligibility_states_drive_enabled(self) -> None:
+        # PRD-to-completion is ineligible by default
+        # (loop-state.status is awaiting_claude_implementation, not
+        # HALTED_TOKEN_EXHAUSTION); bounded is eligible.
+        controls = agent_loop.build_desktop_run_profile_controls(
+            self._view(),
+        )
+        bounded = next(
+            c for c in controls
+            if c["id"] == "select_run_policy_bounded"
+        )
+        prd = next(
+            c for c in controls
+            if c["id"] == "select_run_policy_prd_to_completion"
+        )
+        self.assertTrue(bounded["enabled"])
+        self.assertFalse(prd["enabled"])
+
+    def test_empty_affordances_returns_empty_controls(self) -> None:
+        self.assertEqual(
+            agent_loop.build_desktop_run_profile_controls(
+                {"affordances": []},
+            ),
+            [],
+        )
+
+    def test_missing_affordances_key_returns_empty_controls(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop.build_desktop_run_profile_controls({}), [],
+        )
+
+
 class RenderRunProfilesTextTests(unittest.TestCase):
 
     def _view(self) -> dict:
@@ -529,6 +773,46 @@ class RenderRunProfilesTextTests(unittest.TestCase):
         self.assertTrue(
             lines[-1].startswith("precedence_note:"),
         )
+
+    def test_renderer_surfaces_typed_steps(self) -> None:
+        # Phase 10Q fix cycle: each step MUST appear on its own
+        # line with an explicit `[cli]` / `[manual-edit]` tag so
+        # the operator cannot mistake a manual proposal edit for
+        # a runnable shell command.
+        text = "\n".join(
+            agent_loop.render_desktop_run_profiles_text(
+                self._view(),
+            )
+        )
+        self.assertIn(
+            "1. [cli] python scripts/agent_loop.py plan",
+            text,
+        )
+        self.assertIn("[manual-edit]", text)
+        self.assertIn(
+            "in `.agent-loop/proposed-phase.md`, set the "
+            "next-phase `approval_mode` line to `review`",
+            text,
+        )
+        self.assertIn(
+            "3. [cli] python scripts/agent_loop.py activate",
+            text,
+        )
+
+    def test_renderer_step_count_is_announced(self) -> None:
+        # Multi-step recipes MUST surface the step count so the
+        # operator knows a single copy-paste won't run the
+        # whole recipe.
+        text = "\n".join(
+            agent_loop.render_desktop_run_profiles_text(
+                self._view(),
+            )
+        )
+        self.assertIn(
+            "steps (3 steps; copy-paste each in order):", text,
+        )
+        # Single-step affordances MUST also be announced.
+        self.assertIn("steps (1 step):", text)
 
 
 # ---------------------------------------------------------------------------
