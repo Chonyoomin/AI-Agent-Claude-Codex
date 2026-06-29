@@ -14043,9 +14043,9 @@ def _desktop_safe_call_view(fn, controller_root):
 
 
 def assemble_desktop_app_view(controller_root: Path) -> dict:
-    """Phase 10M / 10P / 10Q: assemble the bounded desktop view by
-    delegating to the shipped Phase 10H / 10I / 10K / 10P / 10Q
-    library functions verbatim.
+    """Phase 10M / 10P / 10Q / 10R: assemble the bounded desktop
+    view by delegating to the shipped Phase 10H / 10I / 10K / 10P
+    / 10Q / 10R library functions verbatim.
 
     Returns a structured dict carrying:
       - `view_signal_version`: literal `phase-10m-v1`
@@ -14070,6 +14070,11 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         soft-error envelope (added Phase 10Q so the shipped
         desktop app exposes the run-profile and approval-controls
         surface alongside the other sub-views)
+      - `project_start_view`: the Phase 10R view dict returned by
+        `build_desktop_project_start_view(controller_root)`, OR a
+        soft-error envelope (added Phase 10R so the shipped
+        desktop app exposes the PRD-intake and project-start
+        workflow alongside the other sub-views)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14092,6 +14097,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     run_profiles_view = _desktop_safe_call_view(
         build_desktop_run_profiles_view, controller_root,
     )
+    project_start_view = _desktop_safe_call_view(
+        build_desktop_project_start_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14102,6 +14110,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "dashboard_view": dashboard_view,
         "setup_view": setup_view,
         "run_profiles_view": run_profiles_view,
+        "project_start_view": project_start_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14149,6 +14158,14 @@ def _desktop_render_sub_view_lines(
         # consistent with the standalone
         # `view-desktop-run-profiles` output.
         lines.extend(render_desktop_run_profiles_text(sub_view))
+        return lines
+    if key == "project_start_view":
+        # Re-use the shipped Phase 10R renderer verbatim so the
+        # project-start attribution tags stay consistent with the
+        # standalone `view-desktop-project-start` output.
+        lines.extend(
+            render_desktop_project_start_text(sub_view),
+        )
         return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
@@ -14213,6 +14230,7 @@ def render_desktop_app_text(view: dict) -> list:
         ("dashboard_view", "Dashboard (Phase 10K)"),
         ("setup_view", "Setup (Phase 10P)"),
         ("run_profiles_view", "Run Profiles (Phase 10Q)"),
+        ("project_start_view", "Project Start (Phase 10R)"),
     ):
         sub = view.get(key, {})
         lines.extend(_desktop_render_sub_view_lines(key, label, sub))
@@ -14287,11 +14305,20 @@ def _launch_desktop_app_window(
 
     control_frame = tk.Frame(root)
     control_frame.pack(side=tk.RIGHT, fill=tk.Y)
+    run_profiles_frame = tk.Frame(control_frame)
+    run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
     tk.Label(
-        control_frame,
+        run_profiles_frame,
         text="Run Profiles (Phase 10Q)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
+    project_start_frame = tk.Frame(control_frame)
+    project_start_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        project_start_frame,
+        text="Project Start (Phase 10R)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14311,15 +14338,20 @@ def _launch_desktop_app_window(
             ),
         )
 
-    button_widgets: list = []
+    run_profile_button_widgets: list = []
+    project_start_button_widgets: list = []
 
-    def _rebuild_buttons(controls: list) -> None:
-        for widget in button_widgets:
+    def _rebuild_button_row(
+        parent: "tk.Frame",
+        controls: list,
+        widget_bag: list,
+    ) -> None:
+        for widget in widget_bag:
             widget.destroy()
-        button_widgets.clear()
+        widget_bag.clear()
         for control in controls:
             button = tk.Button(
-                control_frame,
+                parent,
                 text=control["label"],
                 wraplength=240,
                 justify=tk.LEFT,
@@ -14330,7 +14362,7 @@ def _launch_desktop_app_window(
                 ),
             )
             button.pack(fill=tk.X, padx=4, pady=2)
-            button_widgets.append(button)
+            widget_bag.append(button)
 
     def _refresh() -> None:
         view = assemble_desktop_app_view(controller_root)
@@ -14342,12 +14374,37 @@ def _launch_desktop_app_window(
             isinstance(run_profiles_sub_view, dict)
             and "affordances" in run_profiles_sub_view
         ):
-            controls = build_desktop_run_profile_controls(
-                run_profiles_sub_view,
+            run_profile_controls = (
+                build_desktop_run_profile_controls(
+                    run_profiles_sub_view,
+                )
             )
         else:
-            controls = []
-        _rebuild_buttons(controls)
+            run_profile_controls = []
+        _rebuild_button_row(
+            run_profiles_frame,
+            run_profile_controls,
+            run_profile_button_widgets,
+        )
+        project_start_sub_view = (
+            view.get("project_start_view") or {}
+        )
+        if (
+            isinstance(project_start_sub_view, dict)
+            and "affordances" in project_start_sub_view
+        ):
+            project_start_controls = (
+                build_desktop_project_start_controls(
+                    project_start_sub_view,
+                )
+            )
+        else:
+            project_start_controls = []
+        _rebuild_button_row(
+            project_start_frame,
+            project_start_controls,
+            project_start_button_widgets,
+        )
         root.after(int(cadence_seconds * 1000), _refresh)
 
     _refresh()
@@ -16351,6 +16408,860 @@ def cmd_view_desktop_run_profiles(
         return 2
     view = build_desktop_run_profiles_view(controller_root)
     for line in render_desktop_run_profiles_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10R - Desktop App PRD Intake And Project Start Flow.
+#
+# First desktop workflow that lets an operator create or select a
+# target project, attach a PRD or product brief, choose the target
+# folder, and start a run WITHOUT having to manually prepare prompt
+# artifacts by hand. The surface is a bounded reporter + closed
+# step-recipe affordance list following the Phase 10P / 10Q
+# pattern: canonical mirrors of the project-start dimensions plus
+# six closed affordances that map to shipped mutating CLIs
+# (`attach-external-target`, `detach-external-target`,
+# `intake-prd`, `bootstrap-prompt`, `plan` -> manual proposal edit
+# -> `activate`, and `run`). Each affordance carries a structured
+# `steps` tuple drawn from `DESKTOP_RUN_PROFILE_STEP_TYPES`
+# (`cli` / `manual_edit`) so a multi-step recipe cannot be
+# mistaken for a single shell command.
+#
+# Project-start dimensions surfaced as canonical mirrors:
+#   - `target_attach`     (via the shipped Phase 10F
+#                          `inspect_external_target_attach(...)`
+#                          aggregator)
+#   - `task_md`           (presence + byte size of repo-root
+#                          `TASK.md`)
+#   - `prd_intake`        (presence + byte size of the Phase 9B
+#                          `.agent-loop/prd-intake.json` advisory
+#                          artifact)
+#   - `proposed_phase`    (presence + byte size of
+#                          `.agent-loop/proposed-phase.md`)
+#   - `claude_prompt`     (presence + byte size of
+#                          `.agent-loop/claude-prompt.md`)
+#   - `current_task`      (presence + byte size of
+#                          `.agent-loop/current-task.md`)
+#   - `current_phase`     (presence + byte size of
+#                          `.agent-loop/current-phase.md`)
+#   - `loop_state_*`      (phase / sub_phase / task / status /
+#                          approval_mode from `loop-state.json`)
+#
+# Affordances (bounded copy-paste step recipes):
+#   - `attach_or_select_target_project`
+#                         -> `attach-external-target --target-path
+#                            <PATH> --attached-by <NAME>
+#                            --approval-mode <MODE>`
+#   - `detach_target_project`
+#                         -> `detach-external-target --detached-by
+#                            <NAME>` (eligible only when a target
+#                            is currently attached)
+#   - `intake_prd`        -> `intake-prd --input <PATH>` (writes
+#                            only the advisory `.agent-loop/prd-
+#                            intake.json` per the Phase 9B
+#                            canonical-precedence-note)
+#   - `bootstrap_prompt`  -> `bootstrap-prompt` (writes
+#                            `.agent-loop/claude-prompt.md` per
+#                            the Phase 5F bootstrap contract)
+#   - `start_first_phase_via_plan_activate`
+#                         -> `plan` -> manual proposal edit ->
+#                            `activate` (three-step recipe;
+#                            eligible only when there is no
+#                            active phase / sub_phase / task on
+#                            `loop-state.json`)
+#   - `start_run`         -> `run` (eligible only when
+#                            `loop-state.status` is
+#                            `awaiting_claude_implementation`)
+#
+# The surface is a Phase 7C reporter: always exits 0 on report
+# content once the controller-root selection succeeds. Per the
+# Phase 10L Desktop App Shell Contract this handler NEVER mutates
+# any canonical artifact, NEVER appends to
+# `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
+# network socket, NEVER auto-fills any `--*-by` operator-identity
+# argument or `--approval-mode` value, NEVER rewrites
+# `runtime-config.json` / `external-target.json` / `TASK.md` /
+# the proposed-phase / claude-prompt / current-task / current-
+# phase artifacts, NEVER widens the Phase 10I library-callable
+# control surface beyond its three-control cap, and NEVER
+# introduces a hidden project-start state plane (no per-operator
+# project recents list, no UI-only PRD store, no parallel intake
+# queue).
+#
+# `--controller-root <PATH>` is REQUIRED per the Phase 10L
+# Controller-Root Selection Flow (matching the Phase 10M / 10N /
+# 10P / 10Q contracts); omitting it returns exit 2 with an
+# explicit `[desktop-project-start] REFUSED: ...` stderr line.
+#
+# Out of scope for this slice (deferred per the Phase 10R
+# exclusions in `.agent-loop/phase-plan.md` and `TASK.md`):
+#   - MCP server selection / read-only MCP runtime (Phase 10S /
+#     10T)
+#   - MCP mutation-capable runtime (Phase 10U+)
+#   - controlled-concurrency / overlap-safe detection / Codex-
+#     owned concurrent work (Phase 10AB / 10AC / 10AD)
+#   - packaging / code-signing / auto-update / system-tray work
+#   - any claim that fully autonomous PRD-to-product execution
+#     ships (the affordance audit notes explicitly disclaim this)
+#   - any persisted control plane parallel to the shipped
+#     `loop-state.json`, `runtime-config.json`,
+#     `external-target.json`, `proposed-phase.md`, `prd-intake.json`,
+#     and the canonical Phase 4C activation path
+
+DESKTOP_PROJECT_START_SIGNAL_VERSION = "phase-10r-v1"
+
+DESKTOP_PROJECT_START_PRECEDENCE_NOTE = (
+    "Canonical artifacts on disk always win over any desktop "
+    "project-start rendering. The project-start surface mirrors "
+    "the shipped Phase 10F target-attach inspector report, the "
+    "shipped Phase 9B PRD-intake advisory artifact, the canonical "
+    "TASK.md / proposed-phase.md / claude-prompt.md / "
+    "current-task.md / current-phase.md presence + byte size, "
+    "and the canonical loop-state.phase / sub_phase / task / "
+    "status / approval_mode, and surfaces six closed copy-paste "
+    "step-recipe affordances that map to shipped mutating CLIs. "
+    "The surface NEVER silently mutates any canonical artifact, "
+    "NEVER auto-runs the recipes on the operator's behalf, NEVER "
+    "auto-fills any `--*-by` operator-identity argument or "
+    "`--approval-mode` value, NEVER widens the Phase 10I "
+    "library-callable control cap, NEVER introduces hidden "
+    "background automation or a persisted control plane parallel "
+    "to the shipped canonical artifacts, NEVER spawns a "
+    "subprocess (no `subprocess.Popen`, no `os.system`, no "
+    "shell-out path), and NEVER opens a network socket. "
+    "Ineligible affordances surface fail-closed as `[ineligible]` "
+    "in the rendered output, NOT silently hidden."
+)
+
+DESKTOP_PROJECT_START_DIMENSION_IDS = (
+    "target_attach",
+    "task_md",
+    "prd_intake",
+    "proposed_phase",
+    "claude_prompt",
+    "current_task",
+    "current_phase",
+    "loop_state",
+)
+
+DESKTOP_PROJECT_START_AFFORDANCE_IDS = (
+    "attach_or_select_target_project",
+    "detach_target_project",
+    "intake_prd",
+    "bootstrap_prompt",
+    "start_first_phase_via_plan_activate",
+    "start_run",
+)
+
+_DESKTOP_PROJECT_START_AFFORDANCES: tuple = (
+    {
+        "id": "attach_or_select_target_project",
+        "label": (
+            "Attach or select a target project (writes "
+            "`.agent-loop/external-target.json`)"
+        ),
+        "steps": (
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py "
+                    "attach-external-target "
+                    "--target-path <PATH> --attached-by <NAME> "
+                    "--approval-mode <MODE>"
+                ),
+            },
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        # eligibility_states=None means always operator-decision;
+        # the operator may attach a target at any loop-state.
+        "eligibility_states": None,
+        # Eligible only when no target is currently attached. This
+        # affordance is the "create or select" path; the
+        # `detach_target_project` affordance covers the "switch"
+        # case.
+        "requires_attached": False,
+        "audit_note": (
+            "writes `.agent-loop/external-target.json`; emits "
+            "`external target: attached ...` to "
+            "`.agent-loop/orchestrator.log`. Operator-identity "
+            "argument `--attached-by` is NEVER auto-filled by "
+            "the desktop project-start surface"
+        ),
+    },
+    {
+        "id": "detach_target_project",
+        "label": (
+            "Detach the currently attached target project (clears "
+            "`.agent-loop/external-target.json`)"
+        ),
+        "steps": (
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py "
+                    "detach-external-target --detached-by <NAME>"
+                ),
+            },
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "requires_attached": True,
+        "audit_note": (
+            "clears `.agent-loop/external-target.json`; emits "
+            "`external target: detached ...` to "
+            "`.agent-loop/orchestrator.log`. Operator-identity "
+            "argument `--detached-by` is NEVER auto-filled by "
+            "the desktop project-start surface"
+        ),
+    },
+    {
+        "id": "intake_prd",
+        "label": (
+            "Run Phase 9B PRD intake (writes advisory "
+            "`.agent-loop/prd-intake.json` only)"
+        ),
+        "steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "place your PRD or product brief at a "
+                    "repo-relative JSON path (for example "
+                    "`docs/prd.json`); the shipped Phase 9B "
+                    "intake reads JSON only"
+                ),
+            },
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py intake-prd "
+                    "--input <PATH>"
+                ),
+            },
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "requires_attached": None,
+        "audit_note": (
+            "writes ONLY the advisory `.agent-loop/prd-intake.json` "
+            "artifact (regenerable from the source input); appends "
+            "a `prd intake:` audit-log line. Does NOT write any "
+            "canonical phase-activation artifact (the Phase 4 "
+            "planner and Phase 4C activator remain the only "
+            "writers of canonical phase activation state)"
+        ),
+    },
+    {
+        "id": "bootstrap_prompt",
+        "label": (
+            "Prepare the active Claude prompt artifact "
+            "(`.agent-loop/claude-prompt.md`) without manual "
+            "editing"
+        ),
+        "steps": (
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py bootstrap-prompt"
+                ),
+            },
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": None,
+        "requires_attached": None,
+        "audit_note": (
+            "writes `.agent-loop/claude-prompt.md` per the shipped "
+            "Phase 5F bootstrap contract; emits a `bootstrap-prompt:` "
+            "audit-log line. Operator runs this when starting a "
+            "phase to avoid hand-preparing the prompt artifact"
+        ),
+    },
+    {
+        "id": "start_first_phase_via_plan_activate",
+        "label": (
+            "Start the first phase via the canonical Phase 4C "
+            "plan -> proposal edit -> activate path"
+        ),
+        "steps": (
+            {
+                "type": "cli",
+                "content": "python scripts/agent_loop.py plan",
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "in `.agent-loop/proposed-phase.md`, set the "
+                    "next-phase `phase` / `sub_phase` / `task` / "
+                    "`max_cycles` / `approval_mode` lines to the "
+                    "values you want activated; copy your PRD-"
+                    "derived task description into the proposal "
+                    "body sections"
+                ),
+            },
+            {
+                "type": "cli",
+                "content": (
+                    "python scripts/agent_loop.py activate"
+                ),
+            },
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        # Eligible whenever there is NO active phase / sub_phase /
+        # task on `loop-state.json` (i.e. the operator is starting
+        # fresh). Computed against loop_state in the descriptor
+        # builder rather than via the eligibility-states frozenset
+        # because the test is on field-presence, not on a closed
+        # status enum.
+        "eligibility_states": None,
+        "requires_attached": None,
+        "audit_note": (
+            "the canonical Phase 4C activation path is the only "
+            "contract-approved writer for `loop-state.json` "
+            "`phase` / `sub_phase` / `task` / `max_cycles` / "
+            "`approval_mode`; this affordance does NOT mutate "
+            "in-flight loop-state. Activation emits planner / "
+            "activation transitions to `.agent-loop/planner.log` "
+            "and `.agent-loop/orchestrator.log`"
+        ),
+    },
+    {
+        "id": "start_run",
+        "label": (
+            "Start the next cycle (eligible only when "
+            "loop-state.status is `awaiting_claude_implementation`)"
+        ),
+        "steps": (
+            {
+                "type": "cli",
+                "content": "python scripts/agent_loop.py run",
+            },
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutating",
+        "eligibility_states": frozenset({
+            "awaiting_claude_implementation",
+        }),
+        "requires_attached": None,
+        "audit_note": (
+            "advances cycle state; emits run-state transitions to "
+            "`.agent-loop/orchestrator.log`. This is NOT a claim "
+            "that fully autonomous PRD-to-product execution ships"
+        ),
+    },
+)
+
+
+def _desktop_project_start_artifact_mirror(
+    path: Path, rel: str,
+) -> dict:
+    """Canonical mirror entry for a single project-start artifact.
+
+    Returns `{rel, present, byte_size, error}`; soft-fails on
+    `OSError` rather than raising so a permission glitch on one
+    artifact cannot bring down the whole view.
+    """
+    try:
+        present = path.is_file()
+    except OSError as exc:
+        return {
+            "rel": rel,
+            "present": False,
+            "byte_size": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    if not present:
+        return {
+            "rel": rel,
+            "present": False,
+            "byte_size": None,
+            "error": None,
+        }
+    try:
+        byte_size = path.stat().st_size
+    except OSError as exc:
+        return {
+            "rel": rel,
+            "present": True,
+            "byte_size": None,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+    return {
+        "rel": rel,
+        "present": True,
+        "byte_size": byte_size,
+        "error": None,
+    }
+
+
+def _desktop_project_start_eligibility(
+    spec: dict,
+    *,
+    status_value: Optional[str],
+    attached: bool,
+    has_active_phase: bool,
+) -> tuple:
+    """Return `(eligible, reason)` for one project-start affordance.
+
+    Combines three eligibility inputs:
+      - `eligibility_states` (closed set or None): same shape as
+        the Phase 10N / 10Q affordances
+      - `requires_attached` (True / False / None): True = eligible
+        only when a target IS attached; False = eligible only
+        when NO target is attached; None = independent of attach
+        state
+      - active-phase presence: the
+        `start_first_phase_via_plan_activate` affordance is
+        eligible only when there is NO active phase / sub_phase /
+        task on `loop-state.json`
+    """
+    if spec["id"] == "start_first_phase_via_plan_activate":
+        if has_active_phase:
+            return False, (
+                "an active phase / sub_phase / task is already "
+                "present on `.agent-loop/loop-state.json`; this "
+                "affordance is the FIRST-phase entry. Use the "
+                "Phase 10Q `select_approval_mode_*` or "
+                "`select_run_policy_*` affordances to progress "
+                "the active phase, or `detach_target_project` to "
+                "reset"
+            )
+        # Fall through to the requires_attached / eligibility_states
+        # checks below.
+    requires_attached = spec.get("requires_attached")
+    if requires_attached is True and not attached:
+        return False, (
+            "no external target is currently attached; this "
+            "affordance is the detach / target-switch path. Use "
+            "`attach_or_select_target_project` first"
+        )
+    if requires_attached is False and attached:
+        return False, (
+            "an external target is already attached; this "
+            "affordance is the attach / select path. Use "
+            "`detach_target_project` first if you want to switch "
+            "targets"
+        )
+    if spec["eligibility_states"] is None:
+        return True, (
+            "always operator-decision (no loop-state gate beyond "
+            "attach / first-phase prerequisites)"
+        )
+    if status_value is None:
+        return False, (
+            "canonical loop-state.status is unavailable; "
+            "eligibility cannot be determined"
+        )
+    if status_value in spec["eligibility_states"]:
+        return True, (
+            f"current loop-state.status={status_value!r} matches "
+            f"one of the affordance's eligible states"
+        )
+    return False, (
+        f"current loop-state.status={status_value!r} is not in "
+        f"the affordance's eligible set "
+        f"{sorted(spec['eligibility_states'])!r}; run a CLI "
+        f"command that transitions loop-state to an eligible "
+        f"status first"
+    )
+
+
+def _desktop_project_start_affordance_descriptor(
+    spec: dict,
+    *,
+    status_value: Optional[str],
+    attached: bool,
+    has_active_phase: bool,
+) -> dict:
+    """Return the operator-visible descriptor for one affordance.
+
+    Reuses the Phase 10Q step-summary and clipboard-payload
+    helpers verbatim so the project-start and run-profiles
+    surfaces render the same step-tagged shape.
+    """
+    eligible, reason = _desktop_project_start_eligibility(
+        spec,
+        status_value=status_value,
+        attached=attached,
+        has_active_phase=has_active_phase,
+    )
+    steps = spec["steps"]
+    return {
+        "id": spec["id"],
+        "label": spec["label"],
+        "steps": tuple(dict(step) for step in steps),
+        "command": _desktop_run_profile_command_summary(steps),
+        "clipboard_payload": (
+            _desktop_run_profile_clipboard_payload(steps)
+        ),
+        "dispatch_mode": spec["dispatch_mode"],
+        "category": spec["category"],
+        "requires_attached": spec.get("requires_attached"),
+        "currently_eligible": eligible,
+        "eligibility_reason": reason,
+        "audit_note": spec["audit_note"],
+    }
+
+
+def build_desktop_project_start_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10R: assemble the bounded desktop project-start view.
+
+    Returns a structured dict carrying:
+      - `view_signal_version`: literal `phase-10r-v1`
+      - `controller_path_canonical`: resolved controller root
+      - `current_loop_state_status`: canonical loop-state.status
+        (or None when loop-state is missing / malformed)
+      - `attached`: bool, mirrors the Phase 10F target-attach
+        inspector's `attached` field; on `HaltError` from the
+        inspector the value soft-fails to False
+      - `has_active_phase`: bool, True iff loop-state carries a
+        non-empty `phase` / `sub_phase` / `task` triple
+      - `mirror`: closed dimension-mirror dict over
+        `DESKTOP_PROJECT_START_DIMENSION_IDS`
+      - `affordances`: list of affordance descriptors, one per
+        `DESKTOP_PROJECT_START_AFFORDANCE_IDS` entry
+      - `precedence_note`: literal
+        `DESKTOP_PROJECT_START_PRECEDENCE_NOTE`
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never widens the Phase 10I library-
+    callable control cap. Both delegate-validator HaltErrors
+    (`load_loop_state(...)`, `inspect_external_target_attach(...)`)
+    soft-fail rather than propagate as canonical halt persistence.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+    has_active_phase = False
+    if isinstance(loop_state, dict):
+        phase_v = loop_state.get("phase")
+        sub_phase_v = loop_state.get("sub_phase")
+        task_v = loop_state.get("task")
+        has_active_phase = bool(
+            isinstance(phase_v, str) and phase_v.strip()
+            and isinstance(sub_phase_v, str) and sub_phase_v.strip()
+            and isinstance(task_v, str) and task_v.strip()
+        )
+    target_attach_report: dict = {
+        "attached": False,
+        "schema_valid": False,
+        "summary": "target inspection not run",
+        "error": None,
+    }
+    try:
+        attach_report = inspect_external_target_attach(
+            controller_root,
+        )
+        target_attach_report = {
+            "attached": bool(attach_report.get("attached")),
+            "schema_valid": bool(
+                attach_report.get("schema_valid")
+            ),
+            "summary": attach_report.get("summary", ""),
+            "error": None,
+        }
+    except HaltError as halt:
+        target_attach_report = {
+            "attached": False,
+            "schema_valid": False,
+            "summary": (
+                f"target inspection refused fail-closed: "
+                f"{halt.reason}"
+            ),
+            "error": halt.reason,
+        }
+    attached = target_attach_report["attached"]
+    al = controller_root / ".agent-loop"
+    artifact_specs = (
+        ("task_md", "TASK.md", controller_root / "TASK.md"),
+        (
+            "prd_intake",
+            PRD_INTAKE_OUTPUT_REL,
+            controller_root / PRD_INTAKE_OUTPUT_REL,
+        ),
+        (
+            "proposed_phase",
+            PROPOSAL_PATH_REL,
+            controller_root / PROPOSAL_PATH_REL,
+        ),
+        (
+            "claude_prompt",
+            ".agent-loop/claude-prompt.md",
+            al / "claude-prompt.md",
+        ),
+        (
+            "current_task",
+            ".agent-loop/current-task.md",
+            al / "current-task.md",
+        ),
+        (
+            "current_phase",
+            ".agent-loop/current-phase.md",
+            al / "current-phase.md",
+        ),
+    )
+    mirror: dict = {
+        "target_attach": target_attach_report,
+        "loop_state": {
+            "phase": (
+                loop_state.get("phase")
+                if isinstance(loop_state, dict) else None
+            ),
+            "sub_phase": (
+                loop_state.get("sub_phase")
+                if isinstance(loop_state, dict) else None
+            ),
+            "task": (
+                loop_state.get("task")
+                if isinstance(loop_state, dict) else None
+            ),
+            "status": status_value,
+            "approval_mode": (
+                loop_state.get("approval_mode")
+                if isinstance(loop_state, dict) else None
+            ),
+            "has_active_phase": has_active_phase,
+        },
+    }
+    for key, rel, path in artifact_specs:
+        mirror[key] = _desktop_project_start_artifact_mirror(
+            path, rel,
+        )
+    affordances = [
+        _desktop_project_start_affordance_descriptor(
+            spec,
+            status_value=status_value,
+            attached=attached,
+            has_active_phase=has_active_phase,
+        )
+        for spec in _DESKTOP_PROJECT_START_AFFORDANCES
+    ]
+    return {
+        "view_signal_version": (
+            DESKTOP_PROJECT_START_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "attached": attached,
+        "has_active_phase": has_active_phase,
+        "mirror": mirror,
+        "affordances": affordances,
+        "precedence_note": (
+            DESKTOP_PROJECT_START_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_project_start_text(view: dict) -> list:
+    """Phase 10R: format the assembled project-start view as text
+    lines. Per-line attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[affordance]`, `[ineligible]`, `[cli]`,
+    `[manual-edit]`) match the Phase 10Q renderer so the two
+    surfaces produce consistent operator-facing output.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-project-start] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    mirror = view["mirror"]
+    target = mirror["target_attach"]
+    lines.append(
+        f"  [canonical mirror] target_attach "
+        f"(`.agent-loop/external-target.json` via "
+        f"`inspect_external_target_attach(...)`): attached="
+        f"{target['attached']!r} schema_valid="
+        f"{target['schema_valid']!r} summary="
+        f"{target['summary']!r}"
+    )
+    ls = mirror["loop_state"]
+    lines.append(
+        f"  [canonical mirror] loop_state "
+        f"(`.agent-loop/loop-state.json`): "
+        f"phase={ls['phase']!r} sub_phase={ls['sub_phase']!r} "
+        f"task={ls['task']!r} status={ls['status']!r} "
+        f"approval_mode={ls['approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] has_active_phase (computed from "
+        f"loop-state.phase / sub_phase / task): "
+        f"{view['has_active_phase']!r}"
+    )
+    for key in (
+        "task_md", "prd_intake", "proposed_phase",
+        "claude_prompt", "current_task", "current_phase",
+    ):
+        entry = mirror[key]
+        error_part = (
+            f" error={entry['error']!r}"
+            if entry["error"] is not None else ""
+        )
+        lines.append(
+            f"  [canonical mirror] {key} (`{entry['rel']}`): "
+            f"present={entry['present']!r} byte_size="
+            f"{entry['byte_size']!r}{error_part}"
+        )
+    for descriptor in view.get("affordances", []):
+        tag = (
+            "[affordance]"
+            if descriptor["currently_eligible"]
+            else "[ineligible]"
+        )
+        lines.append(
+            f"  {tag} id={descriptor['id']!r} "
+            f"dispatch_mode={descriptor['dispatch_mode']!r} "
+            f"category={descriptor['category']!r} "
+            f"requires_attached="
+            f"{descriptor['requires_attached']!r} "
+            f"currently_eligible="
+            f"{descriptor['currently_eligible']!r}"
+        )
+        lines.append(
+            f"    label: {descriptor['label']}"
+        )
+        steps = descriptor.get("steps") or ()
+        if len(steps) == 1:
+            lines.append("    steps (1 step):")
+        else:
+            lines.append(
+                f"    steps ({len(steps)} steps; copy-paste each "
+                f"in order):"
+            )
+        for index, step in enumerate(steps, start=1):
+            step_tag = (
+                "[cli]" if step["type"] == "cli"
+                else "[manual-edit]"
+            )
+            lines.append(
+                f"      {index}. {step_tag} {step['content']}"
+            )
+        lines.append(
+            f"    [advisory] eligibility_reason: "
+            f"{descriptor['eligibility_reason']}"
+        )
+        lines.append(
+            f"    [advisory] audit_note: "
+            f"{descriptor['audit_note']}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_project_start_controls(view: dict) -> list:
+    """Phase 10R desktop control surface: return a closed list of
+    widget descriptors ready for binding to actual desktop-side
+    controls (the Phase 10M Tk window renders one `tk.Button` per
+    descriptor; each click is a pure clipboard-copy operation per
+    the Phase 10Q fix-cycle pattern).
+
+    Each descriptor mirrors the Phase 10Q control-descriptor
+    shape (`id` / `label` / `enabled` / `eligibility_reason` /
+    `clipboard_payload` / `audit_note` / `dispatch_mode` /
+    `category`) plus a Phase 10R `requires_attached` passthrough
+    so the Tk shell can surface attach-vs-detach reasoning in a
+    tooltip if it chooses.
+    """
+    controls: list = []
+    for descriptor in view.get("affordances", []):
+        controls.append({
+            "id": descriptor["id"],
+            "label": descriptor["label"],
+            "enabled": bool(descriptor["currently_eligible"]),
+            "eligibility_reason": (
+                descriptor["eligibility_reason"]
+            ),
+            "clipboard_payload": (
+                descriptor["clipboard_payload"]
+            ),
+            "audit_note": descriptor["audit_note"],
+            "dispatch_mode": descriptor["dispatch_mode"],
+            "category": descriptor["category"],
+            "requires_attached": (
+                descriptor["requires_attached"]
+            ),
+        })
+    return controls
+
+
+def cmd_view_desktop_project_start(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10R operator entry: print the desktop project-start
+    view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase 10L
+    Desktop App Shell Contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket,
+    NEVER widens the Phase 10I library-callable control cap, and
+    NEVER rewrites any of the canonical project-start artifacts.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow (matching the Phase 10M / 10N
+    / 10P / 10Q contracts); omitting it returns exit 2 with an
+    explicit `[desktop-project-start] REFUSED: ...` stderr line.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-project-start] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop project-start surface MUST NOT silently "
+            "pick a default root from an auto-discovered repo "
+            "root, the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Supply the controller root "
+            "explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-project-start] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires AGENTS.md "
+            f"/ CLAUDE.md / TASK.md / .agent-loop/ to be present "
+            f"before any canonical artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_project_start_view(controller_root)
+    for line in render_desktop_project_start_text(view):
         print(line)
     return 0
 
@@ -22583,6 +23494,59 @@ def build_parser() -> argparse.ArgumentParser:
             "message."
         ),
     )
+    project_start = sub.add_parser(
+        "view-desktop-project-start",
+        help=(
+            "Phase 10R desktop app PRD intake and project start "
+            "flow initial slice: render a bounded read-only "
+            "project-start view covering canonical mirrors of "
+            "the shipped Phase 10F target-attach inspector "
+            "report, the shipped Phase 9B PRD-intake advisory "
+            "artifact, the canonical TASK.md / proposed-phase.md "
+            "/ claude-prompt.md / current-task.md / "
+            "current-phase.md presence + byte size, and the "
+            "canonical loop-state.phase / sub_phase / task / "
+            "status / approval_mode, and surface six closed "
+            "copy-paste step-recipe affordances mapped to the "
+            "shipped `attach-external-target`, "
+            "`detach-external-target`, `intake-prd`, "
+            "`bootstrap-prompt`, plan -> manual proposal edit "
+            "-> activate, and `run` CLIs. Phase 7C reporter "
+            "pattern: always exits 0 on report content; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never auto-runs `attach-"
+            "external-target` / `detach-external-target` / "
+            "`intake-prd` / `bootstrap-prompt` / `plan` / "
+            "`activate` / `run` on the operator's behalf; never "
+            "auto-fills any --*-by operator-identity argument "
+            "or --approval-mode value; never widens the Phase "
+            "10I library-callable control cap; never rewrites "
+            "runtime-config.json / external-target.json / "
+            "TASK.md / the proposed-phase / claude-prompt / "
+            "current-task / current-phase artifacts; never "
+            "opens a network socket; never introduces a hidden "
+            "project-start state plane."
+        ),
+    )
+    project_start.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop project-start view renders against. Per "
+            "the Phase 10L Controller-Root Selection Flow the "
+            "desktop shell MUST NOT silently pick a default "
+            "root from an auto-discovered repo root, the OS-"
+            "level current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Omitting this flag returns exit 2 with a "
+            "`[desktop-project-start] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -22856,6 +23820,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-actions": cmd_view_desktop_actions,
     "view-desktop-setup": cmd_view_desktop_setup,
     "view-desktop-run-profiles": cmd_view_desktop_run_profiles,
+    "view-desktop-project-start": cmd_view_desktop_project_start,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
