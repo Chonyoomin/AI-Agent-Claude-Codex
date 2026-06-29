@@ -114,6 +114,16 @@ MCP_INTEGRATION_CONTRACT_PATH = (
     REPO_ROOT / "docs" / "mcp-integration-contract.md"
 )
 PHASE_10O_DOC_PATHS = (MCP_INTEGRATION_CONTRACT_PATH,)
+# Phase 10S - MCP Server Selection UX Contract documentation-only
+# slice. Defines how the desktop app MUST present available MCP
+# servers, permission classes, read-only vs deferred-mutating
+# capability labels, per-server safety copy, and operator approval
+# requirements before MCP enablement becomes user-facing. Layered
+# on top of the Phase 10O integration contract.
+MCP_SERVER_SELECTION_UX_CONTRACT_PATH = (
+    REPO_ROOT / "docs" / "mcp-server-selection-ux-contract.md"
+)
+PHASE_10S_DOC_PATHS = (MCP_SERVER_SELECTION_UX_CONTRACT_PATH,)
 ALL_OPERATOR_DOC_PATHS = (
     PHASE_8A_DOC_PATHS
     + PHASE_8B_DOC_PATHS
@@ -125,6 +135,7 @@ ALL_OPERATOR_DOC_PATHS = (
     + PHASE_10J_DOC_PATHS
     + PHASE_10L_DOC_PATHS
     + PHASE_10O_DOC_PATHS
+    + PHASE_10S_DOC_PATHS
 )
 
 # Regex for `python scripts/agent_loop.py <subcommand>` mentions in the
@@ -5594,6 +5605,612 @@ class McpIntegrationContractRoadmapRoutingAlignmentTests(
             canonical, self.readme_collapsed,
             "README.md does not carry the canonical Phase 10T "
             "title",
+        )
+
+
+class McpServerSelectionUxContractDocExistsAndIsWellFormedTests(
+    unittest.TestCase,
+):
+    """Phase 10S: the MCP server selection UX contract doc must
+    exist on disk, be non-empty, ASCII-only, and carry the
+    canonical section headers a future MCP server selection
+    runtime implementer reads.
+    """
+
+    def setUp(self) -> None:
+        self.path = MCP_SERVER_SELECTION_UX_CONTRACT_PATH
+        self.text = _read(self.path)
+
+    def test_doc_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self.path.is_file(),
+            f"Expected Phase 10S MCP server selection UX contract "
+            f"doc at {self.path}",
+        )
+        self.assertGreater(self.path.stat().st_size, 0)
+
+    def test_doc_is_ascii_only(self) -> None:
+        raw = self.path.read_bytes()
+        try:
+            raw.decode("ascii")
+        except UnicodeDecodeError as exc:
+            self.fail(
+                f"docs/mcp-server-selection-ux-contract.md contains "
+                f"non-ASCII bytes: {exc}"
+            )
+
+    def test_doc_has_required_top_level_sections(self) -> None:
+        for header in (
+            "# MCP Server Selection UX Contract",
+            "## Status",
+            "## Scope",
+            "## Relationship To Phase 10O MCP Integration Contract",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## Server Entry Descriptor Shape",
+            "## Permission Classes",
+            "## Capability Category Labels",
+            "## Per-Server Safety Copy",
+            "## Approval Requirements",
+            "## Enablement State Machine",
+            "## Selection-UX Rendering Rules",
+            "## Operations That Remain CLI-Only",
+            "## Identity And Operator Attribution",
+            "## Refusal Behavior",
+            "## Source-Of-Truth Preservation",
+            "## Safety Boundaries",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Evidence-Review Preservation",
+            "## Dependencies On Later Phase 10 Slices",
+            "## Out Of Scope For Phase 10S",
+        ):
+            self.assertIn(
+                header, self.text,
+                f"docs/mcp-server-selection-ux-contract.md missing "
+                f"required section header {header!r}",
+            )
+
+
+class McpServerSelectionUxContractMarksDocumentationOnlyTests(
+    unittest.TestCase,
+):
+    """The contract MUST be unambiguous that no MCP runtime ships
+    in this slice. It defines the UX boundary; runtime work is
+    deferred to Phase 10T / 10U+.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_marks_documentation_only_status(self) -> None:
+        for fragment in (
+            "No MCP server runtime",
+            "MCP server selection runtime",
+            "ships in this slice",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not mark "
+                f"runtime work as not-yet-shipped via fragment "
+                f"{fragment!r}",
+            )
+
+    def test_contract_defers_runtime_to_phase_10t_and_10u(
+        self,
+    ) -> None:
+        for fragment in (
+            "Phase 10T",
+            "Phase 10U",
+            "deferred to later Phase 10",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not defer "
+                f"MCP runtime to {fragment!r}",
+            )
+
+    def test_contract_states_no_runtime_today(self) -> None:
+        # The "ZERO MCP integration paths" / "ZERO MCP server
+        # selection surfaces" wording is the load-bearing claim
+        # that the repository today does not ship any MCP runtime
+        # surface. Without it a reader might assume the selection
+        # UX is already implemented.
+        for fragment in (
+            "ZERO MCP integration paths",
+            "ZERO MCP server selection surfaces",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not state "
+                f"that no MCP runtime ships today via fragment "
+                f"{fragment!r}",
+            )
+
+
+class McpServerSelectionUxContractPinsThreePermissionClassesTests(
+    unittest.TestCase,
+):
+    """The contract MUST pin a closed three-permission-class
+    enumeration (`read_only_advisory_class`,
+    `browser_inspection_class`, `deferred_mutating_class`) so a
+    future runtime cannot silently introduce a fourth class.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_all_three_permission_classes(
+        self,
+    ) -> None:
+        for cls in (
+            "read_only_advisory_class",
+            "browser_inspection_class",
+            "deferred_mutating_class",
+        ):
+            self.assertIn(
+                cls, self.collapsed,
+                f"mcp-server-selection-ux contract does not name "
+                f"required permission class {cls!r}",
+            )
+
+    def test_contract_marks_class_enumeration_as_closed(
+        self,
+    ) -> None:
+        for fragment in (
+            "closed permission-class enumeration",
+            "exactly one of the following three closed permission",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not mark "
+                f"the permission-class set as closed via fragment "
+                f"{fragment!r}",
+            )
+
+    def test_contract_routes_deferred_mutating_class_to_phase_10u(
+        self,
+    ) -> None:
+        # A reader hitting the deferred-mutating-class section
+        # MUST be routed at Phase 10U+ for the eventual enablement.
+        self.assertIn(
+            "Phase 10U", self.collapsed,
+            "mcp-server-selection-ux contract does not route "
+            "deferred_mutating_class enablement to Phase 10U+",
+        )
+
+
+class McpServerSelectionUxContractPinsServerEntryDescriptorTests(
+    unittest.TestCase,
+):
+    """The contract MUST pin a closed per-server descriptor shape
+    so a future runtime cannot silently widen the rendered fields.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_all_required_descriptor_fields(
+        self,
+    ) -> None:
+        for field in (
+            "`id`",
+            "`display_name`",
+            "`source_url`",
+            "`permission_class`",
+            "`capability_categories`",
+            "`safety_copy`",
+            "`approval_requirements`",
+            "`enablement_state`",
+            "`deferred_runtime_marker`",
+            "`refusal_reason_template`",
+        ):
+            self.assertIn(
+                field, self.text,
+                f"mcp-server-selection-ux contract does not name "
+                f"required descriptor field {field!r}",
+            )
+
+    def test_contract_pins_descriptor_validation_refusal(
+        self,
+    ) -> None:
+        for fragment in (
+            "refuse fail-closed on any server descriptor that is "
+            "missing one of the required fields",
+            "unknown `permission_class`",
+            "unknown `capability_categories`",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not pin "
+                f"descriptor-validation refusal via fragment "
+                f"{fragment!r}",
+            )
+
+
+class McpServerSelectionUxContractPinsApprovalRequirementsTests(
+    unittest.TestCase,
+):
+    """The contract MUST pin a closed approval-requirement list so
+    a future runtime cannot silently bypass any gate.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_names_all_required_approval_requirements(
+        self,
+    ) -> None:
+        for req in (
+            "operator_acknowledged_safety_copy",
+            "operator_supplied_identity",
+            "approval_mode_supports_enablement",
+            "phase_10t_runtime_available",
+            "policy_rule_permits_enablement",
+        ):
+            self.assertIn(
+                req, self.collapsed,
+                f"mcp-server-selection-ux contract does not name "
+                f"required approval-requirement {req!r}",
+            )
+
+    def test_contract_refuses_strict_mode_enablement(self) -> None:
+        # The `approval_mode_supports_enablement` requirement must
+        # be explicit that strict mode is refused fail-closed.
+        for fragment in (
+            "refuse fail-closed in",
+            "strict",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not pin "
+                f"strict-mode refusal via fragment {fragment!r}",
+            )
+
+    def test_contract_refuses_no_runtime_enablement(self) -> None:
+        # The selection UX cannot render a working enablement
+        # affordance against a non-shipped runtime; the contract
+        # MUST anchor this explicitly so a future runtime cannot
+        # silently relax it.
+        for fragment in (
+            "non-shipped runtime",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not pin "
+                f"refusal against non-shipped runtime via fragment "
+                f"{fragment!r}",
+            )
+
+
+class McpServerSelectionUxContractPreservesShippedHardStopsTests(
+    unittest.TestCase,
+):
+    """Every shipped hard-stop the Phase 10G / 10J / 10L / 10O
+    contracts pin MUST also apply to the selection UX verbatim.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_contract_preserves_no_git_automation(self) -> None:
+        for fragment in (
+            "no-Git-automation boundary",
+            "no Git automation",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not "
+                f"preserve the no-Git-automation boundary via "
+                f"fragment {fragment!r}",
+            )
+
+    def test_contract_preserves_canonical_artifact_write_ban(
+        self,
+    ) -> None:
+        for fragment in (
+            "write any canonical artifact",
+            "TASK.md",
+            ".agent-loop/loop-state.json",
+            ".agent-loop/orchestrator.log",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not "
+                f"preserve the no-canonical-artifact-write boundary "
+                f"via fragment {fragment!r}",
+            )
+
+    def test_contract_preserves_no_auto_fill_identity(self) -> None:
+        for fragment in (
+            "MUST NOT auto-fill any operator identity field",
+            "$USER",
+            "whoami",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not "
+                f"preserve the no-auto-fill identity rule via "
+                f"fragment {fragment!r}",
+            )
+
+    def test_contract_preserves_phase_10i_three_control_cap(
+        self,
+    ) -> None:
+        for fragment in (
+            "Phase 10I library-callable",
+            "three controls",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not "
+                f"preserve the Phase 10I three-control cap via "
+                f"fragment {fragment!r}",
+            )
+
+    def test_contract_preserves_approval_gates(self) -> None:
+        for fragment in (
+            "Phase 4C activator",
+            "APPROVED_FOR_ACTIVATION",
+            "Phase 9G",
+            "record-final-acceptance",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not "
+                f"preserve approval gates via fragment "
+                f"{fragment!r}",
+            )
+
+    def test_contract_forbids_side_state_stores(self) -> None:
+        for fragment in (
+            "MUST NOT introduce an MCP-side database",
+            "MUST NOT introduce a per-operator MCP-server "
+            "enablement preference store",
+            "MUST NOT introduce an MCP-side identity token",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not forbid "
+                f"side state stores via fragment {fragment!r}",
+            )
+
+
+class McpServerSelectionUxContractPinsCliOnlyOperationsTests(
+    unittest.TestCase,
+):
+    """The contract MUST preserve the shipped CLI-only enumeration
+    verbatim so the selection UX cannot silently dispatch a
+    mutating CLI subcommand.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+
+    def test_contract_lists_required_mutating_clis(self) -> None:
+        for sub in (
+            "attach-external-target",
+            "detach-external-target",
+            "verify-external-target",
+            "plan",
+            "activate",
+            "run",
+            "resume",
+            "auto-continue",
+            "record-final-acceptance",
+            "record-token-exhaustion",
+            "record-capacity-halt",
+            "intake-prd",
+            "set-runtime-config",
+            "bootstrap-prompt",
+        ):
+            self.assertIn(
+                sub, self.text,
+                f"mcp-server-selection-ux contract does not "
+                f"enumerate mutating CLI {sub!r}",
+            )
+
+    def test_contract_lists_required_read_only_advisory_clis(
+        self,
+    ) -> None:
+        for sub in (
+            "view-desktop-setup",
+            "view-desktop-run-profiles",
+            "view-desktop-project-start",
+        ):
+            self.assertIn(
+                sub, self.text,
+                f"mcp-server-selection-ux contract does not "
+                f"surface read-only advisory CLI {sub!r} (must be "
+                f"in the Phase 10S CLI-only enumeration to anchor "
+                f"the surface against later 10P/10Q/10R additions)",
+            )
+
+
+class McpServerSelectionUxContractInternalConsistencyTests(
+    unittest.TestCase,
+):
+    """The Phase 10S contract MUST reference and align with the
+    Phase 10O integration contract; the two are companions and
+    the Phase 10S permission classes are layered on top of the
+    Phase 10O tool categories.
+    """
+
+    def setUp(self) -> None:
+        self.text = _read(MCP_SERVER_SELECTION_UX_CONTRACT_PATH)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+        self.integration_text = _read(MCP_INTEGRATION_CONTRACT_PATH)
+        self.integration_collapsed = re.sub(
+            r"\s+", " ", self.integration_text,
+        )
+
+    def test_contract_routes_at_phase_10o_integration_doc(
+        self,
+    ) -> None:
+        self.assertIn(
+            "docs/mcp-integration-contract.md", self.text,
+            "mcp-server-selection-ux contract does not route the "
+            "reader at the Phase 10O integration contract doc",
+        )
+        self.assertIn(
+            "Phase 10O", self.collapsed,
+            "mcp-server-selection-ux contract does not name "
+            "Phase 10O",
+        )
+
+    def test_contract_aligns_class_to_category_layering(
+        self,
+    ) -> None:
+        for fragment in (
+            "Phase 10S permission-class enumeration is layered on "
+            "top of the Phase 10O tool-category enumeration",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"mcp-server-selection-ux contract does not align "
+                f"its permission classes with the Phase 10O tool "
+                f"categories via fragment {fragment!r}",
+            )
+
+    def test_integration_contract_does_not_yet_widen_to_selection_ux(
+        self,
+    ) -> None:
+        # The Phase 10O contract is the runtime / safety contract;
+        # it MUST NOT itself absorb the selection UX rendering
+        # rules (those belong in Phase 10S). This guard catches a
+        # scope-creep edit that would silently re-route the
+        # selection-UX rules into the runtime doc.
+        for fragment in (
+            "Server Entry Descriptor Shape",
+            "Per-Server Safety Copy",
+            "Enablement State Machine",
+            "Selection-UX Rendering Rules",
+        ):
+            self.assertNotIn(
+                fragment, self.integration_text,
+                f"docs/mcp-integration-contract.md now carries "
+                f"selection-UX-specific heading {fragment!r}; that "
+                f"belongs in docs/mcp-server-selection-ux-contract"
+                f".md, not in the Phase 10O integration contract",
+            )
+
+
+class McpServerSelectionUxContractReadmeAlignmentTests(
+    unittest.TestCase,
+):
+    """README.md MUST surface Phase 10S as active and route readers
+    at `docs/mcp-server-selection-ux-contract.md`.
+    """
+
+    def setUp(self) -> None:
+        readme = REPO_ROOT / "README.md"
+        self.text = _read(readme)
+        self.collapsed = re.sub(r"\s+", " ", self.text)
+
+    def test_readme_routes_at_phase_10s_contract(self) -> None:
+        self.assertIn(
+            "docs/mcp-server-selection-ux-contract.md", self.text,
+            "README.md does not route readers at the Phase 10S MCP "
+            "server selection UX contract doc",
+        )
+
+    def test_readme_marks_phase_10s_as_active(self) -> None:
+        self.assertIn(
+            "Phase 10S", self.text,
+            "README.md does not name Phase 10S as a current focus",
+        )
+        self.assertIn(
+            "MCP Server Selection UX Contract", self.text,
+            "README.md does not name the Phase 10S sub-phase title",
+        )
+
+    def test_readme_marks_phase_10s_as_documentation_only(
+        self,
+    ) -> None:
+        for fragment in (
+            "documentation form only",
+            "Phase 10T",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"README.md Phase 10S paragraph does not document "
+                f"the documentation-only scope fragment "
+                f"{fragment!r}",
+            )
+
+    def test_readme_routes_advanced_mcp_to_later_phases(
+        self,
+    ) -> None:
+        # Future MCP runtime capabilities must be routed to Phase
+        # 10T / 10U+ so a reader does not assume they ship in 10S.
+        for fragment in (
+            "Phase 10T",
+            "Phase 10U",
+        ):
+            self.assertIn(
+                fragment, self.collapsed,
+                f"README.md does not route future MCP capability "
+                f"to {fragment!r}",
+            )
+
+
+class McpServerSelectionUxContractDoesNotClaimRuntimeShipsTests(
+    unittest.TestCase,
+):
+    """Anchor test: README and ROADMAP MUST NOT silently claim
+    that the Phase 10S slice ships MCP runtime, MCP server
+    selection runtime, or MCP enablement runtime.
+    """
+
+    def setUp(self) -> None:
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.readme_collapsed = re.sub(
+            r"\s+", " ", self.readme_text,
+        )
+        self.roadmap_text = _read(REPO_ROOT / "ROADMAP.md")
+        self.roadmap_collapsed = re.sub(
+            r"\s+", " ", self.roadmap_text,
+        )
+
+    def test_readme_does_not_claim_phase_10s_ships_runtime(
+        self,
+    ) -> None:
+        # A "Phase 10S ... runtime" / "Phase 10S ... initial
+        # slice" phrasing implies actual MCP runtime ships in 10S,
+        # which violates the documentation-only scope.
+        forbidden = (
+            "Phase 10S initial slice runtime",
+            "Phase 10S MCP runtime",
+            "Phase 10S MCP server selection runtime",
+            "Phase 10S MCP integration runtime",
+            "Phase 10S read-only MCP runtime",
+            "Phase 10S MCP enablement runtime",
+        )
+        for phrase in forbidden:
+            self.assertNotIn(
+                phrase, self.readme_collapsed,
+                f"README.md silently claims Phase 10S ships "
+                f"runtime via {phrase!r}; Phase 10S is documentation"
+                f" only - runtime is deferred to Phase 10T / 10U+",
+            )
+
+    def test_roadmap_pins_phase_10s_as_selection_ux_contract(
+        self,
+    ) -> None:
+        # The canonical roadmap line for the slice.
+        self.assertIn(
+            "Phase 10S",
+            self.roadmap_collapsed,
+            "ROADMAP.md does not name Phase 10S",
+        )
+        self.assertIn(
+            "MCP Server Selection UX Contract",
+            self.roadmap_collapsed,
+            "ROADMAP.md does not pin the canonical Phase 10S title",
         )
 
 
