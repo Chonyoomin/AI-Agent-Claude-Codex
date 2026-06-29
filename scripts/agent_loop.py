@@ -14075,6 +14075,16 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         soft-error envelope (added Phase 10R so the shipped
         desktop app exposes the PRD-intake and project-start
         workflow alongside the other sub-views)
+      - `mcp_assistance_view`: the Phase 10T view dict returned
+        by `build_desktop_mcp_assistance_view(controller_root)`,
+        OR a soft-error envelope (added Phase 10T so the
+        shipped desktop app exposes the first read-only MCP
+        assistance selection surface; per the Phase 10S contract
+        every `deferred_mutating_class` descriptor surfaces as
+        `refused_deferred_runtime` and routes the operator at
+        Phase 10U+; ZERO new library-callable controls are
+        introduced and the Phase 10I three-control cap is
+        preserved exactly)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14100,6 +14110,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     project_start_view = _desktop_safe_call_view(
         build_desktop_project_start_view, controller_root,
     )
+    mcp_assistance_view = _desktop_safe_call_view(
+        build_desktop_mcp_assistance_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14111,6 +14124,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "setup_view": setup_view,
         "run_profiles_view": run_profiles_view,
         "project_start_view": project_start_view,
+        "mcp_assistance_view": mcp_assistance_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14165,6 +14179,17 @@ def _desktop_render_sub_view_lines(
         # standalone `view-desktop-project-start` output.
         lines.extend(
             render_desktop_project_start_text(sub_view),
+        )
+        return lines
+    if key == "mcp_assistance_view":
+        # Re-use the shipped Phase 10T renderer verbatim so the
+        # MCP assistance attribution tags ([mcp-server] /
+        # [mcp-safety] / [mcp-capability] / [mcp-approval] /
+        # [mcp-enablement] / [refused] / [deferred-runtime]) stay
+        # consistent with the standalone
+        # `view-desktop-mcp-assistance` output.
+        lines.extend(
+            render_desktop_mcp_assistance_text(sub_view),
         )
         return lines
     signal = sub_view.get("view_signal_version")
@@ -14231,6 +14256,7 @@ def render_desktop_app_text(view: dict) -> list:
         ("setup_view", "Setup (Phase 10P)"),
         ("run_profiles_view", "Run Profiles (Phase 10Q)"),
         ("project_start_view", "Project Start (Phase 10R)"),
+        ("mcp_assistance_view", "MCP Assistance (Phase 10T)"),
     ):
         sub = view.get(key, {})
         lines.extend(_desktop_render_sub_view_lines(key, label, sub))
@@ -14319,6 +14345,13 @@ def _launch_desktop_app_window(
         text="Project Start (Phase 10R)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    mcp_assistance_frame = tk.Frame(control_frame)
+    mcp_assistance_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        mcp_assistance_frame,
+        text="MCP Assistance (Phase 10T)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14340,6 +14373,7 @@ def _launch_desktop_app_window(
 
     run_profile_button_widgets: list = []
     project_start_button_widgets: list = []
+    mcp_assistance_button_widgets: list = []
 
     def _rebuild_button_row(
         parent: "tk.Frame",
@@ -14404,6 +14438,25 @@ def _launch_desktop_app_window(
             project_start_frame,
             project_start_controls,
             project_start_button_widgets,
+        )
+        mcp_assistance_sub_view = (
+            view.get("mcp_assistance_view") or {}
+        )
+        if (
+            isinstance(mcp_assistance_sub_view, dict)
+            and "servers" in mcp_assistance_sub_view
+        ):
+            mcp_assistance_controls = (
+                build_desktop_mcp_assistance_controls(
+                    mcp_assistance_sub_view,
+                )
+            )
+        else:
+            mcp_assistance_controls = []
+        _rebuild_button_row(
+            mcp_assistance_frame,
+            mcp_assistance_controls,
+            mcp_assistance_button_widgets,
         )
         root.after(int(cadence_seconds * 1000), _refresh)
 
@@ -17406,6 +17459,1035 @@ def cmd_view_desktop_project_start(
         return 2
     view = build_desktop_project_start_view(controller_root)
     for line in render_desktop_project_start_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10T: MCP Read-Only Assistance In Desktop App (FIRST MCP
+# runtime slice). Surfaces a closed in-process registry of MCP
+# server descriptors per the Phase 10O integration contract and
+# the Phase 10S server selection UX contract; renders per-server
+# safety copy, capability labels, approval-requirement state, and
+# the closed three-state enablement state machine. This slice
+# does NOT introduce any network IO, any MCP client transport,
+# any MCP-side state store, any mutation-capable MCP action, or
+# any widening of the Phase 10I three-control library-callable
+# cap. The "enablement affordance" is copy-paste-only matching
+# the Phase 10N action-bridge model: a click copies the operator
+# configuration recipe to the OS clipboard; the desktop process
+# never spawns a subprocess and never contacts the MCP server.
+# Per Phase 10S, `deferred_mutating_class` descriptors MUST
+# surface as `refused_deferred_runtime`; Phase 10T enforces this
+# by short-circuiting the enablement-state computation.
+# ---------------------------------------------------------------------------
+
+DESKTOP_MCP_ASSISTANCE_SIGNAL_VERSION = "phase-10t-v1"
+
+DESKTOP_MCP_ASSISTANCE_PRECEDENCE_NOTE = (
+    "Phase 10T MCP read-only assistance surface. The shipped "
+    "Phase 10O MCP integration contract and Phase 10S MCP server "
+    "selection UX contract govern this surface verbatim: the "
+    "Phase 10I three-control library-callable cap is preserved "
+    "exactly; ZERO new library-callable controls are introduced; "
+    "every MCP server descriptor is validated against the closed "
+    "Phase 10S descriptor shape and refused fail-closed on any "
+    "missing required field, wrong-typed value, unknown "
+    "permission_class, or unknown capability_categories member; "
+    "every `deferred_mutating_class` descriptor surfaces as "
+    "`refused_deferred_runtime` and routes the operator at the "
+    "future Phase 10U+ mutation-capable MCP runtime slices "
+    "(tracked in ROADMAP.md); every enablement affordance is "
+    "copy-paste-only per the Phase 10N action-bridge model and "
+    "NEVER spawns a subprocess, NEVER opens a network socket, "
+    "NEVER contacts the MCP server in-process, NEVER mutates "
+    "any canonical artifact (loop-state.json / orchestrator.log "
+    "/ external-target.json / runtime-config.json / TASK.md / "
+    "proposed-phase.md / claude-prompt.md / claude-summary.md / "
+    "codex-review.md / fix-prompt.md / current-task.md / "
+    "current-phase.md / phase-plan.md / prd-intake.json / "
+    "final-acceptance.json / any Phase 2A evidence file / any "
+    "Phase 6 memory entry), NEVER appends to "
+    "`.agent-loop/orchestrator.log`, NEVER advances loop-state, "
+    "NEVER invokes `_halt(...)`, NEVER auto-fills any --*-by "
+    "operator-identity argument or approval-mode value, NEVER "
+    "introduces an MCP-side database / preference store / "
+    "recents list / identity token / session token, and NEVER "
+    "widens the Phase 10I cap"
+)
+
+MCP_SERVER_PERMISSION_CLASSES = (
+    "read_only_advisory_class",
+    "browser_inspection_class",
+    "deferred_mutating_class",
+)
+
+MCP_SERVER_CAPABILITY_CATEGORIES = (
+    "read_only_advisory",
+    "browser_app_inspection",
+    "deferred_mutating",
+)
+
+MCP_SERVER_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_deferred_runtime",
+)
+
+MCP_SERVER_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_safety_copy",
+    "operator_supplied_identity",
+    "approval_mode_supports_enablement",
+    "phase_10t_runtime_available",
+    "policy_rule_permits_enablement",
+)
+
+# Approval modes where MCP enablement is contract-permitted. Per
+# the Phase 10S `approval_mode_supports_enablement` requirement,
+# strict mode (Phase 5C strict-mode pause semantics) refuses MCP
+# enablement fail-closed. `review` and `autonomous` are permitted;
+# `strict` is refused.
+MCP_ENABLEMENT_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+# Required descriptor fields per the Phase 10S "Server Entry
+# Descriptor Shape" section. Used by the descriptor validator.
+_MCP_SERVER_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "source_url",
+    "permission_class",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+# Required descriptor sub-collection fields.
+_MCP_SERVER_DESCRIPTOR_REQUIRED_LIST_FIELDS = (
+    "capability_categories",
+    "safety_copy",
+    "approval_requirements",
+    "enablement_steps",
+)
+
+_DESKTOP_MCP_ASSISTANCE_REGISTRY: tuple = (
+    {
+        "id": "local_repo_docs",
+        "display_name": (
+            "Local Repo Docs (read-only advisory)"
+        ),
+        "source_url": (
+            "https://example.invalid/mcp-servers/local-repo-docs"
+        ),
+        "permission_class": "read_only_advisory_class",
+        "capability_categories": ("read_only_advisory",),
+        "safety_copy": (
+            "fetches read-only documentation snippets from the "
+            "operator-selected repo docs index.",
+            "NEVER writes any canonical artifact (Phase 2A "
+            "evidence, loop-state.json, orchestrator.log, "
+            "external-target.json, claude-prompt.md, "
+            "claude-summary.md, codex-review.md, fix-prompt.md, "
+            "current-task.md, current-phase.md, phase-plan.md, "
+            "proposed-phase.md, final-acceptance.json, any Phase "
+            "6 memory entry, any Phase 9 descriptor).",
+            "All fetched values are surfaced as `[mcp-advisory]` "
+            "derived state per the Phase 10O "
+            "advisory-vs-canonical mirror rule.",
+            "Enablement is queued by Phase 10T; actual fetching "
+            "is deferred to a later Phase 10 runtime slice "
+            "tracked in `ROADMAP.md`.",
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_safety_copy",
+            "operator_supplied_identity",
+            "approval_mode_supports_enablement",
+            "phase_10t_runtime_available",
+            "policy_rule_permits_enablement",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10T surfaces this server as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual in-process MCP "
+            "fetch transport is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`. The Phase "
+            "10T desktop surface NEVER spawns a subprocess and "
+            "NEVER opens a network socket."
+        ),
+        "refusal_reason_template": (
+            "`local_repo_docs` enablement refused: one or more "
+            "Phase 10S approval requirements are not satisfied "
+            "(see per-requirement state above). Acknowledge the "
+            "safety copy, supply an operator identity explicitly, "
+            "ensure the controller's loop-state.approval_mode is "
+            "in {review, autonomous}, and ensure the operator "
+            "policy rule permits the server before retrying."
+        ),
+        "enablement_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "set the env var "
+                    "`AGENT_LOOP_MCP_LOCAL_REPO_DOCS_CMD` to "
+                    "the absolute path of your local repo-docs "
+                    "MCP wrapper script (see "
+                    "`docs/mcp-server-selection-ux-contract.md`)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-server safety copy "
+                    "block above explicitly (this is a "
+                    "per-session operator action; not "
+                    "pre-acknowledged from any prior session "
+                    "or saved preference)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply an explicit `--operator-identity "
+                    "<NAME>` value when invoking the future "
+                    "enablement CLI; the desktop surface "
+                    "NEVER auto-fills this from `$USER`, "
+                    "`whoami`, an MCP server session, a "
+                    "browser session, or any persistent "
+                    "MCP-side identity store"
+                ),
+            },
+        ),
+    },
+    {
+        "id": "local_browser_inspector",
+        "display_name": (
+            "Local Browser Inspector (read-only inspection)"
+        ),
+        "source_url": (
+            "https://example.invalid/mcp-servers/"
+            "local-browser-inspector"
+        ),
+        "permission_class": "browser_inspection_class",
+        "capability_categories": ("browser_app_inspection",),
+        "safety_copy": (
+            "inspects the operator's explicitly-selected browser "
+            "tab or app window and returns structured "
+            "accessibility-tree metadata.",
+            "Inspection is strictly READ-ONLY against the "
+            "operator's existing browser / app state; the server "
+            "NEVER injects events (no synthetic mouse events, "
+            "no synthetic keystrokes, no form-fill).",
+            "Inspection captures are per-explicit-operator-action "
+            "and per-session; the server NEVER subscribes to "
+            "OS-level event streams (keyboard hooks, "
+            "screen-capture-without-explicit-action, "
+            "microphone, camera).",
+            "The server captures NO replayable credentials (no "
+            "cookies, no browser session tokens, no OS-level "
+            "credentials, no environment variables, no SSH keys, "
+            "no API keys, no clipboard auto-refresh).",
+            "Inspection captures are NEVER persisted across "
+            "sessions.",
+            "Enablement is queued by Phase 10T; actual "
+            "in-process inspection transport is deferred to a "
+            "later Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`.",
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_safety_copy",
+            "operator_supplied_identity",
+            "approval_mode_supports_enablement",
+            "phase_10t_runtime_available",
+            "policy_rule_permits_enablement",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10T surfaces this server as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the in-process inspection "
+            "transport is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`local_browser_inspector` enablement refused: one "
+            "or more Phase 10S approval requirements are not "
+            "satisfied (see per-requirement state above)."
+        ),
+        "enablement_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "install the local browser inspector "
+                    "wrapper script and set "
+                    "`AGENT_LOOP_MCP_BROWSER_INSPECTOR_CMD` to "
+                    "its absolute path"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-server safety copy "
+                    "block above explicitly (per-session "
+                    "operator action)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "explicitly select the browser tab or app "
+                    "window to inspect at the start of each "
+                    "session; the inspector NEVER auto-enables "
+                    "based on a saved-session, a cookie, or "
+                    "any persistent OS-level permission grant"
+                ),
+            },
+        ),
+    },
+    {
+        "id": "github_pr_comment_poster",
+        "display_name": (
+            "GitHub PR Comment Poster (deferred mutation-capable)"
+        ),
+        "source_url": (
+            "https://example.invalid/mcp-servers/"
+            "github-pr-comment-poster"
+        ),
+        "permission_class": "deferred_mutating_class",
+        "capability_categories": (
+            "read_only_advisory",
+            "deferred_mutating",
+        ),
+        "safety_copy": (
+            "declares mutation-capable tools (posts comments to "
+            "GitHub PRs and edits issue metadata) alongside "
+            "read-only advisory tools.",
+            "The Phase 10T desktop surface MUST NOT surface a "
+            "working enablement affordance for any "
+            "`deferred_mutating_class` server; the surface "
+            "renders this entry with a `[refused]` tag and "
+            "routes the operator at the future Phase 10U+ "
+            "mutation-capable MCP runtime slices tracked in "
+            "`ROADMAP.md`.",
+            "No value the server returns may be treated as "
+            "canonical operator identity, canonical evidence, "
+            "canonical review verdict, or canonical artifact "
+            "content.",
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_safety_copy",
+            "operator_supplied_identity",
+            "approval_mode_supports_enablement",
+            "phase_10t_runtime_available",
+            "policy_rule_permits_enablement",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10T MUST refuse fail-closed on any "
+            "`deferred_mutating_class` server; the per-action "
+            "approval gates, audit-log entry shape, refusal "
+            "vocabulary, rollback behavior, and closed "
+            "eligibility set required before enablement are "
+            "defined by the future Phase 10U+ mutation-capable "
+            "MCP runtime slices tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`github_pr_comment_poster` enablement refused: this "
+            "server is in `deferred_mutating_class`; the Phase "
+            "10T desktop surface refuses fail-closed on every "
+            "deferred-mutating server per the Phase 10S "
+            "`Deferred Mutation-Capable Tool Boundary` section. "
+            "Enablement is deferred to a future Phase 10U+ "
+            "runtime slice tracked in `ROADMAP.md`."
+        ),
+        "enablement_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "no enablement steps are surfaced by Phase "
+                    "10T; the desktop surface refuses "
+                    "fail-closed on every "
+                    "`deferred_mutating_class` server until a "
+                    "future Phase 10U+ runtime slice ships "
+                    "the per-action approval gates"
+                ),
+            },
+        ),
+    },
+)
+
+
+def _desktop_mcp_assistance_validate_descriptor(spec: dict) -> None:
+    """Phase 10T descriptor validator: refuse fail-closed on any
+    missing required field, wrong-typed value, unknown
+    permission_class, or unknown capability_categories member.
+    Pure validation; no IO, no mutation, no _halt invocation.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP assistance refused: descriptor is "
+                f"not a dict ({type(spec).__name__})"
+            ),
+        )
+    for field in _MCP_SERVER_DESCRIPTOR_REQUIRED_STRING_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: descriptor "
+                    f"field {field!r} is missing or non-string "
+                    f"({value!r})"
+                ),
+            )
+    for field in _MCP_SERVER_DESCRIPTOR_REQUIRED_LIST_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, (list, tuple)) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: descriptor "
+                    f"field {field!r} is missing or empty "
+                    f"({value!r})"
+                ),
+            )
+    if spec["permission_class"] not in (
+        MCP_SERVER_PERMISSION_CLASSES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP assistance refused: descriptor "
+                f"permission_class={spec['permission_class']!r} "
+                f"is not in the closed Phase 10S enumeration "
+                f"{MCP_SERVER_PERMISSION_CLASSES!r}"
+            ),
+        )
+    for cap in spec["capability_categories"]:
+        if cap not in MCP_SERVER_CAPABILITY_CATEGORIES:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: "
+                    f"descriptor capability_categories member "
+                    f"{cap!r} is not in the closed Phase 10O "
+                    f"enumeration "
+                    f"{MCP_SERVER_CAPABILITY_CATEGORIES!r}"
+                ),
+            )
+    for req in spec["approval_requirements"]:
+        if req not in MCP_SERVER_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: "
+                    f"descriptor approval_requirements member "
+                    f"{req!r} is not in the closed Phase 10S "
+                    f"enumeration "
+                    f"{MCP_SERVER_APPROVAL_REQUIREMENTS!r}"
+                ),
+            )
+    for step in spec["enablement_steps"]:
+        if not isinstance(step, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: "
+                    f"enablement_step is not a dict ({step!r})"
+                ),
+            )
+        if step.get("type") not in (
+            DESKTOP_RUN_PROFILE_STEP_TYPES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: "
+                    f"enablement_step type "
+                    f"{step.get('type')!r} is not in the closed "
+                    f"set {DESKTOP_RUN_PROFILE_STEP_TYPES!r}"
+                ),
+            )
+        if not isinstance(step.get("content"), str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP assistance refused: "
+                    f"enablement_step content is not a string "
+                    f"({step.get('content')!r})"
+                ),
+            )
+
+
+def _desktop_mcp_assistance_compute_approval_state(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10t_runtime_available: bool,
+    operator_acknowledged_safety_copy: bool,
+    operator_supplied_identity: bool,
+    policy_rule_permits_enablement: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied: bool,
+    reason: str}` entries for every Phase 10S approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            MCP_ENABLEMENT_PERMITTED_APPROVAL_MODES
+        )
+    )
+    state = {
+        "operator_acknowledged_safety_copy": {
+            "satisfied": bool(operator_acknowledged_safety_copy),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-server safety copy this session"
+                if operator_acknowledged_safety_copy
+                else (
+                    "per-server safety copy not yet "
+                    "acknowledged this session; per the Phase "
+                    "10S contract acknowledgement MUST be a "
+                    "per-session operator action and MUST NOT "
+                    "be pre-acknowledged from any prior session "
+                    "or saved preference"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10S contract identity MUST be "
+                    "operator-supplied and MUST NOT be "
+                    "auto-filled from `$USER`, `whoami`, an "
+                    "MCP server session, a browser session, a "
+                    "packaging-time-configured identity, or any "
+                    "persistent MCP-side identity store"
+                )
+            ),
+        },
+        "approval_mode_supports_enablement": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(MCP_ENABLEMENT_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the permitted "
+                    f"set "
+                    f"{sorted(MCP_ENABLEMENT_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10S contract the selection "
+                    f"UX MUST refuse fail-closed in `strict` mode"
+                )
+            ),
+        },
+        "phase_10t_runtime_available": {
+            "satisfied": bool(phase_10t_runtime_available),
+            "reason": (
+                "Phase 10T MCP read-only assistance selection "
+                "surface is shipped and reachable"
+                if phase_10t_runtime_available
+                else (
+                    "Phase 10T MCP read-only assistance "
+                    "selection surface is not yet reachable in "
+                    "this controller"
+                )
+            ),
+        },
+        "policy_rule_permits_enablement": {
+            "satisfied": bool(policy_rule_permits_enablement),
+            "reason": (
+                "operator-supplied policy rule does not refuse "
+                "this enablement"
+                if policy_rule_permits_enablement
+                else (
+                    "operator-supplied policy rule refuses "
+                    "this enablement (additive boundary per "
+                    "the Phase 10O contract; policy rules MAY "
+                    "refuse a server the base contract would "
+                    "have allowed but MUST NOT approve one the "
+                    "base contract refuses)"
+                )
+            ),
+        },
+    }
+    return state
+
+
+def _desktop_mcp_assistance_compute_enablement_state(
+    spec: dict,
+    *,
+    approval_state: dict,
+) -> tuple:
+    """Phase 10T enablement-state computation. Returns
+    `(state_value, reason)` where `state_value` is one of
+    `MCP_SERVER_ENABLEMENT_STATES`. Phase 10S short-circuits:
+
+    - `deferred_mutating_class` ALWAYS surfaces as
+      `refused_deferred_runtime` regardless of approval state
+    - Otherwise: every required approval requirement satisfied
+      ->  `enabled_pending_runtime`; any unmet requirement ->
+      `disabled_by_default`
+    """
+    if spec["permission_class"] == "deferred_mutating_class":
+        return (
+            "refused_deferred_runtime",
+            (
+                "permission_class=`deferred_mutating_class` is "
+                "refused fail-closed by Phase 10T per the Phase "
+                "10S `Deferred Mutation-Capable Tool Boundary` "
+                "section; enablement deferred to Phase 10U+"
+            ),
+        )
+    unmet = [
+        req for req in spec["approval_requirements"]
+        if not approval_state.get(req, {}).get("satisfied")
+    ]
+    if unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"one or more Phase 10S approval requirements "
+                f"are not satisfied: {unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10S approval requirement is satisfied; "
+            "actual in-process MCP fetch transport is deferred "
+            "to a later Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`"
+        ),
+    )
+
+
+def _desktop_mcp_assistance_steps_summary(steps: tuple) -> str:
+    """Return a one-line ` && `-joined step summary intentionally
+    NOT runnable as-is; each step prefixed with `[cli]` /
+    `[manual-edit]` so a single-line scan still sees every step
+    and its kind.
+    """
+    parts = []
+    for step in steps:
+        tag = (
+            "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        )
+        parts.append(f"{tag} {step['content']}")
+    return " && ".join(parts)
+
+
+def _desktop_mcp_assistance_clipboard_payload(steps: tuple) -> str:
+    """Return a multi-line `[cli]` / `[manual-edit]` tagged
+    clipboard payload, one step per line, ready for the Tk button
+    row's clipboard-copy operation.
+    """
+    lines = []
+    for step in steps:
+        tag = (
+            "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        )
+        lines.append(f"{tag} {step['content']}")
+    return "\n".join(lines)
+
+
+def _desktop_mcp_assistance_server_descriptor(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10t_runtime_available: bool,
+    operator_acknowledged_safety_copy: bool,
+    operator_supplied_identity: bool,
+    policy_rule_permits_enablement: bool,
+) -> dict:
+    """Return the operator-visible per-server descriptor (closed
+    shape; matches the Phase 10S contract field list).
+    """
+    approval_state = (
+        _desktop_mcp_assistance_compute_approval_state(
+            spec,
+            approval_mode=approval_mode,
+            phase_10t_runtime_available=(
+                phase_10t_runtime_available
+            ),
+            operator_acknowledged_safety_copy=(
+                operator_acknowledged_safety_copy
+            ),
+            operator_supplied_identity=(
+                operator_supplied_identity
+            ),
+            policy_rule_permits_enablement=(
+                policy_rule_permits_enablement
+            ),
+        )
+    )
+    enablement_state, enablement_reason = (
+        _desktop_mcp_assistance_compute_enablement_state(
+            spec, approval_state=approval_state,
+        )
+    )
+    steps = tuple(
+        dict(step) for step in spec["enablement_steps"]
+    )
+    return {
+        "id": spec["id"],
+        "display_name": spec["display_name"],
+        "source_url": spec["source_url"],
+        "permission_class": spec["permission_class"],
+        "capability_categories": list(
+            spec["capability_categories"]
+        ),
+        "safety_copy": list(spec["safety_copy"]),
+        "approval_requirements": list(
+            spec["approval_requirements"]
+        ),
+        "approval_state": approval_state,
+        "enablement_state": enablement_state,
+        "enablement_reason": enablement_reason,
+        "enablement_steps": steps,
+        "command": _desktop_mcp_assistance_steps_summary(steps),
+        "clipboard_payload": (
+            _desktop_mcp_assistance_clipboard_payload(steps)
+        ),
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "advisory_selection_ux",
+    }
+
+
+def build_desktop_mcp_assistance_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10T: assemble the bounded desktop MCP read-only
+    assistance view. Surfaces the closed
+    `_DESKTOP_MCP_ASSISTANCE_REGISTRY` of MCP server descriptors
+    with per-server safety copy, capability labels, approval-
+    requirement state, and the closed three-state enablement
+    state machine per the Phase 10S contract.
+
+    The view carries:
+      - `view_signal_version`: literal `phase-10t-v1`
+      - `controller_path_canonical`: resolved controller root
+      - `current_loop_state_status`: controller's loop-state.status
+        (or None when loop-state is missing / malformed)
+      - `controller_loop_state_approval_mode`: controller's
+        loop-state.approval_mode (gates the
+        `approval_mode_supports_enablement` requirement)
+      - `phase_10t_runtime_available`: True (this slice ships
+        the selection surface and is reachable per cycle)
+      - `phase_10u_runtime_available`: False (mutation-capable
+        runtime is deferred to Phase 10U+)
+      - `permission_classes`: closed enumeration mirror
+      - `capability_categories`: closed enumeration mirror
+      - `enablement_states`: closed enumeration mirror
+      - `approval_requirements`: closed enumeration mirror
+      - `servers`: list of per-server descriptors (one per entry
+        in `_DESKTOP_MCP_ASSISTANCE_REGISTRY`)
+      - `precedence_note`: literal
+        `DESKTOP_MCP_ASSISTANCE_PRECEDENCE_NOTE`
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never widens the Phase 10I library-
+    callable control cap, never contacts any MCP server, never
+    opens a network socket. The shipped `load_loop_state(...)`
+    validator HaltError soft-fails so the surface stays
+    operable when the controller's loop-state is missing or
+    malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    # Per-server descriptors. The selection UX is per-poll-derived
+    # per the Phase 10S "Source-Of-Truth Preservation" rule: no
+    # persisted per-operator preference store, no recents list, no
+    # enablement history. The operator-side approval inputs
+    # (safety acknowledgement / identity / policy rule) default to
+    # `False` in this initial slice; the per-server descriptor
+    # surfaces the per-requirement state so a future runtime slice
+    # can wire operator-side acknowledgement UI without changing
+    # the contract shape.
+    servers = []
+    for spec in _DESKTOP_MCP_ASSISTANCE_REGISTRY:
+        _desktop_mcp_assistance_validate_descriptor(spec)
+        servers.append(
+            _desktop_mcp_assistance_server_descriptor(
+                spec,
+                approval_mode=approval_mode,
+                phase_10t_runtime_available=True,
+                operator_acknowledged_safety_copy=False,
+                operator_supplied_identity=False,
+                policy_rule_permits_enablement=True,
+            )
+        )
+    return {
+        "view_signal_version": (
+            DESKTOP_MCP_ASSISTANCE_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10t_runtime_available": True,
+        "phase_10u_runtime_available": False,
+        "permission_classes": list(
+            MCP_SERVER_PERMISSION_CLASSES
+        ),
+        "capability_categories": list(
+            MCP_SERVER_CAPABILITY_CATEGORIES
+        ),
+        "enablement_states": list(MCP_SERVER_ENABLEMENT_STATES),
+        "approval_requirements": list(
+            MCP_SERVER_APPROVAL_REQUIREMENTS
+        ),
+        "servers": servers,
+        "precedence_note": (
+            DESKTOP_MCP_ASSISTANCE_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_mcp_assistance_text(view: dict) -> list:
+    """Phase 10T: format the assembled MCP assistance view as text
+    lines. Per-line attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[mcp-server]`, `[mcp-safety]`,
+    `[mcp-capability]`, `[mcp-approval]`, `[mcp-enablement]`,
+    `[refused]`, `[deferred-runtime]`, `[cli]`, `[manual-edit]`)
+    match the Phase 10S contract attribution vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-mcp-assistance] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10t_runtime_available: "
+        f"{view['phase_10t_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10u_runtime_available (deferred "
+        f"mutation-capable MCP runtime; Phase 10U+): "
+        f"{view['phase_10u_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [advisory] permission_classes (closed Phase 10S "
+        f"enumeration): {view['permission_classes']!r}"
+    )
+    lines.append(
+        f"  [advisory] capability_categories (closed Phase 10O "
+        f"enumeration): {view['capability_categories']!r}"
+    )
+    lines.append(
+        f"  [advisory] enablement_states (closed Phase 10S "
+        f"state machine): {view['enablement_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase 10S "
+        f"enumeration): {view['approval_requirements']!r}"
+    )
+    for server in view.get("servers", []):
+        is_deferred = (
+            server["enablement_state"]
+            == "refused_deferred_runtime"
+        )
+        tag = "[refused]" if is_deferred else "[mcp-server]"
+        lines.append(
+            f"  {tag} id={server['id']!r} "
+            f"display_name={server['display_name']!r} "
+            f"permission_class={server['permission_class']!r} "
+            f"enablement_state={server['enablement_state']!r}"
+        )
+        lines.append(
+            f"    [advisory] source_url (inert text; the "
+            f"selection UX MUST NOT auto-fetch or auto-open): "
+            f"{server['source_url']}"
+        )
+        for cap in server["capability_categories"]:
+            lines.append(
+                f"    [mcp-capability] [capability: "
+                f"{cap.replace('_', '-')}] {cap}"
+            )
+        for idx, sentence in enumerate(server["safety_copy"], 1):
+            lines.append(
+                f"    [mcp-safety] {idx}. {sentence}"
+            )
+        for req in server["approval_requirements"]:
+            entry = server["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[mcp-approval]"
+                if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+        lines.append(
+            f"    [mcp-enablement] enablement_reason: "
+            f"{server['enablement_reason']}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{server['deferred_runtime_marker']}"
+        )
+        if is_deferred:
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{server['refusal_reason_template']}"
+            )
+        steps = server.get("enablement_steps") or ()
+        if len(steps) == 1:
+            lines.append("    enablement_steps (1 step):")
+        else:
+            lines.append(
+                f"    enablement_steps ({len(steps)} steps; "
+                f"copy-paste each in order):"
+            )
+        for idx, step in enumerate(steps, start=1):
+            step_tag = (
+                "[cli]" if step["type"] == "cli"
+                else "[manual-edit]"
+            )
+            lines.append(
+                f"      {idx}. {step_tag} {step['content']}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_mcp_assistance_controls(view: dict) -> list:
+    """Phase 10T desktop control surface: return a closed list of
+    widget descriptors ready for binding to actual desktop-side
+    controls (the Phase 10M Tk window renders one `tk.Button` per
+    descriptor; each click is a pure clipboard-copy operation
+    matching the Phase 10N action-bridge model).
+    """
+    controls: list = []
+    for server in view.get("servers", []):
+        controls.append({
+            "id": server["id"],
+            "label": (
+                f"{server['display_name']} "
+                f"[{server['enablement_state']}]"
+            ),
+            "enabled": (
+                server["enablement_state"]
+                == "enabled_pending_runtime"
+            ),
+            "permission_class": server["permission_class"],
+            "enablement_state": server["enablement_state"],
+            "enablement_reason": server["enablement_reason"],
+            "clipboard_payload": server["clipboard_payload"],
+            "deferred_runtime_marker": (
+                server["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                server["refusal_reason_template"]
+            ),
+            "dispatch_mode": server["dispatch_mode"],
+            "category": server["category"],
+        })
+    return controls
+
+
+def cmd_view_desktop_mcp_assistance(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10T operator entry: print the desktop MCP read-only
+    assistance view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase
+    10L Desktop App Shell Contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket,
+    NEVER contacts any MCP server, NEVER widens the Phase 10I
+    library-callable control cap, and NEVER introduces an
+    MCP-side state store.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow (matching the Phase 10M / 10N
+    / 10P / 10Q / 10R contracts); omitting it returns exit 2 with
+    an explicit `[desktop-mcp-assistance] REFUSED: ...` stderr
+    line.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-mcp-assistance] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop MCP assistance surface MUST NOT silently "
+            "pick a default root from an auto-discovered repo "
+            "root, the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Supply the controller root "
+            "explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-mcp-assistance] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ to "
+            f"be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_mcp_assistance_view(controller_root)
+    for line in render_desktop_mcp_assistance_text(view):
         print(line)
     return 0
 
@@ -23691,6 +24773,51 @@ def build_parser() -> argparse.ArgumentParser:
             "message."
         ),
     )
+    mcp_assistance = sub.add_parser(
+        "view-desktop-mcp-assistance",
+        help=(
+            "Phase 10T desktop app MCP read-only assistance "
+            "surface (FIRST MCP runtime slice): render the "
+            "closed in-process MCP server descriptor registry "
+            "per the Phase 10S `docs/mcp-server-selection-ux-"
+            "contract.md` shape, with per-server safety copy, "
+            "capability labels, approval-requirement state, "
+            "and the closed three-state enablement state "
+            "machine (`disabled_by_default` / "
+            "`enabled_pending_runtime` / "
+            "`refused_deferred_runtime`). Every "
+            "`deferred_mutating_class` descriptor surfaces as "
+            "`refused_deferred_runtime` and routes the "
+            "operator at the future Phase 10U+ mutation-"
+            "capable MCP runtime slices. Phase 7C reporter "
+            "pattern: always exits 0 on report content; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never contacts any MCP server in-process; "
+            "never widens the Phase 10I library-callable "
+            "control cap; never introduces an MCP-side state "
+            "store."
+        ),
+    )
+    mcp_assistance.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop MCP assistance view renders against. Per "
+            "the Phase 10L Controller-Root Selection Flow the "
+            "desktop shell MUST NOT silently pick a default "
+            "root from an auto-discovered repo root, the OS-"
+            "level current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Omitting this flag returns exit 2 with a "
+            "`[desktop-mcp-assistance] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -23965,6 +25092,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-setup": cmd_view_desktop_setup,
     "view-desktop-run-profiles": cmd_view_desktop_run_profiles,
     "view-desktop-project-start": cmd_view_desktop_project_start,
+    "view-desktop-mcp-assistance": cmd_view_desktop_mcp_assistance,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
