@@ -1,10 +1,10 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix only the current Claude-owned Phase 10P review issues found by Codex.
+Fix only the current Claude-owned Phase 10R review issues found by Codex.
 
 ## Context
-The latest Phase 10P implementation was reviewed by Codex and received the
+The latest Phase 10R implementation was reviewed by Codex and received the
 verdict `NEEDS_FIXES`.
 
 Read:
@@ -12,48 +12,55 @@ Read:
 - `.agent-loop/claude-prompt.md`
 - `.agent-loop/codex-review.md`
 - `scripts/agent_loop.py`
-- `tests/test_desktop_setup.py`
+- `tests/test_desktop_project_start.py`
 - `tests/test_desktop_app.py`
 - `README.md`
 - `docs/desktop-app-contract.md`
+- `TASK.md`
+- `.agent-loop/phase-plan.md`
 
 ## Required fixes
-- Integrate the new Phase 10P desktop setup/onboarding surface into the shipped
-  desktop app runtime instead of leaving it only as a separate CLI reporter.
-  The current `build_desktop_setup_view(...)` / `render_desktop_setup_text(...)`
-  / `cmd_view_desktop_setup(...)` surface exists, but `assemble_desktop_app_view(...)`
-  and `render_desktop_app_text(...)` still only expose the older Phase 10H /
-  10I / 10K views. Update the desktop app runtime so Phase 10P actually ships
-  a desktop-app onboarding surface consistent with the phase objective, while
-  preserving the existing non-mutation boundaries and the bounded desktop-app
-  contract.
-- Fix adapter onboarding so an adapter is not reported as fully `ok` merely
-  because `AGENT_LOOP_CLAUDE_CMD` or `AGENT_LOOP_CODEX_CMD` is non-empty.
-  Add bounded validation that distinguishes a truly resolvable/configured local
-  adapter command from a junk or non-runnable command string, without widening
-  into subprocess execution, shell evaluation, network IO, or hidden config
-  writes. The setup surface should not claim automatic local invocation is
-  configured when the command cannot realistically be invoked.
+- Fix the project-start attach-state routing bug. Right now, when
+  `inspect_external_target_attach(...)` refuses on a malformed or unreadable
+  attach record, `build_desktop_project_start_view(...)` soft-fails that state
+  to `attached=False`, which incorrectly makes
+  `attach_or_select_target_project` eligible again even though the canonical
+  `attach-external-target` path still refuses when an attach record exists.
+  Update the Phase 10R desktop project-start surface so malformed/unreadable
+  attach-record states fail closed instead of advertising an attach path that
+  the canonical CLI cannot actually take.
+- Fix the active-phase gating bug on
+  `start_first_phase_via_plan_activate`. The current implementation derives
+  `has_active_phase` from the controller repository's own
+  `.agent-loop/loop-state.json`, which makes the affordance ineligible whenever
+  the controller itself is already on an active phase like `Phase 10R`, even if
+  the attached target project is fresh and is exactly what the operator wants
+  to start. Update the Phase 10R workflow so "start the target project's first
+  phase" is evaluated against the correct project-start state instead of the
+  controller repo's own current phase bookkeeping.
 - Add or update focused tests for both fixes:
-  - desktop app runtime/view coverage proving the setup surface is included in
-    the shipped desktop app surface
-  - adapter validation coverage proving invalid/non-resolvable command values
-    do not surface as `ok`
-- Update `README.md` as needed so the 10P description matches the shipped
+  - coverage proving malformed/unreadable attach-record states do not surface a
+    false-positive eligible attach path
+  - coverage proving the first-phase-start affordance is gated against the
+    correct target/project-start state rather than the controller repo's own
+    active phase state
+- Update `README.md` as needed so the 10R description matches the shipped
   implementation after the fixes.
 
 ## Constraints
 - Fix only the listed issues.
-- Do not redesign later phases such as 10Q, 10R, 10T, or 10U.
-- Do not introduce a hidden persisted config plane.
+- Do not redesign later phases such as 10S, 10T, or 10U.
+- Do not introduce a hidden persisted control plane.
+- Do not silently mutate in-flight `loop-state.json` approval state or other
+  canonical controller fields outside approved canonical write paths.
 - Do not add subprocess spawning, shell execution, network IO, or canonical
-  artifact writes to satisfy adapter validation.
+  artifact writes beyond the shipped bounded desktop/runtime contracts.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
 - Do not edit `.agent-loop/loop-state.json` or `.agent-loop/orchestrator.log`
-  by hand.
+- by hand.
 - Do not delete files unless explicitly required and approved.
-- Preserve the original Phase 10P objective and existing Phase 10L/10M/10N
+- Preserve the original Phase 10R objective and existing Phase 10L/10M/10N
   non-mutation boundaries.
 - Prefer minimal, targeted changes.
 

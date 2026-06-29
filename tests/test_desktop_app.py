@@ -391,6 +391,10 @@ class RenderDesktopAppTextTests(unittest.TestCase):
             "run_profiles_view": {
                 "error": "test run profiles error", "view": None,
             },
+            "project_start_view": {
+                "error": "test project start error",
+                "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
@@ -399,6 +403,9 @@ class RenderDesktopAppTextTests(unittest.TestCase):
         self.assertIn("[error] 'test setup error'", output)
         self.assertIn(
             "[error] 'test run profiles error'", output,
+        )
+        self.assertIn(
+            "[error] 'test project start error'", output,
         )
 
 
