@@ -146,6 +146,65 @@ def _write_attach_record(controller: Path) -> None:
     )
 
 
+def _make_target_with_loop_state(
+    td: Path,
+    *,
+    phase: str = "",
+    sub_phase: str = "",
+    task: str = "",
+    status: str = "",
+) -> Path:
+    """Build a target project dir containing its own
+    `.agent-loop/loop-state.json` so Phase 10R target-side state
+    can be exercised."""
+    td.mkdir(parents=True, exist_ok=True)
+    (td / ".agent-loop").mkdir()
+    (td / ".agent-loop" / "loop-state.json").write_text(
+        json.dumps({
+            "phase": phase,
+            "sub_phase": sub_phase,
+            "task": task,
+            "status": status,
+            "cycle_count": 0,
+            "max_cycles": 0,
+            "last_verdict": None,
+            "last_verdict_phase": None,
+            "contract_version": CONTRACT_VERSION,
+            "claude_version": None,
+            "codex_version": None,
+            "orchestrator_version": "phase-3d-v0",
+            "approval_mode": "review",
+            "awaiting_human_for": None,
+        }),
+        encoding="utf-8",
+    )
+    return td
+
+
+def _write_attach_record_with_target_path(
+    controller: Path, target: Path,
+) -> None:
+    """Write an attach record carrying a parseable
+    `target_path_canonical` field so the Phase 10F freshness probe
+    yields a usable target path back through the Phase 10R
+    project-start view."""
+    rec = {
+        "attach_record_signal_version": "phase-10b-v1",
+        "target_path_canonical": target.resolve().as_posix(),
+        "target_path": str(target),
+        "approval_mode": "review",
+        "attached_by": "tester",
+        "attached_at_utc": "2025-01-01T00:00:00Z",
+        "mode_selection": {"approval_mode": "review"},
+    }
+    (
+        controller
+        / agent_loop.EXTERNAL_TARGET_ATTACH_RECORD_REL
+    ).write_text(
+        json.dumps(rec), encoding="utf-8",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
@@ -361,7 +420,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("attach_or_select_target_project"),
                 status_value="awaiting_claude_implementation",
                 attached=False,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertTrue(eligible)
@@ -372,7 +431,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("attach_or_select_target_project"),
                 status_value="awaiting_claude_implementation",
                 attached=True,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertFalse(eligible)
@@ -384,7 +443,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("detach_target_project"),
                 status_value="awaiting_claude_implementation",
                 attached=True,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertTrue(eligible)
@@ -395,7 +454,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("detach_target_project"),
                 status_value="awaiting_claude_implementation",
                 attached=False,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertFalse(eligible)
@@ -411,13 +470,13 @@ class EligibilityTests(unittest.TestCase):
                 ),
                 status_value="awaiting_claude_implementation",
                 attached=False,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertFalse(eligible)
         self.assertIn("active phase", reason)
 
-    def test_start_first_phase_eligible_when_no_active_phase(
+    def test_start_first_phase_eligible_when_attached_and_target_fresh(
         self,
     ) -> None:
         eligible, _ = (
@@ -426,11 +485,83 @@ class EligibilityTests(unittest.TestCase):
                     "start_first_phase_via_plan_activate",
                 ),
                 status_value=None,
-                attached=False,
-                has_active_phase=False,
+                attached=True,
+                target_has_active_phase=False,
             )
         )
         self.assertTrue(eligible)
+
+    def test_start_first_phase_ineligible_when_no_target_attached(
+        self,
+    ) -> None:
+        eligible, reason = (
+            agent_loop._desktop_project_start_eligibility(
+                self._spec(
+                    "start_first_phase_via_plan_activate",
+                ),
+                status_value=None,
+                attached=False,
+                target_has_active_phase=False,
+            )
+        )
+        self.assertFalse(eligible)
+        self.assertIn(
+            "no external target is currently attached", reason,
+        )
+
+    def test_first_phase_ignores_controller_active_phase(
+        self,
+    ) -> None:
+        # Phase 10R fix cycle: the controller being mid-phase (e.g.
+        # the controller's own loop-state carrying `Phase 10R`)
+        # must NOT lock out a fresh attached target. The
+        # `target_has_active_phase` input gates this affordance,
+        # not anything controller-side.
+        eligible, _ = (
+            agent_loop._desktop_project_start_eligibility(
+                self._spec(
+                    "start_first_phase_via_plan_activate",
+                ),
+                status_value="awaiting_claude_implementation",
+                attached=True,
+                target_has_active_phase=False,
+            )
+        )
+        self.assertTrue(eligible)
+
+    def test_attach_ineligible_when_attach_record_refused(
+        self,
+    ) -> None:
+        eligible, reason = (
+            agent_loop._desktop_project_start_eligibility(
+                self._spec("attach_or_select_target_project"),
+                status_value="awaiting_claude_implementation",
+                attached=False,
+                target_has_active_phase=False,
+                attach_record_refused=True,
+            )
+        )
+        self.assertFalse(eligible)
+        self.assertIn(
+            "unreadable or malformed JSON", reason,
+        )
+
+    def test_detach_ineligible_when_attach_record_refused(
+        self,
+    ) -> None:
+        eligible, reason = (
+            agent_loop._desktop_project_start_eligibility(
+                self._spec("detach_target_project"),
+                status_value="awaiting_claude_implementation",
+                attached=False,
+                target_has_active_phase=False,
+                attach_record_refused=True,
+            )
+        )
+        self.assertFalse(eligible)
+        self.assertIn(
+            "unreadable or malformed JSON", reason,
+        )
 
     def test_start_run_eligible_at_awaiting_claude(self) -> None:
         eligible, _ = (
@@ -438,7 +569,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("start_run"),
                 status_value="awaiting_claude_implementation",
                 attached=False,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertTrue(eligible)
@@ -451,7 +582,7 @@ class EligibilityTests(unittest.TestCase):
                     "phase_complete_awaiting_human_approval"
                 ),
                 attached=False,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertFalse(eligible)
@@ -463,7 +594,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("intake_prd"),
                 status_value=None,
                 attached=False,
-                has_active_phase=False,
+                target_has_active_phase=False,
             )
         )
         self.assertTrue(eligible)
@@ -475,7 +606,7 @@ class EligibilityTests(unittest.TestCase):
                 self._spec("bootstrap_prompt"),
                 status_value="awaiting_claude_implementation",
                 attached=True,
-                has_active_phase=True,
+                target_has_active_phase=True,
             )
         )
         self.assertTrue(eligible)
@@ -535,10 +666,16 @@ class BuildProjectStartViewTests(unittest.TestCase):
             )
             for key in (
                 "current_loop_state_status", "attached",
-                "has_active_phase", "mirror", "affordances",
+                "attach_record_refused",
+                "has_active_phase",
+                "controller_has_active_phase",
+                "mirror", "affordances",
                 "precedence_note",
             ):
                 self.assertIn(key, view)
+            self.assertIn(
+                "target_loop_state", view["mirror"],
+            )
 
     def test_unattached_state(self) -> None:
         with TemporaryDirectory() as td:
@@ -581,11 +718,23 @@ class BuildProjectStartViewTests(unittest.TestCase):
             self.assertFalse(attach["currently_eligible"])
             self.assertTrue(detach["currently_eligible"])
 
-    def test_has_active_phase_true_when_loop_state_populated(
+    def test_has_active_phase_true_when_target_loop_state_populated(
         self,
     ) -> None:
+        # Phase 10R fix cycle: `has_active_phase` now reflects the
+        # ATTACHED target's own loop-state, not the controller's.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
+            target = _make_target_with_loop_state(
+                Path(td) / "target",
+                phase="Phase 1 - target",
+                sub_phase="Phase 1A - target",
+                task="active-task",
+                status="awaiting_claude_implementation",
+            )
+            _write_attach_record_with_target_path(
+                controller, target,
+            )
             view = (
                 agent_loop.build_desktop_project_start_view(
                     controller,
@@ -599,9 +748,78 @@ class BuildProjectStartViewTests(unittest.TestCase):
             )
             self.assertFalse(first_phase["currently_eligible"])
 
-    def test_has_active_phase_false_when_loop_state_empty(
+    def test_has_active_phase_false_when_target_loop_state_empty(
         self,
     ) -> None:
+        # Phase 10R fix cycle: a fresh attached target with no
+        # active phase makes the first-phase entry eligible even
+        # when the CONTROLLER itself is mid-phase.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            target = _make_target_with_loop_state(
+                Path(td) / "target",
+            )
+            _write_attach_record_with_target_path(
+                controller, target,
+            )
+            view = (
+                agent_loop.build_desktop_project_start_view(
+                    controller,
+                )
+            )
+            self.assertFalse(view["has_active_phase"])
+            self.assertTrue(
+                view["controller_has_active_phase"],
+                "controller mirror should still reflect the "
+                "controller's own active phase",
+            )
+            first_phase = next(
+                a for a in view["affordances"]
+                if a["id"]
+                == "start_first_phase_via_plan_activate"
+            )
+            self.assertTrue(first_phase["currently_eligible"])
+
+    def test_first_phase_eligible_with_fresh_target_despite_mid_phase_controller(
+        self,
+    ) -> None:
+        # Phase 10R fix cycle (Codex Issue: active-phase gating
+        # bug): the controller being mid-phase (e.g. on Phase 10R
+        # itself) must NOT lock out the first-phase affordance
+        # when the operator has just attached a fresh target.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c",
+                phase="Phase 10 - Future Product Features",
+                sub_phase="Phase 10R - active controller phase",
+                task="phase-10r-active",
+                status="awaiting_claude_implementation",
+            )
+            target = _make_target_with_loop_state(
+                Path(td) / "target",
+            )
+            _write_attach_record_with_target_path(
+                controller, target,
+            )
+            view = (
+                agent_loop.build_desktop_project_start_view(
+                    controller,
+                )
+            )
+            self.assertTrue(view["controller_has_active_phase"])
+            self.assertFalse(view["has_active_phase"])
+            first_phase = next(
+                a for a in view["affordances"]
+                if a["id"]
+                == "start_first_phase_via_plan_activate"
+            )
+            self.assertTrue(first_phase["currently_eligible"])
+
+    def test_first_phase_ineligible_when_no_target_attached(
+        self,
+    ) -> None:
+        # Without a target the first-phase entry has no project to
+        # activate against; it must surface as ineligible.
         with TemporaryDirectory() as td:
             controller = _make_empty_loop_state_controller(
                 Path(td) / "c",
@@ -611,13 +829,142 @@ class BuildProjectStartViewTests(unittest.TestCase):
                     controller,
                 )
             )
-            self.assertFalse(view["has_active_phase"])
+            self.assertFalse(view["attached"])
             first_phase = next(
                 a for a in view["affordances"]
                 if a["id"]
                 == "start_first_phase_via_plan_activate"
             )
-            self.assertTrue(first_phase["currently_eligible"])
+            self.assertFalse(first_phase["currently_eligible"])
+
+    def test_attach_record_refused_when_inspector_halts_with_record_on_disk(
+        self,
+    ) -> None:
+        # Phase 10R fix cycle (Codex Issue: attach-state routing
+        # bug): when the attach record file is on disk but the
+        # inspector refuses fail-closed, the view must record
+        # `attach_record_refused=True` AND BOTH the attach and
+        # detach affordances must surface as ineligible (the
+        # canonical attach refuses because the record already
+        # exists; the canonical detach refuses because the record
+        # is unreadable).
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (
+                controller
+                / agent_loop.EXTERNAL_TARGET_ATTACH_RECORD_REL
+            ).write_text(
+                "{not-json-this-is-garbage}",
+                encoding="utf-8",
+            )
+            view = (
+                agent_loop.build_desktop_project_start_view(
+                    controller,
+                )
+            )
+            self.assertTrue(view["attach_record_refused"])
+            attach = next(
+                a for a in view["affordances"]
+                if a["id"] == "attach_or_select_target_project"
+            )
+            detach = next(
+                a for a in view["affordances"]
+                if a["id"] == "detach_target_project"
+            )
+            self.assertFalse(attach["currently_eligible"])
+            self.assertFalse(detach["currently_eligible"])
+            self.assertIn(
+                "unreadable or malformed JSON",
+                attach["eligibility_reason"],
+            )
+            self.assertIn(
+                "unreadable or malformed JSON",
+                detach["eligibility_reason"],
+            )
+
+    def test_attach_record_refused_false_when_inspector_halts_with_no_record(
+        self,
+    ) -> None:
+        # If the inspector raises HaltError for some other reason
+        # (no attach record file on disk), `attach_record_refused`
+        # must stay False - the canonical attach is then eligible
+        # (no record to refuse) and the operator should not see
+        # the malformed-record refusal message.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop, "inspect_external_target_attach",
+                side_effect=agent_loop.HaltError(
+                    "halted_input_missing",
+                    "synthetic non-record halt",
+                ),
+            ):
+                view = (
+                    agent_loop
+                    .build_desktop_project_start_view(controller)
+                )
+            self.assertFalse(view["attach_record_refused"])
+            attach = next(
+                a for a in view["affordances"]
+                if a["id"] == "attach_or_select_target_project"
+            )
+            self.assertTrue(attach["currently_eligible"])
+
+    def test_target_loop_state_mirror_present_when_attached(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            target = _make_target_with_loop_state(
+                Path(td) / "target",
+                phase="Phase 1 - target",
+                sub_phase="Phase 1A - target",
+                task="active-task",
+                status="awaiting_codex_review",
+            )
+            _write_attach_record_with_target_path(
+                controller, target,
+            )
+            view = (
+                agent_loop.build_desktop_project_start_view(
+                    controller,
+                )
+            )
+            tls = view["mirror"]["target_loop_state"]
+            self.assertEqual(
+                tls["path"], target.resolve().as_posix(),
+            )
+            self.assertEqual(
+                tls["status"], "awaiting_codex_review",
+            )
+            self.assertTrue(tls["has_active_phase"])
+            self.assertIsNone(tls["error"])
+
+    def test_target_loop_state_mirror_records_error_on_missing_state(
+        self,
+    ) -> None:
+        # Target dir exists but has no `.agent-loop/loop-state.json`
+        # -> target-side load_loop_state raises HaltError, the view
+        # soft-fails the error into the mirror, and the operator
+        # still sees a usable view.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            target = Path(td) / "target"
+            target.mkdir()
+            _write_attach_record_with_target_path(
+                controller, target,
+            )
+            view = (
+                agent_loop.build_desktop_project_start_view(
+                    controller,
+                )
+            )
+            tls = view["mirror"]["target_loop_state"]
+            self.assertEqual(
+                tls["path"], target.resolve().as_posix(),
+            )
+            self.assertIsNotNone(tls["error"])
+            self.assertFalse(tls["has_active_phase"])
 
     def test_loop_state_halt_soft_fails(self) -> None:
         with TemporaryDirectory() as td:
@@ -707,8 +1054,11 @@ class RenderProjectStartTextTests(unittest.TestCase):
         )
         for fragment in (
             "[canonical mirror] target_attach",
+            "[refused] attach_record_refused",
             "[canonical mirror] loop_state",
+            "[canonical mirror] target_loop_state",
             "[advisory] has_active_phase",
+            "[advisory] controller_has_active_phase",
             "[canonical mirror] task_md",
             "[canonical mirror] prd_intake",
             "[canonical mirror] proposed_phase",
@@ -944,7 +1294,9 @@ class DesktopAppViewIncludesProjectStartTests(unittest.TestCase):
             "controller_path_canonical": "/tmp/c",
             "current_loop_state_status": None,
             "attached": False,
+            "attach_record_refused": False,
             "has_active_phase": False,
+            "controller_has_active_phase": False,
             "mirror": {
                 "target_attach": {
                     "attached": False, "schema_valid": False,
@@ -955,6 +1307,10 @@ class DesktopAppViewIncludesProjectStartTests(unittest.TestCase):
                     "task": None, "status": None,
                     "approval_mode": None,
                     "has_active_phase": False,
+                },
+                "target_loop_state": {
+                    "path": None, "status": None,
+                    "has_active_phase": False, "error": None,
                 },
                 "task_md": {
                     "rel": "TASK.md", "present": False,

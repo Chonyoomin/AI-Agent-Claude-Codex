@@ -16713,14 +16713,19 @@ _DESKTOP_PROJECT_START_AFFORDANCES: tuple = (
         ),
         "dispatch_mode": "copy_paste",
         "category": "mutating",
-        # Eligible whenever there is NO active phase / sub_phase /
-        # task on `loop-state.json` (i.e. the operator is starting
-        # fresh). Computed against loop_state in the descriptor
-        # builder rather than via the eligibility-states frozenset
-        # because the test is on field-presence, not on a closed
-        # status enum.
+        # Eligible whenever (1) a target IS attached AND (2) there
+        # is NO active phase / sub_phase / task on the TARGET
+        # project's own `.agent-loop/loop-state.json` (i.e. the
+        # target is starting fresh). Phase 10R fix cycle: the gate
+        # input is the TARGET's loop-state, NOT the controller's
+        # own active phase bookkeeping, so the controller being
+        # mid-phase (e.g. Phase 10R) does not lock out a fresh
+        # attached target. Computed against loop_state in the
+        # descriptor builder rather than via the eligibility-states
+        # frozenset because the test is on field-presence, not on a
+        # closed status enum.
         "eligibility_states": None,
-        "requires_attached": None,
+        "requires_attached": True,
         "audit_note": (
             "the canonical Phase 4C activation path is the only "
             "contract-approved writer for `loop-state.json` "
@@ -16805,28 +16810,58 @@ def _desktop_project_start_eligibility(
     *,
     status_value: Optional[str],
     attached: bool,
-    has_active_phase: bool,
+    target_has_active_phase: bool,
+    attach_record_refused: bool = False,
 ) -> tuple:
     """Return `(eligible, reason)` for one project-start affordance.
 
-    Combines three eligibility inputs:
+    Combines four eligibility inputs:
       - `eligibility_states` (closed set or None): same shape as
         the Phase 10N / 10Q affordances
       - `requires_attached` (True / False / None): True = eligible
         only when a target IS attached; False = eligible only
         when NO target is attached; None = independent of attach
         state
-      - active-phase presence: the
+      - `target_has_active_phase`: True iff the ATTACHED target
+        project's own `.agent-loop/loop-state.json` carries a
+        non-empty `phase` / `sub_phase` / `task` triple. The
         `start_first_phase_via_plan_activate` affordance is
-        eligible only when there is NO active phase / sub_phase /
-        task on `loop-state.json`
+        eligible only when this is False AND a target is attached.
+        Phase 10R fix cycle: the gate input is the TARGET's
+        loop-state, NOT the controller's own active-phase
+        bookkeeping
+      - `attach_record_refused`: True iff the controller's attach
+        record file exists on disk but is unreadable / malformed
+        JSON. In this state the canonical `attach-external-target`
+        path refuses (because the record already exists) AND the
+        canonical `detach-external-target` path refuses (because
+        the record cannot be parsed), so neither attach nor detach
+        affordances should advertise as eligible. Phase 10R fix
+        cycle: fails closed instead of soft-failing to
+        `attached=False` and surfacing a broken attach option
     """
+    if attach_record_refused and spec["id"] in (
+        "attach_or_select_target_project",
+        "detach_target_project",
+    ):
+        return False, (
+            "the controller's attach record file at "
+            "`.agent-loop/external-target.json` exists on disk "
+            "but is unreadable or malformed JSON. The canonical "
+            "`attach-external-target` path refuses fail-closed "
+            "when an attach record already exists, AND the "
+            "canonical `detach-external-target` path refuses "
+            "fail-closed when the attach record cannot be parsed. "
+            "Inspect or repair the attach record manually before "
+            "retrying either affordance"
+        )
     if spec["id"] == "start_first_phase_via_plan_activate":
-        if has_active_phase:
+        if target_has_active_phase:
             return False, (
                 "an active phase / sub_phase / task is already "
-                "present on `.agent-loop/loop-state.json`; this "
-                "affordance is the FIRST-phase entry. Use the "
+                "present on the ATTACHED target's own "
+                "`.agent-loop/loop-state.json`; this affordance "
+                "is the FIRST-phase entry for the target. Use the "
                 "Phase 10Q `select_approval_mode_*` or "
                 "`select_run_policy_*` affordances to progress "
                 "the active phase, or `detach_target_project` to "
@@ -16838,7 +16873,7 @@ def _desktop_project_start_eligibility(
     if requires_attached is True and not attached:
         return False, (
             "no external target is currently attached; this "
-            "affordance is the detach / target-switch path. Use "
+            "affordance operates on the attached target. Use "
             "`attach_or_select_target_project` first"
         )
     if requires_attached is False and attached:
@@ -16877,7 +16912,8 @@ def _desktop_project_start_affordance_descriptor(
     *,
     status_value: Optional[str],
     attached: bool,
-    has_active_phase: bool,
+    target_has_active_phase: bool,
+    attach_record_refused: bool = False,
 ) -> dict:
     """Return the operator-visible descriptor for one affordance.
 
@@ -16889,7 +16925,8 @@ def _desktop_project_start_affordance_descriptor(
         spec,
         status_value=status_value,
         attached=attached,
-        has_active_phase=has_active_phase,
+        target_has_active_phase=target_has_active_phase,
+        attach_record_refused=attach_record_refused,
     )
     steps = spec["steps"]
     return {
@@ -16922,8 +16959,22 @@ def build_desktop_project_start_view(
       - `attached`: bool, mirrors the Phase 10F target-attach
         inspector's `attached` field; on `HaltError` from the
         inspector the value soft-fails to False
-      - `has_active_phase`: bool, True iff loop-state carries a
-        non-empty `phase` / `sub_phase` / `task` triple
+      - `attach_record_refused`: bool, True iff the attach record
+        file exists on disk but the inspector refused fail-closed
+        (unreadable / malformed JSON / not a JSON object). Phase
+        10R fix cycle: when True the attach and detach affordances
+        BOTH advertise as ineligible because the canonical CLI
+        cannot make sense of the record
+      - `has_active_phase`: bool, True iff the ATTACHED target's
+        own `.agent-loop/loop-state.json` carries a non-empty
+        `phase` / `sub_phase` / `task` triple. Phase 10R fix
+        cycle: this reflects TARGET-side state and gates
+        `start_first_phase_via_plan_activate`; the controller's
+        own active-phase bookkeeping is exposed separately as
+        `controller_has_active_phase` for audit visibility only
+      - `controller_has_active_phase`: bool, True iff the
+        controller's own loop-state carries a non-empty
+        `phase` / `sub_phase` / `task` triple. Not a gate input
       - `mirror`: closed dimension-mirror dict over
         `DESKTOP_PROJECT_START_DIMENSION_IDS`
       - `affordances`: list of affordance descriptors, one per
@@ -16933,9 +16984,10 @@ def build_desktop_project_start_view(
 
     Never writes, never mutates, never spawns a subprocess, never
     invokes `_halt(...)`, never widens the Phase 10I library-
-    callable control cap. Both delegate-validator HaltErrors
-    (`load_loop_state(...)`, `inspect_external_target_attach(...)`)
-    soft-fail rather than propagate as canonical halt persistence.
+    callable control cap. All delegate-validator HaltErrors
+    (`load_loop_state(...)`, `inspect_external_target_attach(...)`,
+    target-side `load_loop_state(...)`) soft-fail rather than
+    propagate as canonical halt persistence.
     """
     state_path = (
         controller_root / ".agent-loop" / "loop-state.json"
@@ -16950,12 +17002,12 @@ def build_desktop_project_start_view(
         candidate = loop_state.get("status")
         if isinstance(candidate, str):
             status_value = candidate
-    has_active_phase = False
+    controller_has_active_phase = False
     if isinstance(loop_state, dict):
         phase_v = loop_state.get("phase")
         sub_phase_v = loop_state.get("sub_phase")
         task_v = loop_state.get("task")
-        has_active_phase = bool(
+        controller_has_active_phase = bool(
             isinstance(phase_v, str) and phase_v.strip()
             and isinstance(sub_phase_v, str) and sub_phase_v.strip()
             and isinstance(task_v, str) and task_v.strip()
@@ -16966,6 +17018,8 @@ def build_desktop_project_start_view(
         "summary": "target inspection not run",
         "error": None,
     }
+    attach_record_refused = False
+    target_path_canonical: Optional[str] = None
     try:
         attach_report = inspect_external_target_attach(
             controller_root,
@@ -16978,6 +17032,11 @@ def build_desktop_project_start_view(
             "summary": attach_report.get("summary", ""),
             "error": None,
         }
+        freshness = attach_report.get("freshness")
+        if isinstance(freshness, dict):
+            ctp = freshness.get("current_target_path_canonical")
+            if isinstance(ctp, str) and ctp:
+                target_path_canonical = ctp
     except HaltError as halt:
         target_attach_report = {
             "attached": False,
@@ -16988,7 +17047,58 @@ def build_desktop_project_start_view(
             ),
             "error": halt.reason,
         }
+        # Phase 10R fix cycle: when the inspector refuses
+        # fail-closed AND an attach record file exists on disk,
+        # treat this as `attach_record_refused` so the attach and
+        # detach affordances do NOT advertise as eligible. The
+        # canonical attach/detach CLI both refuse on a malformed
+        # record file; soft-failing to `attached=False` would
+        # otherwise re-enable the attach path.
+        attach_record_path = (
+            controller_root / EXTERNAL_TARGET_ATTACH_RECORD_REL
+        )
+        try:
+            if attach_record_path.exists():
+                attach_record_refused = True
+        except OSError:
+            attach_record_refused = False
     attached = target_attach_report["attached"]
+    # Phase 10R fix cycle: read the TARGET project's own
+    # `.agent-loop/loop-state.json` so the
+    # `start_first_phase_via_plan_activate` affordance is gated on
+    # the TARGET's active-phase state rather than the controller's
+    # own active-phase bookkeeping. Soft-fails on every error
+    # (missing target dir, missing/unreadable target loop-state,
+    # malformed JSON) so a single target-side glitch never breaks
+    # the desktop view.
+    target_has_active_phase = False
+    target_loop_state_status: Optional[str] = None
+    target_loop_state_error: Optional[str] = None
+    if attached and target_path_canonical:
+        target_state_path = (
+            Path(target_path_canonical)
+            / ".agent-loop" / "loop-state.json"
+        )
+        try:
+            target_loop_state = load_loop_state(target_state_path)
+            if isinstance(target_loop_state, dict):
+                tp = target_loop_state.get("phase")
+                tsp = target_loop_state.get("sub_phase")
+                tt = target_loop_state.get("task")
+                target_has_active_phase = bool(
+                    isinstance(tp, str) and tp.strip()
+                    and isinstance(tsp, str) and tsp.strip()
+                    and isinstance(tt, str) and tt.strip()
+                )
+                tstatus = target_loop_state.get("status")
+                if isinstance(tstatus, str):
+                    target_loop_state_status = tstatus
+        except HaltError as halt:
+            target_loop_state_error = halt.reason
+        except OSError as exc:
+            target_loop_state_error = (
+                f"{type(exc).__name__}: {exc}"
+            )
     al = controller_root / ".agent-loop"
     artifact_specs = (
         ("task_md", "TASK.md", controller_root / "TASK.md"),
@@ -17038,7 +17148,13 @@ def build_desktop_project_start_view(
                 loop_state.get("approval_mode")
                 if isinstance(loop_state, dict) else None
             ),
-            "has_active_phase": has_active_phase,
+            "has_active_phase": controller_has_active_phase,
+        },
+        "target_loop_state": {
+            "path": target_path_canonical,
+            "status": target_loop_state_status,
+            "has_active_phase": target_has_active_phase,
+            "error": target_loop_state_error,
         },
     }
     for key, rel, path in artifact_specs:
@@ -17050,7 +17166,8 @@ def build_desktop_project_start_view(
             spec,
             status_value=status_value,
             attached=attached,
-            has_active_phase=has_active_phase,
+            target_has_active_phase=target_has_active_phase,
+            attach_record_refused=attach_record_refused,
         )
         for spec in _DESKTOP_PROJECT_START_AFFORDANCES
     ]
@@ -17063,7 +17180,9 @@ def build_desktop_project_start_view(
         ),
         "current_loop_state_status": status_value,
         "attached": attached,
-        "has_active_phase": has_active_phase,
+        "attach_record_refused": attach_record_refused,
+        "has_active_phase": target_has_active_phase,
+        "controller_has_active_phase": controller_has_active_phase,
         "mirror": mirror,
         "affordances": affordances,
         "precedence_note": (
@@ -17099,6 +17218,12 @@ def render_desktop_project_start_text(view: dict) -> list:
         f"{target['schema_valid']!r} summary="
         f"{target['summary']!r}"
     )
+    lines.append(
+        f"  [refused] attach_record_refused (attach record file "
+        f"on disk but unreadable / malformed JSON; canonical "
+        f"attach AND detach both refuse): "
+        f"{view.get('attach_record_refused', False)!r}"
+    )
     ls = mirror["loop_state"]
     lines.append(
         f"  [canonical mirror] loop_state "
@@ -17107,10 +17232,29 @@ def render_desktop_project_start_text(view: dict) -> list:
         f"task={ls['task']!r} status={ls['status']!r} "
         f"approval_mode={ls['approval_mode']!r}"
     )
+    tls = mirror.get("target_loop_state") or {}
+    tls_error_part = (
+        f" error={tls.get('error')!r}"
+        if tls.get("error") is not None else ""
+    )
     lines.append(
-        f"  [advisory] has_active_phase (computed from "
-        f"loop-state.phase / sub_phase / task): "
+        f"  [canonical mirror] target_loop_state (attached "
+        f"target's own `.agent-loop/loop-state.json`): "
+        f"path={tls.get('path')!r} status={tls.get('status')!r} "
+        f"has_active_phase={tls.get('has_active_phase')!r}"
+        f"{tls_error_part}"
+    )
+    lines.append(
+        f"  [advisory] has_active_phase (computed from ATTACHED "
+        f"target's loop-state.phase / sub_phase / task; gates "
+        f"start_first_phase_via_plan_activate): "
         f"{view['has_active_phase']!r}"
+    )
+    lines.append(
+        f"  [advisory] controller_has_active_phase (computed "
+        f"from CONTROLLER's loop-state; NOT a gate input, kept "
+        f"for audit visibility only): "
+        f"{view.get('controller_has_active_phase', False)!r}"
     )
     for key in (
         "task_md", "prd_intake", "proposed_phase",
