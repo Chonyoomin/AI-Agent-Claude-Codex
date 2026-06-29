@@ -20,36 +20,36 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10Q - Desktop App Run Profiles And Approval Controls
+Phase 10R - Desktop App PRD Intake And Project Start Flow
 
 ## Phase Status
 
-Phase 10P is complete and approved to advance. Phase 10Q is now active as the next mainline slice focused on adding a first-class desktop surface for selecting run profiles, approval mode, autonomy level, and PRD-to-completion vs bounded-run execution policies without introducing hidden UI-only state.
+Phase 10Q is complete and approved to advance. Phase 10R is now active as the next mainline slice focused on adding the first desktop workflow for creating or selecting a target project, attaching a PRD or product brief, choosing the target folder, and starting a run without manual prompt-artifact preparation.
 
 ## Active Task
 
-Implement Phase 10Q for the agent loop. This slice should add the first desktop run-profile and approval-controls surface so an operator can inspect and deliberately choose approval mode, autonomy level, PRD-to-completion vs bounded-run mode, and related execution policies through explicit controls that map back to canonical runtime state instead of hidden desktop-only settings.
+Implement Phase 10R for the agent loop. This slice should add the first desktop PRD-intake and project-start workflow so an operator can create or select a target project, attach a PRD or product brief, choose the target folder, and start a run without manually preparing prompt artifacts by hand.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10Q as active
-- `.agent-loop/phase-plan.md` records Phase 10P as closed history and contains a `## Phase 10Q - Desktop App Run Profiles And Approval Controls` section with concrete objective, done criteria, and exclusions
-- the repository adds the first desktop run-profile and approval-controls surface that lets an operator inspect and deliberately choose approval mode, autonomy level, PRD-to-completion vs bounded-run execution policy, and related guardrails through explicit desktop controls
-- the controls map back to canonical runtime state or clearly bounded existing mutating surfaces rather than introducing hidden UI-only settings or a parallel configuration plane
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and `.agent-loop/loop-state.json` identify Phase 10 / 10R as active
+- `.agent-loop/phase-plan.md` records Phase 10Q as closed history and contains a `## Phase 10R - Desktop App PRD Intake And Project Start Flow` section with concrete objective, done criteria, and exclusions
+- the repository adds the first desktop workflow for creating or selecting a target project, attaching a PRD or product brief, choosing the target folder, and starting a run without requiring the operator to manually prepare prompt artifacts by hand
+- the workflow maps back to canonical runtime state and existing bounded mutating surfaces rather than introducing a hidden UI-only state store or a parallel orchestration plane
 - the phase preserves the shipped controller-vs-target boundary, no-auto-fill identity rules, approval semantics, canonical-artifact-first model, and existing CLI/runtime contracts instead of silently mutating in-flight loop state
-- focused validation proves the run-profile and approval-controls surface is bounded, auditable, and does not widen into PRD intake, MCP runtime execution, RAG runtime, packaging, or controlled-concurrency work
+- focused validation proves the PRD-intake and project-start flow is bounded, auditable, and does not widen into MCP runtime execution, RAG runtime, packaging, or controlled-concurrency work
 
 ## Next-Phase Gate
 
-Do not widen the desktop app beyond run profiles and approval controls until:
+Do not widen the desktop app beyond PRD intake and project start flow until:
 
-- Phase 10Q receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the desktop run-profile and approval-controls slice
-- any PRD intake, MCP runtime, RAG runtime, policy-pack, packaging, or controlled-concurrency work is activated through its own later phase instead of being folded into this slice
+- Phase 10R receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the desktop PRD-intake and project-start slice
+- any MCP runtime, RAG runtime, policy-pack, packaging, or controlled-concurrency work is activated through its own later phase instead of being folded into this slice
 
 ## Out Of Scope For Current Phase
 
-- any PRD intake flow, MCP runtime integration, tool execution path, or networked tool orchestration beyond the approved Phase 10Q run-profile and approval-controls surface
+- any MCP runtime integration, tool execution path, or networked tool orchestration beyond the approved Phase 10R PRD-intake and project-start surface
 - any hidden background control plane or second orchestrator that bypasses the shipped Python runtime
 - any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation
 - any claim that fully autonomous PRD-to-product execution is already solved
@@ -64,5 +64,5 @@ Do not widen the desktop app beyond run profiles and approval controls until:
 - any change to the Phase 3A Orchestrator Contract body
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
-- adding any project-wide CI suite beyond focused validation for the desktop run-profile and approval-controls surfaces
+- adding any project-wide CI suite beyond focused validation for the desktop PRD-intake and project-start surfaces
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

@@ -1,40 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 10Q - Desktop App Run Profiles And Approval Controls
+Phase 10R - Desktop App PRD Intake And Project Start Flow
 
 ## Objective
-Implement Phase 10Q for the agent loop. This slice should add the first desktop run-profile and approval-controls surface so an operator can inspect and deliberately choose approval mode, autonomy level, PRD-to-completion vs bounded-run mode, and related execution policies through explicit controls that map back to canonical runtime state instead of hidden desktop-only settings.
+Implement Phase 10R for the agent loop. This slice should add the first desktop PRD-intake and project-start workflow so an operator can create or select a target project, attach a PRD or product brief, choose the target folder, and start a run without manually preparing prompt artifacts by hand.
 
 ## Context
-Implement the Desktop App Run Profiles And Approval Controls slice for the
-agent loop. This slice should add a first-class desktop control surface for
-selecting approval mode, autonomy level, PRD-to-completion vs bounded-run
-mode, and related execution policies through explicit buttons/toggles that map
-back to canonical runtime state rather than hidden UI-only settings.
+Implement the Desktop App PRD Intake And Project Start Flow slice for the
+agent loop. This slice should add the first desktop workflow for creating or
+selecting a target project, attaching a PRD or product brief, choosing the
+target folder, and starting a run without requiring the operator to manually
+prepare prompt artifacts by hand.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10Q as active
-- `.agent-loop/phase-plan.md` records Phase 10P as closed history and contains
-  a `## Phase 10Q - Desktop App Run Profiles And Approval Controls` section
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10R as active
+- `.agent-loop/phase-plan.md` records Phase 10Q as closed history and contains
+  a `## Phase 10R - Desktop App PRD Intake And Project Start Flow` section
   with concrete objective, done criteria, and exclusions
-- the repository adds the first desktop run-profile and approval-controls
-  surface that lets an operator inspect and deliberately choose approval mode,
-  autonomy level, PRD-to-completion vs bounded-run execution policy, and
-  related guardrails through explicit desktop controls
-- the controls map back to canonical runtime state or clearly bounded existing
-  mutating surfaces rather than introducing hidden UI-only settings or a
-  parallel configuration plane
+- the repository adds the first desktop workflow for creating or selecting a
+  target project, attaching a PRD or product brief, choosing the target
+  folder, and starting a run without requiring the operator to manually
+  prepare prompt artifacts by hand
+- the workflow maps back to canonical runtime state and existing bounded
+  mutating surfaces rather than introducing a hidden UI-only state store or a
+  parallel orchestration plane
 - the phase preserves the shipped controller-vs-target boundary, no-auto-fill
   identity rules, approval semantics, canonical-artifact-first model, and
   existing CLI/runtime contracts instead of silently mutating in-flight loop
   state
-- focused validation proves the run-profile and approval-controls surface is
-  bounded, auditable, and does not widen into PRD intake, MCP runtime
-  execution, RAG runtime, packaging, or controlled-concurrency work
-- `README.md` reflects that Phase 10Q is active and that desktop run profiles
-  and approval controls are now the implementation focus
+- focused validation proves the PRD-intake and project-start flow is bounded,
+  auditable, and does not widen into MCP runtime execution, RAG runtime,
+  packaging, or controlled-concurrency work
+- `README.md` reflects that Phase 10R is active and that desktop PRD intake
+  and project start are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,8 +47,8 @@ back to canonical runtime state rather than hidden UI-only settings.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no PRD intake flow, no MCP runtime integration, no tool-execution path, and
-  no networked tool orchestration in this slice
+- no MCP runtime integration, no tool-execution path, and no networked tool
+  orchestration in this slice
 - no hidden background control plane, no parallel config plane, and no bypass
   of the shipped CLI/library/runtime boundaries
 - no silent mutation of in-flight loop-state approval_mode or other canonical
