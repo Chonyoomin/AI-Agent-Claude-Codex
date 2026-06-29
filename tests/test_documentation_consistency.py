@@ -6158,6 +6158,117 @@ class McpServerSelectionUxContractReadmeAlignmentTests(
             )
 
 
+class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
+    unittest.TestCase,
+):
+    """Phase 10S fix cycle: the README MUST NOT claim two different
+    active phases at once. The status line above and any
+    per-phase paragraph below MUST agree on which Phase 10 sub-phase
+    is currently the active one.
+
+    The bug this guards against: a per-phase paragraph leaves
+    `, active)` in its opening header even after the slice has
+    actually shipped and the status line has moved on to the next
+    phase. The existing
+    `McpServerSelectionUxContractReadmeAlignmentTests.test_readme_
+    marks_phase_10s_as_active` only confirmed that `Phase 10S`
+    appears somewhere; it did NOT fail when an older paragraph
+    still advertised its own phase as active.
+    """
+
+    CANONICAL_ACTIVE_PHASE = "Phase 10S"
+    # Matches the README per-phase paragraph header form
+    # `Phase 10X (Slice Name, active|complete) ...` at the start of
+    # a line. The phase id grammar matches the shipped sub-phase
+    # naming used in the README (`Phase 10A` through `Phase 10Z`,
+    # plus older numeric-only ids like `Phase 1` / `Phase 9G` and
+    # `Fix Phase A`). We restrict to the canonical "X (slice name,
+    # status)" header form so prose mentions of phase ids inside
+    # paragraph bodies do not get falsely matched.
+    _PHASE_HEADER_RE = re.compile(
+        r"^(?P<phase>(?:Fix )?Phase [0-9]+[A-Z]?) "
+        r"\([^)]*?, (?P<status>active|complete)\)",
+        re.MULTILINE,
+    )
+
+    def setUp(self) -> None:
+        self.text = _read(REPO_ROOT / "README.md")
+
+    def _claimed_active(self) -> list:
+        return [
+            m.group("phase")
+            for m in self._PHASE_HEADER_RE.finditer(self.text)
+            if m.group("status") == "active"
+        ]
+
+    def test_exactly_one_phase_paragraph_claims_active(
+        self,
+    ) -> None:
+        active = self._claimed_active()
+        self.assertEqual(
+            len(active), 1,
+            f"README.md claims {len(active)} different phases are "
+            f"active simultaneously ({active!r}); exactly one "
+            f"per-phase paragraph header may carry `, active)` at "
+            f"a time. The remaining claims are stale and must flip "
+            f"to `, complete)`. The canonical active phase per the "
+            f"status line is {self.CANONICAL_ACTIVE_PHASE!r}",
+        )
+
+    def test_active_phase_paragraph_matches_canonical_phase_10s(
+        self,
+    ) -> None:
+        active = self._claimed_active()
+        self.assertEqual(
+            active, [self.CANONICAL_ACTIVE_PHASE],
+            f"README.md claims active phase(s) {active!r}; per the "
+            f"current `.agent-loop/current-phase.md` and the "
+            f"README status line the canonical active phase is "
+            f"{self.CANONICAL_ACTIVE_PHASE!r}. Any other per-phase "
+            f"paragraph still marked `, active)` is stale and must "
+            f"flip to `, complete)`",
+        )
+
+    def test_no_completed_phase_paragraph_still_claims_active(
+        self,
+    ) -> None:
+        # The README status line enumerates a long list of "complete"
+        # phases; any per-phase paragraph for one of those phases
+        # MUST NOT contradict the status line by claiming itself
+        # active. The most common drift mode: a fix cycle flips the
+        # status-line summary but forgets to flip the per-phase
+        # paragraph header.
+        completed_sentinels = (
+            "Phase 10R",
+            "Phase 10Q",
+            "Phase 10P",
+            "Phase 10O",
+            "Phase 10N",
+            "Phase 10M",
+            "Phase 10L",
+            "Phase 10K",
+            "Phase 10J",
+            "Phase 10I",
+            "Phase 10H",
+            "Phase 10G",
+            "Phase 10F",
+            "Phase 10E",
+            "Phase 10D",
+            "Phase 10C",
+            "Phase 10B",
+            "Phase 10A",
+        )
+        active = self._claimed_active()
+        stale = [p for p in active if p in completed_sentinels]
+        self.assertEqual(
+            stale, [],
+            f"README.md per-phase paragraphs still claim "
+            f"{stale!r} as `, active)` even though the status line "
+            f"enumerates each of these phases as complete. Flip "
+            f"the stale paragraph header(s) to `, complete)`",
+        )
+
+
 class McpServerSelectionUxContractDoesNotClaimRuntimeShipsTests(
     unittest.TestCase,
 ):
