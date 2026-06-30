@@ -379,6 +379,86 @@ class ValidatorTests(unittest.TestCase):
             )
         self.assertIn("selection_step type", str(cm.exception))
 
+    # ---- Phase 10V fix cycle: path_canonical_rel MUST be a
+    # POSIX-style relative path bounded inside the controller
+    # root. The five tests below would FAIL if the validator
+    # collapsed back to the previous non-empty-string-only check
+    # (the original codex-found bug).
+
+    def test_refuses_path_with_backslash(self) -> None:
+        # Backslash is not a valid POSIX path separator. A
+        # registry entry like `docs\foo.md` would resolve
+        # inconsistently across platforms; refuse fail-closed.
+        spec = self._valid_spec()
+        spec["path_canonical_rel"] = "docs\\foo.md"
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_rag_source_selection_validate_descriptor(
+                spec,
+            )
+        self.assertIn("backslash", str(cm.exception))
+
+    def test_refuses_posix_absolute_path(self) -> None:
+        # `/etc/passwd` style absolute path: the source would
+        # resolve outside the controller root, breaking the
+        # bounded repo-local source model.
+        spec = self._valid_spec()
+        spec["path_canonical_rel"] = "/etc/passwd"
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_rag_source_selection_validate_descriptor(
+                spec,
+            )
+        self.assertIn("absolute", str(cm.exception))
+
+    def test_refuses_windows_drive_prefix(self) -> None:
+        # `C:/foo` or `C:foo` Windows-style drive prefix is also
+        # absolute on the POSIX-relative boundary.
+        spec = self._valid_spec()
+        spec["path_canonical_rel"] = "C:/foo"
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_rag_source_selection_validate_descriptor(
+                spec,
+            )
+        self.assertIn(
+            "Windows-style drive prefix", str(cm.exception),
+        )
+
+    def test_refuses_parent_traversal(self) -> None:
+        # Any `..` segment escapes the controller-root boundary.
+        spec = self._valid_spec()
+        spec["path_canonical_rel"] = "../outside.md"
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_rag_source_selection_validate_descriptor(
+                spec,
+            )
+        self.assertIn(
+            "parent-directory traversal", str(cm.exception),
+        )
+
+    def test_refuses_internal_parent_traversal(self) -> None:
+        # Even an internal `a/../b` form is rejected: while
+        # `Path.resolve()` would canonicalize this to `b`, the
+        # descriptor MUST stay readable to a reviewer without
+        # mental canonicalization.
+        spec = self._valid_spec()
+        spec["path_canonical_rel"] = "docs/../README.md"
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_rag_source_selection_validate_descriptor(
+                spec,
+            )
+        self.assertIn(
+            "parent-directory traversal", str(cm.exception),
+        )
+
+    def test_accepts_nested_posix_relative_path(self) -> None:
+        # Positive coverage: a nested forward-slash repo-relative
+        # path stays valid (no backslash, no leading slash, no
+        # drive prefix, no `..`).
+        spec = self._valid_spec()
+        spec["path_canonical_rel"] = "docs/usage.md"
+        agent_loop._desktop_rag_source_selection_validate_descriptor(
+            spec,
+        )
+
 
 # ---------------------------------------------------------------------------
 # Freshness probe

@@ -250,7 +250,12 @@ Required string fields:
 - `advisory_label_rule`: closed enum member from
   `RAG_ADVISORY_LABELING_RULES`.
 - `path_canonical_rel`: the source's path relative to the
-  controller root. MUST be a POSIX-style relative path.
+  controller root. MUST be a POSIX-style relative path bounded
+  inside the controller root. The validator refuses fail-closed
+  on any backslash, leading `/`, Windows-style drive prefix
+  (`C:` / `C:/foo`), or `..` parent-directory segment so a
+  future malformed registry entry cannot silently widen the
+  bounded repo-local source model.
 - `description`: operator-visible description.
 - `deferred_runtime_marker`: operator-visible note describing
   that actual retrieval is deferred to a future runtime slice.

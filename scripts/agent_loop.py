@@ -21221,6 +21221,73 @@ def _desktop_rag_source_selection_validate_descriptor(
                     f"{RAG_SOURCE_APPROVAL_REQUIREMENTS!r}"
                 ),
             )
+    # Phase 10V fix cycle: enforce the
+    # `docs/rag-source-selection-contract.md` invariant that
+    # `path_canonical_rel` MUST be a POSIX-style relative path
+    # bounded inside the controller root. The previous
+    # validator only checked that the field was a non-empty
+    # string, which left the door open for a future malformed
+    # registry entry to point outside the controller root via an
+    # absolute path, a Windows drive prefix, a backslash, or a
+    # parent-directory traversal. Reject every such form
+    # fail-closed so the bounded repo-local source model is
+    # preserved even when the registry is edited later.
+    path_rel = spec["path_canonical_rel"]
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"path_canonical_rel={path_rel!r} contains a "
+                f"backslash; per the Phase 10V contract this "
+                f"MUST be a POSIX-style (forward-slash) "
+                f"relative path"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"path_canonical_rel={path_rel!r} is absolute; "
+                f"per the Phase 10V contract this MUST be "
+                f"relative to the controller root"
+            ),
+        )
+    # Windows-style drive prefix (`C:`, `c:foo`, `c:/foo`,
+    # `c:\foo`) is rejected as absolute on the POSIX-relative
+    # boundary even though Python on non-Windows treats it as
+    # relative.
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"path_canonical_rel={path_rel!r} carries a "
+                f"Windows-style drive prefix; per the Phase 10V "
+                f"contract this MUST be a POSIX-style relative "
+                f"path bounded inside the controller root"
+            ),
+        )
+    # Any `..` segment anywhere in the path is rejected: even
+    # `a/../b` resolves outside the bounded surface a reviewer
+    # expects when reading the descriptor.
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"path_canonical_rel={path_rel!r} contains a "
+                f"parent-directory traversal (`..`) segment; "
+                f"per the Phase 10V contract the path MUST stay "
+                f"bounded inside the controller root"
+            ),
+        )
     for step in spec["selection_steps"]:
         if not isinstance(step, dict):
             raise HaltError(
