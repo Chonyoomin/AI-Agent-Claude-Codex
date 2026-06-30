@@ -14427,6 +14427,13 @@ def _launch_desktop_app_window(
     mcp_action_ack_frame = tk.Frame(mcp_action_guardrails_frame)
     mcp_action_ack_frame.pack(side=tk.TOP, fill=tk.X)
     mcp_action_ack_vars: dict = {}
+    # Phase 10U fix cycle: session-scoped acknowledgement bag for
+    # `per_session_explicit_approval` policy actions. Distinct
+    # from `mcp_action_ack_vars` (the per-invocation acknowledgement
+    # bag) so the approval-policy enum models executable contract
+    # logic. Per-session BooleanVar only; closing the window
+    # discards every value.
+    mcp_action_session_ack_vars: dict = {}
     mcp_action_dry_run_vars: dict = {}
     mcp_action_policy_vars: dict = {}
     mcp_action_ack_widgets: list = []
@@ -14603,6 +14610,12 @@ def _launch_desktop_app_window(
             aid for aid, var in mcp_action_ack_vars.items()
             if var.get()
         )
+        action_session_ack_set = frozenset(
+            aid for aid, var in (
+                mcp_action_session_ack_vars.items()
+            )
+            if var.get()
+        )
         action_dry_run_set = frozenset(
             aid for aid, var in mcp_action_dry_run_vars.items()
             if var.get()
@@ -14614,6 +14627,9 @@ def _launch_desktop_app_window(
         live_action_operator_inputs = {
             "identity": mcp_identity_var.get().strip(),
             "acknowledged_action_ids": action_ack_set,
+            "session_acknowledged_action_ids": (
+                action_session_ack_set
+            ),
             "dry_run_reviewed_action_ids": action_dry_run_set,
             "policy_permitted_action_ids": action_policy_set,
         }
@@ -14641,6 +14657,12 @@ def _launch_desktop_app_window(
                     mcp_action_ack_vars[action_id] = (
                         tk.BooleanVar(value=False)
                     )
+                if action_id not in (
+                    mcp_action_session_ack_vars
+                ):
+                    mcp_action_session_ack_vars[action_id] = (
+                        tk.BooleanVar(value=False)
+                    )
                 if action_id not in mcp_action_dry_run_vars:
                     mcp_action_dry_run_vars[action_id] = (
                         tk.BooleanVar(value=False)
@@ -14649,19 +14671,56 @@ def _launch_desktop_app_window(
                     mcp_action_policy_vars[action_id] = (
                         tk.BooleanVar(value=False)
                     )
-                ack_check = tk.Checkbutton(
-                    mcp_action_ack_frame,
-                    text=(
-                        f"Acknowledge action: "
-                        f"{action['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_action_ack_vars[action_id],
-                )
-                ack_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_action_ack_widgets.append(ack_check)
+                policy = action.get("approval_policy", "")
+                # Phase 10U fix cycle: render the policy-relevant
+                # acknowledgement widget per action. The per-
+                # invocation widget shows only for
+                # `per_action_explicit_approval` actions; the
+                # session-scoped widget shows only for
+                # `per_session_explicit_approval` actions. This
+                # matches the executable approval-policy contract
+                # exposed by `_desktop_mcp_action_guardrails_
+                # compute_approval_state(...)` so the Tk surface
+                # cannot accidentally surface a per-invocation
+                # acknowledgement that does not actually satisfy
+                # a per-session policy.
+                if policy == "per_action_explicit_approval":
+                    ack_check = tk.Checkbutton(
+                        mcp_action_ack_frame,
+                        text=(
+                            f"Acknowledge action (per-"
+                            f"invocation): "
+                            f"{action['display_name']}"
+                        ),
+                        wraplength=240,
+                        justify=tk.LEFT,
+                        anchor=tk.W,
+                        variable=mcp_action_ack_vars[action_id],
+                    )
+                    ack_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_action_ack_widgets.append(ack_check)
+                elif policy == "per_session_explicit_approval":
+                    session_ack_check = tk.Checkbutton(
+                        mcp_action_ack_frame,
+                        text=(
+                            f"Session-acknowledge action: "
+                            f"{action['display_name']}"
+                        ),
+                        wraplength=240,
+                        justify=tk.LEFT,
+                        anchor=tk.W,
+                        variable=(
+                            mcp_action_session_ack_vars[
+                                action_id
+                            ]
+                        ),
+                    )
+                    session_ack_check.pack(
+                        fill=tk.X, padx=4, pady=1,
+                    )
+                    mcp_action_ack_widgets.append(
+                        session_ack_check,
+                    )
                 dry_run_check = tk.Checkbutton(
                     mcp_action_ack_frame,
                     text=(
@@ -19563,6 +19622,7 @@ def _desktop_mcp_action_guardrails_compute_approval_state(
     approval_mode: Optional[str],
     phase_10u_runtime_available: bool,
     operator_per_action_acknowledgement: bool,
+    operator_session_acknowledgement: bool,
     operator_supplied_identity: bool,
     policy_pack_permits_action: bool,
     audit_log_appendable: bool,
@@ -19571,6 +19631,27 @@ def _desktop_mcp_action_guardrails_compute_approval_state(
     """Return a per-requirement-id dict carrying `{satisfied,
     reason}` entries for every Phase 10U approval requirement.
     Pure computation; no IO.
+
+    The `operator_per_action_acknowledgement` requirement
+    BRANCHES on `spec["approval_policy"]` per the Phase 10U
+    fix cycle so the approval-policy enum models distinct
+    executable contract logic rather than only descriptive text:
+
+      - `per_action_explicit_approval`: satisfied iff the
+        operator has acknowledged the action THIS INVOCATION
+        (the per-action acknowledgement input). The session-
+        scoped acknowledgement does NOT cover per-action policies.
+      - `per_session_explicit_approval`: satisfied iff the
+        operator has acknowledged the action AS SESSION-SCOPED
+        (the session acknowledgement input). The per-action
+        acknowledgement does NOT cover per-session policies; the
+        two surfaces are intentionally non-overlapping so a
+        future runtime slice cannot accidentally treat a stale
+        per-action acknowledgement as a session-wide approval.
+      - `refused_until_policy_update`: NEVER satisfied at the
+        policy level. The action is refused regardless of
+        operator input until a future policy-update slice
+        introduces a different policy mode.
     """
     mode_supported = (
         isinstance(approval_mode, str)
@@ -19578,21 +19659,63 @@ def _desktop_mcp_action_guardrails_compute_approval_state(
             MCP_ACTION_PERMITTED_APPROVAL_MODES
         )
     )
+    policy = spec["approval_policy"]
+    if policy == "per_action_explicit_approval":
+        ack_satisfied = bool(operator_per_action_acknowledgement)
+        ack_reason_yes = (
+            "operator has explicitly acknowledged this "
+            "specific action this invocation (per-action "
+            "policy; the session-scoped acknowledgement does "
+            "NOT cover this policy)"
+        )
+        ack_reason_no = (
+            "per-action acknowledgement not yet supplied; per "
+            "the Phase 10U `per_action_explicit_approval` "
+            "policy acknowledgement MUST be supplied per "
+            "invocation via `--acknowledge-action <ID>` and "
+            "MUST NOT be carried over from a prior invocation, "
+            "a session-scoped acknowledgement, a prior session, "
+            "or a saved preference"
+        )
+    elif policy == "per_session_explicit_approval":
+        ack_satisfied = bool(operator_session_acknowledgement)
+        ack_reason_yes = (
+            "operator has explicitly acknowledged this "
+            "action as session-scoped (per-session policy; the "
+            "per-action acknowledgement does NOT cover this "
+            "policy)"
+        )
+        ack_reason_no = (
+            "session-scoped acknowledgement not yet supplied; "
+            "per the Phase 10U `per_session_explicit_approval` "
+            "policy acknowledgement MUST be supplied via "
+            "`--session-acknowledge-action <ID>` and MUST NOT "
+            "be substituted by a per-invocation acknowledgement "
+            "or carried across sessions"
+        )
+    else:
+        # refused_until_policy_update or any policy mode that
+        # explicitly refuses dispatch at the policy level
+        # itself, distinct from runtime-side or operator-side
+        # gating. The contract is: this policy is NEVER
+        # satisfiable until a future policy-update slice
+        # re-classifies the action.
+        ack_satisfied = False
+        ack_reason_yes = (
+            "(unreachable) `refused_until_policy_update` policy "
+            "is NEVER satisfiable in this slice"
+        )
+        ack_reason_no = (
+            "approval_policy=`refused_until_policy_update` "
+            "refuses fail-closed at the policy level; this "
+            "action MUST stay refused until a future "
+            "policy-update slice re-classifies it"
+        )
     return {
         "operator_per_action_acknowledgement": {
-            "satisfied": bool(operator_per_action_acknowledgement),
+            "satisfied": ack_satisfied,
             "reason": (
-                "operator has explicitly acknowledged this "
-                "specific action this invocation"
-                if operator_per_action_acknowledgement
-                else (
-                    "per-action acknowledgement not yet "
-                    "supplied; per the Phase 10U per-action "
-                    "approval policy acknowledgement MUST be a "
-                    "per-action operator action and MUST NOT be "
-                    "carried over from a prior action, prior "
-                    "session, or saved preference"
-                )
+                ack_reason_yes if ack_satisfied else ack_reason_no
             ),
         },
         "operator_supplied_identity": {
@@ -19811,6 +19934,7 @@ def _desktop_mcp_action_guardrails_action_descriptor(
     approval_mode: Optional[str],
     phase_10u_runtime_available: bool,
     operator_per_action_acknowledgement: bool,
+    operator_session_acknowledgement: bool,
     operator_supplied_identity: bool,
     policy_pack_permits_action: bool,
     audit_log_appendable: bool,
@@ -19828,6 +19952,9 @@ def _desktop_mcp_action_guardrails_action_descriptor(
             ),
             operator_per_action_acknowledgement=(
                 operator_per_action_acknowledgement
+            ),
+            operator_session_acknowledgement=(
+                operator_session_acknowledgement
             ),
             operator_supplied_identity=(
                 operator_supplied_identity
@@ -19898,10 +20025,24 @@ def _desktop_mcp_action_guardrails_normalize_operator_inputs(
         current session; empty when not yet supplied. Per Phase
         10S MUST NOT be auto-filled from any persistent source.
       - `acknowledged_action_ids` (frozenset[str]): action ids
-        the operator has explicitly acknowledged this invocation.
+        the operator has explicitly acknowledged for THIS
+        invocation. Only satisfies actions whose
+        `approval_policy == "per_action_explicit_approval"`.
         Per Phase 10U acknowledgement MUST be a per-action
         operator action and MUST NOT be pre-acknowledged from any
         prior session.
+      - `session_acknowledged_action_ids` (frozenset[str]):
+        action ids the operator has explicitly acknowledged as
+        SESSION-SCOPED. Only satisfies actions whose
+        `approval_policy == "per_session_explicit_approval"`.
+        The Phase 10U fix cycle splits acknowledgement into two
+        non-overlapping surfaces so the approval-policy enum
+        models distinct executable contract logic: a per-action
+        acknowledgement MUST NOT silently satisfy a per-session
+        policy, and a session-scoped acknowledgement MUST NOT
+        silently satisfy a per-action policy. Both sets are
+        per-session in-memory state and NEVER carried across
+        sessions.
       - `dry_run_reviewed_action_ids` (frozenset[str]): action
         ids whose dry-run payload the operator has explicitly
         reviewed this invocation. NEVER carried across sessions.
@@ -19919,6 +20060,7 @@ def _desktop_mcp_action_guardrails_normalize_operator_inputs(
         return {
             "identity": "",
             "acknowledged_action_ids": frozenset(),
+            "session_acknowledged_action_ids": frozenset(),
             "dry_run_reviewed_action_ids": frozenset(),
             "policy_permitted_action_ids": frozenset(),
         }
@@ -19959,6 +20101,9 @@ def _desktop_mcp_action_guardrails_normalize_operator_inputs(
         "identity": identity.strip(),
         "acknowledged_action_ids": _to_set(
             "acknowledged_action_ids",
+        ),
+        "session_acknowledged_action_ids": _to_set(
+            "session_acknowledged_action_ids",
         ),
         "dry_run_reviewed_action_ids": _to_set(
             "dry_run_reviewed_action_ids",
@@ -20032,6 +20177,7 @@ def build_desktop_mcp_action_guardrails_view(
     )
     identity_supplied = bool(inputs["identity"])
     ack_set = inputs["acknowledged_action_ids"]
+    session_ack_set = inputs["session_acknowledged_action_ids"]
     dry_run_set = inputs["dry_run_reviewed_action_ids"]
     policy_set = inputs["policy_permitted_action_ids"]
     actions = []
@@ -20048,6 +20194,9 @@ def build_desktop_mcp_action_guardrails_view(
                 phase_10u_runtime_available=False,
                 operator_per_action_acknowledgement=(
                     action_id in ack_set
+                ),
+                operator_session_acknowledgement=(
+                    action_id in session_ack_set
                 ),
                 operator_supplied_identity=identity_supplied,
                 policy_pack_permits_action=(
@@ -20076,6 +20225,9 @@ def build_desktop_mcp_action_guardrails_view(
         "operator_inputs": {
             "identity": inputs["identity"],
             "acknowledged_action_ids": sorted(ack_set),
+            "session_acknowledged_action_ids": sorted(
+                session_ack_set,
+            ),
             "dry_run_reviewed_action_ids": sorted(dry_run_set),
             "policy_permitted_action_ids": sorted(policy_set),
         },
@@ -20178,10 +20330,19 @@ def render_desktop_mcp_action_guardrails_text(view: dict) -> list:
     )
     lines.append(
         f"  [mcp-approval] operator_inputs."
-        f"acknowledged_action_ids (per-action operator-clicked "
-        f"acknowledgement; NEVER carried across actions or "
-        f"sessions): "
+        f"acknowledged_action_ids (per-invocation operator-"
+        f"clicked acknowledgement; only satisfies "
+        f"`per_action_explicit_approval` policies; NEVER "
+        f"carried across actions or sessions): "
         f"{op_inputs.get('acknowledged_action_ids', [])!r}"
+    )
+    lines.append(
+        f"  [mcp-approval] operator_inputs."
+        f"session_acknowledged_action_ids (session-scoped "
+        f"operator-clicked acknowledgement; only satisfies "
+        f"`per_session_explicit_approval` policies; NEVER "
+        f"carried across sessions): "
+        f"{op_inputs.get('session_acknowledged_action_ids', [])!r}"
     )
     lines.append(
         f"  [mcp-approval] operator_inputs."
@@ -20343,8 +20504,17 @@ def cmd_view_desktop_mcp_action_guardrails(
 
     Optional per-invocation operator-input flags:
       - `--operator-identity <NAME>`: per-session identity.
-      - `--acknowledge-action <ID>` (repeatable): per-action
-        acknowledgement.
+      - `--acknowledge-action <ID>` (repeatable): per-invocation
+        acknowledgement. Only satisfies
+        `per_action_explicit_approval` policy actions.
+      - `--session-acknowledge-action <ID>` (repeatable):
+        session-scoped acknowledgement. Only satisfies
+        `per_session_explicit_approval` policy actions. The
+        Phase 10U fix cycle introduced this distinct surface so
+        the approval-policy enum models executable contract
+        logic; a per-invocation acknowledgement MUST NOT
+        silently satisfy a per-session policy action and vice
+        versa.
       - `--dry-run-reviewed-action <ID>` (repeatable): per-action
         dry-run-review confirmation.
       - `--policy-permit-action <ID>` (repeatable): per-action
@@ -20387,6 +20557,10 @@ def cmd_view_desktop_mcp_action_guardrails(
         ),
         "acknowledged_action_ids": frozenset(
             getattr(args, "acknowledge_action", None) or []
+        ),
+        "session_acknowledged_action_ids": frozenset(
+            getattr(args, "session_acknowledge_action", None)
+            or []
         ),
         "dry_run_reviewed_action_ids": frozenset(
             getattr(args, "dry_run_reviewed_action", None) or []
@@ -26844,14 +27018,35 @@ def build_parser() -> argparse.ArgumentParser:
         action="append",
         default=None,
         help=(
-            "OPTIONAL repeatable per-action safety-copy "
-            "acknowledgement (e.g. `--acknowledge-action "
-            "github_post_pr_comment`). Acknowledgement is "
-            "per-action and per-session per the Phase 10U "
-            "contract; the surface NEVER pre-acknowledges "
-            "based on a prior action, prior session, or any "
+            "OPTIONAL repeatable per-INVOCATION acknowledgement "
+            "(e.g. `--acknowledge-action "
+            "github_post_pr_comment`). Only satisfies actions "
+            "whose `approval_policy == "
+            "\"per_action_explicit_approval\"` per the Phase "
+            "10U executable approval-policy contract; the "
+            "session-scoped acknowledgement does NOT cover this "
+            "policy. Acknowledgement is per-invocation and per-"
+            "session; the surface NEVER pre-acknowledges based "
+            "on a prior action, prior session, or any "
             "persistent operator-side state. Repeat the flag "
             "once per action id."
+        ),
+    )
+    mcp_action_guardrails.add_argument(
+        "--session-acknowledge-action",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable SESSION-SCOPED acknowledgement "
+            "(e.g. `--session-acknowledge-action "
+            "github_trigger_workflow`). Only satisfies actions "
+            "whose `approval_policy == "
+            "\"per_session_explicit_approval\"` per the Phase "
+            "10U executable approval-policy contract; the "
+            "per-invocation acknowledgement does NOT cover "
+            "this policy. Acknowledgement persists across "
+            "actions within a session but NEVER carries across "
+            "sessions. Repeat the flag once per action id."
         ),
     )
     mcp_action_guardrails.add_argument(
