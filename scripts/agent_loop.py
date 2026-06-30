@@ -14352,6 +14352,28 @@ def _desktop_clamp_cadence(
     return value
 
 
+def _desktop_replace_text_preserving_view(
+    text_widget,
+    lines: Sequence[str],
+) -> None:
+    """Refresh a desktop ScrolledText body without forcing the
+    operator back to the top on every poll.
+
+    The Phase 10M shell re-renders on each cadence tick. Preserve
+    the current y-scroll fraction and skip the body rewrite when
+    the rendered content is unchanged so the window stops looking
+    like it is constantly reloading.
+    """
+    rendered = "".join(f"{line}\n" for line in lines)
+    current = text_widget.get("1.0", "end")
+    view = text_widget.yview()
+    if current != rendered:
+        text_widget.delete("1.0", "end")
+        text_widget.insert("1.0", rendered)
+    if view:
+        text_widget.yview_moveto(view[0])
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -14387,13 +14409,48 @@ def _launch_desktop_app_window(
     from tkinter import scrolledtext
     root = tk.Tk()
     root.title(_DESKTOP_APP_WINDOW_TITLE)
+    root.geometry("1440x900")
+    root.minsize(960, 640)
+    shell_frame = tk.Frame(root)
+    shell_frame.pack(fill=tk.BOTH, expand=True)
     text = scrolledtext.ScrolledText(
-        root, width=120, height=40, wrap=tk.WORD,
+        shell_frame, width=120, height=40, wrap=tk.WORD,
     )
     text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
-    control_frame = tk.Frame(root)
-    control_frame.pack(side=tk.RIGHT, fill=tk.Y)
+    control_outer = tk.Frame(shell_frame, width=380)
+    control_outer.pack(side=tk.RIGHT, fill=tk.BOTH)
+    control_outer.pack_propagate(False)
+    control_canvas = tk.Canvas(
+        control_outer, highlightthickness=0, width=380,
+    )
+    control_scrollbar = tk.Scrollbar(
+        control_outer,
+        orient=tk.VERTICAL,
+        command=control_canvas.yview,
+    )
+    control_canvas.configure(
+        yscrollcommand=control_scrollbar.set,
+    )
+    control_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    control_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    control_frame = tk.Frame(control_canvas)
+    control_window = control_canvas.create_window(
+        (0, 0), window=control_frame, anchor="nw",
+    )
+
+    def _sync_control_scroll_region(_event=None) -> None:
+        control_canvas.configure(
+            scrollregion=control_canvas.bbox("all"),
+        )
+
+    def _sync_control_width(event) -> None:
+        control_canvas.itemconfigure(
+            control_window, width=event.width,
+        )
+
+    control_frame.bind("<Configure>", _sync_control_scroll_region)
+    control_canvas.bind("<Configure>", _sync_control_width)
     run_profiles_frame = tk.Frame(control_frame)
     run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
     tk.Label(
@@ -14534,9 +14591,10 @@ def _launch_desktop_app_window(
 
     def _refresh() -> None:
         view = assemble_desktop_app_view(controller_root)
-        text.delete("1.0", tk.END)
-        for line in render_desktop_app_text(view):
-            text.insert(tk.END, line + "\n")
+        _desktop_replace_text_preserving_view(
+            text,
+            render_desktop_app_text(view),
+        )
         run_profiles_sub_view = view.get("run_profiles_view") or {}
         if (
             isinstance(run_profiles_sub_view, dict)
@@ -14870,6 +14928,7 @@ def _launch_desktop_app_window(
             rag_source_selection_controls,
             rag_source_selection_button_widgets,
         )
+        _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
 
     _refresh()

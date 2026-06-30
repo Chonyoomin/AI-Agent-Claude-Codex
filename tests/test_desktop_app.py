@@ -238,6 +238,77 @@ class DesktopClampCadenceTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# _desktop_replace_text_preserving_view
+# ---------------------------------------------------------------------------
+class DesktopReplaceTextPreservingViewTests(unittest.TestCase):
+
+    class _FakeTextWidget:
+        def __init__(
+            self,
+            *,
+            content: str = "",
+            yview: tuple = (0.0, 1.0),
+        ) -> None:
+            self.content = content
+            self._yview = yview
+            self.delete_calls = 0
+            self.insert_calls = 0
+            self.moveto_calls: list[float] = []
+
+        def get(self, _start: str, _end: str) -> str:
+            return self.content
+
+        def yview(self) -> tuple:
+            return self._yview
+
+        def delete(self, _start: str, _end: str) -> None:
+            self.delete_calls += 1
+            self.content = ""
+
+        def insert(self, _start: str, value: str) -> None:
+            self.insert_calls += 1
+            self.content = value
+
+        def yview_moveto(self, fraction: float) -> None:
+            self.moveto_calls.append(fraction)
+            self._yview = (fraction, fraction)
+
+    def test_rewrites_content_and_restores_scroll_fraction(
+        self,
+    ) -> None:
+        widget = self._FakeTextWidget(
+            content="old\n",
+            yview=(0.42, 0.88),
+        )
+        agent_loop._desktop_replace_text_preserving_view(
+            widget,
+            ["new line 1", "new line 2"],
+        )
+        self.assertEqual(
+            widget.content,
+            "new line 1\nnew line 2\n",
+        )
+        self.assertEqual(widget.delete_calls, 1)
+        self.assertEqual(widget.insert_calls, 1)
+        self.assertEqual(widget.moveto_calls, [0.42])
+
+    def test_skips_rewrite_when_rendered_text_unchanged(
+        self,
+    ) -> None:
+        widget = self._FakeTextWidget(
+            content="same\nbody\n",
+            yview=(0.25, 0.9),
+        )
+        agent_loop._desktop_replace_text_preserving_view(
+            widget,
+            ["same", "body"],
+        )
+        self.assertEqual(widget.delete_calls, 0)
+        self.assertEqual(widget.insert_calls, 0)
+        self.assertEqual(widget.moveto_calls, [0.25])
+
+
+# ---------------------------------------------------------------------------
 # assemble_desktop_app_view
 # ---------------------------------------------------------------------------
 class AssembleDesktopAppViewTests(unittest.TestCase):
