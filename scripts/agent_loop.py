@@ -14097,6 +14097,18 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         this slice; ZERO new library-callable controls are
         introduced and the Phase 10I three-control cap is
         preserved exactly)
+      - `rag_source_selection_view`: the Phase 10V view dict
+        returned by
+        `build_desktop_rag_source_selection_view(controller_root)`,
+        OR a soft-error envelope (added Phase 10V so the
+        shipped desktop app exposes the bounded RAG source
+        selection contract alongside the other sub-views; per
+        the Phase 10V fail-closed default EVERY source surfaces
+        as `refused_until_policy_update` since
+        `phase_10v_runtime_available` is hard-coded `False` in
+        this slice; ZERO new library-callable controls are
+        introduced and the Phase 10I three-control cap is
+        preserved exactly)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14128,6 +14140,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     mcp_action_guardrails_view = _desktop_safe_call_view(
         build_desktop_mcp_action_guardrails_view, controller_root,
     )
+    rag_source_selection_view = _desktop_safe_call_view(
+        build_desktop_rag_source_selection_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14141,6 +14156,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "project_start_view": project_start_view,
         "mcp_assistance_view": mcp_assistance_view,
         "mcp_action_guardrails_view": mcp_action_guardrails_view,
+        "rag_source_selection_view": rag_source_selection_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14220,6 +14236,17 @@ def _desktop_render_sub_view_lines(
             render_desktop_mcp_action_guardrails_text(sub_view),
         )
         return lines
+    if key == "rag_source_selection_view":
+        # Re-use the shipped Phase 10V renderer verbatim so the
+        # RAG source selection attribution tags ([rag-source] /
+        # [rag-provenance] / [rag-freshness] / [rag-advisory] /
+        # [rag-approval] / [rag-enablement] / [refused] /
+        # [deferred-runtime]) stay consistent with the
+        # standalone `view-desktop-rag-source-selection` output.
+        lines.extend(
+            render_desktop_rag_source_selection_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14288,6 +14315,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "mcp_action_guardrails_view",
             "MCP Action Guardrails (Phase 10U)",
+        ),
+        (
+            "rag_source_selection_view",
+            "RAG Source Selection (Phase 10V)",
         ),
     ):
         sub = view.get(key, {})
@@ -14391,6 +14422,13 @@ def _launch_desktop_app_window(
         text="MCP Action Guardrails (Phase 10U)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    rag_source_selection_frame = tk.Frame(control_frame)
+    rag_source_selection_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        rag_source_selection_frame,
+        text="RAG Source Selection (Phase 10V)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     # Phase 10T fix cycle: per-session operator-input widgets so
     # the shipped Tk surface actually exposes a selectable read-
     # only MCP assistance path. State is held in-memory ONLY
@@ -14437,6 +14475,15 @@ def _launch_desktop_app_window(
     mcp_action_dry_run_vars: dict = {}
     mcp_action_policy_vars: dict = {}
     mcp_action_ack_widgets: list = []
+    # Phase 10V per-session per-source advisory-labeling
+    # acknowledgement bag. Per-session BooleanVar only; closing
+    # the window discards every value. Operator identity is
+    # reused from the Phase 10T `mcp_identity_var` so a session
+    # only types it once.
+    rag_source_ack_frame = tk.Frame(rag_source_selection_frame)
+    rag_source_ack_frame.pack(side=tk.TOP, fill=tk.X)
+    rag_source_ack_vars: dict = {}
+    rag_source_ack_widgets: list = []
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14460,6 +14507,7 @@ def _launch_desktop_app_window(
     project_start_button_widgets: list = []
     mcp_assistance_button_widgets: list = []
     mcp_action_guardrails_button_widgets: list = []
+    rag_source_selection_button_widgets: list = []
 
     def _rebuild_button_row(
         parent: "tk.Frame",
@@ -14758,6 +14806,69 @@ def _launch_desktop_app_window(
             mcp_action_guardrails_frame,
             mcp_action_guardrails_controls,
             mcp_action_guardrails_button_widgets,
+        )
+        # Phase 10V live operator-input re-derivation. The
+        # ScrolledText panel above shows the assemble_desktop_app
+        # _view default empty-input snapshot; the Tk action
+        # surface below is the authoritative operator-input
+        # plane. Operator identity is reused from the Phase 10T
+        # StringVar so a session only types it once.
+        rag_source_ack_set = frozenset(
+            sid for sid, var in rag_source_ack_vars.items()
+            if var.get()
+        )
+        live_rag_operator_inputs = {
+            "identity": mcp_identity_var.get().strip(),
+            "acknowledged_source_ids": rag_source_ack_set,
+        }
+        live_rag_source_selection_view = _desktop_safe_call_view(
+            lambda root_arg: (
+                build_desktop_rag_source_selection_view(
+                    root_arg,
+                    operator_inputs=live_rag_operator_inputs,
+                )
+            ),
+            controller_root,
+        )
+        for widget in rag_source_ack_widgets:
+            widget.destroy()
+        rag_source_ack_widgets.clear()
+        if (
+            isinstance(live_rag_source_selection_view, dict)
+            and "sources" in live_rag_source_selection_view
+        ):
+            for source in (
+                live_rag_source_selection_view["sources"]
+            ):
+                source_id = source["id"]
+                if source_id not in rag_source_ack_vars:
+                    rag_source_ack_vars[source_id] = (
+                        tk.BooleanVar(value=False)
+                    )
+                ack_check = tk.Checkbutton(
+                    rag_source_ack_frame,
+                    text=(
+                        f"Acknowledge advisory-labeling: "
+                        f"{source['display_name']}"
+                    ),
+                    wraplength=240,
+                    justify=tk.LEFT,
+                    anchor=tk.W,
+                    variable=rag_source_ack_vars[source_id],
+                )
+                ack_check.pack(fill=tk.X, padx=4, pady=1)
+                rag_source_ack_widgets.append(ack_check)
+            rag_source_selection_controls = (
+                build_desktop_rag_source_selection_controls(
+                    live_rag_source_selection_view,
+                )
+            )
+        else:
+            rag_source_selection_controls = []
+        _rebuild_button_row(
+            rag_source_selection_frame,
+            rag_source_selection_controls,
+            rag_source_selection_button_widgets,
         )
         root.after(int(cadence_seconds * 1000), _refresh)
 
@@ -20573,6 +20684,1386 @@ def cmd_view_desktop_mcp_action_guardrails(
         controller_root, operator_inputs=operator_inputs,
     )
     for line in render_desktop_mcp_action_guardrails_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10V: RAG Source Selection Contract And Desktop UX.
+#
+# Surfaces a closed in-process registry of repo-local RAG source
+# descriptors (docs / PRDs / notes / standards / evidence) per the
+# `docs/rag-source-selection-contract.md` contract: per-source
+# provenance, freshness derived from on-disk last-modified, and a
+# strict `[rag-advisory]` labeling rule so any retrieved content
+# is clearly NEVER canonical project state. THIS SLICE SHIPS THE
+# CONTRACT AND THE SELECTION UX ONLY. No actual retrieval transport
+# ships: `phase_10v_runtime_available` is hard-coded `False` so
+# every source surfaces as `refused_until_policy_update` regardless
+# of operator input. A future runtime slice MAY flip the flag and
+# plug a bounded retrieval path into this same registry but MUST
+# preserve the Phase 10I three-control library-callable cap.
+#
+# The surface NEVER spawns a subprocess, NEVER opens a network
+# socket, NEVER reads file CONTENT (only stat / mtime / size),
+# NEVER builds an embeddings index, NEVER persists a retrieval
+# cache, NEVER subscribes to a background watcher, NEVER mutates
+# any canonical artifact, NEVER appends to
+# `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER auto-fills any operator-identity
+# field, NEVER widens the Phase 10I library-callable cap, NEVER
+# introduces a RAG-side database / preference store / recents
+# list / identity token / session token, and NEVER actually
+# retrieves any source content.
+# ---------------------------------------------------------------------------
+
+DESKTOP_RAG_SOURCE_SELECTION_SIGNAL_VERSION = "phase-10v-v1"
+
+DESKTOP_RAG_SOURCE_SELECTION_PRECEDENCE_NOTE = (
+    "Phase 10V RAG source selection contract and desktop UX "
+    "surface. The shipped Phase 10O MCP integration contract, "
+    "Phase 10S MCP server selection UX contract, Phase 10T MCP "
+    "read-only assistance surface, and Phase 10U MCP action "
+    "guardrails surface govern this surface's "
+    "advisory-vs-canonical mirror rule verbatim: any value the "
+    "selection UX surfaces is `[rag-advisory]` ONLY and NEVER "
+    "substitutes for the canonical Phase 2A evidence files / "
+    "git diff / Claude summary / Codex review / loop-state.json "
+    "/ memory entries. The Phase 10I three-control library-"
+    "callable cap is preserved exactly; ZERO new library-"
+    "callable controls are introduced. Every RAG source "
+    "descriptor is validated against the closed Phase 10V "
+    "descriptor shape and refused fail-closed on any missing "
+    "required field, wrong-typed value, unknown `source_type`, "
+    "unknown `provenance`, unknown `advisory_label_rule`, "
+    "unknown `approval_requirements` member, or unknown "
+    "enablement-step type. `phase_10v_runtime_available` is "
+    "hard-coded `False` in this slice so EVERY source surfaces "
+    "as `refused_until_policy_update` regardless of operator "
+    "input. The surface NEVER spawns a subprocess, NEVER opens "
+    "a network socket, NEVER reads source CONTENT (only "
+    "stat / mtime / size), NEVER builds an embeddings index, "
+    "NEVER persists a retrieval cache, NEVER subscribes to a "
+    "background watcher, NEVER mutates any canonical artifact "
+    "(loop-state.json / orchestrator.log / external-target.json "
+    "/ runtime-config.json / TASK.md / proposed-phase.md / "
+    "claude-prompt.md / claude-summary.md / codex-review.md / "
+    "fix-prompt.md / current-task.md / current-phase.md / "
+    "phase-plan.md / prd-intake.json / final-acceptance.json / "
+    "any Phase 2A evidence file / any Phase 6 memory entry), "
+    "NEVER appends to `.agent-loop/orchestrator.log`, NEVER "
+    "advances loop-state, NEVER invokes `_halt(...)`, NEVER "
+    "auto-fills any --*-by operator-identity argument or "
+    "approval-mode value, NEVER introduces a RAG-side database "
+    "/ preference store / recents list / identity token / "
+    "session token, and NEVER widens the Phase 10I cap"
+)
+
+RAG_SOURCE_TYPES = (
+    "repo_local_docs",
+    "repo_local_prds",
+    "repo_local_notes",
+    "repo_local_standards",
+    "repo_local_evidence",
+)
+
+RAG_PROVENANCE_CATEGORIES = (
+    "checked_in_documentation",
+    "checked_in_planning_artifact",
+    "checked_in_standard",
+    "operator_supplied_notes",
+    "transient_evidence",
+)
+
+RAG_FRESHNESS_STATES = (
+    "fresh",
+    "stale",
+    "missing",
+    "unknown",
+)
+
+RAG_ADVISORY_LABELING_RULES = (
+    # The retrieved value is `[rag-advisory]` only and NEVER
+    # substitutes for canonical artifact content. This is the
+    # default rule for shipped descriptors.
+    "advisory_only_no_canonical_substitution",
+    # Same as above but the future runtime slice MUST surface
+    # the source's path + last_modified UTC alongside any
+    # retrieved value so a reviewer can verify provenance.
+    "advisory_with_provenance_required",
+    # The source is refused fail-closed at the labeling-rule
+    # level: a future runtime slice MUST NOT surface its
+    # content as advisory until the rule is re-classified.
+    "refused_until_policy_update",
+)
+
+RAG_SOURCE_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_until_policy_update",
+)
+
+RAG_SOURCE_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_advisory_labeling",
+    "operator_supplied_identity",
+    "approval_mode_supports_selection",
+    "phase_10v_runtime_available",
+    "source_path_present_in_repo",
+)
+
+# Mirrors the Phase 10T / 10U permitted-mode set so the
+# selection boundary stays consistent.
+RAG_SOURCE_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+# Bounded freshness threshold. A source whose on-disk
+# last-modified mtime is older than this many seconds (relative
+# to the per-poll `time.time()`) surfaces as `stale`; a more
+# recent mtime surfaces as `fresh`. Set to 30 days; a future
+# runtime slice MAY refine the threshold per-source-type without
+# widening the closed enum.
+RAG_SOURCE_FRESHNESS_STALE_THRESHOLD_SECONDS = 30 * 24 * 3600
+
+_RAG_SOURCE_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "source_type",
+    "provenance",
+    "advisory_label_rule",
+    "path_canonical_rel",
+    "description",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+_RAG_SOURCE_DESCRIPTOR_REQUIRED_LIST_FIELDS = (
+    "approval_requirements",
+    "selection_steps",
+)
+
+_DESKTOP_RAG_SOURCE_SELECTION_REGISTRY: tuple = (
+    {
+        "id": "repo_local_standards_agents_md",
+        "display_name": "AGENTS.md (checked-in standards)",
+        "source_type": "repo_local_standards",
+        "provenance": "checked_in_standard",
+        "advisory_label_rule": (
+            "advisory_with_provenance_required"
+        ),
+        "path_canonical_rel": "AGENTS.md",
+        "description": (
+            "The repository's canonical AGENTS.md. Retrieval "
+            "MUST surface the source path and last_modified UTC "
+            "alongside any excerpt; the excerpt is `[rag-"
+            "advisory]` ONLY and NEVER substitutes for the "
+            "canonical AGENTS.md content read directly."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10v_runtime_available",
+            "source_path_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10V surfaces this source as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual retrieval "
+            "transport is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`. The Phase "
+            "10V desktop surface NEVER reads source CONTENT, "
+            "NEVER spawns a subprocess, NEVER opens a network "
+            "socket."
+        ),
+        "refusal_reason_template": (
+            "`repo_local_standards_agents_md` selection "
+            "refused: one or more Phase 10V approval "
+            "requirements are not satisfied (see per-"
+            "requirement state above)."
+        ),
+        "selection_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-source advisory-"
+                    "labeling rule explicitly (per-session "
+                    "operator action; NEVER pre-acknowledged "
+                    "from any prior session or saved "
+                    "preference)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly (NEVER auto-filled from "
+                    "$USER, whoami, packaging-time identity, "
+                    "or any persistent RAG-side identity "
+                    "store)"
+                ),
+            },
+        ),
+    },
+    {
+        "id": "repo_local_docs_readme",
+        "display_name": "README.md (checked-in documentation)",
+        "source_type": "repo_local_docs",
+        "provenance": "checked_in_documentation",
+        "advisory_label_rule": (
+            "advisory_only_no_canonical_substitution"
+        ),
+        "path_canonical_rel": "README.md",
+        "description": (
+            "The repository's public README.md. Retrieval "
+            "surfaces excerpts as `[rag-advisory]` only; the "
+            "advisory excerpt NEVER substitutes for reading "
+            "README.md directly."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10v_runtime_available",
+            "source_path_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10V surfaces this source as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the in-process "
+            "retrieval transport is implemented in a later "
+            "Phase 10 runtime slice tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`repo_local_docs_readme` selection refused: one "
+            "or more Phase 10V approval requirements are not "
+            "satisfied (see per-requirement state above)."
+        ),
+        "selection_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-source advisory-"
+                    "labeling rule explicitly"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly"
+                ),
+            },
+        ),
+    },
+    {
+        "id": "repo_local_prds_task_md",
+        "display_name": "TASK.md (checked-in planning artifact)",
+        "source_type": "repo_local_prds",
+        "provenance": "checked_in_planning_artifact",
+        "advisory_label_rule": (
+            "advisory_with_provenance_required"
+        ),
+        "path_canonical_rel": "TASK.md",
+        "description": (
+            "The Codex-owned TASK.md planning artifact. "
+            "Retrieval MUST surface the source path and "
+            "last_modified UTC alongside any excerpt; the "
+            "excerpt is `[rag-advisory]` ONLY and NEVER "
+            "substitutes for the canonical TASK.md content or "
+            "the planner write surface."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10v_runtime_available",
+            "source_path_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10V surfaces this source as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual retrieval "
+            "transport is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`repo_local_prds_task_md` selection refused: one "
+            "or more Phase 10V approval requirements are not "
+            "satisfied (see per-requirement state above)."
+        ),
+        "selection_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-source advisory-"
+                    "labeling rule explicitly (this includes "
+                    "the explicit understanding that retrieved "
+                    "TASK.md excerpts NEVER substitute for the "
+                    "Codex-owned planner write surface)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly"
+                ),
+            },
+        ),
+    },
+    {
+        "id": "repo_local_notes_codex_review",
+        "display_name": (
+            "Codex Review Notes "
+            "(.agent-loop/codex-review.md)"
+        ),
+        "source_type": "repo_local_notes",
+        "provenance": "operator_supplied_notes",
+        "advisory_label_rule": (
+            "advisory_with_provenance_required"
+        ),
+        "path_canonical_rel": (
+            ".agent-loop/codex-review.md"
+        ),
+        "description": (
+            "The most recent Codex review note. Retrieval MUST "
+            "surface the source path and last_modified UTC "
+            "alongside any excerpt; the excerpt is `[rag-"
+            "advisory]` ONLY and NEVER substitutes for the "
+            "Codex-owned codex-review.md verdict."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10v_runtime_available",
+            "source_path_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10V surfaces this source as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual retrieval "
+            "transport is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`repo_local_notes_codex_review` selection "
+            "refused: one or more Phase 10V approval "
+            "requirements are not satisfied (see per-"
+            "requirement state above)."
+        ),
+        "selection_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-source advisory-"
+                    "labeling rule explicitly (retrieved "
+                    "Codex-review excerpts NEVER substitute "
+                    "for the canonical Codex-owned verdict)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly"
+                ),
+            },
+        ),
+    },
+    {
+        "id": "repo_local_evidence_git_diff",
+        "display_name": (
+            "Git Diff Evidence "
+            "(.agent-loop/git-diff.patch)"
+        ),
+        "source_type": "repo_local_evidence",
+        "provenance": "transient_evidence",
+        "advisory_label_rule": (
+            "advisory_with_provenance_required"
+        ),
+        "path_canonical_rel": (
+            ".agent-loop/git-diff.patch"
+        ),
+        "description": (
+            "The most recent Phase 2A git diff evidence "
+            "snapshot. Retrieval MUST surface the source path "
+            "and last_modified UTC alongside any excerpt; the "
+            "excerpt is `[rag-advisory]` ONLY and NEVER "
+            "substitutes for the Phase 2A evidence-review "
+            "ownership boundary."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10v_runtime_available",
+            "source_path_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10V surfaces this source as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual retrieval "
+            "transport is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`repo_local_evidence_git_diff` selection "
+            "refused: one or more Phase 10V approval "
+            "requirements are not satisfied (see per-"
+            "requirement state above)."
+        ),
+        "selection_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "acknowledge the per-source advisory-"
+                    "labeling rule explicitly (retrieved "
+                    "git-diff excerpts NEVER substitute for "
+                    "the Phase 2A evidence-review ownership "
+                    "boundary)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly"
+                ),
+            },
+        ),
+    },
+)
+
+
+def _desktop_rag_source_selection_validate_descriptor(
+    spec: dict,
+) -> None:
+    """Phase 10V source-descriptor validator: refuse fail-closed
+    on any missing required field, wrong-typed value, or unknown
+    closed-enumeration member. Pure validation; no IO, no
+    mutation, no `_halt(...)` invocation.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: source "
+                f"descriptor is not a dict "
+                f"({type(spec).__name__})"
+            ),
+        )
+    for field in _RAG_SOURCE_DESCRIPTOR_REQUIRED_STRING_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop RAG source selection refused: "
+                    f"source descriptor field {field!r} is "
+                    f"missing or non-string ({value!r})"
+                ),
+            )
+    for field in _RAG_SOURCE_DESCRIPTOR_REQUIRED_LIST_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, (list, tuple)) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop RAG source selection refused: "
+                    f"source descriptor field {field!r} is "
+                    f"missing or empty ({value!r})"
+                ),
+            )
+    if spec["source_type"] not in RAG_SOURCE_TYPES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: source "
+                f"descriptor source_type={spec['source_type']!r} "
+                f"is not in the closed Phase 10V enumeration "
+                f"{RAG_SOURCE_TYPES!r}"
+            ),
+        )
+    if spec["provenance"] not in RAG_PROVENANCE_CATEGORIES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: source "
+                f"descriptor provenance={spec['provenance']!r} "
+                f"is not in the closed Phase 10V enumeration "
+                f"{RAG_PROVENANCE_CATEGORIES!r}"
+            ),
+        )
+    if spec["advisory_label_rule"] not in (
+        RAG_ADVISORY_LABELING_RULES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: source "
+                f"descriptor advisory_label_rule="
+                f"{spec['advisory_label_rule']!r} is not in "
+                f"the closed Phase 10V enumeration "
+                f"{RAG_ADVISORY_LABELING_RULES!r}"
+            ),
+        )
+    for req in spec["approval_requirements"]:
+        if req not in RAG_SOURCE_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop RAG source selection refused: "
+                    f"approval_requirements member {req!r} is "
+                    f"not in the closed Phase 10V enumeration "
+                    f"{RAG_SOURCE_APPROVAL_REQUIREMENTS!r}"
+                ),
+            )
+    for step in spec["selection_steps"]:
+        if not isinstance(step, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop RAG source selection refused: "
+                    f"selection_step is not a dict ({step!r})"
+                ),
+            )
+        if step.get("type") not in (
+            DESKTOP_RUN_PROFILE_STEP_TYPES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop RAG source selection refused: "
+                    f"selection_step type "
+                    f"{step.get('type')!r} is not in the "
+                    f"closed set "
+                    f"{DESKTOP_RUN_PROFILE_STEP_TYPES!r}"
+                ),
+            )
+        if not isinstance(step.get("content"), str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop RAG source selection refused: "
+                    f"selection_step content is not a string "
+                    f"({step.get('content')!r})"
+                ),
+            )
+
+
+def _desktop_rag_source_selection_probe_freshness(
+    controller_root: Path,
+    spec: dict,
+    *,
+    now_ts: Optional[float] = None,
+) -> dict:
+    """Pure file-stat probe of a RAG source descriptor: returns
+    `{path_canonical, exists, last_modified_utc, last_modified_ts,
+    size_bytes, freshness_state}`. NEVER reads source CONTENT;
+    only `Path.stat()` is consulted. `freshness_state` is one of
+    `RAG_FRESHNESS_STATES`. Pure read-only IO; never raises.
+    """
+    if now_ts is None:
+        now_ts = time.time()
+    path = (
+        controller_root / spec["path_canonical_rel"]
+    ).resolve()
+    exists = False
+    mtime_ts: Optional[float] = None
+    size_bytes: Optional[int] = None
+    freshness_state = "missing"
+    try:
+        st = path.stat()
+        exists = True
+        mtime_ts = float(st.st_mtime)
+        size_bytes = int(st.st_size)
+        age_seconds = now_ts - mtime_ts
+        if age_seconds < 0:
+            freshness_state = "unknown"
+        elif age_seconds < (
+            RAG_SOURCE_FRESHNESS_STALE_THRESHOLD_SECONDS
+        ):
+            freshness_state = "fresh"
+        else:
+            freshness_state = "stale"
+    except FileNotFoundError:
+        freshness_state = "missing"
+    except OSError:
+        freshness_state = "unknown"
+    last_modified_utc: Optional[str] = None
+    if mtime_ts is not None:
+        last_modified_utc = (
+            datetime.fromtimestamp(mtime_ts, tz=timezone.utc)
+            .isoformat()
+        )
+    return {
+        "path_canonical": path.as_posix(),
+        "exists": exists,
+        "last_modified_utc": last_modified_utc,
+        "last_modified_ts": mtime_ts,
+        "size_bytes": size_bytes,
+        "freshness_state": freshness_state,
+    }
+
+
+def _desktop_rag_source_selection_compute_approval_state(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10v_runtime_available: bool,
+    operator_acknowledged_advisory_labeling: bool,
+    operator_supplied_identity: bool,
+    source_path_present_in_repo: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10V approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            RAG_SOURCE_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_acknowledged_advisory_labeling": {
+            "satisfied": bool(
+                operator_acknowledged_advisory_labeling
+            ),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-source advisory-labeling rule this "
+                "session"
+                if operator_acknowledged_advisory_labeling
+                else (
+                    "advisory-labeling rule not acknowledged "
+                    "this session; per the Phase 10V contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action and MUST NOT be pre-"
+                    "acknowledged from any prior session or "
+                    "saved preference"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10V contract identity MUST be "
+                    "operator-supplied and MUST NOT be auto-"
+                    "filled from `$USER`, `whoami`, a "
+                    "packaging-time-configured identity, or "
+                    "any persistent RAG-side identity store"
+                )
+            ),
+        },
+        "approval_mode_supports_selection": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(RAG_SOURCE_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(RAG_SOURCE_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10V contract selection "
+                    f"MUST refuse fail-closed in `strict` mode"
+                )
+            ),
+        },
+        "phase_10v_runtime_available": {
+            "satisfied": bool(phase_10v_runtime_available),
+            "reason": (
+                "Phase 10V retrieval runtime is shipped and "
+                "reachable"
+                if phase_10v_runtime_available
+                else (
+                    "Phase 10V ships the contract and the "
+                    "selection UX only; the actual retrieval "
+                    "runtime is deferred to a future Phase 10 "
+                    "runtime slice tracked in `ROADMAP.md`"
+                )
+            ),
+        },
+        "source_path_present_in_repo": {
+            "satisfied": bool(source_path_present_in_repo),
+            "reason": (
+                "source path exists on disk at the controller-"
+                "root-resolved canonical location"
+                if source_path_present_in_repo
+                else (
+                    "source path is not present at the "
+                    "controller-root-resolved canonical "
+                    "location; selection refused fail-closed "
+                    "until the source file exists"
+                )
+            ),
+        },
+    }
+
+
+def _desktop_rag_source_selection_compute_enablement_state(
+    spec: dict,
+    *,
+    approval_state: dict,
+) -> tuple:
+    """Phase 10V enablement-state computation. Returns
+    `(state_value, reason)` where `state_value` is one of
+    `RAG_SOURCE_ENABLEMENT_STATES`.
+
+    Default: `refused_until_policy_update`. Promotion to
+    `enabled_pending_runtime` requires every approval
+    requirement satisfied. Until the runtime ships every source
+    stays `refused_until_policy_update` regardless of operator
+    input (the closed `phase_10v_runtime_available` requirement
+    is hard-coded `False` in this slice). Sources whose
+    `advisory_label_rule == "refused_until_policy_update"` are
+    short-circuited at the labeling-rule level.
+    """
+    if spec["advisory_label_rule"] == (
+        "refused_until_policy_update"
+    ):
+        return (
+            "refused_until_policy_update",
+            (
+                "advisory_label_rule="
+                "`refused_until_policy_update` is refused "
+                "fail-closed by Phase 10V at the labeling-"
+                "rule level; selection deferred to a future "
+                "policy-update slice"
+            ),
+        )
+    runtime_side_reqs = {
+        "phase_10v_runtime_available",
+        "source_path_present_in_repo",
+    }
+    runtime_unmet = [
+        req for req in spec["approval_requirements"]
+        if req in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if runtime_unmet:
+        return (
+            "refused_until_policy_update",
+            (
+                f"Phase 10V runtime-side requirements are not "
+                f"satisfied: {runtime_unmet!r}; per the Phase "
+                f"10V fail-closed default selection is "
+                f"refused until the runtime slice ships AND "
+                f"the source path is present in the repo"
+            ),
+        )
+    operator_unmet = [
+        req for req in spec["approval_requirements"]
+        if req not in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if operator_unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"one or more Phase 10V operator-side approval "
+                f"requirements are not satisfied: "
+                f"{operator_unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10V approval requirement is "
+            "satisfied; the Phase 10V slice still ships the "
+            "contract only so a future Phase 10 runtime slice "
+            "MUST actually perform retrieval (tracked in "
+            "`ROADMAP.md`)"
+        ),
+    )
+
+
+def _desktop_rag_source_selection_steps_summary(
+    steps: tuple,
+) -> str:
+    """Return a one-line ` && `-joined step summary tagged with
+    `[cli]` / `[manual-edit]`. Intentionally NOT runnable as-is.
+    """
+    parts = []
+    for step in steps:
+        tag = (
+            "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        )
+        parts.append(f"{tag} {step['content']}")
+    return " && ".join(parts)
+
+
+def _desktop_rag_source_selection_clipboard_payload(
+    steps: tuple,
+) -> str:
+    """Return a multi-line `[cli]` / `[manual-edit]` tagged
+    clipboard payload, one step per line.
+    """
+    lines = []
+    for step in steps:
+        tag = (
+            "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        )
+        lines.append(f"{tag} {step['content']}")
+    return "\n".join(lines)
+
+
+def _desktop_rag_source_selection_source_descriptor(
+    spec: dict,
+    *,
+    freshness_probe: dict,
+    approval_mode: Optional[str],
+    phase_10v_runtime_available: bool,
+    operator_acknowledged_advisory_labeling: bool,
+    operator_supplied_identity: bool,
+) -> dict:
+    """Return the operator-visible per-source descriptor (closed
+    shape; matches the Phase 10V contract field list).
+    """
+    source_present = bool(freshness_probe["exists"])
+    approval_state = (
+        _desktop_rag_source_selection_compute_approval_state(
+            spec,
+            approval_mode=approval_mode,
+            phase_10v_runtime_available=(
+                phase_10v_runtime_available
+            ),
+            operator_acknowledged_advisory_labeling=(
+                operator_acknowledged_advisory_labeling
+            ),
+            operator_supplied_identity=(
+                operator_supplied_identity
+            ),
+            source_path_present_in_repo=source_present,
+        )
+    )
+    enablement_state, enablement_reason = (
+        _desktop_rag_source_selection_compute_enablement_state(
+            spec, approval_state=approval_state,
+        )
+    )
+    steps = tuple(
+        dict(step) for step in spec["selection_steps"]
+    )
+    return {
+        "id": spec["id"],
+        "display_name": spec["display_name"],
+        "source_type": spec["source_type"],
+        "provenance": spec["provenance"],
+        "advisory_label_rule": spec["advisory_label_rule"],
+        "path_canonical_rel": spec["path_canonical_rel"],
+        "path_canonical": freshness_probe["path_canonical"],
+        "source_path_present_in_repo": source_present,
+        "last_modified_utc": (
+            freshness_probe["last_modified_utc"]
+        ),
+        "size_bytes": freshness_probe["size_bytes"],
+        "freshness_state": freshness_probe["freshness_state"],
+        "description": spec["description"],
+        "approval_requirements": list(
+            spec["approval_requirements"]
+        ),
+        "approval_state": approval_state,
+        "enablement_state": enablement_state,
+        "enablement_reason": enablement_reason,
+        "selection_steps": steps,
+        "command": (
+            _desktop_rag_source_selection_steps_summary(steps)
+        ),
+        "clipboard_payload": (
+            _desktop_rag_source_selection_clipboard_payload(
+                steps,
+            )
+        ),
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "rag_source_selection_ux",
+    }
+
+
+def _desktop_rag_source_selection_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10V
+    RAG source selection surface. Returns a closed dict with:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when not yet supplied. Per Phase
+        10S MUST NOT be auto-filled from any persistent source.
+      - `acknowledged_source_ids` (frozenset[str]): the set of
+        source ids whose per-source advisory-labeling rule the
+        operator has acknowledged this session. Per Phase 10V
+        acknowledgement MUST be a per-session operator action
+        and MUST NOT be pre-acknowledged from any prior session
+        or saved preference.
+
+    `None` returns the defaults. A non-dict value raises
+    HaltError per the Phase 10S descriptor-validation pattern.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_source_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_source_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG source selection refused: "
+                f"operator_inputs.acknowledged_source_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_source_ids": frozenset(
+            str(s) for s in ack
+        ),
+    }
+
+
+def build_desktop_rag_source_selection_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10V: assemble the bounded desktop RAG source
+    selection view. Surfaces the closed
+    `_DESKTOP_RAG_SOURCE_SELECTION_REGISTRY` with per-source
+    provenance, freshness derived from the on-disk last-modified
+    timestamp, advisory-labeling rule, approval-requirement
+    state, and the closed three-state enablement state machine
+    per the Phase 10V contract.
+
+    `phase_10v_runtime_available` is hard-coded `False` in this
+    slice so every source surfaces as
+    `refused_until_policy_update`. A future runtime slice MAY
+    flip the flag to enable selection; the slice itself refuses
+    fail-closed by default.
+
+    `operator_inputs` is the per-session operator-supplied
+    acknowledgement / identity state held in-memory only; NEVER
+    persisted to disk, NEVER carried across sessions.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never invokes `_halt(...)`, never reads source CONTENT (only
+    `Path.stat()` is consulted), never widens the Phase 10I
+    library-callable cap, never contacts any retrieval runtime,
+    never opens a network socket. The shipped `load_loop_state(...)`
+    validator HaltError soft-fails so the surface stays operable
+    when the controller's loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    inputs = (
+        _desktop_rag_source_selection_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_source_ids"]
+    now_ts = time.time()
+    sources = []
+    for spec in _DESKTOP_RAG_SOURCE_SELECTION_REGISTRY:
+        _desktop_rag_source_selection_validate_descriptor(spec)
+        source_id = spec["id"]
+        freshness_probe = (
+            _desktop_rag_source_selection_probe_freshness(
+                controller_root, spec, now_ts=now_ts,
+            )
+        )
+        sources.append(
+            _desktop_rag_source_selection_source_descriptor(
+                spec,
+                freshness_probe=freshness_probe,
+                approval_mode=approval_mode,
+                # Hard-coded False in this slice; this is the
+                # boundary that keeps EVERY source refused
+                # until a future runtime slice ships.
+                phase_10v_runtime_available=False,
+                operator_acknowledged_advisory_labeling=(
+                    source_id in ack_set
+                ),
+                operator_supplied_identity=identity_supplied,
+            )
+        )
+    return {
+        "view_signal_version": (
+            DESKTOP_RAG_SOURCE_SELECTION_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10v_runtime_available": False,
+        "freshness_stale_threshold_seconds": (
+            RAG_SOURCE_FRESHNESS_STALE_THRESHOLD_SECONDS
+        ),
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_source_ids": sorted(ack_set),
+        },
+        "source_types": list(RAG_SOURCE_TYPES),
+        "provenance_categories": list(
+            RAG_PROVENANCE_CATEGORIES
+        ),
+        "advisory_labeling_rules": list(
+            RAG_ADVISORY_LABELING_RULES
+        ),
+        "freshness_states": list(RAG_FRESHNESS_STATES),
+        "enablement_states": list(
+            RAG_SOURCE_ENABLEMENT_STATES
+        ),
+        "approval_requirements": list(
+            RAG_SOURCE_APPROVAL_REQUIREMENTS
+        ),
+        "sources": sources,
+        "precedence_note": (
+            DESKTOP_RAG_SOURCE_SELECTION_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_rag_source_selection_text(
+    view: dict,
+) -> list:
+    """Phase 10V: format the assembled RAG source selection view
+    as text lines. Per-line attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[rag-source]`, `[rag-provenance]`,
+    `[rag-freshness]`, `[rag-advisory]`, `[rag-approval]`,
+    `[rag-enablement]`, `[refused]`, `[deferred-runtime]`,
+    `[cli]`, `[manual-edit]`) keep attribution consistent with
+    the Phase 10S / 10T / 10U tag vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-rag-source-selection] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10v_runtime_available (Phase 10V "
+        f"ships the contract and selection UX only; the "
+        f"retrieval runtime is deferred to a future Phase 10 "
+        f"runtime slice): {view['phase_10v_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [advisory] freshness_stale_threshold_seconds: "
+        f"{view['freshness_stale_threshold_seconds']!r}"
+    )
+    lines.append(
+        f"  [advisory] source_types (closed Phase 10V "
+        f"enumeration): {view['source_types']!r}"
+    )
+    lines.append(
+        f"  [advisory] provenance_categories (closed Phase 10V "
+        f"enumeration): {view['provenance_categories']!r}"
+    )
+    lines.append(
+        f"  [advisory] advisory_labeling_rules (closed Phase "
+        f"10V enumeration): {view['advisory_labeling_rules']!r}"
+    )
+    lines.append(
+        f"  [advisory] freshness_states (closed Phase 10V "
+        f"state machine): {view['freshness_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] enablement_states (closed Phase 10V "
+        f"state machine): {view['enablement_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase 10V "
+        f"enumeration): {view['approval_requirements']!r}"
+    )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [rag-approval] operator_inputs.identity (per-"
+        f"session operator-supplied; NEVER auto-filled from "
+        f"$USER / whoami / packaging-time identity / RAG-side "
+        f"identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [rag-approval] operator_inputs."
+        f"acknowledged_source_ids (per-session operator-"
+        f"clicked advisory-labeling acknowledgement; NEVER "
+        f"persisted across sessions): "
+        f"{op_inputs.get('acknowledged_source_ids', [])!r}"
+    )
+    for source in view.get("sources", []):
+        is_refused = (
+            source["enablement_state"]
+            == "refused_until_policy_update"
+        )
+        tag = "[refused]" if is_refused else "[rag-source]"
+        lines.append(
+            f"  {tag} id={source['id']!r} "
+            f"display_name={source['display_name']!r} "
+            f"source_type={source['source_type']!r} "
+            f"enablement_state={source['enablement_state']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{source['description']}"
+        )
+        lines.append(
+            f"    [rag-provenance] provenance="
+            f"{source['provenance']!r}"
+        )
+        lines.append(
+            f"    [rag-advisory] advisory_label_rule="
+            f"{source['advisory_label_rule']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] path_canonical_rel="
+            f"{source['path_canonical_rel']!r} "
+            f"path_canonical={source['path_canonical']!r}"
+        )
+        lines.append(
+            f"    [rag-freshness] source_path_present_in_repo="
+            f"{source['source_path_present_in_repo']!r} "
+            f"freshness_state={source['freshness_state']!r} "
+            f"last_modified_utc="
+            f"{source['last_modified_utc']!r} "
+            f"size_bytes={source['size_bytes']!r}"
+        )
+        for req in source["approval_requirements"]:
+            entry = source["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[rag-approval]"
+                if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+        lines.append(
+            f"    [rag-enablement] enablement_reason: "
+            f"{source['enablement_reason']}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{source['deferred_runtime_marker']}"
+        )
+        if is_refused:
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{source['refusal_reason_template']}"
+            )
+        steps = source.get("selection_steps") or ()
+        if len(steps) == 1:
+            lines.append("    selection_steps (1 step):")
+        else:
+            lines.append(
+                f"    selection_steps ({len(steps)} steps; "
+                f"copy-paste each in order):"
+            )
+        for idx, step in enumerate(steps, start=1):
+            step_tag = (
+                "[cli]" if step["type"] == "cli"
+                else "[manual-edit]"
+            )
+            lines.append(
+                f"      {idx}. {step_tag} {step['content']}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_rag_source_selection_controls(
+    view: dict,
+) -> list:
+    """Phase 10V desktop control surface: return a closed list
+    of widget descriptors ready for binding to actual desktop-
+    side controls. Each click is a pure clipboard-copy
+    operation matching the Phase 10N action-bridge model; per
+    the Phase 10V fail-closed default `enabled` is False for
+    every source until a future runtime slice ships AND the
+    operator inputs satisfy every approval requirement.
+    """
+    controls: list = []
+    for source in view.get("sources", []):
+        controls.append({
+            "id": source["id"],
+            "label": (
+                f"{source['display_name']} "
+                f"[{source['enablement_state']}]"
+            ),
+            "enabled": (
+                source["enablement_state"]
+                == "enabled_pending_runtime"
+            ),
+            "source_type": source["source_type"],
+            "provenance": source["provenance"],
+            "advisory_label_rule": (
+                source["advisory_label_rule"]
+            ),
+            "freshness_state": source["freshness_state"],
+            "enablement_state": source["enablement_state"],
+            "enablement_reason": source["enablement_reason"],
+            "clipboard_payload": source["clipboard_payload"],
+            "deferred_runtime_marker": (
+                source["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                source["refusal_reason_template"]
+            ),
+            "dispatch_mode": source["dispatch_mode"],
+            "category": source["category"],
+        })
+    return controls
+
+
+def cmd_view_desktop_rag_source_selection(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10V operator entry: print the desktop RAG source
+    selection view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase
+    10L Desktop App Shell Contract this handler NEVER mutates
+    any canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket,
+    NEVER contacts any retrieval runtime, NEVER reads source
+    CONTENT (only `Path.stat()` is consulted on per-source
+    paths), NEVER widens the Phase 10I library-callable control
+    cap, NEVER introduces a RAG-side state store, and NEVER
+    actually retrieves any source content.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow; omitting it returns exit 2
+    with an explicit `[desktop-rag-source-selection] REFUSED:
+    ...` stderr line.
+
+    Optional per-invocation operator-input flags:
+      - `--operator-identity <NAME>`: per-session identity.
+      - `--acknowledge-source <ID>` (repeatable): per-session
+        per-source advisory-labeling acknowledgement.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-rag-source-selection] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop RAG source selection "
+            "surface MUST NOT silently pick a default root "
+            "from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-rag-source-selection] REFUSED: "
+            f"controller root "
+            f"{validation['root_path']!r} is missing "
+            f"required markers {missing!r}; per the Phase 10L "
+            f"Desktop App Shell Contract the desktop shell "
+            f"requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_source_ids": frozenset(
+            getattr(args, "acknowledge_source", None) or []
+        ),
+    }
+    view = build_desktop_rag_source_selection_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_rag_source_selection_text(view):
         print(line)
     return 0
 
@@ -27078,6 +28569,88 @@ def build_parser() -> argparse.ArgumentParser:
             "the flag once per action id."
         ),
     )
+    rag_source_selection = sub.add_parser(
+        "view-desktop-rag-source-selection",
+        help=(
+            "Phase 10V desktop app RAG source selection "
+            "contract and desktop UX surface: render the "
+            "closed in-process RAG source descriptor registry "
+            "per the `docs/rag-source-selection-contract.md` "
+            "shape, with per-source provenance, freshness "
+            "(derived from on-disk last-modified mtime), "
+            "advisory-labeling rule, approval-requirement "
+            "state, and the closed three-state selection "
+            "state machine (`disabled_by_default` / "
+            "`enabled_pending_runtime` / "
+            "`refused_until_policy_update`). Phase 10V ships "
+            "the CONTRACT and the SELECTION UX only: "
+            "`phase_10v_runtime_available` is hard-coded False "
+            "so EVERY source surfaces as "
+            "`refused_until_policy_update` regardless of "
+            "operator input; a future runtime slice MUST flip "
+            "the flag to actually enable retrieval. Phase 7C "
+            "reporter pattern: always exits 0 on report "
+            "content; never mutates any canonical artifact; "
+            "never appends to `.agent-loop/orchestrator.log`; "
+            "never advances loop-state; never invokes "
+            "`_halt(...)`; never spawns a subprocess; never "
+            "opens a network socket; never reads source "
+            "CONTENT (only `Path.stat()` is consulted); never "
+            "builds an embeddings index; never persists a "
+            "retrieval cache; never subscribes to a background "
+            "watcher; never widens the Phase 10I library-"
+            "callable control cap; never introduces a RAG-"
+            "side state store."
+        ),
+    )
+    rag_source_selection.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop RAG source selection view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT "
+            "silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Omitting this "
+            "flag returns exit 2 with a "
+            "`[desktop-rag-source-selection] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    rag_source_selection.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity. "
+            "Per the Phase 10S contract MUST NOT be auto-"
+            "filled from `$USER`, `whoami`, a packaging-time-"
+            "configured identity, or any persistent RAG-side "
+            "identity store. Supplying this flag flips the "
+            "`operator_supplied_identity` approval requirement "
+            "to satisfied for every source in the rendered "
+            "view."
+        ),
+    )
+    rag_source_selection.add_argument(
+        "--acknowledge-source",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-source "
+            "advisory-labeling acknowledgement (e.g. "
+            "`--acknowledge-source repo_local_docs_readme`). "
+            "Acknowledgement is per-session per the Phase 10V "
+            "contract; the surface NEVER pre-acknowledges "
+            "based on a prior session or any persistent "
+            "operator-side state. Repeat the flag once per "
+            "source id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -27355,6 +28928,9 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-mcp-assistance": cmd_view_desktop_mcp_assistance,
     "view-desktop-mcp-action-guardrails": (
         cmd_view_desktop_mcp_action_guardrails
+    ),
+    "view-desktop-rag-source-selection": (
+        cmd_view_desktop_rag_source_selection
     ),
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
