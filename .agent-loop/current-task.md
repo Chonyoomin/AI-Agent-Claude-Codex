@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10R - Desktop App PRD Intake And Project Start Flow
+Phase 10T - MCP Read-Only Assistance In Desktop App
 
 ## Status
-Phase 10Q is complete and approved to advance. Phase 10R is now active as the next mainline slice focused on adding the first desktop workflow for creating or selecting a target project, attaching a PRD or product brief, choosing the target folder, and starting a run without manual prompt-artifact preparation.
+Phase 10S is complete and approved to advance. Phase 10T is now active as the next mainline slice focused on implementing the first user-selectable MCP read-only assistance surfaces in the desktop app without mutating canonical artifacts or bypassing evidence review.
 
 ## Task
-Implement Phase 10R for the agent loop. This slice should add the first desktop PRD-intake and project-start workflow so an operator can create or select a target project, attach a PRD or product brief, choose the target folder, and start a run without manually preparing prompt artifacts by hand.
+Implement Phase 10T for the agent loop. This slice should add the first user-selectable MCP read-only assistance surfaces in the desktop app so operators can enable approved context-gathering tools from the desktop app without mutating canonical artifacts or bypassing evidence review.
 
 ## Notes
 
-- keep this slice bounded to PRD intake and project start flow; do not jump into MCP runtime, RAG runtime, or concurrency work yet
-- preserve the shipped ownership boundaries, phase gating, audit visibility, desktop-app boundaries, and canonical-artifact-first model while adding desktop-side project-start UX
-- do not widen into hidden orchestration, silent in-flight loop mutation, credential capture, MCP runtime actions, RAG, policy-pack, packaging, or auto-update work
+- keep this slice bounded to read-only MCP assistance in the desktop app; do not jump into mutation-capable MCP actions, RAG runtime, or concurrency work yet
+- preserve the shipped ownership boundaries, evidence-review model, approval semantics, desktop-app boundaries, and canonical-artifact-first model while adding the first user-facing MCP assistance surface
+- do not widen into hidden orchestration, silent in-flight loop mutation, credential capture, mutation-capable MCP runtime, RAG, policy-pack, packaging, or auto-update work
