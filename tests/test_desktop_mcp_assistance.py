@@ -579,9 +579,17 @@ class BuildMcpAssistanceViewTests(unittest.TestCase):
                     "refused_deferred_runtime",
                 )
 
-    def test_read_only_descriptors_disabled_when_no_identity(
+    def test_read_only_descriptors_disabled_until_operator_inputs(
         self,
     ) -> None:
+        # Phase 10T fix cycle: with no per-session operator
+        # inputs supplied the read-only servers stay
+        # `disabled_by_default` because the operator-supplied-
+        # identity / safety-copy-acknowledgement requirements
+        # are unsatisfied. This anchors the fail-CLOSED default;
+        # the `..._with_full_operator_inputs` test below proves
+        # the surface ACTUALLY exposes a selectable path once
+        # the operator supplies the required per-session inputs.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
             view = (
@@ -598,11 +606,246 @@ class BuildMcpAssistanceViewTests(unittest.TestCase):
                 self.assertEqual(
                     s["enablement_state"],
                     "disabled_by_default",
-                    "no operator-side acknowledgement / identity "
-                    "is supplied by default; the read-only "
-                    "server must surface as disabled_by_default "
-                    "until the future runtime wires those inputs",
                 )
+
+    def test_read_only_path_selectable_with_full_operator_inputs(
+        self,
+    ) -> None:
+        # Phase 10T fix cycle (the headline bug fix): the
+        # shipped bounded Phase 10T surface MUST expose a
+        # selectable read-only MCP assistance path once the
+        # operator explicitly supplies their identity AND
+        # acknowledges the per-server safety copy this session.
+        # Without this coverage the previous slice could ship
+        # with every read-only button permanently disabled.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "tester",
+                        "acknowledged_server_ids": frozenset({
+                            "local_repo_docs",
+                            "local_browser_inspector",
+                        }),
+                    },
+                )
+            )
+            ros = [
+                s for s in view["servers"]
+                if s["permission_class"]
+                == "read_only_advisory_class"
+            ]
+            self.assertTrue(ros)
+            for s in ros:
+                self.assertEqual(
+                    s["enablement_state"],
+                    "enabled_pending_runtime",
+                    (
+                        f"server {s['id']!r} should flip to "
+                        f"enabled_pending_runtime when identity "
+                        f"and acknowledgement are supplied"
+                    ),
+                )
+            bi = [
+                s for s in view["servers"]
+                if s["permission_class"]
+                == "browser_inspection_class"
+            ]
+            self.assertTrue(bi)
+            for s in bi:
+                self.assertEqual(
+                    s["enablement_state"],
+                    "enabled_pending_runtime",
+                )
+
+    def test_deferred_mutating_remains_refused_with_full_inputs(
+        self,
+    ) -> None:
+        # Phase 10S Deferred Mutation-Capable Tool Boundary
+        # MUST hold even when every operator-side requirement
+        # is satisfied; the deferred-mutating short-circuit is
+        # not bypassable via operator inputs.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "tester",
+                        "acknowledged_server_ids": frozenset({
+                            "local_repo_docs",
+                            "local_browser_inspector",
+                            "github_pr_comment_poster",
+                        }),
+                    },
+                )
+            )
+            deferred = [
+                s for s in view["servers"]
+                if s["permission_class"]
+                == "deferred_mutating_class"
+            ]
+            self.assertTrue(deferred)
+            for s in deferred:
+                self.assertEqual(
+                    s["enablement_state"],
+                    "refused_deferred_runtime",
+                    (
+                        f"server {s['id']!r} must remain refused "
+                        f"even when every operator input is "
+                        f"supplied; the Phase 10S deferred-"
+                        f"mutating boundary is NOT bypassable "
+                        f"via operator inputs"
+                    ),
+                )
+
+    def test_acknowledgement_alone_without_identity_stays_disabled(
+        self,
+    ) -> None:
+        # Partial inputs MUST not flip the server to enabled
+        # (every Phase 10S approval requirement must hold).
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "",
+                        "acknowledged_server_ids": frozenset({
+                            "local_repo_docs",
+                        }),
+                    },
+                )
+            )
+            s = next(
+                s for s in view["servers"]
+                if s["id"] == "local_repo_docs"
+            )
+            self.assertEqual(
+                s["enablement_state"],
+                "disabled_by_default",
+            )
+
+    def test_per_server_acknowledgement_is_isolated(
+        self,
+    ) -> None:
+        # Acknowledging one server MUST NOT cascade to other
+        # servers; the per-server safety-copy ack is bound to
+        # the specific server id.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "tester",
+                        "acknowledged_server_ids": frozenset({
+                            "local_repo_docs",
+                        }),
+                    },
+                )
+            )
+            acked = next(
+                s for s in view["servers"]
+                if s["id"] == "local_repo_docs"
+            )
+            other = next(
+                s for s in view["servers"]
+                if s["id"] == "local_browser_inspector"
+            )
+            self.assertEqual(
+                acked["enablement_state"],
+                "enabled_pending_runtime",
+            )
+            self.assertEqual(
+                other["enablement_state"],
+                "disabled_by_default",
+            )
+
+    def test_policy_refusal_disables_targeted_server_only(
+        self,
+    ) -> None:
+        # Operator-side additive policy refusal MUST refuse the
+        # targeted server even when every other requirement is
+        # satisfied, and MUST NOT cascade to non-targeted
+        # servers.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "tester",
+                        "acknowledged_server_ids": frozenset({
+                            "local_repo_docs",
+                            "local_browser_inspector",
+                        }),
+                        "policy_refused_server_ids": frozenset({
+                            "local_repo_docs",
+                        }),
+                    },
+                )
+            )
+            refused = next(
+                s for s in view["servers"]
+                if s["id"] == "local_repo_docs"
+            )
+            other = next(
+                s for s in view["servers"]
+                if s["id"] == "local_browser_inspector"
+            )
+            self.assertEqual(
+                refused["enablement_state"],
+                "disabled_by_default",
+            )
+            self.assertEqual(
+                other["enablement_state"],
+                "enabled_pending_runtime",
+            )
+
+    def test_operator_inputs_mirror_in_view(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "  tester  ",
+                        "acknowledged_server_ids": (
+                            "local_repo_docs",
+                        ),
+                        "policy_refused_server_ids": [],
+                    },
+                )
+            )
+            self.assertIn("operator_inputs", view)
+            mirror = view["operator_inputs"]
+            self.assertEqual(mirror["identity"], "tester")
+            self.assertEqual(
+                mirror["acknowledged_server_ids"],
+                ["local_repo_docs"],
+            )
+            self.assertEqual(
+                mirror["policy_refused_server_ids"], [],
+            )
+
+    def test_operator_inputs_normalizer_refuses_non_dict(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._desktop_mcp_assistance_normalize_operator_inputs(
+                "not-a-dict",
+            )
+
+    def test_operator_inputs_normalizer_refuses_bad_identity(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._desktop_mcp_assistance_normalize_operator_inputs(
+                {"identity": 42},
+            )
 
     def test_loop_state_halt_soft_fails(self) -> None:
         with TemporaryDirectory() as td:
@@ -714,6 +957,11 @@ class RenderMcpAssistanceTextTests(unittest.TestCase):
             "[advisory] capability_categories",
             "[advisory] enablement_states",
             "[advisory] approval_requirements",
+            "[mcp-approval] operator_inputs.identity",
+            "[mcp-approval] operator_inputs."
+            "acknowledged_server_ids",
+            "[mcp-approval] operator_inputs."
+            "policy_refused_server_ids",
             "[mcp-server] id=",
             "[mcp-capability] [capability: read-only-advisory]",
             "[mcp-safety] 1.",
@@ -832,6 +1080,43 @@ class BuildMcpAssistanceControlsTests(unittest.TestCase):
             [],
         )
 
+    def test_controls_enable_read_only_with_operator_inputs(
+        self,
+    ) -> None:
+        # Phase 10T fix cycle: prove the shipped Tk button row
+        # actually exposes a clickable read-only enablement
+        # affordance once operator inputs are supplied; without
+        # this coverage the prior slice could ship with every
+        # read-only button permanently disabled.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_assistance_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "tester",
+                        "acknowledged_server_ids": frozenset({
+                            "local_repo_docs",
+                            "local_browser_inspector",
+                        }),
+                    },
+                )
+            )
+            controls = (
+                agent_loop
+                .build_desktop_mcp_assistance_controls(view)
+            )
+            by_id = {c["id"]: c for c in controls}
+            self.assertTrue(by_id["local_repo_docs"]["enabled"])
+            self.assertTrue(
+                by_id["local_browser_inspector"]["enabled"],
+            )
+            self.assertFalse(
+                by_id["github_pr_comment_poster"]["enabled"],
+                "deferred-mutating MUST stay disabled even when "
+                "operator inputs are supplied",
+            )
+
 
 # ---------------------------------------------------------------------------
 # CLI handler
@@ -914,6 +1199,71 @@ class CmdViewDesktopMcpAssistanceTests(unittest.TestCase):
             args.cmd, "view-desktop-mcp-assistance",
         )
         self.assertEqual(args.controller_root, "/tmp/nope")
+
+    def test_parser_accepts_operator_input_flags(self) -> None:
+        # Phase 10T fix cycle: the CLI MUST accept per-session
+        # operator-input flags so the operator can flip read-
+        # only servers from `disabled_by_default` to
+        # `enabled_pending_runtime` without persisting state.
+        parser = agent_loop.build_parser()
+        args = parser.parse_args([
+            "view-desktop-mcp-assistance",
+            "--controller-root", "/tmp/nope",
+            "--operator-identity", "yoomin",
+            "--acknowledge-server", "local_repo_docs",
+            "--acknowledge-server", "local_browser_inspector",
+            "--policy-refuse-server",
+            "local_browser_inspector",
+        ])
+        self.assertEqual(args.operator_identity, "yoomin")
+        self.assertEqual(
+            args.acknowledge_server,
+            ["local_repo_docs", "local_browser_inspector"],
+        )
+        self.assertEqual(
+            args.policy_refuse_server,
+            ["local_browser_inspector"],
+        )
+
+    def test_cli_flags_flip_read_only_server_to_enabled(
+        self,
+    ) -> None:
+        # End-to-end: parser + handler must thread the flags
+        # through so the rendered view shows the read-only
+        # server as `enabled_pending_runtime` while the
+        # deferred-mutating server stays refused.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            parser = agent_loop.build_parser()
+            args = parser.parse_args([
+                "view-desktop-mcp-assistance",
+                "--controller-root", str(controller),
+                "--operator-identity", "yoomin",
+                "--acknowledge-server", "local_repo_docs",
+            ])
+            out = io.StringIO()
+            with redirect_stdout(out):
+                rc = (
+                    agent_loop
+                    .cmd_view_desktop_mcp_assistance(args)
+                )
+            self.assertEqual(rc, 0)
+            text = out.getvalue()
+            self.assertIn(
+                "id='local_repo_docs' display_name='Local Repo "
+                "Docs (read-only advisory)' "
+                "permission_class='read_only_advisory_class' "
+                "enablement_state='enabled_pending_runtime'",
+                text,
+            )
+            self.assertIn(
+                "id='github_pr_comment_poster' "
+                "display_name='GitHub PR Comment Poster "
+                "(deferred mutation-capable)' "
+                "permission_class='deferred_mutating_class' "
+                "enablement_state='refused_deferred_runtime'",
+                text,
+            )
 
 
 # ---------------------------------------------------------------------------

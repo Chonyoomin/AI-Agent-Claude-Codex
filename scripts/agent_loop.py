@@ -14352,6 +14352,33 @@ def _launch_desktop_app_window(
         text="MCP Assistance (Phase 10T)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    # Phase 10T fix cycle: per-session operator-input widgets so
+    # the shipped Tk surface actually exposes a selectable read-
+    # only MCP assistance path. State is held in-memory ONLY
+    # (Tk StringVar / BooleanVar); per the Phase 10S contract
+    # NEVER persisted to disk, NEVER auto-filled from any
+    # OS / packaging / browser-session source, NEVER carried
+    # across sessions (closing the window discards everything).
+    tk.Label(
+        mcp_assistance_frame,
+        text=(
+            "Operator identity (per-session; required to "
+            "enable any server):"
+        ),
+        wraplength=240, justify=tk.LEFT, anchor=tk.W,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    mcp_identity_var = tk.StringVar(value="")
+    mcp_identity_entry = tk.Entry(
+        mcp_assistance_frame,
+        textvariable=mcp_identity_var,
+    )
+    mcp_identity_entry.pack(fill=tk.X, padx=4, pady=(0, 4))
+    mcp_ack_frame = tk.Frame(mcp_assistance_frame)
+    mcp_ack_frame.pack(side=tk.TOP, fill=tk.X)
+    # Per-server BooleanVar storage: keyed by server id. Held
+    # only in-memory; closing the window discards every value.
+    mcp_ack_vars: dict = {}
+    mcp_ack_widgets: list = []
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14439,16 +14466,71 @@ def _launch_desktop_app_window(
             project_start_controls,
             project_start_button_widgets,
         )
-        mcp_assistance_sub_view = (
-            view.get("mcp_assistance_view") or {}
+        # Phase 10T fix cycle: re-derive the MCP assistance
+        # view with the per-session operator-input state read
+        # from the Tk widgets, then re-render the per-server
+        # acknowledgement Checkbuttons and the per-server
+        # action button row. The view in `assemble_desktop_app_view`
+        # is rendered (in the ScrolledText panel) with the
+        # default empty operator-input state so the rendered
+        # text shows what an unauthenticated operator would see;
+        # the Tk action surface below is the authoritative
+        # operator-input plane that flips servers to
+        # `enabled_pending_runtime` once acknowledgement +
+        # identity are supplied per session.
+        ack_set = frozenset(
+            sid for sid, var in mcp_ack_vars.items()
+            if var.get()
         )
+        live_operator_inputs = {
+            "identity": mcp_identity_var.get().strip(),
+            "acknowledged_server_ids": ack_set,
+            "policy_refused_server_ids": frozenset(),
+        }
+        live_mcp_assistance_view = _desktop_safe_call_view(
+            lambda root_arg: (
+                build_desktop_mcp_assistance_view(
+                    root_arg,
+                    operator_inputs=live_operator_inputs,
+                )
+            ),
+            controller_root,
+        )
+        # Re-render per-server acknowledgement Checkbuttons (one
+        # per registry entry). Reusing widgets across polls would
+        # introduce identity-tied state churn; instead the bag is
+        # rebuilt every poll so registry changes propagate
+        # cleanly and per-session BooleanVar state is preserved
+        # for any server id we have already seen.
+        for widget in mcp_ack_widgets:
+            widget.destroy()
+        mcp_ack_widgets.clear()
         if (
-            isinstance(mcp_assistance_sub_view, dict)
-            and "servers" in mcp_assistance_sub_view
+            isinstance(live_mcp_assistance_view, dict)
+            and "servers" in live_mcp_assistance_view
         ):
+            for server in live_mcp_assistance_view["servers"]:
+                server_id = server["id"]
+                if server_id not in mcp_ack_vars:
+                    mcp_ack_vars[server_id] = (
+                        tk.BooleanVar(value=False)
+                    )
+                ack_check = tk.Checkbutton(
+                    mcp_ack_frame,
+                    text=(
+                        f"Acknowledge safety copy: "
+                        f"{server['display_name']}"
+                    ),
+                    wraplength=240,
+                    justify=tk.LEFT,
+                    anchor=tk.W,
+                    variable=mcp_ack_vars[server_id],
+                )
+                ack_check.pack(fill=tk.X, padx=4, pady=1)
+                mcp_ack_widgets.append(ack_check)
             mcp_assistance_controls = (
                 build_desktop_mcp_assistance_controls(
-                    mcp_assistance_sub_view,
+                    live_mcp_assistance_view,
                 )
             )
         else:
@@ -18168,8 +18250,107 @@ def _desktop_mcp_assistance_server_descriptor(
     }
 
 
+def _desktop_mcp_assistance_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10T
+    selection surface. Returns a closed dict with three fields:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when the operator has not yet
+        supplied one. Per Phase 10S MUST NOT be auto-filled
+        from `$USER`, `whoami`, an MCP server session, a browser
+        session, a packaging-time-configured identity, or any
+        persistent MCP-side identity store. Callers MUST source
+        this field from an explicit per-invocation operator
+        action (CLI flag, Tk Entry widget keystroke, etc.)
+      - `acknowledged_server_ids` (frozenset[str]): the set of
+        server ids whose per-server safety-copy block the
+        operator has acknowledged this session. Per Phase 10S
+        acknowledgement MUST be a per-session operator action
+        and MUST NOT be pre-acknowledged from any prior session
+        or saved preference. Callers MUST source this set from
+        explicit per-invocation operator action (CLI flag, Tk
+        Checkbutton click, etc.)
+      - `policy_refused_server_ids` (frozenset[str]): the set
+        of server ids that an operator-supplied or Codex-owned
+        policy rule refuses (Phase 10O additive boundary; policy
+        rules MAY refuse a server the base contract would have
+        allowed but MUST NOT approve one the base contract
+        refuses)
+
+    `None` returns the defaults (empty identity / empty sets).
+    A non-dict value raises HaltError per the Phase 10S
+    descriptor-validation pattern. Unknown fields are ignored.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_server_ids": frozenset(),
+            "policy_refused_server_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP assistance refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP assistance refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_server_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP assistance refused: "
+                f"operator_inputs.acknowledged_server_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    policy_refused = operator_inputs.get(
+        "policy_refused_server_ids", frozenset(),
+    )
+    if not isinstance(
+        policy_refused, (frozenset, set, list, tuple),
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP assistance refused: "
+                f"operator_inputs.policy_refused_server_ids is "
+                f"not iterable ({policy_refused!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_server_ids": frozenset(
+            str(s) for s in ack
+        ),
+        "policy_refused_server_ids": frozenset(
+            str(s) for s in policy_refused
+        ),
+    }
+
+
 def build_desktop_mcp_assistance_view(
     controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
 ) -> dict:
     """Phase 10T: assemble the bounded desktop MCP read-only
     assistance view. Surfaces the closed
@@ -18177,6 +18358,19 @@ def build_desktop_mcp_assistance_view(
     with per-server safety copy, capability labels, approval-
     requirement state, and the closed three-state enablement
     state machine per the Phase 10S contract.
+
+    `operator_inputs` is the per-session operator-supplied
+    acknowledgement / identity / policy-refusal state added by
+    the Phase 10T fix cycle so the shipped selection surface
+    actually exposes a selectable read-only MCP assistance path
+    when the operator explicitly opts in per session. The
+    `cmd_view_desktop_mcp_assistance(...)` CLI threads operator
+    inputs via `--operator-identity` / `--acknowledge-server`
+    flags; the `_launch_desktop_app_window(...)` Tk surface
+    threads them via a per-session-only in-memory Entry + per-
+    server Checkbutton bag. Per Phase 10S source-of-truth
+    preservation NEVER persisted to disk, NEVER captured into
+    `.agent-loop/`, NEVER carried across sessions.
 
     The view carries:
       - `view_signal_version`: literal `phase-10t-v1`
@@ -18190,6 +18384,9 @@ def build_desktop_mcp_assistance_view(
         the selection surface and is reachable per cycle)
       - `phase_10u_runtime_available`: False (mutation-capable
         runtime is deferred to Phase 10U+)
+      - `operator_inputs`: a per-poll mirror of the normalized
+        operator-input dict so a reviewer can see exactly which
+        inputs flowed into the per-server eligibility decisions
       - `permission_classes`: closed enumeration mirror
       - `capability_categories`: closed enumeration mirror
       - `enablement_states`: closed enumeration mirror
@@ -18224,26 +18421,41 @@ def build_desktop_mcp_assistance_view(
         mode_candidate = loop_state.get("approval_mode")
         if isinstance(mode_candidate, str):
             approval_mode = mode_candidate
+    inputs = (
+        _desktop_mcp_assistance_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_server_ids"]
+    policy_refused_set = inputs["policy_refused_server_ids"]
     # Per-server descriptors. The selection UX is per-poll-derived
     # per the Phase 10S "Source-Of-Truth Preservation" rule: no
     # persisted per-operator preference store, no recents list, no
     # enablement history. The operator-side approval inputs
-    # (safety acknowledgement / identity / policy rule) default to
-    # `False` in this initial slice; the per-server descriptor
-    # surfaces the per-requirement state so a future runtime slice
-    # can wire operator-side acknowledgement UI without changing
-    # the contract shape.
+    # (safety acknowledgement / identity / policy rule) come from
+    # the per-session `operator_inputs` mirror above. Phase 10T
+    # fix cycle: the shipped surface NOW exposes a selectable
+    # read-only path once the operator supplies identity AND
+    # acknowledges the per-server safety copy (CLI flags / Tk
+    # widgets); the previous slice hard-coded both to False which
+    # left every read-only button permanently disabled.
     servers = []
     for spec in _DESKTOP_MCP_ASSISTANCE_REGISTRY:
         _desktop_mcp_assistance_validate_descriptor(spec)
+        server_id = spec["id"]
         servers.append(
             _desktop_mcp_assistance_server_descriptor(
                 spec,
                 approval_mode=approval_mode,
                 phase_10t_runtime_available=True,
-                operator_acknowledged_safety_copy=False,
-                operator_supplied_identity=False,
-                policy_rule_permits_enablement=True,
+                operator_acknowledged_safety_copy=(
+                    server_id in ack_set
+                ),
+                operator_supplied_identity=identity_supplied,
+                policy_rule_permits_enablement=(
+                    server_id not in policy_refused_set
+                ),
             )
         )
     return {
@@ -18257,6 +18469,13 @@ def build_desktop_mcp_assistance_view(
         "controller_loop_state_approval_mode": approval_mode,
         "phase_10t_runtime_available": True,
         "phase_10u_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_server_ids": sorted(ack_set),
+            "policy_refused_server_ids": (
+                sorted(policy_refused_set)
+            ),
+        },
         "permission_classes": list(
             MCP_SERVER_PERMISSION_CLASSES
         ),
@@ -18325,6 +18544,30 @@ def render_desktop_mcp_assistance_text(view: dict) -> list:
     lines.append(
         f"  [advisory] approval_requirements (closed Phase 10S "
         f"enumeration): {view['approval_requirements']!r}"
+    )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [mcp-approval] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / MCP "
+        f"server session): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [mcp-approval] operator_inputs."
+        f"acknowledged_server_ids (per-session operator-clicked "
+        f"safety-copy acknowledgement; NEVER persisted across "
+        f"sessions): "
+        f"{op_inputs.get('acknowledged_server_ids', [])!r}"
+    )
+    lines.append(
+        f"  [mcp-approval] operator_inputs."
+        f"policy_refused_server_ids (additive policy-rule "
+        f"refusal per the Phase 10O additive boundary): "
+        f"{op_inputs.get('policy_refused_server_ids', [])!r}"
     )
     for server in view.get("servers", []):
         is_deferred = (
@@ -18455,6 +18698,27 @@ def cmd_view_desktop_mcp_assistance(
     / 10P / 10Q / 10R contracts); omitting it returns exit 2 with
     an explicit `[desktop-mcp-assistance] REFUSED: ...` stderr
     line.
+
+    Phase 10T fix cycle: accepts three OPTIONAL per-invocation
+    operator-input flags that thread through to
+    `build_desktop_mcp_assistance_view(...)` as the per-session
+    operator-supplied state per the Phase 10S contract:
+
+      - `--operator-identity <NAME>`: the operator's per-session
+        identity. Per Phase 10S MUST NOT be auto-filled from
+        `$USER`, `whoami`, a packaging-time-configured identity,
+        or any persistent MCP-side identity store. Supplying
+        this flag flips the `operator_supplied_identity`
+        requirement to satisfied for every server.
+      - `--acknowledge-server <ID>` (repeatable): the operator
+        explicitly acknowledges the per-server safety-copy block
+        for server `<ID>` this invocation. Acknowledgements are
+        per-session and NEVER persisted across invocations.
+      - `--policy-refuse-server <ID>` (repeatable): operator-
+        side additive policy-rule refusal for server `<ID>`;
+        flips the `policy_rule_permits_enablement` requirement
+        to unsatisfied for that server (Phase 10O additive
+        boundary).
     """
     root_arg = getattr(args, "controller_root", None)
     if not root_arg:
@@ -18486,7 +18750,20 @@ def cmd_view_desktop_mcp_assistance(
             file=sys.stderr,
         )
         return 2
-    view = build_desktop_mcp_assistance_view(controller_root)
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_server_ids": frozenset(
+            getattr(args, "acknowledge_server", None) or []
+        ),
+        "policy_refused_server_ids": frozenset(
+            getattr(args, "policy_refuse_server", None) or []
+        ),
+    }
+    view = build_desktop_mcp_assistance_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
     for line in render_desktop_mcp_assistance_text(view):
         print(line)
     return 0
@@ -24816,6 +25093,54 @@ def build_parser() -> argparse.ArgumentParser:
             "Omitting this flag returns exit 2 with a "
             "`[desktop-mcp-assistance] REFUSED: ...` stderr "
             "message."
+        ),
+    )
+    mcp_assistance.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity "
+            "(e.g. `--operator-identity yoomin`). Per the Phase "
+            "10S MCP server selection UX contract this value "
+            "MUST be operator-supplied explicitly per session "
+            "and MUST NOT be auto-filled from `$USER`, "
+            "`whoami`, a packaging-time-configured identity, an "
+            "MCP server session, a browser session, or any "
+            "persistent MCP-side identity store. Supplying this "
+            "flag flips the `operator_supplied_identity` "
+            "approval requirement to satisfied for every server "
+            "in the rendered view."
+        ),
+    )
+    mcp_assistance.add_argument(
+        "--acknowledge-server",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session safety-copy "
+            "acknowledgement (e.g. `--acknowledge-server "
+            "local_repo_docs`). Acknowledgement is per-session "
+            "and per-server per the Phase 10S contract; the "
+            "selection UX NEVER pre-acknowledges based on a "
+            "prior session, a saved preference, or any "
+            "persistent operator-side state. Repeat the flag "
+            "once per server id."
+        ),
+    )
+    mcp_assistance.add_argument(
+        "--policy-refuse-server",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session policy-rule "
+            "refusal (e.g. `--policy-refuse-server "
+            "local_browser_inspector`). Operator-side additive "
+            "policy-rule refusal per the Phase 10O additive "
+            "boundary: policy rules MAY refuse a server the "
+            "base contract would have allowed but MUST NOT "
+            "approve one the base contract refuses. Repeat the "
+            "flag once per server id."
         ),
     )
     distill = sub.add_parser(
