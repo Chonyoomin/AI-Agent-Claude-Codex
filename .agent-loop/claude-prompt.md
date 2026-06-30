@@ -1,40 +1,42 @@
 # Claude Code Task
 
 ## Phase
-Phase 10T - MCP Read-Only Assistance In Desktop App
+Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies
 
 ## Objective
-Implement Phase 10T for the agent loop. This slice should add the first
-user-selectable MCP read-only assistance surfaces in the desktop app so
-operators can enable approved context-gathering tools from the desktop app
-without mutating canonical artifacts or bypassing evidence review.
+Implement Phase 10U for the agent loop. This slice should add the mutation
+boundaries, refusal behavior, auditing, per-tool allow-lists, and approval
+prompts required before any non-read-only MCP-assisted runtime action is
+allowed through the desktop app.
 
 ## Context
-Implement the MCP Read-Only Assistance In Desktop App slice for the agent
-loop. This slice should add the first user-selectable MCP read-only assistance
-surfaces so operators can enable approved context-gathering tools from the
-desktop app without mutating canonical artifacts or bypassing evidence review.
+Implement the MCP Action Guardrails And Per-Tool Approval Policies slice for
+the agent loop. This slice should add the mutation boundaries, refusal
+behavior, auditing, per-tool allow-lists, and approval prompts required before
+any non-read-only MCP-assisted runtime action is allowed through the desktop
+app.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10T as active
-- `.agent-loop/phase-plan.md` records Phase 10S as closed history and contains
-  a `## Phase 10T - MCP Read-Only Assistance In Desktop App` section with
-  concrete objective, done criteria, and exclusions
-- add the first user-selectable MCP read-only assistance surfaces so operators
-  can enable approved context-gathering tools from the desktop app without
-  mutating canonical artifacts or bypassing evidence review
-- follow the shipped Phase 10O MCP integration contract and Phase 10S MCP
-  server selection UX contract, preserving the read-only versus deferred-
-  mutating boundary and the canonical-artifact-first model
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10U as active
+- `.agent-loop/phase-plan.md` records Phase 10T as closed history and contains
+  a `## Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies`
+  section with concrete objective, done criteria, and exclusions
+- add the mutation boundaries, refusal behavior, auditing, per-tool allow-
+  lists, and approval prompts required before any non-read-only MCP-assisted
+  runtime action is allowed through the desktop app
+- follow the shipped Phase 10O MCP integration contract, Phase 10S MCP server
+  selection UX contract, and the Phase 10T read-only assistance surface,
+  preserving the canonical-artifact-first model while introducing bounded
+  mutation guardrails
 - preserve approval gating, evidence review, external-workspace boundaries,
   desktop/UI boundaries, and the Phase 10I library-callable cap instead of
-  introducing hidden automation or a parallel state store
-- add focused validation proving the first MCP read-only assistance surface is
-  bounded, auditable, and does not widen into mutation-capable MCP actions,
-  RAG runtime, packaging, or controlled-concurrency work
-- `README.md` reflects that Phase 10T is active and that MCP read-only
-  assistance in the desktop app is now the implementation focus
+  introducing hidden automation, silent mutation, or a parallel state store
+- add focused validation proving the mutation-capable MCP action guardrails are
+  bounded, auditable, and do not widen into RAG runtime, packaging, or
+  controlled-concurrency work
+- `README.md` reflects that Phase 10U is active and that MCP action guardrails
+  and per-tool approval policies are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,8 +49,9 @@ desktop app without mutating canonical artifacts or bypassing evidence review.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no mutation-capable MCP actions, no MCP-driven writes to canonical
-  artifacts, and no bypass of the shipped CLI/library/runtime boundaries
+- no broad MCP runtime expansion beyond the bounded mutation-capable guardrails
+  defined for this slice, and no tool-execution path that bypasses the
+  approved approval and audit policies
 - no RAG, GitHub, policy-pack, packaging, system-tray, or controlled-
   concurrency runtime work
 - no automatic next-phase activation behavior that bypasses or rewrites the

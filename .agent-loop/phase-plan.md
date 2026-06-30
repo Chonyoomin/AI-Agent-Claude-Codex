@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10T - MCP Read-Only Assistance In Desktop App)
+Phase 10 - Future Product Features (sub-phase: Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5176,9 +5176,8 @@ ships.
 
 ### Status
 
-Active. This slice implements the first user-selectable MCP read-only
-assistance surfaces in the desktop app without mutating canonical artifacts or
-bypassing evidence review.
+Complete. Closed by activation of Phase 10U - MCP Action Guardrails And
+Per-Tool Approval Policies.
 
 ### Objective
 
@@ -5221,6 +5220,67 @@ desktop app without mutating canonical artifacts or bypassing evidence review.
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no rewrite of current shipped behavior just to make future MCP or autonomy
   work easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies
+
+### Status
+
+Active. Activated by `python scripts/agent_loop.py activate` after a valid
+Phase 4A approval signal on `.agent-loop/proposed-phase.md`.
+
+### Objective
+
+Implement the MCP Action Guardrails And Per-Tool Approval Policies slice for
+the agent loop. This slice should add the mutation boundaries, refusal
+behavior, auditing, per-tool allow-lists, and approval prompts required before
+any non-read-only MCP-assisted runtime action is allowed through the desktop
+app.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10U as active
+- `.agent-loop/phase-plan.md` records Phase 10T as closed history and contains
+  a `## Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies`
+  section with concrete objective, done criteria, and exclusions
+- the repository adds the mutation boundaries, refusal behavior, auditing,
+  per-tool allow-lists, and approval prompts required before any non-read-only
+  MCP-assisted runtime action is allowed through the desktop app
+- the implementation follows the shipped Phase 10O MCP integration contract,
+  Phase 10S MCP server selection UX contract, and the Phase 10T read-only
+  assistance surface, preserving the canonical-artifact-first model while
+  introducing bounded mutation guardrails
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, and the Phase 10I
+  library-callable cap instead of introducing hidden automation, silent
+  mutation, or a parallel state store
+- focused validation proves the mutation-capable MCP action guardrails are
+  bounded, auditable, and do not widen into RAG runtime, packaging, or
+  controlled-concurrency work
+- `README.md` reflects that Phase 10U is active and that MCP action guardrails
+  and per-tool approval policies are now the implementation focus
+
+### Exclusions
+
+- no broad MCP runtime expansion beyond the bounded mutation-capable guardrails
+  defined for this slice, and no tool-execution path that bypasses the
+  approved approval and audit policies
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no external-workspace target dispatch beyond the shipped attach/bootstrap/
+  runtime surfaces, concurrent Codex/Claude overlap execution, RAG layer, or
+  model-policy extensibility work
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
