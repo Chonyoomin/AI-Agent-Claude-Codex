@@ -14085,6 +14085,18 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         Phase 10U+; ZERO new library-callable controls are
         introduced and the Phase 10I three-control cap is
         preserved exactly)
+      - `mcp_action_guardrails_view`: the Phase 10U view dict
+        returned by
+        `build_desktop_mcp_action_guardrails_view(controller_root)`,
+        OR a soft-error envelope (added Phase 10U so the shipped
+        desktop app exposes the bounded mutation-action
+        guardrails contract alongside the read-only assistance
+        surface; per the Phase 10U fail-closed default EVERY
+        action surfaces as `refused_until_policy_update` since
+        `phase_10u_runtime_available` is hard-coded `False` in
+        this slice; ZERO new library-callable controls are
+        introduced and the Phase 10I three-control cap is
+        preserved exactly)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14113,6 +14125,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     mcp_assistance_view = _desktop_safe_call_view(
         build_desktop_mcp_assistance_view, controller_root,
     )
+    mcp_action_guardrails_view = _desktop_safe_call_view(
+        build_desktop_mcp_action_guardrails_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14125,6 +14140,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "run_profiles_view": run_profiles_view,
         "project_start_view": project_start_view,
         "mcp_assistance_view": mcp_assistance_view,
+        "mcp_action_guardrails_view": mcp_action_guardrails_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14192,6 +14208,18 @@ def _desktop_render_sub_view_lines(
             render_desktop_mcp_assistance_text(sub_view),
         )
         return lines
+    if key == "mcp_action_guardrails_view":
+        # Re-use the shipped Phase 10U renderer verbatim so the
+        # MCP action guardrails attribution tags ([mcp-action] /
+        # [mcp-effect] / [mcp-mutation] / [mcp-policy] /
+        # [mcp-approval] / [mcp-enablement] / [mcp-audit] /
+        # [refused] / [deferred-runtime]) stay consistent with
+        # the standalone
+        # `view-desktop-mcp-action-guardrails` output.
+        lines.extend(
+            render_desktop_mcp_action_guardrails_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14257,6 +14285,10 @@ def render_desktop_app_text(view: dict) -> list:
         ("run_profiles_view", "Run Profiles (Phase 10Q)"),
         ("project_start_view", "Project Start (Phase 10R)"),
         ("mcp_assistance_view", "MCP Assistance (Phase 10T)"),
+        (
+            "mcp_action_guardrails_view",
+            "MCP Action Guardrails (Phase 10U)",
+        ),
     ):
         sub = view.get(key, {})
         lines.extend(_desktop_render_sub_view_lines(key, label, sub))
@@ -14352,6 +14384,13 @@ def _launch_desktop_app_window(
         text="MCP Assistance (Phase 10T)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    mcp_action_guardrails_frame = tk.Frame(control_frame)
+    mcp_action_guardrails_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        mcp_action_guardrails_frame,
+        text="MCP Action Guardrails (Phase 10U)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     # Phase 10T fix cycle: per-session operator-input widgets so
     # the shipped Tk surface actually exposes a selectable read-
     # only MCP assistance path. State is held in-memory ONLY
@@ -14379,6 +14418,18 @@ def _launch_desktop_app_window(
     # only in-memory; closing the window discards every value.
     mcp_ack_vars: dict = {}
     mcp_ack_widgets: list = []
+    # Phase 10U per-action operator-input widgets. The operator
+    # identity StringVar is reused from the Phase 10T surface
+    # above so the operator only types it once per session. Per-
+    # action BooleanVar bags are kept in-memory only; closing
+    # the window discards every value per the Phase 10S source-
+    # of-truth preservation rule.
+    mcp_action_ack_frame = tk.Frame(mcp_action_guardrails_frame)
+    mcp_action_ack_frame.pack(side=tk.TOP, fill=tk.X)
+    mcp_action_ack_vars: dict = {}
+    mcp_action_dry_run_vars: dict = {}
+    mcp_action_policy_vars: dict = {}
+    mcp_action_ack_widgets: list = []
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14401,6 +14452,7 @@ def _launch_desktop_app_window(
     run_profile_button_widgets: list = []
     project_start_button_widgets: list = []
     mcp_assistance_button_widgets: list = []
+    mcp_action_guardrails_button_widgets: list = []
 
     def _rebuild_button_row(
         parent: "tk.Frame",
@@ -14539,6 +14591,114 @@ def _launch_desktop_app_window(
             mcp_assistance_frame,
             mcp_assistance_controls,
             mcp_assistance_button_widgets,
+        )
+        # Phase 10U live operator-input re-derivation. The
+        # ScrolledText panel above shows the assemble_desktop_app
+        # _view default empty-input snapshot (the audit-trail
+        # view a reviewer would see); the Tk action surface below
+        # is the authoritative operator-input plane. Operator
+        # identity is reused from the Phase 10T StringVar so a
+        # session only types it once.
+        action_ack_set = frozenset(
+            aid for aid, var in mcp_action_ack_vars.items()
+            if var.get()
+        )
+        action_dry_run_set = frozenset(
+            aid for aid, var in mcp_action_dry_run_vars.items()
+            if var.get()
+        )
+        action_policy_set = frozenset(
+            aid for aid, var in mcp_action_policy_vars.items()
+            if var.get()
+        )
+        live_action_operator_inputs = {
+            "identity": mcp_identity_var.get().strip(),
+            "acknowledged_action_ids": action_ack_set,
+            "dry_run_reviewed_action_ids": action_dry_run_set,
+            "policy_permitted_action_ids": action_policy_set,
+        }
+        live_mcp_action_guardrails_view = _desktop_safe_call_view(
+            lambda root_arg: (
+                build_desktop_mcp_action_guardrails_view(
+                    root_arg,
+                    operator_inputs=live_action_operator_inputs,
+                )
+            ),
+            controller_root,
+        )
+        for widget in mcp_action_ack_widgets:
+            widget.destroy()
+        mcp_action_ack_widgets.clear()
+        if (
+            isinstance(live_mcp_action_guardrails_view, dict)
+            and "actions" in live_mcp_action_guardrails_view
+        ):
+            for action in (
+                live_mcp_action_guardrails_view["actions"]
+            ):
+                action_id = action["action_id"]
+                if action_id not in mcp_action_ack_vars:
+                    mcp_action_ack_vars[action_id] = (
+                        tk.BooleanVar(value=False)
+                    )
+                if action_id not in mcp_action_dry_run_vars:
+                    mcp_action_dry_run_vars[action_id] = (
+                        tk.BooleanVar(value=False)
+                    )
+                if action_id not in mcp_action_policy_vars:
+                    mcp_action_policy_vars[action_id] = (
+                        tk.BooleanVar(value=False)
+                    )
+                ack_check = tk.Checkbutton(
+                    mcp_action_ack_frame,
+                    text=(
+                        f"Acknowledge action: "
+                        f"{action['display_name']}"
+                    ),
+                    wraplength=240,
+                    justify=tk.LEFT,
+                    anchor=tk.W,
+                    variable=mcp_action_ack_vars[action_id],
+                )
+                ack_check.pack(fill=tk.X, padx=4, pady=1)
+                mcp_action_ack_widgets.append(ack_check)
+                dry_run_check = tk.Checkbutton(
+                    mcp_action_ack_frame,
+                    text=(
+                        f"Dry-run reviewed: "
+                        f"{action['display_name']}"
+                    ),
+                    wraplength=240,
+                    justify=tk.LEFT,
+                    anchor=tk.W,
+                    variable=mcp_action_dry_run_vars[action_id],
+                )
+                dry_run_check.pack(fill=tk.X, padx=4, pady=1)
+                mcp_action_ack_widgets.append(dry_run_check)
+                policy_check = tk.Checkbutton(
+                    mcp_action_ack_frame,
+                    text=(
+                        f"Policy pack permits: "
+                        f"{action['display_name']}"
+                    ),
+                    wraplength=240,
+                    justify=tk.LEFT,
+                    anchor=tk.W,
+                    variable=mcp_action_policy_vars[action_id],
+                )
+                policy_check.pack(fill=tk.X, padx=4, pady=1)
+                mcp_action_ack_widgets.append(policy_check)
+            mcp_action_guardrails_controls = (
+                build_desktop_mcp_action_guardrails_controls(
+                    live_mcp_action_guardrails_view,
+                )
+            )
+        else:
+            mcp_action_guardrails_controls = []
+        _rebuild_button_row(
+            mcp_action_guardrails_frame,
+            mcp_action_guardrails_controls,
+            mcp_action_guardrails_button_widgets,
         )
         root.after(int(cadence_seconds * 1000), _refresh)
 
@@ -18765,6 +18925,1480 @@ def cmd_view_desktop_mcp_assistance(
         controller_root, operator_inputs=operator_inputs,
     )
     for line in render_desktop_mcp_assistance_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10U: MCP Action Guardrails And Per-Tool Approval Policies.
+#
+# Surfaces a closed in-process registry of MCP ACTION descriptors
+# (one descriptor per mutation-capable MCP tool action) layered on
+# top of the Phase 10T `deferred_mutating_class` server entries.
+# Pins the per-action approval-policy machine, the closed audit-log
+# field list every dispatched action MUST persist, the closed
+# refusal vocabulary, and the per-session operator-input wiring
+# required before any dispatched mutation can clear the approval
+# gates.
+#
+# THIS SLICE SHIPS THE CONTRACT ONLY. `phase_10u_runtime_available`
+# is hard-coded `False` for every action so EVERY action surfaces
+# as `refused_until_policy_update` regardless of operator input.
+# A future runtime slice MAY flip the flag to True and plug an
+# actual dispatch path into this same registry, but the slice
+# itself MUST NOT widen this surface to ship the runtime; doing
+# so would also widen the Phase 10I three-control library-callable
+# cap, which this slice preserves exactly.
+#
+# The surface NEVER spawns a subprocess, NEVER opens a network
+# socket, NEVER contacts any MCP server in-process, NEVER mutates
+# any canonical artifact, NEVER appends to
+# `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER auto-fills any operator-identity
+# field, NEVER widens the Phase 10I library-callable cap, NEVER
+# introduces an MCP-side database / preference store / recents
+# list / identity token / session token, and NEVER actually
+# dispatches a mutation. The Tk action surface is copy-paste-only:
+# a click copies the per-action refusal explanation (since runtime
+# is unavailable) to the OS clipboard via the shared Phase 10Q
+# `_copy_to_clipboard(...)` helper.
+# ---------------------------------------------------------------------------
+
+DESKTOP_MCP_ACTION_GUARDRAILS_SIGNAL_VERSION = "phase-10u-v1"
+
+DESKTOP_MCP_ACTION_GUARDRAILS_PRECEDENCE_NOTE = (
+    "Phase 10U MCP action guardrails and per-tool approval "
+    "policies surface. The shipped Phase 10O MCP integration "
+    "contract, Phase 10S MCP server selection UX contract, and "
+    "Phase 10T MCP read-only assistance surface govern this "
+    "surface verbatim: the Phase 10I three-control library-"
+    "callable cap is preserved exactly; ZERO new library-callable "
+    "controls are introduced; every MCP action descriptor is "
+    "validated against the closed Phase 10U descriptor shape and "
+    "refused fail-closed on any missing required field, wrong-"
+    "typed value, unknown `effect_class`, unknown `mutation_scope`, "
+    "unknown `approval_policy`, unknown `default_enablement_state`, "
+    "unknown `approval_requirements` member, unknown "
+    "`audit_required_fields` member, or unknown enablement-step "
+    "type. `phase_10u_runtime_available` is hard-coded `False` in "
+    "this slice so EVERY action surfaces as "
+    "`refused_until_policy_update` regardless of operator input; "
+    "the Phase 10S `deferred_mutating_class` boundary is preserved "
+    "exactly and is NOT bypassable via operator inputs. Every "
+    "action descriptor MUST reference a parent server id that "
+    "exists in `_DESKTOP_MCP_ASSISTANCE_REGISTRY` and carries "
+    "`permission_class == \"deferred_mutating_class\"`; references "
+    "to read-only or unknown servers are refused fail-closed. The "
+    "surface NEVER spawns a subprocess, NEVER opens a network "
+    "socket, NEVER contacts the MCP server in-process, NEVER "
+    "mutates any canonical artifact (loop-state.json / "
+    "orchestrator.log / external-target.json / runtime-config.json "
+    "/ TASK.md / proposed-phase.md / claude-prompt.md / "
+    "claude-summary.md / codex-review.md / fix-prompt.md / "
+    "current-task.md / current-phase.md / phase-plan.md / "
+    "prd-intake.json / final-acceptance.json / any Phase 2A "
+    "evidence file / any Phase 6 memory entry), NEVER appends to "
+    "`.agent-loop/orchestrator.log`, NEVER advances loop-state, "
+    "NEVER invokes `_halt(...)`, NEVER auto-fills any --*-by "
+    "operator-identity argument or approval-mode value, NEVER "
+    "introduces an MCP-side database / preference store / recents "
+    "list / identity token / session token, and NEVER widens the "
+    "Phase 10I cap"
+)
+
+MCP_ACTION_EFFECT_CLASSES = (
+    "posts_external_artifact",
+    "mutates_external_state",
+    "triggers_remote_workflow",
+)
+
+MCP_ACTION_MUTATION_SCOPES = (
+    "external_artifact",
+    "external_state",
+    "external_workflow",
+)
+
+MCP_ACTION_APPROVAL_POLICIES = (
+    "per_action_explicit_approval",
+    "per_session_explicit_approval",
+    "refused_until_policy_update",
+)
+
+MCP_ACTION_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_until_policy_update",
+)
+
+MCP_ACTION_APPROVAL_REQUIREMENTS = (
+    "operator_per_action_acknowledgement",
+    "operator_supplied_identity",
+    "approval_mode_supports_action",
+    "phase_10u_runtime_available",
+    "policy_pack_permits_action",
+    "audit_log_appendable",
+    "dry_run_payload_reviewed",
+)
+
+# Approval modes where MCP action dispatch is contract-permitted.
+# Per the Phase 10S `approval_mode_supports_enablement` requirement,
+# strict mode (Phase 5C strict-mode pause semantics) refuses MCP
+# action dispatch fail-closed. Mirrors the Phase 10T permitted-mode
+# set verbatim so the action-dispatch boundary stays consistent
+# with the selection-UX boundary.
+MCP_ACTION_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+# Closed audit-log field list every Phase 10U action MUST persist
+# when actually dispatched by a future runtime slice. Phase 10U
+# ships the CONTRACT only (no runtime dispatch path); these fields
+# pin the canonical audit-entry shape so a future runtime slice
+# cannot ship a narrower or wider audit envelope without
+# explicitly extending this closed list.
+MCP_ACTION_AUDIT_REQUIRED_FIELDS = (
+    "action_id",
+    "server_id",
+    "operator_identity",
+    "approval_mode",
+    "action_dispatched_at_utc",
+    "dry_run_payload_sha256",
+    "policy_pack_rule_id",
+    "operator_per_action_acknowledgement_at_utc",
+    "outcome",
+    "refusal_reason",
+)
+
+# Closed refusal vocabulary. A future runtime slice MUST refuse
+# fail-closed using exactly one of these reasons; any other refusal
+# reason is a contract violation.
+MCP_ACTION_REFUSAL_REASONS = (
+    "approval_mode_strict",
+    "runtime_not_available",
+    "policy_pack_refuses_action",
+    "operator_identity_missing",
+    "operator_acknowledgement_missing",
+    "dry_run_unreviewed",
+    "audit_log_unappendable",
+)
+
+_MCP_ACTION_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "action_id",
+    "server_id",
+    "display_name",
+    "description",
+    "effect_class",
+    "mutation_scope",
+    "approval_policy",
+    "default_enablement_state",
+    "refusal_reason_template",
+    "deferred_runtime_marker",
+)
+
+_MCP_ACTION_DESCRIPTOR_REQUIRED_LIST_FIELDS = (
+    "approval_requirements",
+    "audit_required_fields",
+    "enablement_steps",
+)
+
+_DESKTOP_MCP_ACTION_GUARDRAILS_REGISTRY: tuple = (
+    {
+        "action_id": "github_post_pr_comment",
+        "server_id": "github_pr_comment_poster",
+        "display_name": (
+            "Post Comment To GitHub PR (deferred mutation)"
+        ),
+        "description": (
+            "posts a single review comment to the operator-"
+            "explicitly-targeted GitHub PR via the parent MCP "
+            "server's `post_comment` tool. Phase 10U ships the "
+            "approval / audit / refusal contract only; the actual "
+            "dispatch path is deferred to a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`."
+        ),
+        "effect_class": "posts_external_artifact",
+        "mutation_scope": "external_artifact",
+        "approval_policy": "per_action_explicit_approval",
+        "default_enablement_state": "refused_until_policy_update",
+        "approval_requirements": (
+            "operator_per_action_acknowledgement",
+            "operator_supplied_identity",
+            "approval_mode_supports_action",
+            "phase_10u_runtime_available",
+            "policy_pack_permits_action",
+            "audit_log_appendable",
+            "dry_run_payload_reviewed",
+        ),
+        "audit_required_fields": (
+            "action_id",
+            "server_id",
+            "operator_identity",
+            "approval_mode",
+            "action_dispatched_at_utc",
+            "dry_run_payload_sha256",
+            "policy_pack_rule_id",
+            "operator_per_action_acknowledgement_at_utc",
+            "outcome",
+            "refusal_reason",
+        ),
+        "refusal_reason_template": (
+            "`github_post_pr_comment` dispatch refused: one or "
+            "more Phase 10U approval requirements are not "
+            "satisfied (see per-requirement state above). At "
+            "minimum the per-action acknowledgement, operator "
+            "identity, dry-run review, and policy-pack permission "
+            "MUST be supplied; the controller's loop-state."
+            "approval_mode MUST be in {review, autonomous}; and "
+            "the Phase 10U mutation-dispatch runtime MUST be "
+            "available (deferred to a future Phase 10 runtime "
+            "slice tracked in `ROADMAP.md`)."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10U ships the action-guardrail contract only; "
+            "actual GitHub PR comment dispatch is deferred to a "
+            "future Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`. The Phase 10U desktop surface NEVER "
+            "spawns a subprocess and NEVER opens a network "
+            "socket."
+        ),
+        "enablement_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "explicitly acknowledge this action per "
+                    "invocation (NOT pre-acknowledged from any "
+                    "prior session or saved preference; "
+                    "acknowledgement MUST be a per-action "
+                    "operator action)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly (NEVER auto-filled from $USER, "
+                    "whoami, packaging-time-configured identity, "
+                    "MCP server session, or browser session)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "review the dry-run mutation payload and "
+                    "confirm via "
+                    "`--dry-run-reviewed-action <ID>` per the "
+                    "Phase 10U per-action approval policy"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "add the action id to the operator policy "
+                    "pack allow-list via "
+                    "`--policy-permit-action <ID>` (Phase 10U "
+                    "fail-closed default; the policy pack is an "
+                    "additive allow-list, NEVER auto-populated)"
+                ),
+            },
+        ),
+    },
+    {
+        "action_id": "github_edit_pr_metadata",
+        "server_id": "github_pr_comment_poster",
+        "display_name": (
+            "Edit GitHub PR Metadata (deferred mutation)"
+        ),
+        "description": (
+            "edits PR title, body, labels, or assignees on the "
+            "operator-explicitly-targeted GitHub PR via the "
+            "parent MCP server's `edit_pr_metadata` tool. Phase "
+            "10U ships the approval / audit / refusal contract "
+            "only; the actual dispatch path is deferred to a "
+            "later Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`."
+        ),
+        "effect_class": "mutates_external_state",
+        "mutation_scope": "external_state",
+        "approval_policy": "per_action_explicit_approval",
+        "default_enablement_state": "refused_until_policy_update",
+        "approval_requirements": (
+            "operator_per_action_acknowledgement",
+            "operator_supplied_identity",
+            "approval_mode_supports_action",
+            "phase_10u_runtime_available",
+            "policy_pack_permits_action",
+            "audit_log_appendable",
+            "dry_run_payload_reviewed",
+        ),
+        "audit_required_fields": (
+            "action_id",
+            "server_id",
+            "operator_identity",
+            "approval_mode",
+            "action_dispatched_at_utc",
+            "dry_run_payload_sha256",
+            "policy_pack_rule_id",
+            "operator_per_action_acknowledgement_at_utc",
+            "outcome",
+            "refusal_reason",
+        ),
+        "refusal_reason_template": (
+            "`github_edit_pr_metadata` dispatch refused: one or "
+            "more Phase 10U approval requirements are not "
+            "satisfied (see per-requirement state above)."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10U ships the action-guardrail contract only; "
+            "actual GitHub PR metadata edits are deferred to a "
+            "future Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`."
+        ),
+        "enablement_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "explicitly acknowledge this action per "
+                    "invocation (per the Phase 10U per-action "
+                    "approval policy)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "review the dry-run metadata-edit payload "
+                    "and confirm via "
+                    "`--dry-run-reviewed-action <ID>`"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "add the action id to the operator policy "
+                    "pack allow-list via "
+                    "`--policy-permit-action <ID>`"
+                ),
+            },
+        ),
+    },
+    {
+        "action_id": "github_trigger_workflow",
+        "server_id": "github_pr_comment_poster",
+        "display_name": (
+            "Trigger GitHub Workflow Run (deferred mutation)"
+        ),
+        "description": (
+            "triggers a `workflow_dispatch` GitHub Action run on "
+            "the operator-explicitly-targeted repository via the "
+            "parent MCP server's `trigger_workflow` tool. Phase "
+            "10U ships the approval / audit / refusal contract "
+            "only; the actual dispatch path is deferred to a "
+            "later Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`."
+        ),
+        "effect_class": "triggers_remote_workflow",
+        "mutation_scope": "external_workflow",
+        "approval_policy": "per_session_explicit_approval",
+        "default_enablement_state": "refused_until_policy_update",
+        "approval_requirements": (
+            "operator_per_action_acknowledgement",
+            "operator_supplied_identity",
+            "approval_mode_supports_action",
+            "phase_10u_runtime_available",
+            "policy_pack_permits_action",
+            "audit_log_appendable",
+            "dry_run_payload_reviewed",
+        ),
+        "audit_required_fields": (
+            "action_id",
+            "server_id",
+            "operator_identity",
+            "approval_mode",
+            "action_dispatched_at_utc",
+            "dry_run_payload_sha256",
+            "policy_pack_rule_id",
+            "operator_per_action_acknowledgement_at_utc",
+            "outcome",
+            "refusal_reason",
+        ),
+        "refusal_reason_template": (
+            "`github_trigger_workflow` dispatch refused: one or "
+            "more Phase 10U approval requirements are not "
+            "satisfied (see per-requirement state above)."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10U ships the action-guardrail contract only; "
+            "actual GitHub workflow_dispatch is deferred to a "
+            "future Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`."
+        ),
+        "enablement_steps": (
+            {
+                "type": "manual_edit",
+                "content": (
+                    "explicitly acknowledge this action per "
+                    "session (the per-session approval policy "
+                    "applies; acknowledgement still MUST NOT be "
+                    "carried across sessions)"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "supply `--operator-identity <NAME>` "
+                    "explicitly"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "review the dry-run workflow_dispatch "
+                    "payload (inputs, ref, workflow_id) and "
+                    "confirm via "
+                    "`--dry-run-reviewed-action <ID>`"
+                ),
+            },
+            {
+                "type": "manual_edit",
+                "content": (
+                    "add the action id to the operator policy "
+                    "pack allow-list via "
+                    "`--policy-permit-action <ID>`"
+                ),
+            },
+        ),
+    },
+)
+
+
+def _desktop_mcp_action_guardrails_validate_descriptor(
+    spec: dict,
+) -> None:
+    """Phase 10U action-descriptor validator: refuse fail-closed
+    on any missing required field, wrong-typed value, unknown
+    closed-enumeration member, or unknown parent server id. Pure
+    validation; no IO, no mutation, no `_halt(...)` invocation.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: "
+                f"action descriptor is not a dict "
+                f"({type(spec).__name__})"
+            ),
+        )
+    for field in (
+        _MCP_ACTION_DESCRIPTOR_REQUIRED_STRING_FIELDS
+    ):
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"action descriptor field {field!r} is "
+                    f"missing or non-string ({value!r})"
+                ),
+            )
+    for field in _MCP_ACTION_DESCRIPTOR_REQUIRED_LIST_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, (list, tuple)) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"action descriptor field {field!r} is "
+                    f"missing or empty ({value!r})"
+                ),
+            )
+    if spec["effect_class"] not in MCP_ACTION_EFFECT_CLASSES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: action "
+                f"descriptor effect_class="
+                f"{spec['effect_class']!r} is not in the closed "
+                f"Phase 10U enumeration "
+                f"{MCP_ACTION_EFFECT_CLASSES!r}"
+            ),
+        )
+    if spec["mutation_scope"] not in MCP_ACTION_MUTATION_SCOPES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: action "
+                f"descriptor mutation_scope="
+                f"{spec['mutation_scope']!r} is not in the "
+                f"closed Phase 10U enumeration "
+                f"{MCP_ACTION_MUTATION_SCOPES!r}"
+            ),
+        )
+    if spec["approval_policy"] not in (
+        MCP_ACTION_APPROVAL_POLICIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: action "
+                f"descriptor approval_policy="
+                f"{spec['approval_policy']!r} is not in the "
+                f"closed Phase 10U enumeration "
+                f"{MCP_ACTION_APPROVAL_POLICIES!r}"
+            ),
+        )
+    if spec["default_enablement_state"] not in (
+        MCP_ACTION_ENABLEMENT_STATES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: action "
+                f"descriptor default_enablement_state="
+                f"{spec['default_enablement_state']!r} is not in "
+                f"the closed Phase 10U enumeration "
+                f"{MCP_ACTION_ENABLEMENT_STATES!r}"
+            ),
+        )
+    for req in spec["approval_requirements"]:
+        if req not in MCP_ACTION_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"approval_requirements member {req!r} is "
+                    f"not in the closed Phase 10U enumeration "
+                    f"{MCP_ACTION_APPROVAL_REQUIREMENTS!r}"
+                ),
+            )
+    for field in spec["audit_required_fields"]:
+        if field not in MCP_ACTION_AUDIT_REQUIRED_FIELDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"audit_required_fields member {field!r} is "
+                    f"not in the closed Phase 10U enumeration "
+                    f"{MCP_ACTION_AUDIT_REQUIRED_FIELDS!r}"
+                ),
+            )
+    for step in spec["enablement_steps"]:
+        if not isinstance(step, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"enablement_step is not a dict ({step!r})"
+                ),
+            )
+        if step.get("type") not in (
+            DESKTOP_RUN_PROFILE_STEP_TYPES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"enablement_step type "
+                    f"{step.get('type')!r} is not in the closed "
+                    f"set {DESKTOP_RUN_PROFILE_STEP_TYPES!r}"
+                ),
+            )
+        if not isinstance(step.get("content"), str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"enablement_step content is not a string "
+                    f"({step.get('content')!r})"
+                ),
+            )
+    # Cross-check: the action's parent server MUST exist in the
+    # Phase 10T registry AND carry permission_class ==
+    # `deferred_mutating_class`. Phase 10U actions are only
+    # contract-eligible against the deferred-mutating boundary;
+    # naming a read-only or unknown server is a contract violation.
+    parent_server_ids_to_class = {
+        entry["id"]: entry["permission_class"]
+        for entry in _DESKTOP_MCP_ASSISTANCE_REGISTRY
+    }
+    parent = spec["server_id"]
+    if parent not in parent_server_ids_to_class:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: action "
+                f"descriptor server_id={parent!r} is not in the "
+                f"Phase 10T `_DESKTOP_MCP_ASSISTANCE_REGISTRY` "
+                f"(known ids: "
+                f"{sorted(parent_server_ids_to_class)!r})"
+            ),
+        )
+    if (
+        parent_server_ids_to_class[parent]
+        != "deferred_mutating_class"
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: action "
+                f"descriptor server_id={parent!r} resolves to a "
+                f"server whose permission_class is "
+                f"{parent_server_ids_to_class[parent]!r}; only "
+                f"`deferred_mutating_class` parents are Phase "
+                f"10U-eligible"
+            ),
+        )
+
+
+def _desktop_mcp_action_guardrails_compute_approval_state(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10u_runtime_available: bool,
+    operator_per_action_acknowledgement: bool,
+    operator_supplied_identity: bool,
+    policy_pack_permits_action: bool,
+    audit_log_appendable: bool,
+    dry_run_payload_reviewed: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10U approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            MCP_ACTION_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_per_action_acknowledgement": {
+            "satisfied": bool(operator_per_action_acknowledgement),
+            "reason": (
+                "operator has explicitly acknowledged this "
+                "specific action this invocation"
+                if operator_per_action_acknowledgement
+                else (
+                    "per-action acknowledgement not yet "
+                    "supplied; per the Phase 10U per-action "
+                    "approval policy acknowledgement MUST be a "
+                    "per-action operator action and MUST NOT be "
+                    "carried over from a prior action, prior "
+                    "session, or saved preference"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10S contract identity MUST be "
+                    "operator-supplied and MUST NOT be "
+                    "auto-filled from `$USER`, `whoami`, an "
+                    "MCP server session, a browser session, a "
+                    "packaging-time-configured identity, or any "
+                    "persistent MCP-side identity store"
+                )
+            ),
+        },
+        "approval_mode_supports_action": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(MCP_ACTION_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the permitted "
+                    f"set "
+                    f"{sorted(MCP_ACTION_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10S contract action "
+                    f"dispatch MUST refuse fail-closed in "
+                    f"`strict` mode"
+                )
+            ),
+        },
+        "phase_10u_runtime_available": {
+            "satisfied": bool(phase_10u_runtime_available),
+            "reason": (
+                "Phase 10U mutation-dispatch runtime is shipped "
+                "and reachable"
+                if phase_10u_runtime_available
+                else (
+                    "Phase 10U ships the action-guardrail "
+                    "contract only; the actual mutation-dispatch "
+                    "runtime is deferred to a future Phase 10 "
+                    "runtime slice tracked in `ROADMAP.md`"
+                )
+            ),
+        },
+        "policy_pack_permits_action": {
+            "satisfied": bool(policy_pack_permits_action),
+            "reason": (
+                "operator policy pack explicitly permits this "
+                "action via the per-session additive allow-list"
+                if policy_pack_permits_action
+                else (
+                    "operator policy pack does not permit this "
+                    "action; per the Phase 10U fail-closed "
+                    "default the policy pack is an additive "
+                    "allow-list and MUST be opt-in per session "
+                    "via explicit operator action (CLI flag / "
+                    "Tk Checkbutton)"
+                )
+            ),
+        },
+        "audit_log_appendable": {
+            "satisfied": bool(audit_log_appendable),
+            "reason": (
+                "audit log path is canonical-mirror-appendable "
+                "for the dispatched-action record"
+                if audit_log_appendable
+                else (
+                    "audit log path is not appendable; per the "
+                    "Phase 10U contract every dispatched action "
+                    "MUST be appendable to the canonical audit "
+                    "log (the closed "
+                    "`MCP_ACTION_AUDIT_REQUIRED_FIELDS` envelope "
+                    "MUST be persisted) before dispatch is "
+                    "permitted"
+                )
+            ),
+        },
+        "dry_run_payload_reviewed": {
+            "satisfied": bool(dry_run_payload_reviewed),
+            "reason": (
+                "operator has explicitly reviewed the dry-run "
+                "mutation payload this invocation"
+                if dry_run_payload_reviewed
+                else (
+                    "dry-run mutation payload not reviewed; per "
+                    "the Phase 10U per-action approval policy "
+                    "the operator MUST review the dry-run "
+                    "payload before dispatch is permitted"
+                )
+            ),
+        },
+    }
+
+
+def _desktop_mcp_action_guardrails_compute_enablement_state(
+    spec: dict,
+    *,
+    approval_state: dict,
+) -> tuple:
+    """Phase 10U enablement-state computation. Returns
+    `(state_value, reason)` where `state_value` is one of
+    `MCP_ACTION_ENABLEMENT_STATES`.
+
+    Default: `refused_until_policy_update`. Promotion to
+    `enabled_pending_runtime` requires every approval requirement
+    satisfied; any unmet runtime-side requirement
+    (`phase_10u_runtime_available`, `audit_log_appendable`) keeps
+    the action at `refused_until_policy_update`. Any unmet
+    operator-side requirement keeps the action at
+    `disabled_by_default` once the runtime-side requirements ARE
+    satisfied. Until the runtime ships, every action stays
+    `refused_until_policy_update`.
+    """
+    runtime_side_reqs = {
+        "phase_10u_runtime_available",
+        "audit_log_appendable",
+    }
+    runtime_unmet = [
+        req for req in spec["approval_requirements"]
+        if req in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if runtime_unmet:
+        return (
+            "refused_until_policy_update",
+            (
+                f"Phase 10U runtime-side requirements are not "
+                f"satisfied: {runtime_unmet!r}; per the Phase "
+                f"10U fail-closed default mutation dispatch is "
+                f"refused until the runtime slice ships AND the "
+                f"audit log path is appendable"
+            ),
+        )
+    operator_unmet = [
+        req for req in spec["approval_requirements"]
+        if req not in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if operator_unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"one or more Phase 10U operator-side approval "
+                f"requirements are not satisfied: "
+                f"{operator_unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10U approval requirement is satisfied; "
+            "the Phase 10U slice still ships the contract only "
+            "so a future Phase 10 runtime slice MUST actually "
+            "perform the dispatch (tracked in `ROADMAP.md`)"
+        ),
+    )
+
+
+def _desktop_mcp_action_guardrails_audit_entry_shape(
+    spec: dict,
+) -> dict:
+    """Return the canonical audit-entry shape a future runtime
+    slice MUST persist when dispatching this action. Every field
+    is initialized to None; the future runtime slice replaces None
+    with the dispatched-action value. The shape is closed (only
+    fields in `MCP_ACTION_AUDIT_REQUIRED_FIELDS` are valid keys);
+    a future runtime slice MUST NOT ship a narrower or wider
+    envelope. Pure computation; no IO.
+    """
+    return {
+        field: None
+        for field in spec["audit_required_fields"]
+    }
+
+
+def _desktop_mcp_action_guardrails_steps_summary(
+    steps: tuple,
+) -> str:
+    """Return a one-line ` && `-joined step summary tagged with
+    `[cli]` / `[manual-edit]`. Intentionally NOT runnable as-is.
+    """
+    parts = []
+    for step in steps:
+        tag = (
+            "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        )
+        parts.append(f"{tag} {step['content']}")
+    return " && ".join(parts)
+
+
+def _desktop_mcp_action_guardrails_clipboard_payload(
+    steps: tuple,
+) -> str:
+    """Return a multi-line `[cli]` / `[manual-edit]` tagged
+    clipboard payload, one step per line.
+    """
+    lines = []
+    for step in steps:
+        tag = (
+            "[cli]" if step["type"] == "cli" else "[manual-edit]"
+        )
+        lines.append(f"{tag} {step['content']}")
+    return "\n".join(lines)
+
+
+def _desktop_mcp_action_guardrails_action_descriptor(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10u_runtime_available: bool,
+    operator_per_action_acknowledgement: bool,
+    operator_supplied_identity: bool,
+    policy_pack_permits_action: bool,
+    audit_log_appendable: bool,
+    dry_run_payload_reviewed: bool,
+) -> dict:
+    """Return the operator-visible per-action descriptor (closed
+    shape; matches the Phase 10U contract field list).
+    """
+    approval_state = (
+        _desktop_mcp_action_guardrails_compute_approval_state(
+            spec,
+            approval_mode=approval_mode,
+            phase_10u_runtime_available=(
+                phase_10u_runtime_available
+            ),
+            operator_per_action_acknowledgement=(
+                operator_per_action_acknowledgement
+            ),
+            operator_supplied_identity=(
+                operator_supplied_identity
+            ),
+            policy_pack_permits_action=(
+                policy_pack_permits_action
+            ),
+            audit_log_appendable=audit_log_appendable,
+            dry_run_payload_reviewed=dry_run_payload_reviewed,
+        )
+    )
+    enablement_state, enablement_reason = (
+        _desktop_mcp_action_guardrails_compute_enablement_state(
+            spec, approval_state=approval_state,
+        )
+    )
+    steps = tuple(
+        dict(step) for step in spec["enablement_steps"]
+    )
+    return {
+        "action_id": spec["action_id"],
+        "server_id": spec["server_id"],
+        "display_name": spec["display_name"],
+        "description": spec["description"],
+        "effect_class": spec["effect_class"],
+        "mutation_scope": spec["mutation_scope"],
+        "approval_policy": spec["approval_policy"],
+        "default_enablement_state": (
+            spec["default_enablement_state"]
+        ),
+        "approval_requirements": list(
+            spec["approval_requirements"]
+        ),
+        "audit_required_fields": list(
+            spec["audit_required_fields"]
+        ),
+        "audit_entry_canonical_shape": (
+            _desktop_mcp_action_guardrails_audit_entry_shape(spec)
+        ),
+        "approval_state": approval_state,
+        "enablement_state": enablement_state,
+        "enablement_reason": enablement_reason,
+        "enablement_steps": steps,
+        "command": (
+            _desktop_mcp_action_guardrails_steps_summary(steps)
+        ),
+        "clipboard_payload": (
+            _desktop_mcp_action_guardrails_clipboard_payload(steps)
+        ),
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+        "dispatch_mode": "copy_paste",
+        "category": "mutation_action_guardrail",
+    }
+
+
+def _desktop_mcp_action_guardrails_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10U
+    action guardrails surface. Returns a closed dict:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when not yet supplied. Per Phase
+        10S MUST NOT be auto-filled from any persistent source.
+      - `acknowledged_action_ids` (frozenset[str]): action ids
+        the operator has explicitly acknowledged this invocation.
+        Per Phase 10U acknowledgement MUST be a per-action
+        operator action and MUST NOT be pre-acknowledged from any
+        prior session.
+      - `dry_run_reviewed_action_ids` (frozenset[str]): action
+        ids whose dry-run payload the operator has explicitly
+        reviewed this invocation. NEVER carried across sessions.
+      - `policy_permitted_action_ids` (frozenset[str]): the
+        per-session additive allow-list of action ids the
+        operator policy pack explicitly permits. Phase 10U
+        fail-closed default: NOT a refusal set; the operator MUST
+        opt-in per action.
+
+    `None` returns the defaults (empty identity / empty sets).
+    A non-dict value raises HaltError per the Phase 10S
+    descriptor-validation pattern. Unknown fields are ignored.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_action_ids": frozenset(),
+            "dry_run_reviewed_action_ids": frozenset(),
+            "policy_permitted_action_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop MCP action guardrails refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    def _to_set(field_name: str) -> frozenset:
+        raw = operator_inputs.get(field_name, frozenset())
+        if not isinstance(raw, (frozenset, set, list, tuple)):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop MCP action guardrails refused: "
+                    f"operator_inputs.{field_name} is not "
+                    f"iterable ({raw!r})"
+                ),
+            )
+        return frozenset(str(s) for s in raw)
+    return {
+        "identity": identity.strip(),
+        "acknowledged_action_ids": _to_set(
+            "acknowledged_action_ids",
+        ),
+        "dry_run_reviewed_action_ids": _to_set(
+            "dry_run_reviewed_action_ids",
+        ),
+        "policy_permitted_action_ids": _to_set(
+            "policy_permitted_action_ids",
+        ),
+    }
+
+
+def build_desktop_mcp_action_guardrails_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10U: assemble the bounded desktop MCP action
+    guardrails view. Surfaces the closed
+    `_DESKTOP_MCP_ACTION_GUARDRAILS_REGISTRY` of MCP action
+    descriptors with per-action approval-policy state, the closed
+    audit-entry shape, the closed refusal vocabulary, and the
+    three-state enablement state machine per the Phase 10U
+    contract.
+
+    This slice ships the CONTRACT only:
+    `phase_10u_runtime_available` is hard-coded `False` so EVERY
+    action surfaces as `refused_until_policy_update`. A future
+    runtime slice MAY flip the flag (and provide an audit-log
+    appendable path) to enable dispatch; the slice itself
+    refuses fail-closed by default.
+
+    `operator_inputs` is the per-session operator-supplied
+    acknowledgement / identity / dry-run-review / policy-pack
+    state. The `cmd_view_desktop_mcp_action_guardrails(...)` CLI
+    threads operator inputs via `--operator-identity` /
+    `--acknowledge-action` / `--dry-run-reviewed-action` /
+    `--policy-permit-action` flags; the
+    `_launch_desktop_app_window(...)` Tk surface threads them via
+    per-session-only in-memory `tk.BooleanVar` widgets. Per Phase
+    10S source-of-truth preservation NEVER persisted to disk,
+    NEVER captured into `.agent-loop/`, NEVER carried across
+    sessions.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never widens the Phase 10I library-
+    callable cap, never contacts any MCP server, never opens a
+    network socket. The shipped `load_loop_state(...)` validator
+    HaltError soft-fails so the surface stays operable when the
+    controller's loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    inputs = (
+        _desktop_mcp_action_guardrails_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_action_ids"]
+    dry_run_set = inputs["dry_run_reviewed_action_ids"]
+    policy_set = inputs["policy_permitted_action_ids"]
+    actions = []
+    for spec in _DESKTOP_MCP_ACTION_GUARDRAILS_REGISTRY:
+        _desktop_mcp_action_guardrails_validate_descriptor(spec)
+        action_id = spec["action_id"]
+        actions.append(
+            _desktop_mcp_action_guardrails_action_descriptor(
+                spec,
+                approval_mode=approval_mode,
+                # Hard-coded False in this slice; this is the
+                # boundary that keeps EVERY action refused
+                # until a future runtime slice ships.
+                phase_10u_runtime_available=False,
+                operator_per_action_acknowledgement=(
+                    action_id in ack_set
+                ),
+                operator_supplied_identity=identity_supplied,
+                policy_pack_permits_action=(
+                    action_id in policy_set
+                ),
+                # Hard-coded False in this slice; a future
+                # runtime slice MUST verify the canonical audit
+                # log is appendable before flipping this to True.
+                audit_log_appendable=False,
+                dry_run_payload_reviewed=(
+                    action_id in dry_run_set
+                ),
+            )
+        )
+    return {
+        "view_signal_version": (
+            DESKTOP_MCP_ACTION_GUARDRAILS_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10t_runtime_available": True,
+        "phase_10u_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_action_ids": sorted(ack_set),
+            "dry_run_reviewed_action_ids": sorted(dry_run_set),
+            "policy_permitted_action_ids": sorted(policy_set),
+        },
+        "effect_classes": list(MCP_ACTION_EFFECT_CLASSES),
+        "mutation_scopes": list(MCP_ACTION_MUTATION_SCOPES),
+        "approval_policies": list(MCP_ACTION_APPROVAL_POLICIES),
+        "enablement_states": list(
+            MCP_ACTION_ENABLEMENT_STATES
+        ),
+        "approval_requirements": list(
+            MCP_ACTION_APPROVAL_REQUIREMENTS
+        ),
+        "audit_required_fields": list(
+            MCP_ACTION_AUDIT_REQUIRED_FIELDS
+        ),
+        "refusal_reasons": list(MCP_ACTION_REFUSAL_REASONS),
+        "actions": actions,
+        "precedence_note": (
+            DESKTOP_MCP_ACTION_GUARDRAILS_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_mcp_action_guardrails_text(view: dict) -> list:
+    """Phase 10U: format the assembled MCP action guardrails view
+    as text lines. Per-line attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[mcp-action]`, `[mcp-effect]`, `[mcp-mutation]`,
+    `[mcp-policy]`, `[mcp-approval]`, `[mcp-enablement]`,
+    `[mcp-audit]`, `[refused]`, `[deferred-runtime]`, `[cli]`,
+    `[manual-edit]`) keep attribution consistent with the Phase
+    10S / 10T tag vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-mcp-action-guardrails] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10t_runtime_available: "
+        f"{view['phase_10t_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10u_runtime_available (Phase 10U "
+        f"ships the contract only; the mutation-dispatch runtime "
+        f"is deferred to a future Phase 10 runtime slice): "
+        f"{view['phase_10u_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [advisory] effect_classes (closed Phase 10U "
+        f"enumeration): {view['effect_classes']!r}"
+    )
+    lines.append(
+        f"  [advisory] mutation_scopes (closed Phase 10U "
+        f"enumeration): {view['mutation_scopes']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_policies (closed Phase 10U "
+        f"enumeration): {view['approval_policies']!r}"
+    )
+    lines.append(
+        f"  [advisory] enablement_states (closed Phase 10U "
+        f"state machine): {view['enablement_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase 10U "
+        f"enumeration): {view['approval_requirements']!r}"
+    )
+    lines.append(
+        f"  [advisory] audit_required_fields (closed Phase 10U "
+        f"audit-entry envelope): {view['audit_required_fields']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10U "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [mcp-approval] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / MCP "
+        f"server session): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [mcp-approval] operator_inputs."
+        f"acknowledged_action_ids (per-action operator-clicked "
+        f"acknowledgement; NEVER carried across actions or "
+        f"sessions): "
+        f"{op_inputs.get('acknowledged_action_ids', [])!r}"
+    )
+    lines.append(
+        f"  [mcp-approval] operator_inputs."
+        f"dry_run_reviewed_action_ids (per-action operator-"
+        f"confirmed dry-run review): "
+        f"{op_inputs.get('dry_run_reviewed_action_ids', [])!r}"
+    )
+    lines.append(
+        f"  [mcp-approval] operator_inputs."
+        f"policy_permitted_action_ids (per-session additive "
+        f"allow-list; Phase 10U fail-closed default - NOT a "
+        f"refusal set): "
+        f"{op_inputs.get('policy_permitted_action_ids', [])!r}"
+    )
+    for action in view.get("actions", []):
+        is_refused = (
+            action["enablement_state"]
+            == "refused_until_policy_update"
+        )
+        tag = "[refused]" if is_refused else "[mcp-action]"
+        lines.append(
+            f"  {tag} action_id={action['action_id']!r} "
+            f"server_id={action['server_id']!r} "
+            f"display_name={action['display_name']!r} "
+            f"enablement_state={action['enablement_state']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: {action['description']}"
+        )
+        lines.append(
+            f"    [mcp-effect] effect_class="
+            f"{action['effect_class']!r}"
+        )
+        lines.append(
+            f"    [mcp-mutation] mutation_scope="
+            f"{action['mutation_scope']!r}"
+        )
+        lines.append(
+            f"    [mcp-policy] approval_policy="
+            f"{action['approval_policy']!r}"
+        )
+        lines.append(
+            f"    [mcp-policy] default_enablement_state="
+            f"{action['default_enablement_state']!r}"
+        )
+        for req in action["approval_requirements"]:
+            entry = action["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[mcp-approval]"
+                if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+        lines.append(
+            f"    [mcp-enablement] enablement_reason: "
+            f"{action['enablement_reason']}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{action['deferred_runtime_marker']}"
+        )
+        if is_refused:
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{action['refusal_reason_template']}"
+            )
+        for field in action["audit_required_fields"]:
+            lines.append(
+                f"    [mcp-audit] audit_required_field: "
+                f"{field}"
+            )
+        steps = action.get("enablement_steps") or ()
+        if len(steps) == 1:
+            lines.append("    enablement_steps (1 step):")
+        else:
+            lines.append(
+                f"    enablement_steps ({len(steps)} steps; "
+                f"copy-paste each in order):"
+            )
+        for idx, step in enumerate(steps, start=1):
+            step_tag = (
+                "[cli]" if step["type"] == "cli"
+                else "[manual-edit]"
+            )
+            lines.append(
+                f"      {idx}. {step_tag} {step['content']}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_mcp_action_guardrails_controls(
+    view: dict,
+) -> list:
+    """Phase 10U desktop control surface: return a closed list of
+    widget descriptors ready for binding to actual desktop-side
+    controls. Each click is a pure clipboard-copy operation
+    matching the Phase 10N action-bridge model; per the Phase 10U
+    fail-closed default `enabled` is False for every action until
+    a future runtime slice ships AND the operator inputs satisfy
+    every approval requirement.
+    """
+    controls: list = []
+    for action in view.get("actions", []):
+        controls.append({
+            "id": action["action_id"],
+            "label": (
+                f"{action['display_name']} "
+                f"[{action['enablement_state']}]"
+            ),
+            "enabled": (
+                action["enablement_state"]
+                == "enabled_pending_runtime"
+            ),
+            "effect_class": action["effect_class"],
+            "mutation_scope": action["mutation_scope"],
+            "approval_policy": action["approval_policy"],
+            "enablement_state": action["enablement_state"],
+            "enablement_reason": action["enablement_reason"],
+            "clipboard_payload": action["clipboard_payload"],
+            "deferred_runtime_marker": (
+                action["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                action["refusal_reason_template"]
+            ),
+            "dispatch_mode": action["dispatch_mode"],
+            "category": action["category"],
+        })
+    return controls
+
+
+def cmd_view_desktop_mcp_action_guardrails(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10U operator entry: print the desktop MCP action
+    guardrails view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase 10L
+    Desktop App Shell Contract this handler NEVER mutates any
+    canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket,
+    NEVER contacts any MCP server, NEVER widens the Phase 10I
+    library-callable control cap, NEVER introduces an MCP-side
+    state store, and NEVER actually dispatches a mutation.
+
+    `--controller-root <PATH>` is REQUIRED per the Phase 10L
+    Controller-Root Selection Flow; omitting it returns exit 2
+    with an explicit `[desktop-mcp-action-guardrails] REFUSED:
+    ...` stderr line.
+
+    Optional per-invocation operator-input flags:
+      - `--operator-identity <NAME>`: per-session identity.
+      - `--acknowledge-action <ID>` (repeatable): per-action
+        acknowledgement.
+      - `--dry-run-reviewed-action <ID>` (repeatable): per-action
+        dry-run-review confirmation.
+      - `--policy-permit-action <ID>` (repeatable): per-action
+        additive allow-list permission.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-mcp-action-guardrails] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop MCP action guardrails "
+            "surface MUST NOT silently pick a default root from "
+            "an auto-discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Supply the "
+            "controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-mcp-action-guardrails] REFUSED: "
+            f"controller root {validation['root_path']!r} is "
+            f"missing required markers {missing!r}; per the "
+            f"Phase 10L Desktop App Shell Contract the desktop "
+            f"shell requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_action_ids": frozenset(
+            getattr(args, "acknowledge_action", None) or []
+        ),
+        "dry_run_reviewed_action_ids": frozenset(
+            getattr(args, "dry_run_reviewed_action", None) or []
+        ),
+        "policy_permitted_action_ids": frozenset(
+            getattr(args, "policy_permit_action", None) or []
+        ),
+    }
+    view = build_desktop_mcp_action_guardrails_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_mcp_action_guardrails_text(view):
         print(line)
     return 0
 
@@ -25143,6 +26777,112 @@ def build_parser() -> argparse.ArgumentParser:
             "flag once per server id."
         ),
     )
+    mcp_action_guardrails = sub.add_parser(
+        "view-desktop-mcp-action-guardrails",
+        help=(
+            "Phase 10U desktop app MCP action guardrails and "
+            "per-tool approval policies surface: render the "
+            "closed in-process MCP action descriptor registry "
+            "with per-action approval-policy state, the closed "
+            "audit-entry envelope, the closed refusal "
+            "vocabulary, and the three-state action enablement "
+            "machine (`disabled_by_default` / "
+            "`enabled_pending_runtime` / "
+            "`refused_until_policy_update`). Phase 10U ships "
+            "the CONTRACT only: `phase_10u_runtime_available` "
+            "is hard-coded False so EVERY action surfaces as "
+            "`refused_until_policy_update` regardless of "
+            "operator input; a future runtime slice MUST flip "
+            "the flag to actually enable dispatch. Phase 7C "
+            "reporter pattern: always exits 0 on report "
+            "content; never mutates any canonical artifact; "
+            "never appends to `.agent-loop/orchestrator.log`; "
+            "never advances loop-state; never invokes "
+            "`_halt(...)`; never spawns a subprocess; never "
+            "opens a network socket; never contacts any MCP "
+            "server in-process; never widens the Phase 10I "
+            "library-callable control cap; never introduces an "
+            "MCP-side state store; never actually dispatches a "
+            "mutation."
+        ),
+    )
+    mcp_action_guardrails.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop MCP action guardrails view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT silently "
+            "pick a default root from an auto-discovered repo "
+            "root, the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Omitting this flag returns exit 2 "
+            "with a `[desktop-mcp-action-guardrails] REFUSED: "
+            "...` stderr message."
+        ),
+    )
+    mcp_action_guardrails.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity. "
+            "Per the Phase 10S contract MUST NOT be auto-"
+            "filled from `$USER`, `whoami`, a packaging-time-"
+            "configured identity, an MCP server session, a "
+            "browser session, or any persistent MCP-side "
+            "identity store. Supplying this flag flips the "
+            "`operator_supplied_identity` approval requirement "
+            "to satisfied for every action in the rendered "
+            "view."
+        ),
+    )
+    mcp_action_guardrails.add_argument(
+        "--acknowledge-action",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-action safety-copy "
+            "acknowledgement (e.g. `--acknowledge-action "
+            "github_post_pr_comment`). Acknowledgement is "
+            "per-action and per-session per the Phase 10U "
+            "contract; the surface NEVER pre-acknowledges "
+            "based on a prior action, prior session, or any "
+            "persistent operator-side state. Repeat the flag "
+            "once per action id."
+        ),
+    )
+    mcp_action_guardrails.add_argument(
+        "--dry-run-reviewed-action",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-action dry-run-review "
+            "confirmation (e.g. `--dry-run-reviewed-action "
+            "github_edit_pr_metadata`). Per the Phase 10U "
+            "per-action approval policy the operator MUST "
+            "review the dry-run mutation payload and confirm "
+            "explicitly before dispatch is permitted. Repeat "
+            "the flag once per action id."
+        ),
+    )
+    mcp_action_guardrails.add_argument(
+        "--policy-permit-action",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-action policy-pack "
+            "permission (e.g. `--policy-permit-action "
+            "github_trigger_workflow`). Operator-side additive "
+            "allow-list per the Phase 10U fail-closed default: "
+            "the policy pack is NOT a refusal set, it is an "
+            "explicit opt-in allow-list and MUST be supplied "
+            "per session via explicit operator action. Repeat "
+            "the flag once per action id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -25418,6 +27158,9 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-run-profiles": cmd_view_desktop_run_profiles,
     "view-desktop-project-start": cmd_view_desktop_project_start,
     "view-desktop-mcp-assistance": cmd_view_desktop_mcp_assistance,
+    "view-desktop-mcp-action-guardrails": (
+        cmd_view_desktop_mcp_action_guardrails
+    ),
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
