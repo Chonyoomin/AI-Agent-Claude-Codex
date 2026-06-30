@@ -403,6 +403,10 @@ class RenderDesktopAppTextTests(unittest.TestCase):
                 "error": "test mcp action guardrails error",
                 "view": None,
             },
+            "rag_source_selection_view": {
+                "error": "test rag source selection error",
+                "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
@@ -420,6 +424,9 @@ class RenderDesktopAppTextTests(unittest.TestCase):
         )
         self.assertIn(
             "[error] 'test mcp action guardrails error'", output,
+        )
+        self.assertIn(
+            "[error] 'test rag source selection error'", output,
         )
 
 

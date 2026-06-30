@@ -104,6 +104,10 @@ def _full_inputs() -> dict:
     Used by tests that prove the Phase 10U fail-closed default
     survives even when the operator has supplied everything they
     can supply.
+
+    Phase 10U fix cycle: supplies BOTH `acknowledged_action_ids`
+    AND `session_acknowledged_action_ids` so the helper satisfies
+    every registry action regardless of approval_policy.
     """
     action_ids = [
         spec["action_id"]
@@ -112,6 +116,7 @@ def _full_inputs() -> dict:
     return {
         "identity": "yoomin",
         "acknowledged_action_ids": frozenset(action_ids),
+        "session_acknowledged_action_ids": frozenset(action_ids),
         "dry_run_reviewed_action_ids": frozenset(action_ids),
         "policy_permitted_action_ids": frozenset(action_ids),
     }
@@ -482,6 +487,7 @@ class ApprovalStateTests(unittest.TestCase):
                 approval_mode=None,
                 phase_10u_runtime_available=False,
                 operator_per_action_acknowledgement=False,
+                operator_session_acknowledgement=False,
                 operator_supplied_identity=False,
                 policy_pack_permits_action=False,
                 audit_log_appendable=False,
@@ -498,6 +504,7 @@ class ApprovalStateTests(unittest.TestCase):
                 approval_mode="strict",
                 phase_10u_runtime_available=True,
                 operator_per_action_acknowledgement=True,
+                operator_session_acknowledgement=True,
                 operator_supplied_identity=True,
                 policy_pack_permits_action=True,
                 audit_log_appendable=True,
@@ -515,6 +522,7 @@ class ApprovalStateTests(unittest.TestCase):
                 approval_mode="review",
                 phase_10u_runtime_available=False,
                 operator_per_action_acknowledgement=False,
+                operator_session_acknowledgement=False,
                 operator_supplied_identity=False,
                 policy_pack_permits_action=False,
                 audit_log_appendable=False,
@@ -532,6 +540,7 @@ class ApprovalStateTests(unittest.TestCase):
                 approval_mode="autonomous",
                 phase_10u_runtime_available=False,
                 operator_per_action_acknowledgement=False,
+                operator_session_acknowledgement=False,
                 operator_supplied_identity=False,
                 policy_pack_permits_action=False,
                 audit_log_appendable=False,
@@ -540,6 +549,165 @@ class ApprovalStateTests(unittest.TestCase):
         )
         self.assertTrue(
             state["approval_mode_supports_action"]["satisfied"],
+        )
+
+    # ---- Phase 10U fix cycle: approval-policy executable contract
+    # logic. The four tests below would FAIL if
+    # `per_action_explicit_approval` and
+    # `per_session_explicit_approval` collapsed back into identical
+    # behavior (the original codex-found bug).
+
+    def _per_action_spec(self) -> dict:
+        spec = self._spec()
+        spec["approval_policy"] = "per_action_explicit_approval"
+        return spec
+
+    def _per_session_spec(self) -> dict:
+        spec = self._spec()
+        spec["approval_policy"] = "per_session_explicit_approval"
+        return spec
+
+    def _refused_policy_spec(self) -> dict:
+        spec = self._spec()
+        spec["approval_policy"] = "refused_until_policy_update"
+        return spec
+
+    def test_per_action_policy_requires_per_invocation_ack(
+        self,
+    ) -> None:
+        # per-action policy: per-invocation ack satisfies.
+        state = (
+            agent_loop._desktop_mcp_action_guardrails_compute_approval_state(
+                self._per_action_spec(),
+                approval_mode="review",
+                phase_10u_runtime_available=False,
+                operator_per_action_acknowledgement=True,
+                operator_session_acknowledgement=False,
+                operator_supplied_identity=False,
+                policy_pack_permits_action=False,
+                audit_log_appendable=False,
+                dry_run_payload_reviewed=False,
+            )
+        )
+        self.assertTrue(
+            state["operator_per_action_acknowledgement"][
+                "satisfied"
+            ],
+        )
+
+    def test_per_action_policy_rejects_session_ack(self) -> None:
+        # per-action policy: session-scoped ack does NOT satisfy.
+        # This is the headline regression: if the implementation
+        # collapsed back to identical behavior the per-action
+        # policy would also accept session-scoped ack.
+        state = (
+            agent_loop._desktop_mcp_action_guardrails_compute_approval_state(
+                self._per_action_spec(),
+                approval_mode="review",
+                phase_10u_runtime_available=False,
+                operator_per_action_acknowledgement=False,
+                operator_session_acknowledgement=True,
+                operator_supplied_identity=False,
+                policy_pack_permits_action=False,
+                audit_log_appendable=False,
+                dry_run_payload_reviewed=False,
+            )
+        )
+        self.assertFalse(
+            state["operator_per_action_acknowledgement"][
+                "satisfied"
+            ],
+        )
+        # Reason must explicitly cite the per-action policy.
+        self.assertIn(
+            "per_action_explicit_approval",
+            state["operator_per_action_acknowledgement"][
+                "reason"
+            ],
+        )
+
+    def test_per_session_policy_requires_session_ack(
+        self,
+    ) -> None:
+        # per-session policy: session-scoped ack satisfies.
+        state = (
+            agent_loop._desktop_mcp_action_guardrails_compute_approval_state(
+                self._per_session_spec(),
+                approval_mode="review",
+                phase_10u_runtime_available=False,
+                operator_per_action_acknowledgement=False,
+                operator_session_acknowledgement=True,
+                operator_supplied_identity=False,
+                policy_pack_permits_action=False,
+                audit_log_appendable=False,
+                dry_run_payload_reviewed=False,
+            )
+        )
+        self.assertTrue(
+            state["operator_per_action_acknowledgement"][
+                "satisfied"
+            ],
+        )
+
+    def test_per_session_policy_rejects_per_invocation_ack(
+        self,
+    ) -> None:
+        # per-session policy: per-invocation ack does NOT satisfy.
+        # This is the symmetric regression: if the implementation
+        # collapsed back the per-session policy would also accept
+        # per-invocation ack.
+        state = (
+            agent_loop._desktop_mcp_action_guardrails_compute_approval_state(
+                self._per_session_spec(),
+                approval_mode="review",
+                phase_10u_runtime_available=False,
+                operator_per_action_acknowledgement=True,
+                operator_session_acknowledgement=False,
+                operator_supplied_identity=False,
+                policy_pack_permits_action=False,
+                audit_log_appendable=False,
+                dry_run_payload_reviewed=False,
+            )
+        )
+        self.assertFalse(
+            state["operator_per_action_acknowledgement"][
+                "satisfied"
+            ],
+        )
+        # Reason must explicitly cite the per-session policy.
+        self.assertIn(
+            "per_session_explicit_approval",
+            state["operator_per_action_acknowledgement"][
+                "reason"
+            ],
+        )
+
+    def test_refused_policy_never_satisfies(self) -> None:
+        # refused_until_policy_update policy: NEVER satisfiable
+        # regardless of operator input.
+        state = (
+            agent_loop._desktop_mcp_action_guardrails_compute_approval_state(
+                self._refused_policy_spec(),
+                approval_mode="review",
+                phase_10u_runtime_available=True,
+                operator_per_action_acknowledgement=True,
+                operator_session_acknowledgement=True,
+                operator_supplied_identity=True,
+                policy_pack_permits_action=True,
+                audit_log_appendable=True,
+                dry_run_payload_reviewed=True,
+            )
+        )
+        self.assertFalse(
+            state["operator_per_action_acknowledgement"][
+                "satisfied"
+            ],
+        )
+        self.assertIn(
+            "refused_until_policy_update",
+            state["operator_per_action_acknowledgement"][
+                "reason"
+            ],
         )
 
 
@@ -661,11 +829,44 @@ class OperatorInputsNormalizerTests(unittest.TestCase):
         self.assertEqual(result["identity"], "")
         self.assertEqual(result["acknowledged_action_ids"], frozenset())
         self.assertEqual(
+            result["session_acknowledged_action_ids"],
+            frozenset(),
+        )
+        self.assertEqual(
             result["dry_run_reviewed_action_ids"], frozenset(),
         )
         self.assertEqual(
             result["policy_permitted_action_ids"], frozenset(),
         )
+
+    def test_normalizes_session_acknowledged_action_ids(
+        self,
+    ) -> None:
+        result = (
+            agent_loop._desktop_mcp_action_guardrails_normalize_operator_inputs(
+                {
+                    "session_acknowledged_action_ids": [
+                        "github_trigger_workflow",
+                    ],
+                },
+            )
+        )
+        self.assertIsInstance(
+            result["session_acknowledged_action_ids"],
+            frozenset,
+        )
+        self.assertIn(
+            "github_trigger_workflow",
+            result["session_acknowledged_action_ids"],
+        )
+
+    def test_refuses_non_iterable_session_acknowledged_action_ids(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._desktop_mcp_action_guardrails_normalize_operator_inputs(
+                {"session_acknowledged_action_ids": 42},
+            )
 
     def test_strips_identity_whitespace(self) -> None:
         result = (
@@ -859,6 +1060,9 @@ class BuildViewTests(unittest.TestCase):
                         "acknowledged_action_ids": [
                             "github_post_pr_comment",
                         ],
+                        "session_acknowledged_action_ids": [
+                            "github_trigger_workflow",
+                        ],
                         "dry_run_reviewed_action_ids": [
                             "github_edit_pr_metadata",
                         ],
@@ -875,12 +1079,142 @@ class BuildViewTests(unittest.TestCase):
             ["github_post_pr_comment"],
         )
         self.assertEqual(
+            op["session_acknowledged_action_ids"],
+            ["github_trigger_workflow"],
+        )
+        self.assertEqual(
             op["dry_run_reviewed_action_ids"],
             ["github_edit_pr_metadata"],
         )
         self.assertEqual(
             op["policy_permitted_action_ids"],
             ["github_trigger_workflow"],
+        )
+
+    def test_per_action_policy_action_rejects_session_ack(
+        self,
+    ) -> None:
+        # End-to-end view-level regression: a per-action policy
+        # action (github_post_pr_comment) MUST NOT have its
+        # acknowledgement requirement satisfied by a session-scoped
+        # acknowledgement. This is the headline policy-distinction
+        # regression at the view layer.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_action_guardrails_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        # session-scoped ack supplied; per-
+                        # invocation ack NOT supplied.
+                        "session_acknowledged_action_ids": [
+                            "github_post_pr_comment",
+                        ],
+                    },
+                )
+            )
+        action = next(
+            a for a in view["actions"]
+            if a["action_id"] == "github_post_pr_comment"
+        )
+        self.assertEqual(
+            action["approval_policy"],
+            "per_action_explicit_approval",
+        )
+        self.assertFalse(
+            action["approval_state"][
+                "operator_per_action_acknowledgement"
+            ]["satisfied"],
+        )
+
+    def test_per_session_policy_action_rejects_per_invocation_ack(
+        self,
+    ) -> None:
+        # End-to-end view-level regression: a per-session policy
+        # action (github_trigger_workflow) MUST NOT have its
+        # acknowledgement requirement satisfied by a per-invocation
+        # acknowledgement. The symmetric headline policy-
+        # distinction regression at the view layer.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_action_guardrails_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        # per-invocation ack supplied; session-
+                        # scoped ack NOT supplied.
+                        "acknowledged_action_ids": [
+                            "github_trigger_workflow",
+                        ],
+                    },
+                )
+            )
+        action = next(
+            a for a in view["actions"]
+            if a["action_id"] == "github_trigger_workflow"
+        )
+        self.assertEqual(
+            action["approval_policy"],
+            "per_session_explicit_approval",
+        )
+        self.assertFalse(
+            action["approval_state"][
+                "operator_per_action_acknowledgement"
+            ]["satisfied"],
+        )
+
+    def test_per_action_policy_action_accepts_per_invocation_ack(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_action_guardrails_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        "acknowledged_action_ids": [
+                            "github_post_pr_comment",
+                        ],
+                    },
+                )
+            )
+        action = next(
+            a for a in view["actions"]
+            if a["action_id"] == "github_post_pr_comment"
+        )
+        self.assertTrue(
+            action["approval_state"][
+                "operator_per_action_acknowledgement"
+            ]["satisfied"],
+        )
+
+    def test_per_session_policy_action_accepts_session_ack(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_mcp_action_guardrails_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        "session_acknowledged_action_ids": [
+                            "github_trigger_workflow",
+                        ],
+                    },
+                )
+            )
+        action = next(
+            a for a in view["actions"]
+            if a["action_id"] == "github_trigger_workflow"
+        )
+        self.assertTrue(
+            action["approval_state"][
+                "operator_per_action_acknowledgement"
+            ]["satisfied"],
         )
 
     def test_action_descriptor_carries_audit_entry_canonical_shape(
@@ -1054,6 +1388,7 @@ class CmdHandlerTests(unittest.TestCase):
             "controller_root": None,
             "operator_identity": None,
             "acknowledge_action": None,
+            "session_acknowledge_action": None,
             "dry_run_reviewed_action": None,
             "policy_permit_action": None,
         }
@@ -1171,6 +1506,8 @@ class CmdHandlerTests(unittest.TestCase):
             "--controller-root", ".",
             "--operator-identity", "me",
             "--acknowledge-action", "github_post_pr_comment",
+            "--session-acknowledge-action",
+            "github_trigger_workflow",
             "--dry-run-reviewed-action", "github_post_pr_comment",
             "--policy-permit-action", "github_post_pr_comment",
         ])
@@ -1182,12 +1519,80 @@ class CmdHandlerTests(unittest.TestCase):
             args.acknowledge_action, ["github_post_pr_comment"],
         )
         self.assertEqual(
+            args.session_acknowledge_action,
+            ["github_trigger_workflow"],
+        )
+        self.assertEqual(
             args.dry_run_reviewed_action,
             ["github_post_pr_comment"],
         )
         self.assertEqual(
             args.policy_permit_action,
             ["github_post_pr_comment"],
+        )
+
+    def test_session_acknowledge_flag_threads_through_to_view(
+        self,
+    ) -> None:
+        # End-to-end CLI regression for the new
+        # `--session-acknowledge-action` flag: supplying it for
+        # the per-session policy action satisfies the policy-
+        # branched acknowledgement requirement; the operator_inputs
+        # mirror line surfaces it explicitly.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            args = self._make_args(
+                controller_root=str(controller),
+                operator_identity="me",
+                session_acknowledge_action=[
+                    "github_trigger_workflow",
+                ],
+            )
+            buf_out = io.StringIO()
+            with redirect_stdout(buf_out):
+                rc = (
+                    agent_loop.cmd_view_desktop_mcp_action_guardrails(
+                        args,
+                    )
+                )
+        self.assertEqual(rc, 0)
+        output = buf_out.getvalue()
+        self.assertIn(
+            "operator_inputs.session_acknowledged_action_ids",
+            output,
+        )
+        self.assertIn(
+            "['github_trigger_workflow']", output,
+        )
+
+    def test_renderer_distinguishes_policy_acknowledgement_lines(
+        self,
+    ) -> None:
+        # The renderer MUST surface the per-action
+        # acknowledgement and the session-scoped acknowledgement
+        # as two distinct operator_inputs lines so a reviewer can
+        # see which surface the operator clicked into.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            args = self._make_args(
+                controller_root=str(controller),
+                operator_identity="me",
+            )
+            buf_out = io.StringIO()
+            with redirect_stdout(buf_out):
+                rc = (
+                    agent_loop.cmd_view_desktop_mcp_action_guardrails(
+                        args,
+                    )
+                )
+        self.assertEqual(rc, 0)
+        output = buf_out.getvalue()
+        self.assertIn(
+            "operator_inputs.acknowledged_action_ids", output,
+        )
+        self.assertIn(
+            "operator_inputs.session_acknowledged_action_ids",
+            output,
         )
 
 
@@ -1288,6 +1693,7 @@ class NonMutationInvariantsTests(unittest.TestCase):
                 controller_root=str(controller),
                 operator_identity=None,
                 acknowledge_action=None,
+                session_acknowledge_action=None,
                 dry_run_reviewed_action=None,
                 policy_permit_action=None,
             )
@@ -1312,6 +1718,7 @@ class NonMutationInvariantsTests(unittest.TestCase):
                 controller_root=str(controller),
                 operator_identity=None,
                 acknowledge_action=None,
+                session_acknowledge_action=None,
                 dry_run_reviewed_action=None,
                 policy_permit_action=None,
             )
