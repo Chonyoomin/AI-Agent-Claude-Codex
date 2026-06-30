@@ -395,6 +395,14 @@ class RenderDesktopAppTextTests(unittest.TestCase):
                 "error": "test project start error",
                 "view": None,
             },
+            "mcp_assistance_view": {
+                "error": "test mcp assistance error",
+                "view": None,
+            },
+            "mcp_action_guardrails_view": {
+                "error": "test mcp action guardrails error",
+                "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
@@ -406,6 +414,12 @@ class RenderDesktopAppTextTests(unittest.TestCase):
         )
         self.assertIn(
             "[error] 'test project start error'", output,
+        )
+        self.assertIn(
+            "[error] 'test mcp assistance error'", output,
+        )
+        self.assertIn(
+            "[error] 'test mcp action guardrails error'", output,
         )
 
 
