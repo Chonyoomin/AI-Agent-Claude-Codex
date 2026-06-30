@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10U - MCP Action Guardrails And Per-Tool Approval Policies
+Phase 10V - RAG Source Selection Contract And Desktop UX
 
 ## Status
-Phase 10T is complete and approved to advance. Phase 10U is now active as the next mainline slice focused on adding the mutation boundaries, refusal behavior, auditing, per-tool allow-lists, and approval prompts required before any non-read-only MCP-assisted runtime action is allowed through the desktop app.
+Phase 10U is complete and approved to advance. Phase 10V is now active as the next mainline slice focused on defining how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance and freshness are exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts.
 
 ## Task
-Implement Phase 10U for the agent loop. This slice should add the mutation boundaries, refusal behavior, auditing, per-tool allow-lists, and approval prompts required before any non-read-only MCP-assisted runtime action is allowed through the desktop app.
+Implement Phase 10V for the agent loop. This slice should define how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance and freshness are exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts.
 
 ## Notes
 
-- keep this slice bounded to mutation-capable MCP guardrails and approval policy in the desktop app; do not jump into RAG runtime or concurrency work yet
-- preserve the shipped ownership boundaries, evidence-review model, approval semantics, desktop-app boundaries, and canonical-artifact-first model while adding bounded MCP action guardrails
-- do not widen into hidden orchestration, silent in-flight loop mutation, credential capture beyond explicit operator approval flow, RAG, policy-pack, packaging, or auto-update work
+- keep this slice bounded to the RAG source-selection contract and desktop UX; do not jump into indexing, retrieval runtime, or concurrency work yet
+- preserve the shipped ownership boundaries, evidence-review model, approval semantics, desktop-app boundaries, and canonical-artifact-first model while defining bounded advisory-only RAG source selection
+- do not widen into hidden orchestration, silent in-flight loop mutation, background ingestion/indexing, packaging, or auto-update work
