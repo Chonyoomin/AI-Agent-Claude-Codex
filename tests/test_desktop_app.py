@@ -210,6 +210,65 @@ class DesktopClampCadenceTests(unittest.TestCase):
             1.0,
         )
 
+
+# ---------------------------------------------------------------------------
+# Desktop signatures
+# ---------------------------------------------------------------------------
+class DesktopSignatureTests(unittest.TestCase):
+
+    def test_controls_signature_tracks_render_relevant_fields(self) -> None:
+        controls = [{
+            "label": "Run one cycle",
+            "enabled": True,
+            "clipboard_payload": "python scripts/agent_loop.py run",
+            "ignored": "x",
+        }]
+        self.assertEqual(
+            agent_loop._desktop_controls_signature(controls),
+            ((
+                "Run one cycle",
+                True,
+                "python scripts/agent_loop.py run",
+            ),),
+        )
+
+    def test_ack_signature_supports_server_action_and_source_rows(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop._desktop_ack_signature(
+                [{"id": "docs", "display_name": "Local Repo Docs"}],
+                kind="server",
+            ),
+            (("docs", "Local Repo Docs"),),
+        )
+        self.assertEqual(
+            agent_loop._desktop_ack_signature(
+                [{
+                    "action_id": "open_docs",
+                    "display_name": "Open docs",
+                    "approval_policy": "per_action_explicit_approval",
+                }],
+                kind="action",
+            ),
+            ((
+                "open_docs",
+                "Open docs",
+                "per_action_explicit_approval",
+            ),),
+        )
+        self.assertEqual(
+            agent_loop._desktop_ack_signature(
+                [{"id": "prd", "display_name": "PRD upload"}],
+                kind="source",
+            ),
+            (("prd", "PRD upload"),),
+        )
+
+    def test_ack_signature_rejects_unsupported_kind(self) -> None:
+        with self.assertRaises(ValueError):
+            agent_loop._desktop_ack_signature([], kind="unknown")
+
     def test_value_below_idle_floor_clamped_up(self) -> None:
         self.assertEqual(
             agent_loop._desktop_clamp_cadence(0.1), 2.0,
@@ -306,6 +365,139 @@ class DesktopReplaceTextPreservingViewTests(unittest.TestCase):
         self.assertEqual(widget.delete_calls, 0)
         self.assertEqual(widget.insert_calls, 0)
         self.assertEqual(widget.moveto_calls, [0.25])
+
+
+# ---------------------------------------------------------------------------
+# _desktop_activity_popup_payload
+# ---------------------------------------------------------------------------
+class DesktopActivityPopupPayloadTests(unittest.TestCase):
+
+    def test_claude_implementing_shows_combobulating(self) -> None:
+        payload = agent_loop._desktop_activity_popup_payload(
+            "claude_implementing",
+        )
+        self.assertEqual(payload["status"], "claude_implementing")
+        self.assertIn("Combobulating", payload["title"])
+        self.assertIn("Claude", payload["detail"])
+
+    def test_claude_fixing_shows_recombobulating(self) -> None:
+        payload = agent_loop._desktop_activity_popup_payload(
+            "claude_fixing",
+        )
+        self.assertEqual(payload["status"], "claude_fixing")
+        self.assertIn("Re-combobulating", payload["title"])
+
+    def test_awaiting_codex_review_shows_codex_message(self) -> None:
+        payload = agent_loop._desktop_activity_popup_payload(
+            "awaiting_codex_review",
+        )
+        self.assertEqual(payload["status"], "awaiting_codex_review")
+        self.assertIn("Codex", payload["detail"])
+
+    def test_evidence_capture_shows_receipts_message(self) -> None:
+        payload = agent_loop._desktop_activity_popup_payload(
+            "evidence_capture",
+        )
+        self.assertEqual(payload["status"], "evidence_capture")
+        self.assertIn("receipts", payload["title"])
+
+    def test_idle_status_has_no_popup(self) -> None:
+        self.assertIsNone(
+            agent_loop._desktop_activity_popup_payload(
+                "awaiting_claude_implementation",
+            )
+        )
+
+    def test_non_string_status_has_no_popup(self) -> None:
+        self.assertIsNone(
+            agent_loop._desktop_activity_popup_payload(None)
+        )
+
+
+# ---------------------------------------------------------------------------
+# _desktop_native_summary_payload
+# ---------------------------------------------------------------------------
+class DesktopNativeSummaryPayloadTests(unittest.TestCase):
+
+    def test_extracts_compact_summary_from_view(self) -> None:
+        view = {
+            "controller_path_canonical": "/tmp/controller",
+            "status_view": {
+                "advisory_status_label": "in-flight (claude_implementing)",
+                "controller_loop_state": {
+                    "phase": "Phase 10 - Future Product Features",
+                    "sub_phase": "Phase 10V - RAG Source Selection",
+                    "task": "Implement the desktop app summary",
+                    "cycle_count": 1,
+                    "max_cycles": 3,
+                },
+            },
+            "controls_view": {
+                "current_loop_state_status": "claude_implementing",
+            },
+            "dashboard_view": {
+                "surfaces": {
+                    "review_summaries": {
+                        "current_verdict": "NEEDS_FIXES",
+                    },
+                    "failure_analytics": {
+                        "issue_count_in_latest_review": 2,
+                    },
+                },
+            },
+            "run_profiles_view": {
+                "approval_mode": "review",
+            },
+            "project_start_view": {
+                "target_attach": {
+                    "summary": "attached to sample target",
+                },
+            },
+            "setup_view": {
+                "adapter_env": {
+                    "summary": "manual handoff adapters active",
+                },
+            },
+        }
+        payload = agent_loop._desktop_native_summary_payload(view)
+        self.assertEqual(payload["window_title"], "Agent Loop Desktop")
+        self.assertEqual(
+            payload["status_label"],
+            "in-flight (claude_implementing)",
+        )
+        self.assertEqual(
+            payload["phase"], "Phase 10 - Future Product Features",
+        )
+        self.assertEqual(
+            payload["sub_phase"], "Phase 10V - RAG Source Selection",
+        )
+        self.assertEqual(
+            payload["task"], "Implement the desktop app summary",
+        )
+        self.assertEqual(payload["approval_mode"], "review")
+        self.assertEqual(payload["cycle_progress"], "1 / 3 cycles")
+        self.assertEqual(payload["review_verdict"], "NEEDS_FIXES")
+        self.assertEqual(payload["issue_count"], 2)
+        self.assertEqual(
+            payload["target_summary"], "attached to sample target",
+        )
+        self.assertEqual(
+            payload["adapter_summary"],
+            "manual handoff adapters active",
+        )
+        self.assertEqual(
+            payload["current_loop_state_status"],
+            "claude_implementing",
+        )
+
+    def test_missing_fields_soft_fall_back(self) -> None:
+        payload = agent_loop._desktop_native_summary_payload({})
+        self.assertEqual(payload["status_label"], "Status unavailable")
+        self.assertEqual(payload["phase"], "Unknown phase")
+        self.assertEqual(payload["sub_phase"], "Unknown sub-phase")
+        self.assertEqual(payload["task"], "No active task loaded")
+        self.assertEqual(payload["approval_mode"], "Unknown")
+        self.assertEqual(payload["review_verdict"], "No review verdict yet")
 
 
 # ---------------------------------------------------------------------------

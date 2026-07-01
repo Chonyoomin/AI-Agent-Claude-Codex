@@ -14374,6 +14374,200 @@ def _desktop_replace_text_preserving_view(
         text_widget.yview_moveto(view[0])
 
 
+def _desktop_activity_popup_payload(
+    status_value,
+) -> Optional[dict]:
+    """Map canonical in-flight statuses to a small desktop activity
+    popup payload.
+
+    This is intentionally UI-only advisory state. It never replaces
+    the canonical loop-state status and it only appears for active
+    work states where the operator would otherwise stare at a
+    re-polling window with no obvious "something is happening"
+    signal.
+    """
+    if not isinstance(status_value, str):
+        return None
+    popup_map = {
+        "claude_implementing": {
+            "status": "claude_implementing",
+            "title": "Combobulating...",
+            "detail": (
+                "Claude is implementing the active phase."
+            ),
+        },
+        "claude_fixing": {
+            "status": "claude_fixing",
+            "title": "Re-combobulating...",
+            "detail": (
+                "Claude is applying the current fix cycle."
+            ),
+        },
+        "awaiting_codex_review": {
+            "status": "awaiting_codex_review",
+            "title": "Combobulating...",
+            "detail": (
+                "Codex is reviewing the latest implementation."
+            ),
+        },
+        "evidence_capture": {
+            "status": "evidence_capture",
+            "title": "Gathering receipts...",
+            "detail": (
+                "The loop is collecting diff and validation evidence."
+            ),
+        },
+    }
+    payload = popup_map.get(status_value)
+    if payload is None:
+        return None
+    return dict(payload)
+
+
+def _desktop_native_summary_payload(view: dict) -> dict:
+    """Build a compact native-window summary model from the
+    assembled desktop view.
+
+    The native Tk shell should not show the full terminal-style
+    renderer. This helper extracts a small set of operator-facing
+    fields from the existing canonical/advisory view payloads so
+    the GUI can stay simple without inventing a second state plane.
+    """
+    status_view = (
+        view.get("status_view")
+        if isinstance(view.get("status_view"), dict)
+        else {}
+    )
+    controls_view = (
+        view.get("controls_view")
+        if isinstance(view.get("controls_view"), dict)
+        else {}
+    )
+    dashboard_view = (
+        view.get("dashboard_view")
+        if isinstance(view.get("dashboard_view"), dict)
+        else {}
+    )
+    run_profiles_view = (
+        view.get("run_profiles_view")
+        if isinstance(view.get("run_profiles_view"), dict)
+        else {}
+    )
+    project_start_view = (
+        view.get("project_start_view")
+        if isinstance(view.get("project_start_view"), dict)
+        else {}
+    )
+    setup_view = (
+        view.get("setup_view")
+        if isinstance(view.get("setup_view"), dict)
+        else {}
+    )
+    controller_loop_state = status_view.get("controller_loop_state")
+    if not isinstance(controller_loop_state, dict):
+        controller_loop_state = {}
+    failure_surface = dashboard_view.get("surfaces", {}).get(
+        "failure_analytics", {}
+    )
+    review_surface = dashboard_view.get("surfaces", {}).get(
+        "review_summaries", {}
+    )
+    target_attach = project_start_view.get("target_attach")
+    if not isinstance(target_attach, dict):
+        target_attach = {}
+    adapter_env = setup_view.get("adapter_env")
+    if not isinstance(adapter_env, dict):
+        adapter_env = {}
+    current_verdict = review_surface.get("current_verdict")
+    if not isinstance(current_verdict, str) or not current_verdict:
+        current_verdict = "No review verdict yet"
+    task_value = controller_loop_state.get("task")
+    if not isinstance(task_value, str) or not task_value.strip():
+        task_value = "No active task loaded"
+    return {
+        "window_title": "Agent Loop Desktop",
+        "status_label": (
+            status_view.get("advisory_status_label")
+            or "Status unavailable"
+        ),
+        "phase": (
+            controller_loop_state.get("phase")
+            if isinstance(controller_loop_state.get("phase"), str)
+            else "Unknown phase"
+        ),
+        "sub_phase": (
+            controller_loop_state.get("sub_phase")
+            if isinstance(controller_loop_state.get("sub_phase"), str)
+            else "Unknown sub-phase"
+        ),
+        "task": task_value,
+        "approval_mode": (
+            run_profiles_view.get("approval_mode")
+            if isinstance(run_profiles_view.get("approval_mode"), str)
+            else "Unknown"
+        ),
+        "cycle_progress": (
+            f"{controller_loop_state.get('cycle_count', '?')} / "
+            f"{controller_loop_state.get('max_cycles', '?')} cycles"
+        ),
+        "review_verdict": current_verdict,
+        "issue_count": failure_surface.get(
+            "issue_count_in_latest_review", 0
+        ),
+        "target_summary": (
+            target_attach.get("summary")
+            if isinstance(target_attach.get("summary"), str)
+            else "No target attached"
+        ),
+        "adapter_summary": (
+            adapter_env.get("summary")
+            if isinstance(adapter_env.get("summary"), str)
+            else "Adapter status unavailable"
+        ),
+        "controller_path": view.get("controller_path_canonical") or "",
+        "current_loop_state_status": (
+            controls_view.get("current_loop_state_status")
+        ),
+    }
+
+
+def _desktop_controls_signature(controls: list) -> tuple:
+    """Return a stable tuple signature for a desktop button model."""
+    signature: list = []
+    for control in controls:
+        if not isinstance(control, dict):
+            signature.append(("invalid", repr(control)))
+            continue
+        signature.append((
+            control.get("label"),
+            control.get("enabled"),
+            control.get("clipboard_payload"),
+        ))
+    return tuple(signature)
+
+
+def _desktop_ack_signature(items: list, *, kind: str) -> tuple:
+    """Return a stable tuple signature for checkbox-backed rows."""
+    if kind not in {"server", "action", "source"}:
+        raise ValueError(f"unsupported desktop ack signature kind: {kind}")
+    signature: list = []
+    for item in items:
+        if not isinstance(item, dict):
+            signature.append(("invalid", repr(item)))
+            continue
+        if kind == "server":
+            signature.append((item.get("id"), item.get("display_name")))
+        elif kind == "action":
+            signature.append((
+                item.get("action_id"),
+                item.get("display_name"),
+                item.get("approval_policy"),
+            ))
+        elif kind == "source":
+            signature.append((item.get("id"), item.get("display_name")))
+    return tuple(signature)
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -14406,17 +14600,108 @@ def _launch_desktop_app_window(
     `--headless`.
     """
     import tkinter as tk
-    from tkinter import scrolledtext
     root = tk.Tk()
     root.title(_DESKTOP_APP_WINDOW_TITLE)
     root.geometry("1440x900")
     root.minsize(960, 640)
     shell_frame = tk.Frame(root)
     shell_frame.pack(fill=tk.BOTH, expand=True)
-    text = scrolledtext.ScrolledText(
-        shell_frame, width=120, height=40, wrap=tk.WORD,
+    summary_frame = tk.Frame(shell_frame, bg="#f7f4ec")
+    summary_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    summary_header = tk.Label(
+        summary_frame,
+        text="Agent Loop Desktop",
+        font=("TkDefaultFont", 18, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        bg="#f7f4ec",
     )
-    text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    summary_header.pack(fill=tk.X, padx=20, pady=(20, 6))
+    summary_status = tk.Label(
+        summary_frame,
+        text="Status unavailable",
+        font=("TkDefaultFont", 11, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        bg="#f7f4ec",
+        fg="#594f3b",
+    )
+    summary_status.pack(fill=tk.X, padx=20, pady=(0, 14))
+    summary_card = tk.Frame(
+        summary_frame,
+        bg="#fffdf8",
+        highlightbackground="#d9d2c3",
+        highlightthickness=1,
+        padx=18,
+        pady=16,
+    )
+    summary_card.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+    summary_phase = tk.Label(
+        summary_card,
+        text="",
+        font=("TkDefaultFont", 12, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_phase.pack(fill=tk.X)
+    summary_sub_phase = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+        fg="#4a4a4a",
+    )
+    summary_sub_phase.pack(fill=tk.X, pady=(6, 14))
+    summary_task = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_task.pack(fill=tk.X, pady=(0, 16))
+    summary_meta = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_meta.pack(fill=tk.X, pady=(0, 16))
+    summary_target = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_target.pack(fill=tk.X, pady=(0, 16))
+    summary_adapter = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_adapter.pack(fill=tk.X, pady=(0, 16))
+    summary_path = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+        fg="#666666",
+    )
+    summary_path.pack(fill=tk.X)
 
     control_outer = tk.Frame(shell_frame, width=380)
     control_outer.pack(side=tk.RIGHT, fill=tk.BOTH)
@@ -14451,6 +14736,51 @@ def _launch_desktop_app_window(
 
     control_frame.bind("<Configure>", _sync_control_scroll_region)
     control_canvas.bind("<Configure>", _sync_control_width)
+    activity_popup = tk.Toplevel(root)
+    activity_popup.title("Agent Activity")
+    activity_popup.withdraw()
+    activity_popup.transient(root)
+    activity_popup.resizable(False, False)
+    activity_popup.attributes("-topmost", True)
+    popup_frame = tk.Frame(
+        activity_popup,
+        padx=18,
+        pady=16,
+        bg="#f4f1e8",
+    )
+    popup_frame.pack(fill=tk.BOTH, expand=True)
+    popup_title = tk.Label(
+        popup_frame,
+        text="Combobulating...",
+        font=("TkDefaultFont", 12, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        bg="#f4f1e8",
+    )
+    popup_title.pack(fill=tk.X)
+    popup_detail = tk.Label(
+        popup_frame,
+        text="",
+        wraplength=280,
+        justify=tk.LEFT,
+        anchor=tk.W,
+        bg="#f4f1e8",
+    )
+    popup_detail.pack(fill=tk.X, pady=(8, 0))
+    active_popup_status: Optional[str] = None
+
+    def _place_activity_popup() -> None:
+        root.update_idletasks()
+        activity_popup.update_idletasks()
+        popup_width = activity_popup.winfo_width()
+        popup_height = activity_popup.winfo_height()
+        root_width = root.winfo_width()
+        x = root.winfo_rootx() + max(24, root_width - popup_width - 36)
+        y = root.winfo_rooty() + 48
+        activity_popup.geometry(
+            f"{popup_width}x{popup_height}+{x}+{y}"
+        )
+
     run_profiles_frame = tk.Frame(control_frame)
     run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
     tk.Label(
@@ -14565,6 +14895,14 @@ def _launch_desktop_app_window(
     mcp_assistance_button_widgets: list = []
     mcp_action_guardrails_button_widgets: list = []
     rag_source_selection_button_widgets: list = []
+    run_profile_controls_signature: Optional[tuple] = None
+    project_start_controls_signature: Optional[tuple] = None
+    mcp_assistance_controls_signature: Optional[tuple] = None
+    mcp_action_guardrails_controls_signature: Optional[tuple] = None
+    rag_source_selection_controls_signature: Optional[tuple] = None
+    mcp_ack_signature: Optional[tuple] = None
+    mcp_action_ack_signature: Optional[tuple] = None
+    rag_source_ack_signature: Optional[tuple] = None
 
     def _rebuild_button_row(
         parent: "tk.Frame",
@@ -14590,11 +14928,55 @@ def _launch_desktop_app_window(
             widget_bag.append(button)
 
     def _refresh() -> None:
+        nonlocal active_popup_status
+        nonlocal run_profile_controls_signature
+        nonlocal project_start_controls_signature
+        nonlocal mcp_assistance_controls_signature
+        nonlocal mcp_action_guardrails_controls_signature
+        nonlocal rag_source_selection_controls_signature
+        nonlocal mcp_ack_signature
+        nonlocal mcp_action_ack_signature
+        nonlocal rag_source_ack_signature
         view = assemble_desktop_app_view(controller_root)
-        _desktop_replace_text_preserving_view(
-            text,
-            render_desktop_app_text(view),
+        summary = _desktop_native_summary_payload(view)
+        summary_header.config(text=summary["window_title"])
+        summary_status.config(text=summary["status_label"])
+        summary_phase.config(text=summary["phase"])
+        summary_sub_phase.config(text=summary["sub_phase"])
+        summary_task.config(text=f"Task: {summary['task']}")
+        summary_meta.config(
+            text=(
+                f"Approval mode: {summary['approval_mode']}\n"
+                f"Cycle progress: {summary['cycle_progress']}\n"
+                f"Latest verdict: {summary['review_verdict']}\n"
+                f"Latest review issues: {summary['issue_count']}"
+            )
         )
+        summary_target.config(
+            text=f"Target: {summary['target_summary']}"
+        )
+        summary_adapter.config(
+            text=f"Adapters: {summary['adapter_summary']}"
+        )
+        summary_path.config(
+            text=f"Controller root: {summary['controller_path']}"
+        )
+        status_payload = _desktop_activity_popup_payload(
+            summary["current_loop_state_status"],
+        )
+        if status_payload is None:
+            if active_popup_status is not None:
+                activity_popup.withdraw()
+                active_popup_status = None
+        else:
+            if active_popup_status != status_payload["status"]:
+                popup_title.config(text=status_payload["title"])
+                popup_detail.config(text=status_payload["detail"])
+                active_popup_status = status_payload["status"]
+            if activity_popup.state() == "withdrawn":
+                activity_popup.deiconify()
+            activity_popup.lift()
+            _place_activity_popup()
         run_profiles_sub_view = view.get("run_profiles_view") or {}
         if (
             isinstance(run_profiles_sub_view, dict)
@@ -14607,11 +14989,18 @@ def _launch_desktop_app_window(
             )
         else:
             run_profile_controls = []
-        _rebuild_button_row(
-            run_profiles_frame,
-            run_profile_controls,
-            run_profile_button_widgets,
+        next_run_profile_controls_signature = _desktop_controls_signature(
+            run_profile_controls
         )
+        if next_run_profile_controls_signature != run_profile_controls_signature:
+            _rebuild_button_row(
+                run_profiles_frame,
+                run_profile_controls,
+                run_profile_button_widgets,
+            )
+            run_profile_controls_signature = (
+                next_run_profile_controls_signature
+            )
         project_start_sub_view = (
             view.get("project_start_view") or {}
         )
@@ -14626,11 +15015,21 @@ def _launch_desktop_app_window(
             )
         else:
             project_start_controls = []
-        _rebuild_button_row(
-            project_start_frame,
-            project_start_controls,
-            project_start_button_widgets,
+        next_project_start_controls_signature = (
+            _desktop_controls_signature(project_start_controls)
         )
+        if (
+            next_project_start_controls_signature
+            != project_start_controls_signature
+        ):
+            _rebuild_button_row(
+                project_start_frame,
+                project_start_controls,
+                project_start_button_widgets,
+            )
+            project_start_controls_signature = (
+                next_project_start_controls_signature
+            )
         # Phase 10T fix cycle: re-derive the MCP assistance
         # view with the per-session operator-input state read
         # from the Tk widgets, then re-render the per-server
@@ -14667,44 +15066,65 @@ def _launch_desktop_app_window(
         # rebuilt every poll so registry changes propagate
         # cleanly and per-session BooleanVar state is preserved
         # for any server id we have already seen.
-        for widget in mcp_ack_widgets:
-            widget.destroy()
-        mcp_ack_widgets.clear()
         if (
             isinstance(live_mcp_assistance_view, dict)
             and "servers" in live_mcp_assistance_view
         ):
-            for server in live_mcp_assistance_view["servers"]:
-                server_id = server["id"]
-                if server_id not in mcp_ack_vars:
-                    mcp_ack_vars[server_id] = (
-                        tk.BooleanVar(value=False)
+            next_mcp_ack_signature = _desktop_ack_signature(
+                live_mcp_assistance_view["servers"],
+                kind="server",
+            )
+            if next_mcp_ack_signature != mcp_ack_signature:
+                for widget in mcp_ack_widgets:
+                    widget.destroy()
+                mcp_ack_widgets.clear()
+                for server in live_mcp_assistance_view["servers"]:
+                    server_id = server["id"]
+                    if server_id not in mcp_ack_vars:
+                        mcp_ack_vars[server_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    ack_check = tk.Checkbutton(
+                        mcp_ack_frame,
+                        text=(
+                            f"Acknowledge safety copy: "
+                            f"{server['display_name']}"
+                        ),
+                        wraplength=240,
+                        justify=tk.LEFT,
+                        anchor=tk.W,
+                        variable=mcp_ack_vars[server_id],
                     )
-                ack_check = tk.Checkbutton(
-                    mcp_ack_frame,
-                    text=(
-                        f"Acknowledge safety copy: "
-                        f"{server['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_ack_vars[server_id],
-                )
-                ack_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_ack_widgets.append(ack_check)
+                    ack_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_ack_widgets.append(ack_check)
+                mcp_ack_signature = next_mcp_ack_signature
             mcp_assistance_controls = (
                 build_desktop_mcp_assistance_controls(
                     live_mcp_assistance_view,
                 )
             )
         else:
+            if mcp_ack_signature is not None:
+                for widget in mcp_ack_widgets:
+                    widget.destroy()
+                mcp_ack_widgets.clear()
+                mcp_ack_signature = ()
             mcp_assistance_controls = []
-        _rebuild_button_row(
-            mcp_assistance_frame,
-            mcp_assistance_controls,
-            mcp_assistance_button_widgets,
+        next_mcp_assistance_controls_signature = (
+            _desktop_controls_signature(mcp_assistance_controls)
         )
+        if (
+            next_mcp_assistance_controls_signature
+            != mcp_assistance_controls_signature
+        ):
+            _rebuild_button_row(
+                mcp_assistance_frame,
+                mcp_assistance_controls,
+                mcp_assistance_button_widgets,
+            )
+            mcp_assistance_controls_signature = (
+                next_mcp_assistance_controls_signature
+            )
         # Phase 10U live operator-input re-derivation. The
         # ScrolledText panel above shows the assemble_desktop_app
         # _view default empty-input snapshot (the audit-trail
@@ -14748,123 +15168,134 @@ def _launch_desktop_app_window(
             ),
             controller_root,
         )
-        for widget in mcp_action_ack_widgets:
-            widget.destroy()
-        mcp_action_ack_widgets.clear()
         if (
             isinstance(live_mcp_action_guardrails_view, dict)
             and "actions" in live_mcp_action_guardrails_view
         ):
-            for action in (
-                live_mcp_action_guardrails_view["actions"]
-            ):
-                action_id = action["action_id"]
-                if action_id not in mcp_action_ack_vars:
-                    mcp_action_ack_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                if action_id not in (
-                    mcp_action_session_ack_vars
+            next_mcp_action_ack_signature = _desktop_ack_signature(
+                live_mcp_action_guardrails_view["actions"],
+                kind="action",
+            )
+            if next_mcp_action_ack_signature != mcp_action_ack_signature:
+                for widget in mcp_action_ack_widgets:
+                    widget.destroy()
+                mcp_action_ack_widgets.clear()
+                for action in (
+                    live_mcp_action_guardrails_view["actions"]
                 ):
-                    mcp_action_session_ack_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                if action_id not in mcp_action_dry_run_vars:
-                    mcp_action_dry_run_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                if action_id not in mcp_action_policy_vars:
-                    mcp_action_policy_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                policy = action.get("approval_policy", "")
-                # Phase 10U fix cycle: render the policy-relevant
-                # acknowledgement widget per action. The per-
-                # invocation widget shows only for
-                # `per_action_explicit_approval` actions; the
-                # session-scoped widget shows only for
-                # `per_session_explicit_approval` actions. This
-                # matches the executable approval-policy contract
-                # exposed by `_desktop_mcp_action_guardrails_
-                # compute_approval_state(...)` so the Tk surface
-                # cannot accidentally surface a per-invocation
-                # acknowledgement that does not actually satisfy
-                # a per-session policy.
-                if policy == "per_action_explicit_approval":
-                    ack_check = tk.Checkbutton(
+                    action_id = action["action_id"]
+                    if action_id not in mcp_action_ack_vars:
+                        mcp_action_ack_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    if action_id not in (
+                        mcp_action_session_ack_vars
+                    ):
+                        mcp_action_session_ack_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    if action_id not in mcp_action_dry_run_vars:
+                        mcp_action_dry_run_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    if action_id not in mcp_action_policy_vars:
+                        mcp_action_policy_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    policy = action.get("approval_policy", "")
+                    if policy == "per_action_explicit_approval":
+                        ack_check = tk.Checkbutton(
+                            mcp_action_ack_frame,
+                            text=(
+                                f"Acknowledge action (per-"
+                                f"invocation): "
+                                f"{action['display_name']}"
+                            ),
+                            wraplength=240,
+                            justify=tk.LEFT,
+                            anchor=tk.W,
+                            variable=mcp_action_ack_vars[action_id],
+                        )
+                        ack_check.pack(fill=tk.X, padx=4, pady=1)
+                        mcp_action_ack_widgets.append(ack_check)
+                    elif policy == "per_session_explicit_approval":
+                        session_ack_check = tk.Checkbutton(
+                            mcp_action_ack_frame,
+                            text=(
+                                f"Session-acknowledge action: "
+                                f"{action['display_name']}"
+                            ),
+                            wraplength=240,
+                            justify=tk.LEFT,
+                            anchor=tk.W,
+                            variable=(
+                                mcp_action_session_ack_vars[
+                                    action_id
+                                ]
+                            ),
+                        )
+                        session_ack_check.pack(
+                            fill=tk.X, padx=4, pady=1,
+                        )
+                        mcp_action_ack_widgets.append(
+                            session_ack_check,
+                        )
+                    dry_run_check = tk.Checkbutton(
                         mcp_action_ack_frame,
                         text=(
-                            f"Acknowledge action (per-"
-                            f"invocation): "
+                            f"Dry-run reviewed: "
                             f"{action['display_name']}"
                         ),
                         wraplength=240,
                         justify=tk.LEFT,
                         anchor=tk.W,
-                        variable=mcp_action_ack_vars[action_id],
+                        variable=mcp_action_dry_run_vars[action_id],
                     )
-                    ack_check.pack(fill=tk.X, padx=4, pady=1)
-                    mcp_action_ack_widgets.append(ack_check)
-                elif policy == "per_session_explicit_approval":
-                    session_ack_check = tk.Checkbutton(
+                    dry_run_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_action_ack_widgets.append(dry_run_check)
+                    policy_check = tk.Checkbutton(
                         mcp_action_ack_frame,
                         text=(
-                            f"Session-acknowledge action: "
+                            f"Policy pack permits: "
                             f"{action['display_name']}"
                         ),
                         wraplength=240,
                         justify=tk.LEFT,
                         anchor=tk.W,
-                        variable=(
-                            mcp_action_session_ack_vars[
-                                action_id
-                            ]
-                        ),
+                        variable=mcp_action_policy_vars[action_id],
                     )
-                    session_ack_check.pack(
-                        fill=tk.X, padx=4, pady=1,
-                    )
-                    mcp_action_ack_widgets.append(
-                        session_ack_check,
-                    )
-                dry_run_check = tk.Checkbutton(
-                    mcp_action_ack_frame,
-                    text=(
-                        f"Dry-run reviewed: "
-                        f"{action['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_action_dry_run_vars[action_id],
+                    policy_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_action_ack_widgets.append(policy_check)
+                mcp_action_ack_signature = (
+                    next_mcp_action_ack_signature
                 )
-                dry_run_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_action_ack_widgets.append(dry_run_check)
-                policy_check = tk.Checkbutton(
-                    mcp_action_ack_frame,
-                    text=(
-                        f"Policy pack permits: "
-                        f"{action['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_action_policy_vars[action_id],
-                )
-                policy_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_action_ack_widgets.append(policy_check)
             mcp_action_guardrails_controls = (
                 build_desktop_mcp_action_guardrails_controls(
                     live_mcp_action_guardrails_view,
                 )
             )
         else:
+            if mcp_action_ack_signature is not None:
+                for widget in mcp_action_ack_widgets:
+                    widget.destroy()
+                mcp_action_ack_widgets.clear()
+                mcp_action_ack_signature = ()
             mcp_action_guardrails_controls = []
-        _rebuild_button_row(
-            mcp_action_guardrails_frame,
-            mcp_action_guardrails_controls,
-            mcp_action_guardrails_button_widgets,
+        next_mcp_action_guardrails_controls_signature = (
+            _desktop_controls_signature(mcp_action_guardrails_controls)
         )
+        if (
+            next_mcp_action_guardrails_controls_signature
+            != mcp_action_guardrails_controls_signature
+        ):
+            _rebuild_button_row(
+                mcp_action_guardrails_frame,
+                mcp_action_guardrails_controls,
+                mcp_action_guardrails_button_widgets,
+            )
+            mcp_action_guardrails_controls_signature = (
+                next_mcp_action_guardrails_controls_signature
+            )
         # Phase 10V live operator-input re-derivation. The
         # ScrolledText panel above shows the assemble_desktop_app
         # _view default empty-input snapshot; the Tk action
@@ -14888,46 +15319,67 @@ def _launch_desktop_app_window(
             ),
             controller_root,
         )
-        for widget in rag_source_ack_widgets:
-            widget.destroy()
-        rag_source_ack_widgets.clear()
         if (
             isinstance(live_rag_source_selection_view, dict)
             and "sources" in live_rag_source_selection_view
         ):
-            for source in (
-                live_rag_source_selection_view["sources"]
-            ):
-                source_id = source["id"]
-                if source_id not in rag_source_ack_vars:
-                    rag_source_ack_vars[source_id] = (
-                        tk.BooleanVar(value=False)
+            next_rag_source_ack_signature = _desktop_ack_signature(
+                live_rag_source_selection_view["sources"],
+                kind="source",
+            )
+            if next_rag_source_ack_signature != rag_source_ack_signature:
+                for widget in rag_source_ack_widgets:
+                    widget.destroy()
+                rag_source_ack_widgets.clear()
+                for source in (
+                    live_rag_source_selection_view["sources"]
+                ):
+                    source_id = source["id"]
+                    if source_id not in rag_source_ack_vars:
+                        rag_source_ack_vars[source_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    ack_check = tk.Checkbutton(
+                        rag_source_ack_frame,
+                        text=(
+                            f"Acknowledge advisory-labeling: "
+                            f"{source['display_name']}"
+                        ),
+                        wraplength=240,
+                        justify=tk.LEFT,
+                        anchor=tk.W,
+                        variable=rag_source_ack_vars[source_id],
                     )
-                ack_check = tk.Checkbutton(
-                    rag_source_ack_frame,
-                    text=(
-                        f"Acknowledge advisory-labeling: "
-                        f"{source['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=rag_source_ack_vars[source_id],
-                )
-                ack_check.pack(fill=tk.X, padx=4, pady=1)
-                rag_source_ack_widgets.append(ack_check)
+                    ack_check.pack(fill=tk.X, padx=4, pady=1)
+                    rag_source_ack_widgets.append(ack_check)
+                rag_source_ack_signature = next_rag_source_ack_signature
             rag_source_selection_controls = (
                 build_desktop_rag_source_selection_controls(
                     live_rag_source_selection_view,
                 )
             )
         else:
+            if rag_source_ack_signature is not None:
+                for widget in rag_source_ack_widgets:
+                    widget.destroy()
+                rag_source_ack_widgets.clear()
+                rag_source_ack_signature = ()
             rag_source_selection_controls = []
-        _rebuild_button_row(
-            rag_source_selection_frame,
-            rag_source_selection_controls,
-            rag_source_selection_button_widgets,
+        next_rag_source_selection_controls_signature = (
+            _desktop_controls_signature(rag_source_selection_controls)
         )
+        if (
+            next_rag_source_selection_controls_signature
+            != rag_source_selection_controls_signature
+        ):
+            _rebuild_button_row(
+                rag_source_selection_frame,
+                rag_source_selection_controls,
+                rag_source_selection_button_widgets,
+            )
+            rag_source_selection_controls_signature = (
+                next_rag_source_selection_controls_signature
+            )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
 
