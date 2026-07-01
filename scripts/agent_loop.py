@@ -24220,6 +24220,7 @@ DESKTOP_RUN_CONSOLE_PRECEDENCE_NOTE = (
 RUN_CONSOLE_ACTIVITY_STATES = (
     "running",
     "awaiting_review",
+    "awaiting_claude",
     "awaiting_fix",
     "awaiting_human",
     "phase_complete",
@@ -24271,9 +24272,22 @@ _RUN_CONSOLE_PHASE_HEADER_RE = re.compile(
 
 def _run_console_derive_activity_state(
     status: Optional[str],
+    last_verdict: Optional[str] = None,
 ) -> str:
     """Map a loop-state status to a closed run-console activity
     state. Pure computation; no IO.
+
+    Fix-cycle disambiguation: `awaiting_claude_implementation`
+    can mean either the normal pre-implementation state (Claude
+    has not yet produced the phase summary; `last_verdict is
+    None`) OR the post-review fix state (`last_verdict ==
+    "NEEDS_FIXES"`; Claude must address the review findings). The
+    two are semantically distinct and MUST NOT collapse into a
+    single label, so this helper branches on `last_verdict` and
+    surfaces `awaiting_fix` ONLY when a fix cycle is actually in
+    flight. The `_run_console_derive_fix_cycle_state(...)` helper
+    stays the single source of truth for the fix-cycle boundary;
+    this label is a UI shortcut that must agree with it.
     """
     if not isinstance(status, str) or not status:
         return "unknown"
@@ -24286,7 +24300,9 @@ def _run_console_derive_activity_state(
     if status == "awaiting_codex_review":
         return "awaiting_review"
     if status == "awaiting_claude_implementation":
-        return "awaiting_fix"
+        if last_verdict == "NEEDS_FIXES":
+            return "awaiting_fix"
+        return "awaiting_claude"
     if status == "phase_complete_awaiting_human_approval":
         return "phase_complete"
     if status in (
@@ -24525,7 +24541,7 @@ def build_desktop_run_console_view(
             max_cycles_value = max_candidate
 
     activity_state = _run_console_derive_activity_state(
-        status_value,
+        status_value, last_verdict,
     )
     cycle_state = _run_console_derive_cycle_state(
         cycle_count_value, max_cycles_value,

@@ -6274,6 +6274,106 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         )
 
 
+class PhasePlanCanonicalHistoryTests(unittest.TestCase):
+    """Phase 10X fix-cycle guard: the `.agent-loop/phase-plan.md`
+    file is the canonical chronological history of all shipped
+    phases. Two invariants MUST hold, otherwise the shipped Phase
+    10X run-console `completion_ledger` will silently mis-mark
+    already-completed phases as `pending`:
+
+      1. `## Phase X` section headers MUST appear in canonical
+         chronological order (the active phase's header is the
+         LAST `## Phase 10*` header in the file). Anything
+         earlier is closed history.
+
+      2. No completed sub-phase's `### Status` body MUST still
+         advertise itself as `Active`; a stale `Active` marker
+         either contradicts the canonical active phase named in
+         `.agent-loop/current-phase.md` or introduces a hidden
+         parallel state store, both of which the Phase 10X
+         run-console contract forbids.
+    """
+
+    _PHASE_PLAN_PATH = REPO_ROOT / ".agent-loop" / "phase-plan.md"
+
+    def setUp(self) -> None:
+        self.text = _read(self._PHASE_PLAN_PATH)
+        self.headers = [
+            line
+            for line in self.text.splitlines()
+            if line.startswith("## Phase 10")
+        ]
+
+    def _phase_id(self, header_line: str) -> str:
+        # "## Phase 10X - Title" -> "Phase 10X"
+        rest = header_line[3:]
+        if " - " in rest:
+            rest = rest.split(" - ", 1)[0]
+        return rest.strip()
+
+    def test_phase_plan_headers_are_in_alphabetic_order(self) -> None:
+        # Every Phase 10 sub-phase in the plan MUST appear in
+        # alphabetic (== chronological) order of its trailing
+        # letter. If the ledger regresses (a new section is
+        # inserted before older sections), completed phases
+        # after that insertion point silently surface as
+        # `pending` in the run console.
+        letters = []
+        for h in self.headers:
+            pid = self._phase_id(h)
+            if len(pid) >= len("Phase 10A"):
+                letters.append(pid[-1])
+        # ORDER: A, B, C, ..., X (up through the current active
+        # sub-phase). Strict monotonic non-decreasing.
+        self.assertEqual(
+            letters, sorted(letters),
+            f"phase-plan.md ## Phase 10 headers are not in "
+            f"canonical chronological order (got trailing "
+            f"letters {letters!r}); the Phase 10X run-console "
+            f"derives completion_state purely from header order, "
+            f"so an out-of-order header will silently mark "
+            f"already-completed phases as `pending`",
+        )
+
+    def test_only_the_canonical_active_phase_is_marked_active(
+        self,
+    ) -> None:
+        # Scan every ### Status body and refuse any body that
+        # begins with "Active" for a sub-phase that is NOT the
+        # canonical active phase. Bounded, deterministic: only
+        # the first non-blank line after a "### Status" header
+        # is inspected.
+        canonical_active = "Phase 10X"  # tracked by the file
+        lines = self.text.splitlines()
+        offending = []
+        current_section = None
+        for i, line in enumerate(lines):
+            if line.startswith("## Phase 10") or line.startswith(
+                "## Fix Phase",
+            ):
+                current_section = self._phase_id(line)
+            if line.strip() == "### Status" and current_section:
+                # Advance past blank lines to the first body line.
+                j = i + 1
+                while j < len(lines) and lines[j].strip() == "":
+                    j += 1
+                if j < len(lines) and lines[j].startswith("Active"):
+                    if current_section != canonical_active:
+                        offending.append(
+                            (current_section, lines[j][:80]),
+                        )
+        self.assertEqual(
+            offending, [],
+            f"phase-plan.md ### Status body for completed "
+            f"sub-phase(s) still starts with `Active`: "
+            f"{offending!r}; a stale active marker either "
+            f"contradicts the canonical active phase "
+            f"{canonical_active!r} or introduces a hidden "
+            f"parallel state store, both of which the Phase "
+            f"10X run-console contract forbids",
+        )
+
+
 class McpServerSelectionUxContractDoesNotClaimRuntimeShipsTests(
     unittest.TestCase,
 ):

@@ -152,6 +152,7 @@ class ConstantsTests(unittest.TestCase):
             (
                 "running",
                 "awaiting_review",
+                "awaiting_claude",
                 "awaiting_fix",
                 "awaiting_human",
                 "phase_complete",
@@ -207,8 +208,10 @@ class ConstantsTests(unittest.TestCase):
 # ---------------------------------------------------------------------------
 class ActivityStateTests(unittest.TestCase):
 
-    def _derive(self, status):
-        return agent_loop._run_console_derive_activity_state(status)
+    def _derive(self, status, last_verdict=None):
+        return agent_loop._run_console_derive_activity_state(
+            status, last_verdict,
+        )
 
     def test_none_returns_unknown(self) -> None:
         self.assertEqual(self._derive(None), "unknown")
@@ -233,10 +236,45 @@ class ActivityStateTests(unittest.TestCase):
             "awaiting_review",
         )
 
-    def test_awaiting_claude_maps_to_awaiting_fix(self) -> None:
+    def test_awaiting_claude_without_verdict_maps_to_awaiting_claude(
+        self,
+    ) -> None:
+        # Fix cycle: the normal pre-implementation state MUST NOT
+        # surface as `awaiting_fix` when no fix cycle is in flight
+        # (`last_verdict is None`). Anchors the semantic
+        # consistency with `_run_console_derive_fix_cycle_state`.
         self.assertEqual(
-            self._derive("awaiting_claude_implementation"),
+            self._derive(
+                "awaiting_claude_implementation",
+                last_verdict=None,
+            ),
+            "awaiting_claude",
+        )
+
+    def test_awaiting_claude_with_needs_fixes_maps_to_awaiting_fix(
+        self,
+    ) -> None:
+        # The post-review fix state MUST surface as `awaiting_fix`
+        # only when `last_verdict == "NEEDS_FIXES"`. This is the
+        # single-source-of-truth boundary shared with
+        # `_run_console_derive_fix_cycle_state`.
+        self.assertEqual(
+            self._derive(
+                "awaiting_claude_implementation",
+                last_verdict="NEEDS_FIXES",
+            ),
             "awaiting_fix",
+        )
+
+    def test_awaiting_claude_with_approved_verdict_maps_to_awaiting_claude(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._derive(
+                "awaiting_claude_implementation",
+                last_verdict="APPROVED_FOR_HUMAN_REVIEW",
+            ),
+            "awaiting_claude",
         )
 
     def test_phase_complete_maps(self) -> None:
@@ -576,6 +614,117 @@ class BuildRunConsoleViewTests(unittest.TestCase):
                 controller,
             )
         self.assertEqual(view["fix_cycle_state"], "in_fix_cycle")
+
+    def test_activity_state_without_verdict_is_awaiting_claude(
+        self,
+    ) -> None:
+        # Fix cycle regression: `awaiting_claude_implementation`
+        # + `last_verdict is None` MUST surface as
+        # `awaiting_claude`, not `awaiting_fix`, so the UI does
+        # not label the normal pre-implementation state as a fix
+        # state when no fix cycle is in flight.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c",
+                status="awaiting_claude_implementation",
+                last_verdict=None,
+            )
+            view = agent_loop.build_desktop_run_console_view(
+                controller,
+            )
+        self.assertEqual(view["activity_state"], "awaiting_claude")
+        self.assertEqual(
+            view["fix_cycle_state"], "not_in_fix_cycle",
+        )
+
+    def test_activity_state_and_fix_cycle_agree_on_needs_fixes(
+        self,
+    ) -> None:
+        # Fix cycle regression: when `last_verdict == "NEEDS_FIXES"`
+        # AND `status == "awaiting_claude_implementation"`, the
+        # activity label MUST be `awaiting_fix` AND the fix-cycle
+        # label MUST be `in_fix_cycle`. The two labels are the
+        # UI mirror of the same predicate; they cannot disagree.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c",
+                status="awaiting_claude_implementation",
+                last_verdict="NEEDS_FIXES",
+            )
+            view = agent_loop.build_desktop_run_console_view(
+                controller,
+            )
+        self.assertEqual(view["activity_state"], "awaiting_fix")
+        self.assertEqual(view["fix_cycle_state"], "in_fix_cycle")
+
+    def test_completion_ledger_flags_pending_regression_when_active_inserted_early(
+        self,
+    ) -> None:
+        # Fix-cycle regression: if the phase-plan section for the
+        # active sub-phase is (incorrectly) inserted BEFORE later
+        # already-completed phase sections, the run console will
+        # silently mark those completed phases as `pending`. This
+        # test constructs the exact broken ordering and asserts
+        # the observable symptom, so the underlying ordering
+        # invariant is anchored at the library boundary rather
+        # than only through the doc-consistency guard.
+        broken_plan = (
+            "## Phase 10O - Prior Complete\n\nComplete.\n\n"
+            "## Phase 10X - Autonomous Run Console And "
+            "Completion Ledger\n\nActive.\n\n"
+            "## Phase 10P - Later Complete\n\nComplete.\n\n"
+            "## Phase 10W - Later Complete\n\nComplete.\n"
+        )
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c", phase_plan_text=broken_plan,
+            )
+            view = agent_loop.build_desktop_run_console_view(
+                controller,
+            )
+        by_id = {
+            e["phase_id"]: e["completion_state"]
+            for e in view["completion_ledger"]
+        }
+        # The BROKEN ordering causes Phase 10P and Phase 10W to
+        # surface as `pending` even though they are complete.
+        # This test PINS the symptom so a canonical-order fix in
+        # phase-plan.md remains observable. If a future refactor
+        # makes the ledger tolerant of out-of-order headers, this
+        # test flips to assert the corrected behavior.
+        self.assertEqual(by_id["Phase 10O"], "complete")
+        self.assertEqual(by_id["Phase 10X"], "in_progress")
+        self.assertEqual(by_id["Phase 10P"], "pending")
+        self.assertEqual(by_id["Phase 10W"], "pending")
+
+    def test_completion_ledger_canonical_history_marks_prior_complete(
+        self,
+    ) -> None:
+        # Corrected canonical order: the active sub-phase's
+        # section MUST be the LAST `## Phase X` header in the
+        # plan. In that layout, every prior phase surfaces as
+        # `complete` and any later phase as `pending`.
+        canonical_plan = (
+            "## Phase 10O - Prior Complete\n\nComplete.\n\n"
+            "## Phase 10P - Prior Complete\n\nComplete.\n\n"
+            "## Phase 10W - Prior Complete\n\nComplete.\n\n"
+            "## Phase 10X - Autonomous Run Console And "
+            "Completion Ledger\n\nActive.\n"
+        )
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c", phase_plan_text=canonical_plan,
+            )
+            view = agent_loop.build_desktop_run_console_view(
+                controller,
+            )
+        by_id = {
+            e["phase_id"]: e["completion_state"]
+            for e in view["completion_ledger"]
+        }
+        for pid in ("Phase 10O", "Phase 10P", "Phase 10W"):
+            self.assertEqual(by_id[pid], "complete", pid)
+        self.assertEqual(by_id["Phase 10X"], "in_progress")
 
     def test_completion_ledger_marks_active_sub_phase_in_progress(
         self,
