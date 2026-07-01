@@ -5450,3 +5450,52 @@ artifacts without creating a hidden second control plane.
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
 - no Git automation
+
+## Phase 10Y - Capacity Recovery And Resume Console
+
+### Objective
+
+Add the first desktop-facing capacity recovery and resume-console surface so
+token or rate-limit halts, checkpoint presence, bounded automatic-resume
+policy, retry or backoff state, and operator override or resume actions become
+understandable and auditable from the UI without creating a hidden second
+control plane.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10Y as active
+- the repository adds a bounded recovery-console / resume-visibility surface to
+  the shipped desktop app and related reporters
+- the implementation defines how token or rate-limit halt visibility,
+  checkpoint presence, bounded automatic-resume policy, retry or backoff state,
+  and operator override or resume actions are derived from canonical artifacts
+  rather than hidden UI-only state
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, checkpoint and
+  continuation boundaries, and the Phase 10I library-callable cap instead of
+  introducing hidden automation, silent mutation, or a parallel state store
+- focused validation proves the recovery-console path is bounded, auditable,
+  and visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10Y is active and that the capacity recovery
+  / resume console is now the implementation focus
+
+### Exclusions
+
+- no unbounded autonomy widening, hidden auto-resume behavior, or token-refresh
+  polling outside shipped checkpoint/continuation semantics
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of capacity recovery
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation

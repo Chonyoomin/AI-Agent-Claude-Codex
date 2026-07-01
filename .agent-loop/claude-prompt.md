@@ -1,41 +1,44 @@
 # Claude Code Task
 
 ## Phase
-Phase 10X - Autonomous Run Console And Completion Ledger
+Phase 10Y - Capacity Recovery And Resume Console
 
 ## Objective
-Implement Phase 10X for the agent loop. This slice should add the first desktop
-autonomous run console and completion ledger so PRD-to-completion mode exposes
-the active step, pending work, blocked or deferred work, fix-cycle state, and
-completion progress without introducing a hidden second control plane.
+Implement Phase 10Y for the agent loop. This slice should add the first desktop
+capacity recovery and resume console so token or rate-limit halts, checkpoint
+presence, bounded automatic-resume policy, retry or backoff state, and
+operator override or resume actions are understandable without introducing a
+hidden second control plane.
 
 ## Context
-Implement the Autonomous Run Console And Completion Ledger slice for the agent
-loop. This is the next desktop-runtime step after the shipped Phase 10W local
-RAG retrieval controls. The goal is to make autonomous-run progress legible and
-auditable from the UI and reporters while continuing to treat canonical
-artifacts as the source of truth.
+Implement the Capacity Recovery And Resume Console slice for the agent loop.
+This is the next desktop-runtime step after the shipped Phase 10X run console.
+The goal is to make token or rate-limit halts, checkpoint presence, bounded
+resume policy, and operator recovery actions legible and auditable from the UI
+and reporters while continuing to treat canonical artifacts as the source of
+truth.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10X as active
-- `.agent-loop/phase-plan.md` records Phase 10W as closed history and contains
-  a `## Phase 10X - Autonomous Run Console And Completion Ledger` section with
+  `.agent-loop/loop-state.json` identify Phase 10 / 10Y as active
+- `.agent-loop/phase-plan.md` records Phase 10X as closed history and contains
+  a `## Phase 10Y - Capacity Recovery And Resume Console` section with
   concrete objective, done criteria, and exclusions
-- add the first bounded run-console / completion-ledger surface to the shipped
-  desktop app and related reporters
-- define how the active step, pending steps, blocked or deferred work,
-  fix-cycle state, and completion progress are derived from canonical artifacts
-  without creating hidden UI-only state that competes with the repo artifacts
+- add the first bounded recovery-console / resume-visibility surface to the
+  shipped desktop app and related reporters
+- define how token or rate-limit halt visibility, checkpoint presence, bounded
+  automatic-resume policy, retry or backoff state, and operator override or
+  resume actions are derived from canonical artifacts without creating hidden
+  UI-only state that competes with the repo artifacts
 - preserve approval gating, evidence review, external-workspace boundaries,
-  desktop/UI boundaries, MCP/RAG boundaries, and the Phase 10I library-callable
-  cap
+  desktop/UI boundaries, checkpoint/continuation boundaries, and the Phase 10I
+  library-callable cap
   instead of introducing hidden automation, silent mutation, or a parallel
   state store
-- add focused validation proving the run-console path is bounded, auditable,
-  and visibility-only with respect to orchestration state
-- `README.md` reflects that Phase 10X is active and that the autonomous run
-  console / completion ledger are now the implementation focus
+- add focused validation proving the recovery-console path is bounded,
+  auditable, and visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10Y is active and that the capacity recovery
+  / resume console is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -48,15 +51,15 @@ artifacts as the source of truth.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no capacity auto-resume, token-refresh detection, retry/backoff automation,
-  or operator-override runtime beyond passive visibility
+- no unbounded autonomy widening, hidden auto-resume behavior, or token-refresh
+  polling outside shipped checkpoint/continuation semantics
 - no hidden background control plane or second orchestrator that bypasses the
   shipped Python runtime
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no concurrent Codex/Claude overlap execution, model-policy extensibility, or
-  hidden orchestration added under the banner of the run console
+  hidden orchestration added under the banner of capacity recovery
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
