@@ -14159,6 +14159,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     rag_retrieval_controls_view = _desktop_safe_call_view(
         build_desktop_rag_retrieval_controls_view, controller_root,
     )
+    run_console_view = _desktop_safe_call_view(
+        build_desktop_run_console_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14176,6 +14179,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "rag_retrieval_controls_view": (
             rag_retrieval_controls_view
         ),
+        "run_console_view": run_console_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14277,6 +14281,17 @@ def _desktop_render_sub_view_lines(
             render_desktop_rag_retrieval_controls_text(sub_view),
         )
         return lines
+    if key == "run_console_view":
+        # Re-use the shipped Phase 10X renderer verbatim so the
+        # run-console attribution tags ([run-console] /
+        # [completion-ledger] / [cycle] / [fix-cycle] /
+        # [canonical mirror] / [advisory] / [refused]) stay
+        # consistent with the standalone
+        # `view-desktop-run-console` output.
+        lines.extend(
+            render_desktop_run_console_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14353,6 +14368,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "rag_retrieval_controls_view",
             "RAG Retrieval Controls (Phase 10W)",
+        ),
+        (
+            "run_console_view",
+            "Run Console (Phase 10X)",
         ),
     ):
         sub = view.get(key, {})
@@ -14968,6 +14987,13 @@ def _launch_desktop_app_window(
     rag_retrieval_top_k_entry.pack(
         fill=tk.X, padx=4, pady=(0, 4),
     )
+    run_console_frame = tk.Frame(control_frame)
+    run_console_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        run_console_frame,
+        text="Run Console (Phase 10X)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14993,6 +15019,7 @@ def _launch_desktop_app_window(
     mcp_action_guardrails_button_widgets: list = []
     rag_source_selection_button_widgets: list = []
     rag_retrieval_button_widgets: list = []
+    run_console_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15551,6 +15578,31 @@ def _launch_desktop_app_window(
             rag_retrieval_frame,
             retrieval_controls,
             rag_retrieval_button_widgets,
+        )
+        # Phase 10X: rebuild the run-console button row from the
+        # cached sub-view. `build_desktop_run_console_controls`
+        # is READ-ONLY (each button is a shipped copy-paste
+        # inspection command); ZERO new library-callable
+        # controls are introduced.
+        run_console_sub_view = view.get("run_console_view", {})
+        if (
+            isinstance(run_console_sub_view, dict)
+            and run_console_sub_view.get("view") is None
+            and "error" in run_console_sub_view
+        ):
+            run_console_controls = []
+        elif isinstance(run_console_sub_view, dict):
+            run_console_controls = (
+                build_desktop_run_console_controls(
+                    run_console_sub_view,
+                )
+            )
+        else:
+            run_console_controls = []
+        _rebuild_button_row(
+            run_console_frame,
+            run_console_controls,
+            run_console_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -24101,6 +24153,703 @@ def cmd_run_local_rag_retrieval(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10X: Autonomous Run Console And Completion Ledger.
+#
+# Layers a bounded READ-ONLY autonomous-run console / completion-
+# ledger surface on top of the shipped Phase 10M desktop app.
+# Ships:
+#   - `build_desktop_run_console_view(controller_root)` READ-ONLY
+#     library that derives the active step, pending steps, blocked /
+#     deferred work, fix-cycle state, and completion progress
+#     ENTIRELY from canonical artifacts: `.agent-loop/loop-state.
+#     json` (validated via `load_loop_state(...)`; HaltError soft-
+#     failed per the Phase 10L rule), `.agent-loop/phase-plan.md`
+#     (append-only phase history), `.agent-loop/current-phase.md`
+#     and `.agent-loop/current-task.md` (active-step mirrors), and
+#     `TASK.md` (project scope). NO new state store; NO parallel
+#     state; NO hidden UI-only fields.
+#   - `render_desktop_run_console_text(view)` per-line renderer with
+#     explicit `[canonical mirror]` / `[advisory]` / `[refused]` /
+#     `[run-console]` / `[completion-ledger]` / `[cycle]` / `[fix-
+#     cycle]` attribution.
+#   - `build_desktop_run_console_controls(view)` COPY-PASTE-ONLY
+#     widget list (each button copies a shipped `python scripts/
+#     agent_loop.py <inspect|status|inspect-artifacts>` invocation
+#     to clipboard; the console NEVER dispatches a command in-
+#     process, NEVER widens the Phase 10I library-callable cap).
+#   - `view-desktop-run-console` Phase 7C CLI reporter (always
+#     exits 0 on report content once the controller-root selection
+#     succeeds; `--controller-root <PATH>` REQUIRED per the Phase
+#     10L Controller-Root Selection Flow).
+#
+# The surface is VISIBILITY-ONLY: it NEVER writes any canonical
+# artifact, NEVER appends to `.agent-loop/orchestrator.log`,
+# NEVER advances loop-state, NEVER invokes `_halt(...)`, NEVER
+# spawns a subprocess, NEVER opens a network socket, NEVER
+# persists a run-console cache, NEVER subscribes to a background
+# watcher, NEVER widens the Phase 10I three-control library-
+# callable cap, and NEVER introduces a second control plane
+# outside the shipped Python runtime.
+# ---------------------------------------------------------------------------
+
+DESKTOP_RUN_CONSOLE_SIGNAL_VERSION = "phase-10x-v1"
+
+DESKTOP_RUN_CONSOLE_PRECEDENCE_NOTE = (
+    "Phase 10X autonomous run console and completion ledger. "
+    "This surface is VISIBILITY-ONLY: every field is derived from "
+    "canonical artifacts (loop-state.json / phase-plan.md / "
+    "current-phase.md / current-task.md / TASK.md) with explicit "
+    "`[canonical mirror]` attribution. No field is invented and no "
+    "hidden UI-only field is introduced. The Phase 10I three-"
+    "control library-callable cap is preserved exactly; ZERO new "
+    "library-callable controls are introduced. The surface NEVER "
+    "mutates any canonical artifact, NEVER appends to "
+    "`.agent-loop/orchestrator.log`, NEVER advances loop-state, "
+    "NEVER invokes `_halt(...)`, NEVER spawns a subprocess, "
+    "NEVER opens a network socket, NEVER persists a run-console "
+    "cache or completion-ledger snapshot on disk, NEVER "
+    "subscribes to a background watcher, NEVER contacts a remote "
+    "index / hosted service, NEVER auto-resumes a halted cycle, "
+    "NEVER retries a failed cycle, NEVER refreshes a token, and "
+    "NEVER auto-activates the next phase (per the Phase 4 "
+    "planner / activator separation). The console is a bounded "
+    "read-only reporter over the shipped Phase 3A orchestrator "
+    "contract, NOT a second control plane"
+)
+
+RUN_CONSOLE_ACTIVITY_STATES = (
+    "running",
+    "awaiting_review",
+    "awaiting_fix",
+    "awaiting_human",
+    "phase_complete",
+    "halted_recoverable",
+    "halted_requires_human",
+    "unknown",
+)
+
+RUN_CONSOLE_CYCLE_STATES = (
+    "within_budget",
+    "at_last_cycle",
+    "over_budget",
+    "unknown",
+)
+
+RUN_CONSOLE_COMPLETION_STATES = (
+    "pending",
+    "in_progress",
+    "complete",
+    "unknown",
+)
+
+RUN_CONSOLE_FIX_CYCLE_STATES = (
+    "not_in_fix_cycle",
+    "in_fix_cycle",
+    "unknown",
+)
+
+RUN_CONSOLE_REFUSAL_REASONS = (
+    "controller_root_invalid",
+    "loop_state_unreadable",
+    "phase_plan_unreadable",
+)
+
+# Fixed-cap bound on the number of phase-plan headers the run
+# console mirrors per invocation. The cap is intentionally tight so
+# the surface stays operator-scannable; a future runtime slice MAY
+# widen it only by explicitly editing this constant AND the matching
+# tests.
+RUN_CONSOLE_PHASE_PLAN_HEADER_CAP = 200
+
+
+_RUN_CONSOLE_PHASE_HEADER_RE = re.compile(
+    r"^## (?P<phase>(?:Fix )?Phase (?:[0-9]+[A-Z]?|[A-Z]))"
+    r"(?: - (?P<title>[^\n]+))?$",
+    re.MULTILINE,
+)
+
+
+def _run_console_derive_activity_state(
+    status: Optional[str],
+) -> str:
+    """Map a loop-state status to a closed run-console activity
+    state. Pure computation; no IO.
+    """
+    if not isinstance(status, str) or not status:
+        return "unknown"
+    if status in (
+        "claude_implementing",
+        "claude_fixing",
+        "evidence_capture",
+    ):
+        return "running"
+    if status == "awaiting_codex_review":
+        return "awaiting_review"
+    if status == "awaiting_claude_implementation":
+        return "awaiting_fix"
+    if status == "phase_complete_awaiting_human_approval":
+        return "phase_complete"
+    if status in (
+        "halted_failed_requires_human",
+        "halted_max_cycles_reached",
+    ):
+        return "halted_requires_human"
+    if status.startswith("halted_awaiting_human"):
+        return "awaiting_human"
+    if status.startswith("halted_"):
+        return "halted_recoverable"
+    return "unknown"
+
+
+def _run_console_derive_cycle_state(
+    cycle_count: Optional[int], max_cycles: Optional[int],
+) -> str:
+    """Return a closed cycle-state label from the canonical
+    `cycle_count` / `max_cycles` pair. Pure computation; no IO.
+    """
+    if (
+        not isinstance(cycle_count, int)
+        or not isinstance(max_cycles, int)
+    ):
+        return "unknown"
+    if max_cycles <= 0:
+        return "unknown"
+    if cycle_count < 0:
+        return "unknown"
+    if cycle_count >= max_cycles:
+        return "over_budget"
+    if cycle_count == max_cycles - 1:
+        return "at_last_cycle"
+    return "within_budget"
+
+
+def _run_console_derive_fix_cycle_state(
+    status: Optional[str], last_verdict: Optional[str],
+) -> str:
+    """Return a closed fix-cycle-state label. A fix cycle is in
+    flight when the last verdict was `NEEDS_FIXES` AND the loop is
+    still awaiting Claude implementation or actively running Claude.
+    Pure computation; no IO.
+    """
+    if not isinstance(status, str) or not status:
+        return "unknown"
+    if last_verdict == "NEEDS_FIXES" and status in (
+        "awaiting_claude_implementation",
+        "claude_fixing",
+        "claude_implementing",
+        "evidence_capture",
+        HALTED_PRE_FIX_PROMPT,
+        HALTED_PRE_CODEX_REVIEW_FIX,
+    ):
+        return "in_fix_cycle"
+    return "not_in_fix_cycle"
+
+
+def _run_console_parse_phase_plan_headers(text: str) -> list:
+    """Return an ordered list of `{"phase_id": str, "title": str}`
+    dicts extracted from the phase-plan.md markdown. Bounded to the
+    first `RUN_CONSOLE_PHASE_PLAN_HEADER_CAP` matches so a malformed
+    plan cannot balloon the surface. Pure computation; no IO.
+    """
+    entries: list = []
+    for match in _RUN_CONSOLE_PHASE_HEADER_RE.finditer(text):
+        entries.append({
+            "phase_id": match.group("phase"),
+            "title": (match.group("title") or "").strip(),
+        })
+        if len(entries) >= RUN_CONSOLE_PHASE_PLAN_HEADER_CAP:
+            break
+    return entries
+
+
+def _run_console_derive_completion_ledger(
+    phase_headers: list,
+    active_phase_id: Optional[str],
+    active_sub_phase_id: Optional[str],
+    activity_state: str,
+) -> list:
+    """Return a per-phase completion-ledger list. Each entry
+    carries `phase_id`, `title`, and one of
+    `RUN_CONSOLE_COMPLETION_STATES` for `completion_state`. The
+    active phase / sub-phase surfaces as `in_progress` (or
+    `complete` when `activity_state == "phase_complete"`); any
+    phase listed BEFORE the active one is `complete`; any phase
+    listed AFTER is `pending`. If neither the active phase nor the
+    active sub-phase appear in the plan, every entry surfaces as
+    `unknown` so the surface never silently guesses. Pure
+    computation; no IO.
+    """
+    active_ids = tuple(
+        p for p in (active_phase_id, active_sub_phase_id)
+        if isinstance(p, str) and p
+    )
+    active_idx: Optional[int] = None
+    for i, entry in enumerate(phase_headers):
+        if entry["phase_id"] in active_ids:
+            active_idx = i
+    ledger: list = []
+    for i, entry in enumerate(phase_headers):
+        if active_idx is None:
+            state = "unknown"
+        elif i < active_idx:
+            state = "complete"
+        elif i == active_idx:
+            state = (
+                "complete"
+                if activity_state == "phase_complete"
+                else "in_progress"
+            )
+        else:
+            state = "pending"
+        ledger.append({
+            "phase_id": entry["phase_id"],
+            "title": entry["title"],
+            "completion_state": state,
+        })
+    return ledger
+
+
+def _run_console_completion_progress(ledger: list) -> dict:
+    """Return an integer completion-progress snapshot derived from
+    a completion ledger. Pure computation; no IO.
+    """
+    total = len(ledger)
+    complete = sum(
+        1 for e in ledger if e["completion_state"] == "complete"
+    )
+    in_progress = sum(
+        1 for e in ledger
+        if e["completion_state"] == "in_progress"
+    )
+    pending = sum(
+        1 for e in ledger if e["completion_state"] == "pending"
+    )
+    unknown = sum(
+        1 for e in ledger if e["completion_state"] == "unknown"
+    )
+    return {
+        "total_phases": total,
+        "complete_count": complete,
+        "in_progress_count": in_progress,
+        "pending_count": pending,
+        "unknown_count": unknown,
+    }
+
+
+def _run_console_read_optional_text(path: Path) -> Optional[str]:
+    """Return the first line (stripped) of a small text artifact
+    like `current-phase.md` or `current-task.md`, or `None` on any
+    IO error / missing file. Bounded read: only the first 4 KiB is
+    consulted so a malformed artifact can never balloon the surface.
+    """
+    try:
+        raw = path.read_bytes()[:4096]
+    except OSError:
+        return None
+    text = raw.decode("utf-8", errors="replace").strip()
+    return text or None
+
+
+def build_desktop_run_console_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10X: assemble the bounded autonomous run console /
+    completion ledger view.
+
+    READ-ONLY. Derives every field from canonical artifacts
+    (`.agent-loop/loop-state.json`, `.agent-loop/phase-plan.md`,
+    `.agent-loop/current-phase.md`, `.agent-loop/current-task.md`,
+    `TASK.md`). The `load_loop_state(...)` validator HaltError is
+    soft-failed to `loop_state=None` per the Phase 10L "MUST NOT
+    propagate validator HaltErrors as canonical halt persistence"
+    rule.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    opens a network socket, never invokes `_halt(...)`, never
+    persists a run-console cache, never subscribes to a background
+    watcher, never auto-resumes a halted cycle, never widens the
+    Phase 10I library-callable cap.
+    """
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    plan_path = al / "phase-plan.md"
+    current_phase_path = al / "current-phase.md"
+    current_task_path = al / "current-task.md"
+
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+
+    active_phase_id: Optional[str] = None
+    active_sub_phase_id: Optional[str] = None
+    active_task: Optional[str] = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    cycle_count_value: Optional[int] = None
+    max_cycles_value: Optional[int] = None
+    last_verdict: Optional[str] = None
+    last_verdict_phase: Optional[str] = None
+    if isinstance(loop_state, dict):
+        for key, target in (
+            ("phase", "active_phase_id"),
+            ("sub_phase", "active_sub_phase_id"),
+            ("task", "active_task"),
+            ("status", "status_value"),
+            ("approval_mode", "approval_mode"),
+            ("last_verdict", "last_verdict"),
+            ("last_verdict_phase", "last_verdict_phase"),
+        ):
+            candidate = loop_state.get(key)
+            if isinstance(candidate, str):
+                if target == "active_phase_id":
+                    active_phase_id = candidate
+                elif target == "active_sub_phase_id":
+                    active_sub_phase_id = candidate
+                elif target == "active_task":
+                    active_task = candidate
+                elif target == "status_value":
+                    status_value = candidate
+                elif target == "approval_mode":
+                    approval_mode = candidate
+                elif target == "last_verdict":
+                    last_verdict = candidate
+                elif target == "last_verdict_phase":
+                    last_verdict_phase = candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            cycle_count_value = cycle_candidate
+        max_candidate = loop_state.get("max_cycles")
+        if isinstance(max_candidate, int):
+            max_cycles_value = max_candidate
+
+    activity_state = _run_console_derive_activity_state(
+        status_value,
+    )
+    cycle_state = _run_console_derive_cycle_state(
+        cycle_count_value, max_cycles_value,
+    )
+    fix_cycle_state = _run_console_derive_fix_cycle_state(
+        status_value, last_verdict,
+    )
+
+    phase_plan_headers: list = []
+    phase_plan_readable = False
+    if plan_path.exists():
+        try:
+            plan_text = plan_path.read_text(
+                encoding="utf-8", errors="replace",
+            )
+            phase_plan_headers = (
+                _run_console_parse_phase_plan_headers(plan_text)
+            )
+            phase_plan_readable = True
+        except OSError:
+            phase_plan_headers = []
+            phase_plan_readable = False
+
+    # The completion-ledger active-phase lookup uses the sub-phase
+    # (Phase 10X) as the finest-grained match; the top-level phase
+    # (Phase 10) is a fallback so a not-yet-authored sub-phase does
+    # not silently mark every earlier phase as `unknown`.
+    completion_ledger = _run_console_derive_completion_ledger(
+        phase_plan_headers,
+        active_phase_id=(
+            active_phase_id.split(" - ")[0].strip()
+            if isinstance(active_phase_id, str)
+            else None
+        ),
+        active_sub_phase_id=(
+            active_sub_phase_id.split(" - ")[0].strip()
+            if isinstance(active_sub_phase_id, str)
+            else None
+        ),
+        activity_state=activity_state,
+    )
+    completion_progress = _run_console_completion_progress(
+        completion_ledger,
+    )
+
+    current_phase_mirror = _run_console_read_optional_text(
+        current_phase_path,
+    )
+    current_task_mirror = _run_console_read_optional_text(
+        current_task_path,
+    )
+
+    return {
+        "view_signal_version": (
+            DESKTOP_RUN_CONSOLE_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "loop_state_readable": (
+            isinstance(loop_state, dict)
+        ),
+        "phase_plan_readable": phase_plan_readable,
+        "active_phase_id": active_phase_id,
+        "active_sub_phase_id": active_sub_phase_id,
+        "active_task_summary": active_task,
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "activity_state": activity_state,
+        "cycle_count": cycle_count_value,
+        "max_cycles": max_cycles_value,
+        "cycle_state": cycle_state,
+        "last_verdict": last_verdict,
+        "last_verdict_phase": last_verdict_phase,
+        "fix_cycle_state": fix_cycle_state,
+        "current_phase_md_mirror": current_phase_mirror,
+        "current_task_md_mirror": current_task_mirror,
+        "phase_plan_header_cap": (
+            RUN_CONSOLE_PHASE_PLAN_HEADER_CAP
+        ),
+        "phase_plan_headers": phase_plan_headers,
+        "completion_ledger": completion_ledger,
+        "completion_progress": completion_progress,
+        "activity_states": list(RUN_CONSOLE_ACTIVITY_STATES),
+        "cycle_states": list(RUN_CONSOLE_CYCLE_STATES),
+        "completion_states": list(RUN_CONSOLE_COMPLETION_STATES),
+        "fix_cycle_states": list(RUN_CONSOLE_FIX_CYCLE_STATES),
+        "refusal_reasons": list(RUN_CONSOLE_REFUSAL_REASONS),
+        "precedence_note": (
+            DESKTOP_RUN_CONSOLE_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_run_console_text(view: dict) -> list:
+    """Phase 10X: format the assembled run console view as text
+    lines. Attribution tags (`[canonical mirror]`, `[advisory]`,
+    `[refused]`, `[run-console]`, `[completion-ledger]`, `[cycle]`,
+    `[fix-cycle]`) keep the reporter output legible.
+    """
+    lines: list = []
+    lines.append(
+        f"[desktop-run-console] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] loop_state_readable: "
+        f"{view['loop_state_readable']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] phase_plan_readable: "
+        f"{view['phase_plan_readable']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] active_phase_id: "
+        f"{view['active_phase_id']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] active_sub_phase_id: "
+        f"{view['active_sub_phase_id']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] active_task_summary: "
+        f"{view['active_task_summary']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [run-console] activity_state: "
+        f"{view['activity_state']!r}"
+    )
+    lines.append(
+        f"  [cycle] cycle_count={view['cycle_count']!r} "
+        f"max_cycles={view['max_cycles']!r} cycle_state="
+        f"{view['cycle_state']!r}"
+    )
+    lines.append(
+        f"  [fix-cycle] last_verdict={view['last_verdict']!r} "
+        f"last_verdict_phase="
+        f"{view['last_verdict_phase']!r} fix_cycle_state="
+        f"{view['fix_cycle_state']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_phase_md_mirror: "
+        f"{view['current_phase_md_mirror']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_task_md_mirror: "
+        f"{view['current_task_md_mirror']!r}"
+    )
+    lines.append(
+        f"  [advisory] activity_states (closed Phase 10X "
+        f"enumeration): {view['activity_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] cycle_states (closed Phase 10X "
+        f"enumeration): {view['cycle_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] completion_states (closed Phase 10X "
+        f"enumeration): {view['completion_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] fix_cycle_states (closed Phase 10X "
+        f"enumeration): {view['fix_cycle_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10X "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    progress = view.get("completion_progress") or {}
+    lines.append(
+        f"  [completion-ledger] progress: "
+        f"total_phases={progress.get('total_phases')!r} "
+        f"complete_count={progress.get('complete_count')!r} "
+        f"in_progress_count={progress.get('in_progress_count')!r} "
+        f"pending_count={progress.get('pending_count')!r} "
+        f"unknown_count={progress.get('unknown_count')!r}"
+    )
+    lines.append(
+        f"  [completion-ledger] phase_plan_header_cap: "
+        f"{view['phase_plan_header_cap']!r}"
+    )
+    for entry in view.get("completion_ledger", []):
+        state = entry["completion_state"]
+        tag = (
+            "[completion-ledger]"
+            if state in ("complete", "in_progress")
+            else (
+                "[refused]"
+                if state == "unknown"
+                else "[completion-ledger]"
+            )
+        )
+        lines.append(
+            f"  {tag} phase_id={entry['phase_id']!r} "
+            f"title={entry['title']!r} completion_state="
+            f"{state!r}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_run_console_controls(view: dict) -> list:
+    """Phase 10X: return a closed list of desktop widget
+    descriptors. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control cap
+    is preserved exactly.
+
+    The three descriptors surface bounded inspection commands the
+    operator MAY run to drill into the current activity state:
+    `status`, `inspect-artifacts`, and `check-state`. Every button
+    stays `enabled=True` because these are shipped read-only CLI
+    reporters; the console does not gate the operator's ability
+    to inspect canonical artifacts.
+    """
+    return [
+        {
+            "id": "run_console_copy_status",
+            "label": (
+                "Copy `python scripts/agent_loop.py status` "
+                "invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py status"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "run_console_visibility",
+        },
+        {
+            "id": "run_console_copy_inspect_artifacts",
+            "label": (
+                "Copy `python scripts/agent_loop.py "
+                "inspect-artifacts` invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py inspect-artifacts"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "run_console_visibility",
+        },
+        {
+            "id": "run_console_copy_check_state",
+            "label": (
+                "Copy `python scripts/agent_loop.py check-state` "
+                "invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py check-state"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "run_console_visibility",
+        },
+    ]
+
+
+def cmd_view_desktop_run_console(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10X operator entry: render the autonomous run console
+    / completion ledger.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates any
+    canonical artifact, NEVER appends to `.agent-loop/orchestrator
+    .log`, NEVER advances loop-state, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket, NEVER
+    persists a run-console cache on disk, NEVER auto-resumes a
+    halted cycle, NEVER widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-run-console] REFUSED: --controller-root is "
+            "required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop run console MUST NOT silently pick a default "
+            "root from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment variable, "
+            "or a packaging-time configured path. Supply the "
+            "controller root explicitly via `--controller-root "
+            "<PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-run-console] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ to "
+            f"be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_run_console_view(controller_root)
+    for line in render_desktop_run_console_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -30836,6 +31585,41 @@ def build_parser() -> argparse.ArgumentParser:
             f"{RAG_RETRIEVAL_TOP_K_CAP}."
         ),
     )
+    run_console = sub.add_parser(
+        "view-desktop-run-console",
+        help=(
+            "Phase 10X autonomous run console and completion "
+            "ledger: render a bounded READ-ONLY view over "
+            "canonical artifacts (loop-state.json, phase-plan.md, "
+            "current-phase.md, current-task.md) exposing the "
+            "active step, activity state (closed enumeration), "
+            "cycle progress, fix-cycle state, and a per-phase "
+            "completion ledger. Phase 7C reporter pattern: "
+            "always exits 0 on report content once the "
+            "controller-root selection succeeds; never mutates "
+            "any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network socket; "
+            "never persists a run-console cache; never auto-"
+            "resumes a halted cycle; never widens the Phase 10I "
+            "library-callable control cap."
+        ),
+    )
+    run_console.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop run console renders against. Per the Phase "
+            "10L Controller-Root Selection Flow the desktop "
+            "shell MUST NOT silently pick a default root. "
+            "Omitting this flag returns exit 2 with a "
+            "`[desktop-run-console] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -31121,6 +31905,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
         cmd_view_desktop_rag_retrieval_controls
     ),
     "run-local-rag-retrieval": cmd_run_local_rag_retrieval,
+    "view-desktop-run-console": cmd_view_desktop_run_console,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

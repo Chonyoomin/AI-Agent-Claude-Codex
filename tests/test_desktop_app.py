@@ -680,6 +680,10 @@ class RenderDesktopAppTextTests(unittest.TestCase):
                 "error": "test rag retrieval controls error",
                 "view": None,
             },
+            "run_console_view": {
+                "error": "test run console error",
+                "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
@@ -704,6 +708,9 @@ class RenderDesktopAppTextTests(unittest.TestCase):
         self.assertIn(
             "[error] 'test rag retrieval controls error'",
             output,
+        )
+        self.assertIn(
+            "[error] 'test run console error'", output,
         )
 
 
