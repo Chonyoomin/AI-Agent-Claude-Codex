@@ -424,12 +424,16 @@ class DesktopNativeSummaryPayloadTests(unittest.TestCase):
             "controller_path_canonical": "/tmp/controller",
             "status_view": {
                 "advisory_status_label": "in-flight (claude_implementing)",
-                "controller_loop_state": {
-                    "phase": "Phase 10 - Future Product Features",
-                    "sub_phase": "Phase 10V - RAG Source Selection",
-                    "task": "Implement the desktop app summary",
-                    "cycle_count": 1,
-                    "max_cycles": 3,
+                "controller": {
+                    "loop_state": {
+                        "mirror": {
+                            "phase": "Phase 10 - Future Product Features",
+                            "sub_phase": "Phase 10V - RAG Source Selection",
+                            "task": "Implement the desktop app summary",
+                            "cycle_count": 1,
+                            "max_cycles": 3,
+                        },
+                    },
                 },
             },
             "controls_view": {
@@ -446,7 +450,9 @@ class DesktopNativeSummaryPayloadTests(unittest.TestCase):
                 },
             },
             "run_profiles_view": {
-                "approval_mode": "review",
+                "mirror": {
+                    "approval_mode": "review",
+                },
             },
             "project_start_view": {
                 "target_attach": {

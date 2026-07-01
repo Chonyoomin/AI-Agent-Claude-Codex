@@ -11977,6 +11977,7 @@ def _ui_load_canonical_loop_state(state_path: Path) -> dict:
             "task": data.get("task"),
             "status": data.get("status"),
             "cycle_count": data.get("cycle_count"),
+            "max_cycles": data.get("max_cycles"),
             "approval_mode": data.get("approval_mode"),
             "awaiting_human_for": data.get("awaiting_human_for"),
             "last_verdict": data.get("last_verdict"),
@@ -14465,6 +14466,18 @@ def _desktop_native_summary_payload(view: dict) -> dict:
     )
     controller_loop_state = status_view.get("controller_loop_state")
     if not isinstance(controller_loop_state, dict):
+        controller = (
+            status_view.get("controller")
+            if isinstance(status_view.get("controller"), dict)
+            else {}
+        )
+        controller_loop_state = (
+            controller.get("loop_state")
+            if isinstance(controller.get("loop_state"), dict)
+            else {}
+        )
+        controller_loop_state = controller_loop_state.get("mirror")
+    if not isinstance(controller_loop_state, dict):
         controller_loop_state = {}
     failure_surface = dashboard_view.get("surfaces", {}).get(
         "failure_analytics", {}
@@ -14481,6 +14494,11 @@ def _desktop_native_summary_payload(view: dict) -> dict:
     current_verdict = review_surface.get("current_verdict")
     if not isinstance(current_verdict, str) or not current_verdict:
         current_verdict = "No review verdict yet"
+    run_profile_mirror = (
+        run_profiles_view.get("mirror")
+        if isinstance(run_profiles_view.get("mirror"), dict)
+        else {}
+    )
     task_value = controller_loop_state.get("task")
     if not isinstance(task_value, str) or not task_value.strip():
         task_value = "No active task loaded"
@@ -14502,7 +14520,9 @@ def _desktop_native_summary_payload(view: dict) -> dict:
         ),
         "task": task_value,
         "approval_mode": (
-            run_profiles_view.get("approval_mode")
+            run_profile_mirror.get("approval_mode")
+            if isinstance(run_profile_mirror.get("approval_mode"), str)
+            else run_profiles_view.get("approval_mode")
             if isinstance(run_profiles_view.get("approval_mode"), str)
             else "Unknown"
         ),
