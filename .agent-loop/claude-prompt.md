@@ -1,42 +1,44 @@
 # Claude Code Task
 
 ## Phase
-Phase 10V - RAG Source Selection Contract And Desktop UX
+Phase 10Y - Capacity Recovery And Resume Console
 
 ## Objective
-Implement Phase 10V for the agent loop. This slice should define how repo-local
-docs, PRDs, notes, standards, and other knowledge sources can be selected from
-the desktop app, how provenance and freshness are exposed to the operator, and
-how advisory-only retrieval remains distinct from canonical artifacts.
+Implement Phase 10Y for the agent loop. This slice should add the first desktop
+capacity recovery and resume console so token or rate-limit halts, checkpoint
+presence, bounded automatic-resume policy, retry or backoff state, and
+operator override or resume actions are understandable without introducing a
+hidden second control plane.
 
 ## Context
-Implement the RAG Source Selection Contract And Desktop UX slice for the agent
-loop. This slice should define how repo-local docs, PRDs, notes, standards, and
-other knowledge sources can be selected from the desktop app, how provenance
-and freshness are exposed to the operator, and how advisory-only retrieval
-remains distinct from canonical artifacts.
+Implement the Capacity Recovery And Resume Console slice for the agent loop.
+This is the next desktop-runtime step after the shipped Phase 10X run console.
+The goal is to make token or rate-limit halts, checkpoint presence, bounded
+resume policy, and operator recovery actions legible and auditable from the UI
+and reporters while continuing to treat canonical artifacts as the source of
+truth.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10V as active
-- `.agent-loop/phase-plan.md` records Phase 10U as closed history and contains
-  a `## Phase 10V - RAG Source Selection Contract And Desktop UX` section with
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10Y as active
+- `.agent-loop/phase-plan.md` records Phase 10X as closed history and contains
+  a `## Phase 10Y - Capacity Recovery And Resume Console` section with
   concrete objective, done criteria, and exclusions
-- add a concrete RAG source-selection contract and desktop UX definition
-  covering repo-local docs, PRDs, notes, standards, and other bounded
-  knowledge sources
-- define how provenance, freshness, and advisory-only retrieval labeling are
-  exposed to the operator without turning RAG output into canonical project
-  state
+- add the first bounded recovery-console / resume-visibility surface to the
+  shipped desktop app and related reporters
+- define how token or rate-limit halt visibility, checkpoint presence, bounded
+  automatic-resume policy, retry or backoff state, and operator override or
+  resume actions are derived from canonical artifacts without creating hidden
+  UI-only state that competes with the repo artifacts
 - preserve approval gating, evidence review, external-workspace boundaries,
-  desktop/UI boundaries, MCP boundaries, and the Phase 10I library-callable cap
+  desktop/UI boundaries, checkpoint/continuation boundaries, and the Phase 10I
+  library-callable cap
   instead of introducing hidden automation, silent mutation, or a parallel
   state store
-- add focused validation proving the RAG source-selection contract surface is
-  bounded, auditable, and does not widen into RAG indexing/runtime retrieval
-  execution, packaging, or controlled-concurrency work
-- `README.md` reflects that Phase 10V is active and that RAG source selection
-  contract and desktop UX are now the implementation focus
+- add focused validation proving the recovery-console path is bounded,
+  auditable, and visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10Y is active and that the capacity recovery
+  / resume console is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -49,15 +51,17 @@ remains distinct from canonical artifacts.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no actual RAG index builder, retrieval runtime, embedding pipeline,
-  background watcher, or knowledge-ingestion execution path
-- no GitHub, policy-pack, packaging, system-tray, or controlled-concurrency
-  runtime work
+- no unbounded autonomy widening, hidden auto-resume behavior, or token-refresh
+  polling outside shipped checkpoint/continuation semantics
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
-- no rewrite of current shipped behavior just to make future MCP or autonomy
-  work easier
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of capacity recovery
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body

@@ -5292,8 +5292,8 @@ app.
 
 ### Status
 
-Active. Activated by `python scripts/agent_loop.py activate` after a valid
-Phase 4A approval signal on `.agent-loop/proposed-phase.md`.
+Complete. Closed after Codex review approval and human progression. Phase 10W
+is now active as the next mainline slice.
 
 ### Objective
 
@@ -5338,6 +5338,159 @@ remains distinct from canonical artifacts.
 - no external-workspace target dispatch beyond the shipped attach/bootstrap/
   runtime surfaces, concurrent Codex/Claude overlap execution, or
   model-policy extensibility work
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10W - RAG Local Index And Retrieval Controls
+
+### Status
+
+Complete and approved by human to advance to Phase 10X. Phase 10W closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW`.
+
+### Objective
+
+Implement the first bounded local RAG runtime slice for the desktop app. This
+phase should add a controller-local knowledge index and retrieval-control
+surface so the loop can pull only the most relevant repo-local PRD sections,
+docs, decisions, standards, and failure/fix patterns into a run without
+turning retrieved excerpts into canonical project state.
+
+### Definition of done
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10W as active
+- `.agent-loop/phase-plan.md` records Phase 10V as closed history and contains
+  a `## Phase 10W - RAG Local Index And Retrieval Controls` section with
+  concrete objective, done criteria, and exclusions
+- the repository adds the first bounded local indexing/retrieval runtime for
+  the Phase 10V source-selection surface, scoped to controller-local sources
+  only
+- the implementation defines how index freshness, retrieval scope, ranking
+  boundaries, and excerpt provenance are exposed without letting retrieved
+  content replace canonical artifacts on disk
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, MCP boundaries, and the
+  Phase 10I library-callable cap instead of introducing hidden automation,
+  silent mutation, or a parallel state store
+- focused validation proves the local index/retrieval path is bounded,
+  auditable, controller-local, and does not widen into remote retrieval,
+  autonomous agent overlap, or hidden background ingestion
+- `README.md` reflects that Phase 10W is active and that bounded local RAG
+  index/retrieval controls are now the implementation focus
+
+### Exclusions
+
+- no remote/vector database, hosted retrieval service, or network-backed index
+- no silent background crawler, daemon, watcher farm, or hidden ingestion
+  process outside the shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of retrieval
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10X - Autonomous Run Console And Completion Ledger
+
+### Objective
+
+Add the first desktop-facing autonomous run console and completion-ledger
+surface so PRD-to-completion mode becomes understandable and auditable from the
+UI. This slice should expose the active run step, pending steps, blocked or
+deferred work, fix-cycle state, and completion progress from canonical
+artifacts without creating a hidden second control plane.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10X as active
+- the repository adds a bounded run-console/completion-ledger surface to the
+  shipped desktop app and related reporters
+- the implementation defines how active work, pending work, blocked or deferred
+  work, fix-cycle state, and completion progress are derived from canonical
+  artifacts rather than hidden UI-only state
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, MCP/RAG boundaries, and
+  the Phase 10I library-callable cap instead of introducing hidden automation,
+  silent mutation, or a parallel state store
+- focused validation proves the run-console path is bounded, auditable, and
+  visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10X is active and that the autonomous run
+  console / completion ledger are now the implementation focus
+
+### Exclusions
+
+- no capacity auto-resume, token-refresh detection, retry/backoff automation,
+  or operator-override runtime beyond passive visibility
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of the run console
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10Y - Capacity Recovery And Resume Console
+
+### Objective
+
+Add the first desktop-facing capacity recovery and resume-console surface so
+token or rate-limit halts, checkpoint presence, bounded automatic-resume
+policy, retry or backoff state, and operator override or resume actions become
+understandable and auditable from the UI without creating a hidden second
+control plane.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10Y as active
+- the repository adds a bounded recovery-console / resume-visibility surface to
+  the shipped desktop app and related reporters
+- the implementation defines how token or rate-limit halt visibility,
+  checkpoint presence, bounded automatic-resume policy, retry or backoff state,
+  and operator override or resume actions are derived from canonical artifacts
+  rather than hidden UI-only state
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, checkpoint and
+  continuation boundaries, and the Phase 10I library-callable cap instead of
+  introducing hidden automation, silent mutation, or a parallel state store
+- focused validation proves the recovery-console path is bounded, auditable,
+  and visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10Y is active and that the capacity recovery
+  / resume console is now the implementation focus
+
+### Exclusions
+
+- no unbounded autonomy widening, hidden auto-resume behavior, or token-refresh
+  polling outside shipped checkpoint/continuation semantics
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of capacity recovery
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`

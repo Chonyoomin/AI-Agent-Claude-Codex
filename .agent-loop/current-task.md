@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10V - RAG Source Selection Contract And Desktop UX
+Phase 10Y - Capacity Recovery And Resume Console
 
 ## Status
-Phase 10U is complete and approved to advance. Phase 10V is now active as the next mainline slice focused on defining how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance and freshness are exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts.
+Phase 10X is complete and approved to advance. Phase 10Y is now active as the next mainline slice focused on surfacing capacity-halt visibility, checkpoint presence, bounded resume policy, and operator recovery controls in the desktop app.
 
 ## Task
-Implement Phase 10V for the agent loop. This slice should define how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance and freshness are exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts.
+Implement Phase 10Y for the agent loop. This slice should add the first desktop capacity recovery and resume console so token or rate-limit halts, checkpoint presence, bounded automatic-resume policy, retry or backoff state, and operator override or resume actions are understandable without introducing a hidden second control plane.
 
 ## Notes
 
-- keep this slice bounded to the RAG source-selection contract and desktop UX; do not jump into indexing, retrieval runtime, or concurrency work yet
-- preserve the shipped ownership boundaries, evidence-review model, approval semantics, desktop-app boundaries, and canonical-artifact-first model while defining bounded advisory-only RAG source selection
-- do not widen into hidden orchestration, silent in-flight loop mutation, background ingestion/indexing, packaging, or auto-update work
+- keep this slice bounded to a desktop-facing capacity-recovery and resume-console surface; do not jump into model/policy selection, concurrency, packaging, or hidden orchestration work
+- preserve the shipped ownership boundaries, evidence-review model, approval semantics, checkpoint/continuation boundaries, and canonical-artifact-first model while surfacing halt-recovery state in the UI
+- do not widen into silent loop mutation, background daemons/watchers, packaging, or auto-update work

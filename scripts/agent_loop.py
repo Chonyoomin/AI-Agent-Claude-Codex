@@ -11977,6 +11977,7 @@ def _ui_load_canonical_loop_state(state_path: Path) -> dict:
             "task": data.get("task"),
             "status": data.get("status"),
             "cycle_count": data.get("cycle_count"),
+            "max_cycles": data.get("max_cycles"),
             "approval_mode": data.get("approval_mode"),
             "awaiting_human_for": data.get("awaiting_human_for"),
             "last_verdict": data.get("last_verdict"),
@@ -14109,6 +14110,18 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         this slice; ZERO new library-callable controls are
         introduced and the Phase 10I three-control cap is
         preserved exactly)
+      - `rag_retrieval_controls_view`: the Phase 10W view dict
+        returned by
+        `build_desktop_rag_retrieval_controls_view(controller_root)`,
+        OR a soft-error envelope (added Phase 10W so the
+        shipped desktop app exposes the bounded local RAG
+        retrieval controls alongside the other sub-views;
+        `phase_10w_runtime_available=True` on this slice
+        because the CLI provides the actual retrieval driver;
+        the sub-view itself is READ-ONLY and NEVER reads
+        source CONTENT; ZERO new library-callable controls are
+        introduced and the Phase 10I three-control cap is
+        preserved exactly)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14143,6 +14156,12 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     rag_source_selection_view = _desktop_safe_call_view(
         build_desktop_rag_source_selection_view, controller_root,
     )
+    rag_retrieval_controls_view = _desktop_safe_call_view(
+        build_desktop_rag_retrieval_controls_view, controller_root,
+    )
+    run_console_view = _desktop_safe_call_view(
+        build_desktop_run_console_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14157,6 +14176,10 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "mcp_assistance_view": mcp_assistance_view,
         "mcp_action_guardrails_view": mcp_action_guardrails_view,
         "rag_source_selection_view": rag_source_selection_view,
+        "rag_retrieval_controls_view": (
+            rag_retrieval_controls_view
+        ),
+        "run_console_view": run_console_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14247,6 +14270,28 @@ def _desktop_render_sub_view_lines(
             render_desktop_rag_source_selection_text(sub_view),
         )
         return lines
+    if key == "rag_retrieval_controls_view":
+        # Re-use the shipped Phase 10W renderer verbatim so the
+        # RAG retrieval controls attribution tags ([rag-source]
+        # / [rag-retrieval] / [rag-provenance] / [rag-freshness]
+        # / [rag-approval] / [refused]) stay consistent with
+        # the standalone
+        # `view-desktop-rag-retrieval-controls` output.
+        lines.extend(
+            render_desktop_rag_retrieval_controls_text(sub_view),
+        )
+        return lines
+    if key == "run_console_view":
+        # Re-use the shipped Phase 10X renderer verbatim so the
+        # run-console attribution tags ([run-console] /
+        # [completion-ledger] / [cycle] / [fix-cycle] /
+        # [canonical mirror] / [advisory] / [refused]) stay
+        # consistent with the standalone
+        # `view-desktop-run-console` output.
+        lines.extend(
+            render_desktop_run_console_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14320,6 +14365,14 @@ def render_desktop_app_text(view: dict) -> list:
             "rag_source_selection_view",
             "RAG Source Selection (Phase 10V)",
         ),
+        (
+            "rag_retrieval_controls_view",
+            "RAG Retrieval Controls (Phase 10W)",
+        ),
+        (
+            "run_console_view",
+            "Run Console (Phase 10X)",
+        ),
     ):
         sub = view.get(key, {})
         lines.extend(_desktop_render_sub_view_lines(key, label, sub))
@@ -14350,6 +14403,241 @@ def _desktop_clamp_cadence(
     if value < floor:
         return float(floor)
     return value
+
+
+def _desktop_replace_text_preserving_view(
+    text_widget,
+    lines: Sequence[str],
+) -> None:
+    """Refresh a desktop ScrolledText body without forcing the
+    operator back to the top on every poll.
+
+    The Phase 10M shell re-renders on each cadence tick. Preserve
+    the current y-scroll fraction and skip the body rewrite when
+    the rendered content is unchanged so the window stops looking
+    like it is constantly reloading.
+    """
+    rendered = "".join(f"{line}\n" for line in lines)
+    current = text_widget.get("1.0", "end")
+    view = text_widget.yview()
+    if current != rendered:
+        text_widget.delete("1.0", "end")
+        text_widget.insert("1.0", rendered)
+    if view:
+        text_widget.yview_moveto(view[0])
+
+
+def _desktop_activity_popup_payload(
+    status_value,
+) -> Optional[dict]:
+    """Map canonical in-flight statuses to a small desktop activity
+    popup payload.
+
+    This is intentionally UI-only advisory state. It never replaces
+    the canonical loop-state status and it only appears for active
+    work states where the operator would otherwise stare at a
+    re-polling window with no obvious "something is happening"
+    signal.
+    """
+    if not isinstance(status_value, str):
+        return None
+    popup_map = {
+        "claude_implementing": {
+            "status": "claude_implementing",
+            "title": "Combobulating...",
+            "detail": (
+                "Claude is implementing the active phase."
+            ),
+        },
+        "claude_fixing": {
+            "status": "claude_fixing",
+            "title": "Re-combobulating...",
+            "detail": (
+                "Claude is applying the current fix cycle."
+            ),
+        },
+        "awaiting_codex_review": {
+            "status": "awaiting_codex_review",
+            "title": "Combobulating...",
+            "detail": (
+                "Codex is reviewing the latest implementation."
+            ),
+        },
+        "evidence_capture": {
+            "status": "evidence_capture",
+            "title": "Gathering receipts...",
+            "detail": (
+                "The loop is collecting diff and validation evidence."
+            ),
+        },
+    }
+    payload = popup_map.get(status_value)
+    if payload is None:
+        return None
+    return dict(payload)
+
+
+def _desktop_native_summary_payload(view: dict) -> dict:
+    """Build a compact native-window summary model from the
+    assembled desktop view.
+
+    The native Tk shell should not show the full terminal-style
+    renderer. This helper extracts a small set of operator-facing
+    fields from the existing canonical/advisory view payloads so
+    the GUI can stay simple without inventing a second state plane.
+    """
+    status_view = (
+        view.get("status_view")
+        if isinstance(view.get("status_view"), dict)
+        else {}
+    )
+    controls_view = (
+        view.get("controls_view")
+        if isinstance(view.get("controls_view"), dict)
+        else {}
+    )
+    dashboard_view = (
+        view.get("dashboard_view")
+        if isinstance(view.get("dashboard_view"), dict)
+        else {}
+    )
+    run_profiles_view = (
+        view.get("run_profiles_view")
+        if isinstance(view.get("run_profiles_view"), dict)
+        else {}
+    )
+    project_start_view = (
+        view.get("project_start_view")
+        if isinstance(view.get("project_start_view"), dict)
+        else {}
+    )
+    setup_view = (
+        view.get("setup_view")
+        if isinstance(view.get("setup_view"), dict)
+        else {}
+    )
+    controller_loop_state = status_view.get("controller_loop_state")
+    if not isinstance(controller_loop_state, dict):
+        controller = (
+            status_view.get("controller")
+            if isinstance(status_view.get("controller"), dict)
+            else {}
+        )
+        controller_loop_state = (
+            controller.get("loop_state")
+            if isinstance(controller.get("loop_state"), dict)
+            else {}
+        )
+        controller_loop_state = controller_loop_state.get("mirror")
+    if not isinstance(controller_loop_state, dict):
+        controller_loop_state = {}
+    failure_surface = dashboard_view.get("surfaces", {}).get(
+        "failure_analytics", {}
+    )
+    review_surface = dashboard_view.get("surfaces", {}).get(
+        "review_summaries", {}
+    )
+    target_attach = project_start_view.get("target_attach")
+    if not isinstance(target_attach, dict):
+        target_attach = {}
+    adapter_env = setup_view.get("adapter_env")
+    if not isinstance(adapter_env, dict):
+        adapter_env = {}
+    current_verdict = review_surface.get("current_verdict")
+    if not isinstance(current_verdict, str) or not current_verdict:
+        current_verdict = "No review verdict yet"
+    run_profile_mirror = (
+        run_profiles_view.get("mirror")
+        if isinstance(run_profiles_view.get("mirror"), dict)
+        else {}
+    )
+    task_value = controller_loop_state.get("task")
+    if not isinstance(task_value, str) or not task_value.strip():
+        task_value = "No active task loaded"
+    return {
+        "window_title": "Agent Loop Desktop",
+        "status_label": (
+            status_view.get("advisory_status_label")
+            or "Status unavailable"
+        ),
+        "phase": (
+            controller_loop_state.get("phase")
+            if isinstance(controller_loop_state.get("phase"), str)
+            else "Unknown phase"
+        ),
+        "sub_phase": (
+            controller_loop_state.get("sub_phase")
+            if isinstance(controller_loop_state.get("sub_phase"), str)
+            else "Unknown sub-phase"
+        ),
+        "task": task_value,
+        "approval_mode": (
+            run_profile_mirror.get("approval_mode")
+            if isinstance(run_profile_mirror.get("approval_mode"), str)
+            else run_profiles_view.get("approval_mode")
+            if isinstance(run_profiles_view.get("approval_mode"), str)
+            else "Unknown"
+        ),
+        "cycle_progress": (
+            f"{controller_loop_state.get('cycle_count', '?')} / "
+            f"{controller_loop_state.get('max_cycles', '?')} cycles"
+        ),
+        "review_verdict": current_verdict,
+        "issue_count": failure_surface.get(
+            "issue_count_in_latest_review", 0
+        ),
+        "target_summary": (
+            target_attach.get("summary")
+            if isinstance(target_attach.get("summary"), str)
+            else "No target attached"
+        ),
+        "adapter_summary": (
+            adapter_env.get("summary")
+            if isinstance(adapter_env.get("summary"), str)
+            else "Adapter status unavailable"
+        ),
+        "controller_path": view.get("controller_path_canonical") or "",
+        "current_loop_state_status": (
+            controls_view.get("current_loop_state_status")
+        ),
+    }
+
+
+def _desktop_controls_signature(controls: list) -> tuple:
+    """Return a stable tuple signature for a desktop button model."""
+    signature: list = []
+    for control in controls:
+        if not isinstance(control, dict):
+            signature.append(("invalid", repr(control)))
+            continue
+        signature.append((
+            control.get("label"),
+            control.get("enabled"),
+            control.get("clipboard_payload"),
+        ))
+    return tuple(signature)
+
+
+def _desktop_ack_signature(items: list, *, kind: str) -> tuple:
+    """Return a stable tuple signature for checkbox-backed rows."""
+    if kind not in {"server", "action", "source"}:
+        raise ValueError(f"unsupported desktop ack signature kind: {kind}")
+    signature: list = []
+    for item in items:
+        if not isinstance(item, dict):
+            signature.append(("invalid", repr(item)))
+            continue
+        if kind == "server":
+            signature.append((item.get("id"), item.get("display_name")))
+        elif kind == "action":
+            signature.append((
+                item.get("action_id"),
+                item.get("display_name"),
+                item.get("approval_policy"),
+            ))
+        elif kind == "source":
+            signature.append((item.get("id"), item.get("display_name")))
+    return tuple(signature)
 
 
 def _launch_desktop_app_window(
@@ -14384,16 +14672,187 @@ def _launch_desktop_app_window(
     `--headless`.
     """
     import tkinter as tk
-    from tkinter import scrolledtext
     root = tk.Tk()
     root.title(_DESKTOP_APP_WINDOW_TITLE)
-    text = scrolledtext.ScrolledText(
-        root, width=120, height=40, wrap=tk.WORD,
+    root.geometry("1440x900")
+    root.minsize(960, 640)
+    shell_frame = tk.Frame(root)
+    shell_frame.pack(fill=tk.BOTH, expand=True)
+    summary_frame = tk.Frame(shell_frame, bg="#f7f4ec")
+    summary_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    summary_header = tk.Label(
+        summary_frame,
+        text="Agent Loop Desktop",
+        font=("TkDefaultFont", 18, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        bg="#f7f4ec",
     )
-    text.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    summary_header.pack(fill=tk.X, padx=20, pady=(20, 6))
+    summary_status = tk.Label(
+        summary_frame,
+        text="Status unavailable",
+        font=("TkDefaultFont", 11, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        bg="#f7f4ec",
+        fg="#594f3b",
+    )
+    summary_status.pack(fill=tk.X, padx=20, pady=(0, 14))
+    summary_card = tk.Frame(
+        summary_frame,
+        bg="#fffdf8",
+        highlightbackground="#d9d2c3",
+        highlightthickness=1,
+        padx=18,
+        pady=16,
+    )
+    summary_card.pack(fill=tk.BOTH, expand=True, padx=20, pady=(0, 20))
+    summary_phase = tk.Label(
+        summary_card,
+        text="",
+        font=("TkDefaultFont", 12, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_phase.pack(fill=tk.X)
+    summary_sub_phase = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+        fg="#4a4a4a",
+    )
+    summary_sub_phase.pack(fill=tk.X, pady=(6, 14))
+    summary_task = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_task.pack(fill=tk.X, pady=(0, 16))
+    summary_meta = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_meta.pack(fill=tk.X, pady=(0, 16))
+    summary_target = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_target.pack(fill=tk.X, pady=(0, 16))
+    summary_adapter = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+    )
+    summary_adapter.pack(fill=tk.X, pady=(0, 16))
+    summary_path = tk.Label(
+        summary_card,
+        text="",
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=700,
+        bg="#fffdf8",
+        fg="#666666",
+    )
+    summary_path.pack(fill=tk.X)
 
-    control_frame = tk.Frame(root)
-    control_frame.pack(side=tk.RIGHT, fill=tk.Y)
+    control_outer = tk.Frame(shell_frame, width=380)
+    control_outer.pack(side=tk.RIGHT, fill=tk.BOTH)
+    control_outer.pack_propagate(False)
+    control_canvas = tk.Canvas(
+        control_outer, highlightthickness=0, width=380,
+    )
+    control_scrollbar = tk.Scrollbar(
+        control_outer,
+        orient=tk.VERTICAL,
+        command=control_canvas.yview,
+    )
+    control_canvas.configure(
+        yscrollcommand=control_scrollbar.set,
+    )
+    control_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    control_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+    control_frame = tk.Frame(control_canvas)
+    control_window = control_canvas.create_window(
+        (0, 0), window=control_frame, anchor="nw",
+    )
+
+    def _sync_control_scroll_region(_event=None) -> None:
+        control_canvas.configure(
+            scrollregion=control_canvas.bbox("all"),
+        )
+
+    def _sync_control_width(event) -> None:
+        control_canvas.itemconfigure(
+            control_window, width=event.width,
+        )
+
+    control_frame.bind("<Configure>", _sync_control_scroll_region)
+    control_canvas.bind("<Configure>", _sync_control_width)
+    activity_popup = tk.Toplevel(root)
+    activity_popup.title("Agent Activity")
+    activity_popup.withdraw()
+    activity_popup.transient(root)
+    activity_popup.resizable(False, False)
+    activity_popup.attributes("-topmost", True)
+    popup_frame = tk.Frame(
+        activity_popup,
+        padx=18,
+        pady=16,
+        bg="#f4f1e8",
+    )
+    popup_frame.pack(fill=tk.BOTH, expand=True)
+    popup_title = tk.Label(
+        popup_frame,
+        text="Combobulating...",
+        font=("TkDefaultFont", 12, "bold"),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        bg="#f4f1e8",
+    )
+    popup_title.pack(fill=tk.X)
+    popup_detail = tk.Label(
+        popup_frame,
+        text="",
+        wraplength=280,
+        justify=tk.LEFT,
+        anchor=tk.W,
+        bg="#f4f1e8",
+    )
+    popup_detail.pack(fill=tk.X, pady=(8, 0))
+    active_popup_status: Optional[str] = None
+
+    def _place_activity_popup() -> None:
+        root.update_idletasks()
+        activity_popup.update_idletasks()
+        popup_width = activity_popup.winfo_width()
+        popup_height = activity_popup.winfo_height()
+        root_width = root.winfo_width()
+        x = root.winfo_rootx() + max(24, root_width - popup_width - 36)
+        y = root.winfo_rooty() + 48
+        activity_popup.geometry(
+            f"{popup_width}x{popup_height}+{x}+{y}"
+        )
+
     run_profiles_frame = tk.Frame(control_frame)
     run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
     tk.Label(
@@ -14427,6 +14886,13 @@ def _launch_desktop_app_window(
     tk.Label(
         rag_source_selection_frame,
         text="RAG Source Selection (Phase 10V)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    rag_retrieval_frame = tk.Frame(control_frame)
+    rag_retrieval_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        rag_retrieval_frame,
+        text="RAG Retrieval Controls (Phase 10W)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     # Phase 10T fix cycle: per-session operator-input widgets so
@@ -14484,6 +14950,50 @@ def _launch_desktop_app_window(
     rag_source_ack_frame.pack(side=tk.TOP, fill=tk.X)
     rag_source_ack_vars: dict = {}
     rag_source_ack_widgets: list = []
+    # Phase 10W: per-session retrieval controls widgets. Query
+    # StringVar and top-K StringVar are held in-memory only;
+    # closing the window discards every value.
+    tk.Label(
+        rag_retrieval_frame,
+        text=(
+            "Retrieval query (per-session; bounded to "
+            f"{RAG_RETRIEVAL_QUERY_CHAR_CAP} chars):"
+        ),
+        wraplength=240, justify=tk.LEFT, anchor=tk.W,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    rag_retrieval_query_var = tk.StringVar(value="")
+    rag_retrieval_query_entry = tk.Entry(
+        rag_retrieval_frame,
+        textvariable=rag_retrieval_query_var,
+    )
+    rag_retrieval_query_entry.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    tk.Label(
+        rag_retrieval_frame,
+        text=(
+            "Top-K (capped at "
+            f"{RAG_RETRIEVAL_TOP_K_CAP}):"
+        ),
+        wraplength=240, justify=tk.LEFT, anchor=tk.W,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    rag_retrieval_top_k_var = tk.StringVar(
+        value=str(RAG_RETRIEVAL_TOP_K_DEFAULT),
+    )
+    rag_retrieval_top_k_entry = tk.Entry(
+        rag_retrieval_frame,
+        textvariable=rag_retrieval_top_k_var,
+    )
+    rag_retrieval_top_k_entry.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    run_console_frame = tk.Frame(control_frame)
+    run_console_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        run_console_frame,
+        text="Run Console (Phase 10X)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14508,6 +15018,16 @@ def _launch_desktop_app_window(
     mcp_assistance_button_widgets: list = []
     mcp_action_guardrails_button_widgets: list = []
     rag_source_selection_button_widgets: list = []
+    rag_retrieval_button_widgets: list = []
+    run_console_button_widgets: list = []
+    run_profile_controls_signature: Optional[tuple] = None
+    project_start_controls_signature: Optional[tuple] = None
+    mcp_assistance_controls_signature: Optional[tuple] = None
+    mcp_action_guardrails_controls_signature: Optional[tuple] = None
+    rag_source_selection_controls_signature: Optional[tuple] = None
+    mcp_ack_signature: Optional[tuple] = None
+    mcp_action_ack_signature: Optional[tuple] = None
+    rag_source_ack_signature: Optional[tuple] = None
 
     def _rebuild_button_row(
         parent: "tk.Frame",
@@ -14533,10 +15053,55 @@ def _launch_desktop_app_window(
             widget_bag.append(button)
 
     def _refresh() -> None:
+        nonlocal active_popup_status
+        nonlocal run_profile_controls_signature
+        nonlocal project_start_controls_signature
+        nonlocal mcp_assistance_controls_signature
+        nonlocal mcp_action_guardrails_controls_signature
+        nonlocal rag_source_selection_controls_signature
+        nonlocal mcp_ack_signature
+        nonlocal mcp_action_ack_signature
+        nonlocal rag_source_ack_signature
         view = assemble_desktop_app_view(controller_root)
-        text.delete("1.0", tk.END)
-        for line in render_desktop_app_text(view):
-            text.insert(tk.END, line + "\n")
+        summary = _desktop_native_summary_payload(view)
+        summary_header.config(text=summary["window_title"])
+        summary_status.config(text=summary["status_label"])
+        summary_phase.config(text=summary["phase"])
+        summary_sub_phase.config(text=summary["sub_phase"])
+        summary_task.config(text=f"Task: {summary['task']}")
+        summary_meta.config(
+            text=(
+                f"Approval mode: {summary['approval_mode']}\n"
+                f"Cycle progress: {summary['cycle_progress']}\n"
+                f"Latest verdict: {summary['review_verdict']}\n"
+                f"Latest review issues: {summary['issue_count']}"
+            )
+        )
+        summary_target.config(
+            text=f"Target: {summary['target_summary']}"
+        )
+        summary_adapter.config(
+            text=f"Adapters: {summary['adapter_summary']}"
+        )
+        summary_path.config(
+            text=f"Controller root: {summary['controller_path']}"
+        )
+        status_payload = _desktop_activity_popup_payload(
+            summary["current_loop_state_status"],
+        )
+        if status_payload is None:
+            if active_popup_status is not None:
+                activity_popup.withdraw()
+                active_popup_status = None
+        else:
+            if active_popup_status != status_payload["status"]:
+                popup_title.config(text=status_payload["title"])
+                popup_detail.config(text=status_payload["detail"])
+                active_popup_status = status_payload["status"]
+            if activity_popup.state() == "withdrawn":
+                activity_popup.deiconify()
+            activity_popup.lift()
+            _place_activity_popup()
         run_profiles_sub_view = view.get("run_profiles_view") or {}
         if (
             isinstance(run_profiles_sub_view, dict)
@@ -14549,11 +15114,18 @@ def _launch_desktop_app_window(
             )
         else:
             run_profile_controls = []
-        _rebuild_button_row(
-            run_profiles_frame,
-            run_profile_controls,
-            run_profile_button_widgets,
+        next_run_profile_controls_signature = _desktop_controls_signature(
+            run_profile_controls
         )
+        if next_run_profile_controls_signature != run_profile_controls_signature:
+            _rebuild_button_row(
+                run_profiles_frame,
+                run_profile_controls,
+                run_profile_button_widgets,
+            )
+            run_profile_controls_signature = (
+                next_run_profile_controls_signature
+            )
         project_start_sub_view = (
             view.get("project_start_view") or {}
         )
@@ -14568,11 +15140,21 @@ def _launch_desktop_app_window(
             )
         else:
             project_start_controls = []
-        _rebuild_button_row(
-            project_start_frame,
-            project_start_controls,
-            project_start_button_widgets,
+        next_project_start_controls_signature = (
+            _desktop_controls_signature(project_start_controls)
         )
+        if (
+            next_project_start_controls_signature
+            != project_start_controls_signature
+        ):
+            _rebuild_button_row(
+                project_start_frame,
+                project_start_controls,
+                project_start_button_widgets,
+            )
+            project_start_controls_signature = (
+                next_project_start_controls_signature
+            )
         # Phase 10T fix cycle: re-derive the MCP assistance
         # view with the per-session operator-input state read
         # from the Tk widgets, then re-render the per-server
@@ -14609,44 +15191,65 @@ def _launch_desktop_app_window(
         # rebuilt every poll so registry changes propagate
         # cleanly and per-session BooleanVar state is preserved
         # for any server id we have already seen.
-        for widget in mcp_ack_widgets:
-            widget.destroy()
-        mcp_ack_widgets.clear()
         if (
             isinstance(live_mcp_assistance_view, dict)
             and "servers" in live_mcp_assistance_view
         ):
-            for server in live_mcp_assistance_view["servers"]:
-                server_id = server["id"]
-                if server_id not in mcp_ack_vars:
-                    mcp_ack_vars[server_id] = (
-                        tk.BooleanVar(value=False)
+            next_mcp_ack_signature = _desktop_ack_signature(
+                live_mcp_assistance_view["servers"],
+                kind="server",
+            )
+            if next_mcp_ack_signature != mcp_ack_signature:
+                for widget in mcp_ack_widgets:
+                    widget.destroy()
+                mcp_ack_widgets.clear()
+                for server in live_mcp_assistance_view["servers"]:
+                    server_id = server["id"]
+                    if server_id not in mcp_ack_vars:
+                        mcp_ack_vars[server_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    ack_check = tk.Checkbutton(
+                        mcp_ack_frame,
+                        text=(
+                            f"Acknowledge safety copy: "
+                            f"{server['display_name']}"
+                        ),
+                        wraplength=240,
+                        justify=tk.LEFT,
+                        anchor=tk.W,
+                        variable=mcp_ack_vars[server_id],
                     )
-                ack_check = tk.Checkbutton(
-                    mcp_ack_frame,
-                    text=(
-                        f"Acknowledge safety copy: "
-                        f"{server['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_ack_vars[server_id],
-                )
-                ack_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_ack_widgets.append(ack_check)
+                    ack_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_ack_widgets.append(ack_check)
+                mcp_ack_signature = next_mcp_ack_signature
             mcp_assistance_controls = (
                 build_desktop_mcp_assistance_controls(
                     live_mcp_assistance_view,
                 )
             )
         else:
+            if mcp_ack_signature is not None:
+                for widget in mcp_ack_widgets:
+                    widget.destroy()
+                mcp_ack_widgets.clear()
+                mcp_ack_signature = ()
             mcp_assistance_controls = []
-        _rebuild_button_row(
-            mcp_assistance_frame,
-            mcp_assistance_controls,
-            mcp_assistance_button_widgets,
+        next_mcp_assistance_controls_signature = (
+            _desktop_controls_signature(mcp_assistance_controls)
         )
+        if (
+            next_mcp_assistance_controls_signature
+            != mcp_assistance_controls_signature
+        ):
+            _rebuild_button_row(
+                mcp_assistance_frame,
+                mcp_assistance_controls,
+                mcp_assistance_button_widgets,
+            )
+            mcp_assistance_controls_signature = (
+                next_mcp_assistance_controls_signature
+            )
         # Phase 10U live operator-input re-derivation. The
         # ScrolledText panel above shows the assemble_desktop_app
         # _view default empty-input snapshot (the audit-trail
@@ -14690,123 +15293,134 @@ def _launch_desktop_app_window(
             ),
             controller_root,
         )
-        for widget in mcp_action_ack_widgets:
-            widget.destroy()
-        mcp_action_ack_widgets.clear()
         if (
             isinstance(live_mcp_action_guardrails_view, dict)
             and "actions" in live_mcp_action_guardrails_view
         ):
-            for action in (
-                live_mcp_action_guardrails_view["actions"]
-            ):
-                action_id = action["action_id"]
-                if action_id not in mcp_action_ack_vars:
-                    mcp_action_ack_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                if action_id not in (
-                    mcp_action_session_ack_vars
+            next_mcp_action_ack_signature = _desktop_ack_signature(
+                live_mcp_action_guardrails_view["actions"],
+                kind="action",
+            )
+            if next_mcp_action_ack_signature != mcp_action_ack_signature:
+                for widget in mcp_action_ack_widgets:
+                    widget.destroy()
+                mcp_action_ack_widgets.clear()
+                for action in (
+                    live_mcp_action_guardrails_view["actions"]
                 ):
-                    mcp_action_session_ack_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                if action_id not in mcp_action_dry_run_vars:
-                    mcp_action_dry_run_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                if action_id not in mcp_action_policy_vars:
-                    mcp_action_policy_vars[action_id] = (
-                        tk.BooleanVar(value=False)
-                    )
-                policy = action.get("approval_policy", "")
-                # Phase 10U fix cycle: render the policy-relevant
-                # acknowledgement widget per action. The per-
-                # invocation widget shows only for
-                # `per_action_explicit_approval` actions; the
-                # session-scoped widget shows only for
-                # `per_session_explicit_approval` actions. This
-                # matches the executable approval-policy contract
-                # exposed by `_desktop_mcp_action_guardrails_
-                # compute_approval_state(...)` so the Tk surface
-                # cannot accidentally surface a per-invocation
-                # acknowledgement that does not actually satisfy
-                # a per-session policy.
-                if policy == "per_action_explicit_approval":
-                    ack_check = tk.Checkbutton(
+                    action_id = action["action_id"]
+                    if action_id not in mcp_action_ack_vars:
+                        mcp_action_ack_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    if action_id not in (
+                        mcp_action_session_ack_vars
+                    ):
+                        mcp_action_session_ack_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    if action_id not in mcp_action_dry_run_vars:
+                        mcp_action_dry_run_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    if action_id not in mcp_action_policy_vars:
+                        mcp_action_policy_vars[action_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    policy = action.get("approval_policy", "")
+                    if policy == "per_action_explicit_approval":
+                        ack_check = tk.Checkbutton(
+                            mcp_action_ack_frame,
+                            text=(
+                                f"Acknowledge action (per-"
+                                f"invocation): "
+                                f"{action['display_name']}"
+                            ),
+                            wraplength=240,
+                            justify=tk.LEFT,
+                            anchor=tk.W,
+                            variable=mcp_action_ack_vars[action_id],
+                        )
+                        ack_check.pack(fill=tk.X, padx=4, pady=1)
+                        mcp_action_ack_widgets.append(ack_check)
+                    elif policy == "per_session_explicit_approval":
+                        session_ack_check = tk.Checkbutton(
+                            mcp_action_ack_frame,
+                            text=(
+                                f"Session-acknowledge action: "
+                                f"{action['display_name']}"
+                            ),
+                            wraplength=240,
+                            justify=tk.LEFT,
+                            anchor=tk.W,
+                            variable=(
+                                mcp_action_session_ack_vars[
+                                    action_id
+                                ]
+                            ),
+                        )
+                        session_ack_check.pack(
+                            fill=tk.X, padx=4, pady=1,
+                        )
+                        mcp_action_ack_widgets.append(
+                            session_ack_check,
+                        )
+                    dry_run_check = tk.Checkbutton(
                         mcp_action_ack_frame,
                         text=(
-                            f"Acknowledge action (per-"
-                            f"invocation): "
+                            f"Dry-run reviewed: "
                             f"{action['display_name']}"
                         ),
                         wraplength=240,
                         justify=tk.LEFT,
                         anchor=tk.W,
-                        variable=mcp_action_ack_vars[action_id],
+                        variable=mcp_action_dry_run_vars[action_id],
                     )
-                    ack_check.pack(fill=tk.X, padx=4, pady=1)
-                    mcp_action_ack_widgets.append(ack_check)
-                elif policy == "per_session_explicit_approval":
-                    session_ack_check = tk.Checkbutton(
+                    dry_run_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_action_ack_widgets.append(dry_run_check)
+                    policy_check = tk.Checkbutton(
                         mcp_action_ack_frame,
                         text=(
-                            f"Session-acknowledge action: "
+                            f"Policy pack permits: "
                             f"{action['display_name']}"
                         ),
                         wraplength=240,
                         justify=tk.LEFT,
                         anchor=tk.W,
-                        variable=(
-                            mcp_action_session_ack_vars[
-                                action_id
-                            ]
-                        ),
+                        variable=mcp_action_policy_vars[action_id],
                     )
-                    session_ack_check.pack(
-                        fill=tk.X, padx=4, pady=1,
-                    )
-                    mcp_action_ack_widgets.append(
-                        session_ack_check,
-                    )
-                dry_run_check = tk.Checkbutton(
-                    mcp_action_ack_frame,
-                    text=(
-                        f"Dry-run reviewed: "
-                        f"{action['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_action_dry_run_vars[action_id],
+                    policy_check.pack(fill=tk.X, padx=4, pady=1)
+                    mcp_action_ack_widgets.append(policy_check)
+                mcp_action_ack_signature = (
+                    next_mcp_action_ack_signature
                 )
-                dry_run_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_action_ack_widgets.append(dry_run_check)
-                policy_check = tk.Checkbutton(
-                    mcp_action_ack_frame,
-                    text=(
-                        f"Policy pack permits: "
-                        f"{action['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=mcp_action_policy_vars[action_id],
-                )
-                policy_check.pack(fill=tk.X, padx=4, pady=1)
-                mcp_action_ack_widgets.append(policy_check)
             mcp_action_guardrails_controls = (
                 build_desktop_mcp_action_guardrails_controls(
                     live_mcp_action_guardrails_view,
                 )
             )
         else:
+            if mcp_action_ack_signature is not None:
+                for widget in mcp_action_ack_widgets:
+                    widget.destroy()
+                mcp_action_ack_widgets.clear()
+                mcp_action_ack_signature = ()
             mcp_action_guardrails_controls = []
-        _rebuild_button_row(
-            mcp_action_guardrails_frame,
-            mcp_action_guardrails_controls,
-            mcp_action_guardrails_button_widgets,
+        next_mcp_action_guardrails_controls_signature = (
+            _desktop_controls_signature(mcp_action_guardrails_controls)
         )
+        if (
+            next_mcp_action_guardrails_controls_signature
+            != mcp_action_guardrails_controls_signature
+        ):
+            _rebuild_button_row(
+                mcp_action_guardrails_frame,
+                mcp_action_guardrails_controls,
+                mcp_action_guardrails_button_widgets,
+            )
+            mcp_action_guardrails_controls_signature = (
+                next_mcp_action_guardrails_controls_signature
+            )
         # Phase 10V live operator-input re-derivation. The
         # ScrolledText panel above shows the assemble_desktop_app
         # _view default empty-input snapshot; the Tk action
@@ -14830,46 +15444,167 @@ def _launch_desktop_app_window(
             ),
             controller_root,
         )
-        for widget in rag_source_ack_widgets:
-            widget.destroy()
-        rag_source_ack_widgets.clear()
         if (
             isinstance(live_rag_source_selection_view, dict)
             and "sources" in live_rag_source_selection_view
         ):
-            for source in (
-                live_rag_source_selection_view["sources"]
-            ):
-                source_id = source["id"]
-                if source_id not in rag_source_ack_vars:
-                    rag_source_ack_vars[source_id] = (
-                        tk.BooleanVar(value=False)
+            next_rag_source_ack_signature = _desktop_ack_signature(
+                live_rag_source_selection_view["sources"],
+                kind="source",
+            )
+            if next_rag_source_ack_signature != rag_source_ack_signature:
+                for widget in rag_source_ack_widgets:
+                    widget.destroy()
+                rag_source_ack_widgets.clear()
+                for source in (
+                    live_rag_source_selection_view["sources"]
+                ):
+                    source_id = source["id"]
+                    if source_id not in rag_source_ack_vars:
+                        rag_source_ack_vars[source_id] = (
+                            tk.BooleanVar(value=False)
+                        )
+                    ack_check = tk.Checkbutton(
+                        rag_source_ack_frame,
+                        text=(
+                            f"Acknowledge advisory-labeling: "
+                            f"{source['display_name']}"
+                        ),
+                        wraplength=240,
+                        justify=tk.LEFT,
+                        anchor=tk.W,
+                        variable=rag_source_ack_vars[source_id],
                     )
-                ack_check = tk.Checkbutton(
-                    rag_source_ack_frame,
-                    text=(
-                        f"Acknowledge advisory-labeling: "
-                        f"{source['display_name']}"
-                    ),
-                    wraplength=240,
-                    justify=tk.LEFT,
-                    anchor=tk.W,
-                    variable=rag_source_ack_vars[source_id],
-                )
-                ack_check.pack(fill=tk.X, padx=4, pady=1)
-                rag_source_ack_widgets.append(ack_check)
+                    ack_check.pack(fill=tk.X, padx=4, pady=1)
+                    rag_source_ack_widgets.append(ack_check)
+                rag_source_ack_signature = next_rag_source_ack_signature
             rag_source_selection_controls = (
                 build_desktop_rag_source_selection_controls(
                     live_rag_source_selection_view,
                 )
             )
         else:
+            if rag_source_ack_signature is not None:
+                for widget in rag_source_ack_widgets:
+                    widget.destroy()
+                rag_source_ack_widgets.clear()
+                rag_source_ack_signature = ()
             rag_source_selection_controls = []
-        _rebuild_button_row(
-            rag_source_selection_frame,
-            rag_source_selection_controls,
-            rag_source_selection_button_widgets,
+        next_rag_source_selection_controls_signature = (
+            _desktop_controls_signature(rag_source_selection_controls)
         )
+        if (
+            next_rag_source_selection_controls_signature
+            != rag_source_selection_controls_signature
+        ):
+            _rebuild_button_row(
+                rag_source_selection_frame,
+                rag_source_selection_controls,
+                rag_source_selection_button_widgets,
+            )
+            rag_source_selection_controls_signature = (
+                next_rag_source_selection_controls_signature
+            )
+        # Phase 10W live retrieval-controls re-derivation. The
+        # ScrolledText panel above shows the assemble_desktop
+        # _app_view default empty-input snapshot; the Tk action
+        # surface below is the authoritative operator-input
+        # plane. Operator identity + acknowledged source ids
+        # are reused from the Phase 10T / 10V widgets; the live
+        # query + top-K are read from the Phase 10W widgets and
+        # threaded into the view builder so per-source
+        # `retrieval_eligible` and the per-source Button
+        # `enabled` bit re-derive on every poll (per the fix-
+        # cycle contract, a button MUST NOT be enabled while the
+        # actual runtime would refuse fail-closed with
+        # `query_empty` or `query_too_long`).
+        live_query = (
+            rag_retrieval_query_var.get().strip()
+        )
+        live_retrieval_operator_inputs = {
+            "identity": mcp_identity_var.get().strip(),
+            "acknowledged_source_ids": frozenset(
+                sid for sid, var in (
+                    rag_source_ack_vars.items()
+                ) if var.get()
+            ),
+            "query": live_query,
+        }
+        live_retrieval_view = _desktop_safe_call_view(
+            lambda root_arg: (
+                build_desktop_rag_retrieval_controls_view(
+                    root_arg,
+                    operator_inputs=(
+                        live_retrieval_operator_inputs
+                    ),
+                )
+            ),
+            controller_root,
+        )
+        if (
+            isinstance(live_retrieval_view, dict)
+            and "sources" in live_retrieval_view
+        ):
+            base_retrieval_controls = (
+                build_desktop_rag_retrieval_controls(
+                    live_retrieval_view,
+                )
+            )
+            live_top_k_raw = (
+                rag_retrieval_top_k_var.get().strip()
+            )
+            try:
+                live_top_k = int(live_top_k_raw)
+            except (TypeError, ValueError):
+                live_top_k = RAG_RETRIEVAL_TOP_K_DEFAULT
+            if live_top_k < 1:
+                live_top_k = 1
+            if live_top_k > RAG_RETRIEVAL_TOP_K_CAP:
+                live_top_k = RAG_RETRIEVAL_TOP_K_CAP
+            for control in base_retrieval_controls:
+                control["clipboard_payload"] = (
+                    "python scripts/agent_loop.py "
+                    "run-local-rag-retrieval "
+                    "--controller-root <PATH> "
+                    "--operator-identity <NAME> "
+                    f"--acknowledge-source {control['id']} "
+                    f"--query \"{live_query or '<QUERY>'}\" "
+                    f"--top-k {live_top_k}"
+                )
+            retrieval_controls = base_retrieval_controls
+        else:
+            retrieval_controls = []
+        _rebuild_button_row(
+            rag_retrieval_frame,
+            retrieval_controls,
+            rag_retrieval_button_widgets,
+        )
+        # Phase 10X: rebuild the run-console button row from the
+        # cached sub-view. `build_desktop_run_console_controls`
+        # is READ-ONLY (each button is a shipped copy-paste
+        # inspection command); ZERO new library-callable
+        # controls are introduced.
+        run_console_sub_view = view.get("run_console_view", {})
+        if (
+            isinstance(run_console_sub_view, dict)
+            and run_console_sub_view.get("view") is None
+            and "error" in run_console_sub_view
+        ):
+            run_console_controls = []
+        elif isinstance(run_console_sub_view, dict):
+            run_console_controls = (
+                build_desktop_run_console_controls(
+                    run_console_sub_view,
+                )
+            )
+        else:
+            run_console_controls = []
+        _rebuild_button_row(
+            run_console_frame,
+            run_console_controls,
+            run_console_button_widgets,
+        )
+        _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
 
     _refresh()
@@ -22136,6 +22871,2001 @@ def cmd_view_desktop_rag_source_selection(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10W: RAG Local Index And Retrieval Controls.
+#
+# Layers the first bounded controller-local RAG indexing + retrieval
+# runtime on top of the Phase 10V source-selection contract. This
+# slice ships:
+#   - a bounded `build_desktop_rag_retrieval_controls_view(...)`
+#     read-only controls view that mirrors closed enums, bounded
+#     caps, and per-source retrieval-eligibility state; NEVER
+#     reads source CONTENT (only Phase 10V freshness probe is
+#     consulted).
+#   - a bounded `retrieve_local_rag_excerpts(...)` retrieval
+#     library that DOES read at most `RAG_RETRIEVAL_PER_SOURCE_
+#     BYTE_CAP` bytes per source, tokenizes lowercase alphanumeric
+#     words, ranks via bounded term-overlap, and returns at most
+#     `RAG_RETRIEVAL_TOP_K_CAP` excerpts each bounded to
+#     `RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS`.
+#   - a `view-desktop-rag-retrieval-controls` CLI reporter and a
+#     `run-local-rag-retrieval` CLI retrieval driver, both Phase
+#     7C reporter-pattern (always exit 0 on report content once
+#     the controller-root selection succeeds).
+#
+# The surface is CONTROLLER-LOCAL ONLY: retrieval refuses fail-
+# closed when a source path resolves outside the controller root.
+# NEVER opens a network socket, NEVER spawns a subprocess, NEVER
+# contacts a remote index / vector database / hosted retrieval
+# service, NEVER persists an index or hit log on disk, NEVER
+# subscribes to a background watcher, NEVER mutates any canonical
+# artifact, NEVER appends to `.agent-loop/orchestrator.log`,
+# NEVER advances loop-state, NEVER invokes `_halt(...)`, NEVER
+# auto-fills any operator-identity field, NEVER widens the Phase
+# 10I library-callable cap, and NEVER lets retrieved excerpts
+# substitute for canonical artifact content (every excerpt
+# carries `[rag-advisory]` provenance tagging per the Phase 10O
+# advisory-vs-canonical mirror rule and the Phase 10V source-of-
+# truth preservation rule).
+# ---------------------------------------------------------------------------
+
+DESKTOP_RAG_RETRIEVAL_CONTROLS_SIGNAL_VERSION = "phase-10w-v1"
+
+DESKTOP_RAG_RETRIEVAL_CONTROLS_PRECEDENCE_NOTE = (
+    "Phase 10W RAG local index and retrieval controls surface. "
+    "The shipped Phase 10O MCP integration contract, Phase 10S "
+    "MCP server selection UX contract, Phase 10T MCP read-only "
+    "assistance surface, Phase 10U MCP action guardrails "
+    "surface, and Phase 10V RAG source selection contract "
+    "govern this surface's advisory-vs-canonical mirror rule "
+    "verbatim: every retrieved excerpt is `[rag-advisory]` ONLY "
+    "and NEVER substitutes for the canonical Phase 2A evidence "
+    "files / git diff / Claude summary / Codex review / "
+    "loop-state.json / memory entries. The Phase 10I three-"
+    "control library-callable cap is preserved exactly; ZERO "
+    "new library-callable controls are introduced. Retrieval is "
+    "CONTROLLER-LOCAL ONLY: retrieval refuses fail-closed when a "
+    "source path resolves outside the controller root. The "
+    "surface NEVER opens a network socket, NEVER spawns a "
+    "subprocess, NEVER contacts a remote index / vector "
+    "database / hosted retrieval service, NEVER persists an "
+    "index or hit log on disk, NEVER subscribes to a background "
+    "watcher, NEVER mutates any canonical artifact "
+    "(loop-state.json / orchestrator.log / external-target.json "
+    "/ runtime-config.json / TASK.md / proposed-phase.md / "
+    "claude-prompt.md / claude-summary.md / codex-review.md / "
+    "fix-prompt.md / current-task.md / current-phase.md / "
+    "phase-plan.md / prd-intake.json / final-acceptance.json / "
+    "any Phase 2A evidence file / any Phase 6 memory entry), "
+    "NEVER appends to `.agent-loop/orchestrator.log`, NEVER "
+    "advances loop-state, NEVER invokes `_halt(...)`, NEVER "
+    "auto-fills any --*-by operator-identity argument or "
+    "approval-mode value, NEVER introduces a RAG-side database "
+    "/ preference store / recents list / identity token / "
+    "session token, and NEVER widens the Phase 10I cap"
+)
+
+# Bounded caps enforced by every Phase 10W entry point. The
+# constants are intentionally tight so retrieval stays operator-
+# controllable; a future runtime slice MAY widen them only by
+# explicitly editing these constants AND the matching tests.
+RAG_RETRIEVAL_QUERY_CHAR_CAP = 512
+RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP = 8192
+RAG_RETRIEVAL_TOP_K_CAP = 5
+RAG_RETRIEVAL_TOP_K_DEFAULT = 3
+RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS = 240
+
+RAG_RETRIEVAL_INDEX_STATES = (
+    "empty",
+    "built_this_invocation",
+    "refused_until_policy_update",
+)
+
+RAG_RETRIEVAL_RANKING_MODES = (
+    "term_overlap_bounded",
+    "refused_until_policy_update",
+)
+
+RAG_RETRIEVAL_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_advisory_labeling",
+    "operator_supplied_identity",
+    "approval_mode_supports_retrieval",
+    "phase_10w_runtime_available",
+    "controller_local_scope_only",
+    "operator_query_supplied",
+    "query_within_char_cap",
+    "per_source_within_byte_cap",
+)
+
+RAG_RETRIEVAL_REFUSAL_REASONS = (
+    "approval_mode_strict",
+    "operator_identity_missing",
+    "operator_acknowledgement_missing",
+    "query_empty",
+    "query_too_long",
+    "source_path_missing",
+    "source_path_outside_controller_root",
+    "runtime_not_available",
+)
+
+RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+
+def _desktop_rag_retrieval_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10W
+    retrieval controls surface. Returns a closed dict with:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when not yet supplied. Per Phase
+        10S MUST NOT be auto-filled from any persistent source.
+      - `acknowledged_source_ids` (frozenset[str]): the set of
+        source ids whose per-source advisory-labeling rule the
+        operator has acknowledged this session.
+
+    `None` returns the defaults. A non-dict value raises
+    HaltError per the Phase 10S descriptor-validation pattern.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_source_ids": frozenset(),
+            "query": "",
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_source_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs.acknowledged_source_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    query = operator_inputs.get("query", "")
+    if query is None:
+        query = ""
+    if not isinstance(query, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs.query is not a string "
+                f"({query!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_source_ids": frozenset(
+            str(s) for s in ack
+        ),
+        "query": query,
+    }
+
+
+def _desktop_rag_retrieval_source_path_inside_controller_root(
+    controller_root: Path, source_path: Path,
+) -> bool:
+    """Return True iff `source_path` resolves INSIDE the
+    controller root. Pure lexical + resolve-based check; no IO
+    beyond `Path.resolve()`. Phase 10W refuses fail-closed on
+    any source path that resolves outside the controller root -
+    this preserves the controller-local scope boundary even if
+    a future registry entry passes the Phase 10V descriptor
+    validator (e.g. via a symlink pointing outside the repo).
+    """
+    try:
+        controller_resolved = controller_root.resolve()
+        source_resolved = source_path.resolve()
+    except OSError:
+        return False
+    try:
+        source_resolved.relative_to(controller_resolved)
+        return True
+    except ValueError:
+        return False
+
+
+def _desktop_rag_retrieval_read_source_bounded(
+    path: Path,
+) -> tuple:
+    """Read at most `RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP + 1` bytes
+    from `path` and return `(text, bytes_read, was_truncated)`.
+    Reading `cap + 1` lets the caller detect whether the source
+    file exceeds the cap without reading unbounded bytes. Any
+    OSError returns `("", 0, False)` so retrieval degrades
+    gracefully. Bytes are decoded as UTF-8 with `errors="replace"`
+    so binary or mixed-encoding sources do not raise.
+    """
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP + 1)
+    except OSError:
+        return ("", 0, False)
+    was_truncated = len(raw) > RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP
+    if was_truncated:
+        raw = raw[:RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP]
+    text = raw.decode("utf-8", errors="replace")
+    return (text, len(raw), was_truncated)
+
+
+# Split on any non-alphanumeric character so the tokenizer is
+# fully lexical and stays platform-stable. Compiled once at
+# module load.
+_RAG_RETRIEVAL_TOKENIZE_RE = re.compile(r"[a-z0-9]+")
+
+
+def _desktop_rag_retrieval_tokenize(text: str) -> list:
+    """Lowercase alphanumeric tokenization. Pure; deterministic.
+    """
+    return _RAG_RETRIEVAL_TOKENIZE_RE.findall(text.lower())
+
+
+def _desktop_rag_retrieval_score_source(
+    source_tokens: list, query_tokens: list,
+) -> tuple:
+    """Return `(score, matched_query_tokens)` where `score` is
+    a bounded term-overlap ratio: the number of DISTINCT query
+    tokens that appear at least once in the source, divided by
+    the number of DISTINCT query tokens. Returns `(0.0, ())`
+    when either input is empty.
+    """
+    if not source_tokens or not query_tokens:
+        return (0.0, ())
+    source_set = set(source_tokens)
+    query_set = list(dict.fromkeys(query_tokens))
+    matched = tuple(t for t in query_set if t in source_set)
+    if not query_set:
+        return (0.0, ())
+    return (len(matched) / len(query_set), matched)
+
+
+def _desktop_rag_retrieval_extract_excerpt(
+    text: str, query_tokens: list,
+) -> str:
+    """Return a bounded excerpt of at most
+    `RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS` characters centered on
+    the FIRST query-token match. When no query token matches,
+    return the leading window bytes of the text as fallback.
+    Pure; no IO.
+    """
+    if not text:
+        return ""
+    window = RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS
+    lowered = text.lower()
+    first_hit: Optional[int] = None
+    for token in query_tokens:
+        pos = lowered.find(token)
+        if pos >= 0:
+            if first_hit is None or pos < first_hit:
+                first_hit = pos
+    if first_hit is None:
+        excerpt = text[:window]
+    else:
+        half = window // 2
+        start = max(0, first_hit - half)
+        excerpt = text[start:start + window]
+    # Collapse newlines into spaces so a single-line reviewer
+    # scan still sees every token.
+    return excerpt.replace("\n", " ").replace("\r", " ").strip()
+
+
+def _desktop_rag_retrieval_compute_approval_state(
+    *,
+    approval_mode: Optional[str],
+    phase_10w_runtime_available: bool,
+    operator_acknowledged_advisory_labeling: bool,
+    operator_supplied_identity: bool,
+    controller_local_scope_only: bool,
+    operator_query_supplied: bool,
+    query_within_char_cap: bool,
+    per_source_within_byte_cap: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10W approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_acknowledged_advisory_labeling": {
+            "satisfied": bool(
+                operator_acknowledged_advisory_labeling
+            ),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-source advisory-labeling rule this session"
+                if operator_acknowledged_advisory_labeling
+                else (
+                    "advisory-labeling rule not acknowledged "
+                    "this session; per the Phase 10V contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10V contract identity MUST be "
+                    "operator-supplied"
+                )
+            ),
+        },
+        "approval_mode_supports_retrieval": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10W contract retrieval "
+                    f"MUST refuse fail-closed in `strict` mode"
+                )
+            ),
+        },
+        "phase_10w_runtime_available": {
+            "satisfied": bool(phase_10w_runtime_available),
+            "reason": (
+                "Phase 10W bounded local retrieval runtime is "
+                "shipped and reachable"
+                if phase_10w_runtime_available
+                else (
+                    "Phase 10W runtime is not available on "
+                    "this invocation"
+                )
+            ),
+        },
+        "controller_local_scope_only": {
+            "satisfied": bool(controller_local_scope_only),
+            "reason": (
+                "every selected source path resolves inside "
+                "the controller root"
+                if controller_local_scope_only
+                else (
+                    "at least one selected source path "
+                    "resolves outside the controller root; "
+                    "per the Phase 10W contract retrieval "
+                    "MUST refuse fail-closed on any non-"
+                    "controller-local source"
+                )
+            ),
+        },
+        "operator_query_supplied": {
+            "satisfied": bool(operator_query_supplied),
+            "reason": (
+                "operator has supplied a non-empty retrieval "
+                "query this session"
+                if operator_query_supplied
+                else (
+                    "operator retrieval query is empty; per the "
+                    "Phase 10W contract the runtime refuses "
+                    "fail-closed with `query_empty` when the "
+                    "query is empty or not a string"
+                )
+            ),
+        },
+        "query_within_char_cap": {
+            "satisfied": bool(query_within_char_cap),
+            "reason": (
+                f"query length is within the closed Phase 10W "
+                f"cap of {RAG_RETRIEVAL_QUERY_CHAR_CAP} "
+                f"characters"
+                if query_within_char_cap
+                else (
+                    f"query length exceeds the closed Phase "
+                    f"10W cap of {RAG_RETRIEVAL_QUERY_CHAR_CAP} "
+                    f"characters"
+                )
+            ),
+        },
+        "per_source_within_byte_cap": {
+            "satisfied": bool(per_source_within_byte_cap),
+            "reason": (
+                f"per-source read is bounded to "
+                f"{RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP} bytes"
+                if per_source_within_byte_cap
+                else (
+                    f"per-source read cap of "
+                    f"{RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP} "
+                    f"bytes was NOT enforced this invocation"
+                )
+            ),
+        },
+    }
+
+
+def build_desktop_rag_retrieval_controls_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10W: assemble the bounded desktop RAG retrieval
+    controls view. This is a READ-ONLY controls view: it mirrors
+    closed enums, bounded caps, and per-source retrieval-
+    eligibility state derived from the shipped Phase 10V
+    `_DESKTOP_RAG_SOURCE_SELECTION_REGISTRY` + the operator
+    inputs. This view NEVER reads source CONTENT (only the Phase
+    10V freshness probe is consulted for last_modified UTC and
+    size_bytes); actual content reads happen only when the
+    operator explicitly invokes `retrieve_local_rag_excerpts(...)`
+    or `run-local-rag-retrieval`.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never opens a network socket, never invokes `_halt(...)`,
+    never widens the Phase 10I library-callable cap. The
+    shipped `load_loop_state(...)` validator HaltError soft-fails
+    so the surface stays operable when the controller's loop-
+    state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    inputs = _desktop_rag_retrieval_normalize_operator_inputs(
+        operator_inputs,
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_source_ids"]
+    live_query = inputs["query"]
+    query_supplied = bool(live_query)
+    query_char_ok = (
+        len(live_query) <= RAG_RETRIEVAL_QUERY_CHAR_CAP
+    )
+    now_ts = time.time()
+    sources = []
+    for spec in _DESKTOP_RAG_SOURCE_SELECTION_REGISTRY:
+        _desktop_rag_source_selection_validate_descriptor(spec)
+        source_id = spec["id"]
+        freshness_probe = (
+            _desktop_rag_source_selection_probe_freshness(
+                controller_root, spec, now_ts=now_ts,
+            )
+        )
+        acknowledged = source_id in ack_set
+        source_present = bool(freshness_probe["exists"])
+        candidate_path = (
+            controller_root / spec["path_canonical_rel"]
+        )
+        inside_root = (
+            _desktop_rag_retrieval_source_path_inside_controller_root(
+                controller_root, candidate_path,
+            )
+        )
+        approval_state = (
+            _desktop_rag_retrieval_compute_approval_state(
+                approval_mode=approval_mode,
+                phase_10w_runtime_available=True,
+                operator_acknowledged_advisory_labeling=(
+                    acknowledged
+                ),
+                operator_supplied_identity=identity_supplied,
+                controller_local_scope_only=inside_root,
+                operator_query_supplied=query_supplied,
+                query_within_char_cap=query_char_ok,
+                per_source_within_byte_cap=True,
+            )
+        )
+        eligible = (
+            source_present
+            and inside_root
+            and all(
+                approval_state[req]["satisfied"]
+                for req in RAG_RETRIEVAL_APPROVAL_REQUIREMENTS
+                if req in (
+                    "operator_acknowledged_advisory_labeling",
+                    "operator_supplied_identity",
+                    "approval_mode_supports_retrieval",
+                    "phase_10w_runtime_available",
+                    "controller_local_scope_only",
+                    "operator_query_supplied",
+                    "query_within_char_cap",
+                )
+            )
+        )
+        sources.append({
+            "id": source_id,
+            "display_name": spec["display_name"],
+            "source_type": spec["source_type"],
+            "provenance": spec["provenance"],
+            "advisory_label_rule": (
+                spec["advisory_label_rule"]
+            ),
+            "path_canonical_rel": (
+                spec["path_canonical_rel"]
+            ),
+            "path_canonical": (
+                freshness_probe["path_canonical"]
+            ),
+            "source_path_present_in_repo": source_present,
+            "controller_local_scope_only": inside_root,
+            "last_modified_utc": (
+                freshness_probe["last_modified_utc"]
+            ),
+            "size_bytes": freshness_probe["size_bytes"],
+            "freshness_state": (
+                freshness_probe["freshness_state"]
+            ),
+            "operator_acknowledged": acknowledged,
+            "approval_state": approval_state,
+            "retrieval_eligible": eligible,
+        })
+    return {
+        "view_signal_version": (
+            DESKTOP_RAG_RETRIEVAL_CONTROLS_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10w_runtime_available": True,
+        "index_state_default": "empty",
+        "ranking_mode_default": "term_overlap_bounded",
+        "query_char_cap": RAG_RETRIEVAL_QUERY_CHAR_CAP,
+        "per_source_byte_cap": (
+            RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP
+        ),
+        "top_k_cap": RAG_RETRIEVAL_TOP_K_CAP,
+        "top_k_default": RAG_RETRIEVAL_TOP_K_DEFAULT,
+        "excerpt_window_chars": (
+            RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS
+        ),
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_source_ids": sorted(ack_set),
+            "query": live_query,
+            "query_char_count": len(live_query),
+        },
+        "index_states": list(RAG_RETRIEVAL_INDEX_STATES),
+        "ranking_modes": list(RAG_RETRIEVAL_RANKING_MODES),
+        "approval_requirements": list(
+            RAG_RETRIEVAL_APPROVAL_REQUIREMENTS
+        ),
+        "refusal_reasons": list(RAG_RETRIEVAL_REFUSAL_REASONS),
+        "sources": sources,
+        "precedence_note": (
+            DESKTOP_RAG_RETRIEVAL_CONTROLS_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_rag_retrieval_controls_text(
+    view: dict,
+) -> list:
+    """Phase 10W: format the assembled retrieval controls view
+    as text lines. Attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[rag-retrieval]`, `[rag-source]`,
+    `[rag-provenance]`, `[rag-freshness]`, `[rag-advisory]`,
+    `[rag-approval]`, `[refused]`) keep attribution consistent
+    with the Phase 10T / 10U / 10V vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-rag-retrieval-controls] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10w_runtime_available (bounded "
+        f"controller-local runtime): "
+        f"{view['phase_10w_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [rag-retrieval] query_char_cap="
+        f"{view['query_char_cap']!r} "
+        f"per_source_byte_cap={view['per_source_byte_cap']!r} "
+        f"top_k_cap={view['top_k_cap']!r} "
+        f"top_k_default={view['top_k_default']!r} "
+        f"excerpt_window_chars="
+        f"{view['excerpt_window_chars']!r}"
+    )
+    lines.append(
+        f"  [advisory] index_state_default="
+        f"{view['index_state_default']!r} "
+        f"ranking_mode_default={view['ranking_mode_default']!r}"
+    )
+    lines.append(
+        f"  [advisory] index_states (closed Phase 10W "
+        f"enumeration): {view['index_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] ranking_modes (closed Phase 10W "
+        f"enumeration): {view['ranking_modes']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase 10W "
+        f"enumeration): {view['approval_requirements']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10W "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [rag-approval] operator_inputs.identity "
+        f"(per-session): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [rag-approval] operator_inputs."
+        f"acknowledged_source_ids (per-session): "
+        f"{op_inputs.get('acknowledged_source_ids', [])!r}"
+    )
+    live_query = op_inputs.get("query", "")
+    query_present = bool(live_query)
+    lines.append(
+        f"  [rag-retrieval] operator_inputs.query "
+        f"(per-session): supplied={query_present!r} "
+        f"query_char_count="
+        f"{op_inputs.get('query_char_count', 0)!r}"
+    )
+    for source in view.get("sources", []):
+        eligible = source["retrieval_eligible"]
+        tag = (
+            "[rag-source]" if eligible else "[refused]"
+        )
+        lines.append(
+            f"  {tag} id={source['id']!r} "
+            f"display_name={source['display_name']!r} "
+            f"source_type={source['source_type']!r} "
+            f"retrieval_eligible={eligible!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] provenance="
+            f"{source['provenance']!r} "
+            f"advisory_label_rule="
+            f"{source['advisory_label_rule']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] path_canonical_rel="
+            f"{source['path_canonical_rel']!r} "
+            f"path_canonical={source['path_canonical']!r}"
+        )
+        lines.append(
+            f"    [rag-freshness] "
+            f"source_path_present_in_repo="
+            f"{source['source_path_present_in_repo']!r} "
+            f"controller_local_scope_only="
+            f"{source['controller_local_scope_only']!r} "
+            f"freshness_state={source['freshness_state']!r} "
+            f"last_modified_utc="
+            f"{source['last_modified_utc']!r} "
+            f"size_bytes={source['size_bytes']!r}"
+        )
+        for req in (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_retrieval",
+            "phase_10w_runtime_available",
+            "controller_local_scope_only",
+            "operator_query_supplied",
+            "query_within_char_cap",
+        ):
+            entry = source["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[rag-approval]" if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: "
+                f"satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_rag_retrieval_controls(view: dict) -> list:
+    """Phase 10W desktop control surface: return a closed list
+    of widget descriptors ready for binding to actual desktop-
+    side controls. Each `enabled` is True only when the per-
+    source `retrieval_eligible` is True; disabled controls
+    still surface with the refusal state visible to the
+    reviewer.
+    """
+    controls: list = []
+    top_k = view.get("top_k_default", RAG_RETRIEVAL_TOP_K_DEFAULT)
+    for source in view.get("sources", []):
+        eligible = source["retrieval_eligible"]
+        clipboard_payload = (
+            "python scripts/agent_loop.py "
+            "run-local-rag-retrieval "
+            "--controller-root <PATH> "
+            "--operator-identity <NAME> "
+            f"--acknowledge-source {source['id']} "
+            "--query \"<QUERY>\" "
+            f"--top-k {top_k}"
+        )
+        controls.append({
+            "id": source["id"],
+            "label": (
+                f"Copy retrieval command: "
+                f"{source['display_name']} "
+                f"[{'eligible' if eligible else 'refused'}]"
+            ),
+            "enabled": eligible,
+            "source_type": source["source_type"],
+            "provenance": source["provenance"],
+            "advisory_label_rule": (
+                source["advisory_label_rule"]
+            ),
+            "freshness_state": source["freshness_state"],
+            "retrieval_eligible": eligible,
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "rag_retrieval_controls_ux",
+        })
+    return controls
+
+
+def retrieve_local_rag_excerpts(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict],
+    query: str,
+    top_k: Optional[int] = None,
+) -> dict:
+    """Phase 10W bounded controller-local RAG retrieval.
+
+    Reads at most `RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP` bytes per
+    eligible source, tokenizes lowercase alphanumeric words,
+    ranks by bounded term-overlap, and returns at most
+    `RAG_RETRIEVAL_TOP_K_CAP` (capped) excerpts each bounded to
+    `RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS`. Every excerpt carries
+    `[rag-advisory]` provenance tagging per the Phase 10O
+    advisory-vs-canonical mirror rule.
+
+    Refuses fail-closed via the returned dict's `refusal_reason`
+    field (never raises) when:
+      - query is empty / not a string / longer than
+        `RAG_RETRIEVAL_QUERY_CHAR_CAP`
+      - operator identity is missing
+      - no source was acknowledged this session
+      - approval_mode is `strict`
+      - a selected source path resolves outside the controller
+        root
+      - every acknowledged source is missing on disk
+        (`source_path_missing`)
+
+    Never writes, never mutates any canonical artifact, never
+    opens a network socket, never spawns a subprocess, never
+    persists a retrieval cache or hit log, never invokes
+    `_halt(...)`, never contacts a remote index / vector
+    database / hosted retrieval service, never widens the
+    Phase 10I library-callable cap.
+    """
+    result_base = {
+        "phase_10w_runtime_available": True,
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "query": query if isinstance(query, str) else "",
+        "query_char_count": (
+            len(query) if isinstance(query, str) else 0
+        ),
+        "top_k_requested": None,
+        "top_k_returned": 0,
+        "index_state": "empty",
+        "ranking_mode": "term_overlap_bounded",
+        "sources_indexed_ids": [],
+        "sources_refused_ids": [],
+        "excerpts": [],
+        "refusal_reason": None,
+        "refusal_message": None,
+    }
+    if not isinstance(query, str) or not query:
+        result_base["refusal_reason"] = "query_empty"
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: query is empty or "
+            "not a string; supply an operator query via "
+            "`--query \"<TEXT>\"`"
+        )
+        return result_base
+    if len(query) > RAG_RETRIEVAL_QUERY_CHAR_CAP:
+        result_base["refusal_reason"] = "query_too_long"
+        result_base["refusal_message"] = (
+            f"Phase 10W retrieval refused: query length "
+            f"{len(query)} exceeds the closed cap "
+            f"{RAG_RETRIEVAL_QUERY_CHAR_CAP}; shorten the "
+            f"query and retry"
+        )
+        return result_base
+    inputs = _desktop_rag_retrieval_normalize_operator_inputs(
+        operator_inputs,
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_source_ids"]
+    if not identity_supplied:
+        result_base["refusal_reason"] = (
+            "operator_identity_missing"
+        )
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: operator identity "
+            "not supplied; per the Phase 10V contract identity "
+            "MUST be operator-supplied and MUST NOT be auto-"
+            "filled from `$USER` / `whoami` / packaging-time "
+            "identity / any persistent RAG-side identity store"
+        )
+        return result_base
+    if not ack_set:
+        result_base["refusal_reason"] = (
+            "operator_acknowledgement_missing"
+        )
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: no source id has "
+            "been acknowledged this session; supply "
+            "`--acknowledge-source <ID>` (repeatable) for each "
+            "source the operator explicitly opts in to"
+        )
+        return result_base
+    # Load loop-state approval mode.
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    if approval_mode not in (
+        RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES
+    ):
+        result_base["refusal_reason"] = "approval_mode_strict"
+        result_base["refusal_message"] = (
+            f"Phase 10W retrieval refused: controller loop-"
+            f"state.approval_mode={approval_mode!r} is not in "
+            f"the permitted set "
+            f"{sorted(RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES)!r}"
+        )
+        return result_base
+    if top_k is None:
+        top_k_effective = RAG_RETRIEVAL_TOP_K_DEFAULT
+    else:
+        try:
+            top_k_effective = int(top_k)
+        except (TypeError, ValueError):
+            top_k_effective = RAG_RETRIEVAL_TOP_K_DEFAULT
+    if top_k_effective < 1:
+        top_k_effective = 1
+    if top_k_effective > RAG_RETRIEVAL_TOP_K_CAP:
+        top_k_effective = RAG_RETRIEVAL_TOP_K_CAP
+    result_base["top_k_requested"] = (
+        top_k if isinstance(top_k, int) else None
+    )
+    query_tokens = _desktop_rag_retrieval_tokenize(query)
+    candidates = []
+    indexed_ids = []
+    refused_ids = []
+    for spec in _DESKTOP_RAG_SOURCE_SELECTION_REGISTRY:
+        _desktop_rag_source_selection_validate_descriptor(spec)
+        source_id = spec["id"]
+        if source_id not in ack_set:
+            refused_ids.append(source_id)
+            continue
+        candidate_path = (
+            controller_root / spec["path_canonical_rel"]
+        )
+        if not (
+            _desktop_rag_retrieval_source_path_inside_controller_root(
+                controller_root, candidate_path,
+            )
+        ):
+            # Preserve controller-local scope: refuse fail-
+            # closed on ANY selected source whose path
+            # resolves outside the controller root, even if
+            # the operator acknowledged it.
+            result_base["refusal_reason"] = (
+                "source_path_outside_controller_root"
+            )
+            result_base["refusal_message"] = (
+                f"Phase 10W retrieval refused: source "
+                f"{source_id!r} resolves outside the "
+                f"controller root; per the Phase 10W contract "
+                f"retrieval MUST refuse fail-closed on any "
+                f"non-controller-local source"
+            )
+            result_base["sources_indexed_ids"] = indexed_ids
+            result_base["sources_refused_ids"] = (
+                refused_ids + [source_id]
+            )
+            return result_base
+        if not candidate_path.exists():
+            refused_ids.append(source_id)
+            continue
+        text, bytes_read, was_truncated = (
+            _desktop_rag_retrieval_read_source_bounded(
+                candidate_path,
+            )
+        )
+        source_tokens = (
+            _desktop_rag_retrieval_tokenize(text)
+        )
+        score, matched = (
+            _desktop_rag_retrieval_score_source(
+                source_tokens, query_tokens,
+            )
+        )
+        freshness_probe = (
+            _desktop_rag_source_selection_probe_freshness(
+                controller_root, spec,
+            )
+        )
+        candidates.append({
+            "source_id": source_id,
+            "source_display_name": spec["display_name"],
+            "source_path_canonical": (
+                candidate_path.resolve().as_posix()
+            ),
+            "provenance": spec["provenance"],
+            "advisory_label_rule": (
+                spec["advisory_label_rule"]
+            ),
+            "freshness_state": (
+                freshness_probe["freshness_state"]
+            ),
+            "last_modified_utc": (
+                freshness_probe["last_modified_utc"]
+            ),
+            "score": score,
+            "tokens_matched": list(matched),
+            "excerpt_text": (
+                _desktop_rag_retrieval_extract_excerpt(
+                    text, query_tokens,
+                )
+            ),
+            "excerpt_window_chars": (
+                RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS
+            ),
+            "bytes_read": bytes_read,
+            "source_was_truncated": was_truncated,
+        })
+        indexed_ids.append(source_id)
+    if not indexed_ids:
+        result_base["refusal_reason"] = "source_path_missing"
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: every acknowledged "
+            "source is missing on disk; supply "
+            "`--acknowledge-source <ID>` for at least one "
+            "source whose canonical path resolves inside the "
+            "controller root AND exists on disk"
+        )
+        result_base["sources_refused_ids"] = refused_ids
+        return result_base
+    # Rank descending by score; ties break by source id for
+    # deterministic ordering.
+    ranked = sorted(
+        candidates,
+        key=lambda c: (-c["score"], c["source_id"]),
+    )
+    top_excerpts = ranked[:top_k_effective]
+    # Tag every returned excerpt as `[rag-advisory]` per the
+    # Phase 10O advisory-vs-canonical mirror rule.
+    for excerpt in top_excerpts:
+        excerpt["provenance_tag"] = "[rag-advisory]"
+    result_base["index_state"] = "built_this_invocation"
+    result_base["sources_indexed_ids"] = indexed_ids
+    result_base["sources_refused_ids"] = refused_ids
+    result_base["excerpts"] = top_excerpts
+    result_base["top_k_returned"] = len(top_excerpts)
+    return result_base
+
+
+def render_local_rag_retrieval_result_text(
+    result: dict,
+) -> list:
+    """Format the retrieval result dict as text lines. When the
+    retrieval refused, the refusal reason and message surface
+    with `[refused]` attribution. When the retrieval succeeded,
+    each excerpt surfaces with `[rag-advisory]` attribution per
+    the Phase 10O advisory-vs-canonical mirror rule.
+    """
+    lines = []
+    lines.append(
+        f"[local-rag-retrieval] result "
+        f"(phase_10w_runtime_available="
+        f"{result['phase_10w_runtime_available']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror): "
+        f"{result['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [rag-retrieval] query={result['query']!r} "
+        f"query_char_count={result['query_char_count']!r} "
+        f"top_k_requested={result['top_k_requested']!r} "
+        f"top_k_returned={result['top_k_returned']!r} "
+        f"index_state={result['index_state']!r} "
+        f"ranking_mode={result['ranking_mode']!r}"
+    )
+    lines.append(
+        f"  [rag-retrieval] sources_indexed_ids: "
+        f"{result['sources_indexed_ids']!r}"
+    )
+    lines.append(
+        f"  [rag-retrieval] sources_refused_ids: "
+        f"{result['sources_refused_ids']!r}"
+    )
+    if result["refusal_reason"] is not None:
+        lines.append(
+            f"  [refused] refusal_reason="
+            f"{result['refusal_reason']!r}"
+        )
+        lines.append(
+            f"  [refused] refusal_message="
+            f"{result['refusal_message']!r}"
+        )
+        return lines
+    if not result["excerpts"]:
+        lines.append(
+            "  [rag-retrieval] no excerpts returned"
+        )
+        return lines
+    for idx, excerpt in enumerate(result["excerpts"], 1):
+        lines.append(
+            f"  [rag-advisory] excerpt {idx}: "
+            f"source_id={excerpt['source_id']!r} "
+            f"score={excerpt['score']!r} "
+            f"freshness_state="
+            f"{excerpt['freshness_state']!r} "
+            f"last_modified_utc="
+            f"{excerpt['last_modified_utc']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] source_display_name="
+            f"{excerpt['source_display_name']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] source_path_canonical="
+            f"{excerpt['source_path_canonical']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] provenance="
+            f"{excerpt['provenance']!r} "
+            f"advisory_label_rule="
+            f"{excerpt['advisory_label_rule']!r}"
+        )
+        lines.append(
+            f"    [rag-retrieval] tokens_matched="
+            f"{excerpt['tokens_matched']!r} "
+            f"bytes_read={excerpt['bytes_read']!r} "
+            f"source_was_truncated="
+            f"{excerpt['source_was_truncated']!r}"
+        )
+        lines.append(
+            f"    [rag-advisory] excerpt_text: "
+            f"{excerpt['excerpt_text']!r}"
+        )
+    return lines
+
+
+def cmd_view_desktop_rag_retrieval_controls(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10W operator entry: print the desktop RAG retrieval
+    controls view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase
+    10L Desktop App Shell Contract this handler NEVER mutates
+    any canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket,
+    NEVER reads source CONTENT (only the Phase 10V freshness
+    probe is consulted), NEVER widens the Phase 10I library-
+    callable control cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-rag-retrieval-controls] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop RAG retrieval "
+            "controls surface MUST NOT silently pick a "
+            "default root from an auto-discovered repo root, "
+            "the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Supply the controller root "
+            "explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-rag-retrieval-controls] REFUSED: "
+            f"controller root "
+            f"{validation['root_path']!r} is missing "
+            f"required markers {missing!r}; per the Phase 10L "
+            f"Desktop App Shell Contract the desktop shell "
+            f"requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_source_ids": frozenset(
+            getattr(args, "acknowledge_source", None) or []
+        ),
+        "query": getattr(args, "query", None) or "",
+    }
+    view = build_desktop_rag_retrieval_controls_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_rag_retrieval_controls_text(view):
+        print(line)
+    return 0
+
+
+def cmd_run_local_rag_retrieval(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10W operator entry: actually run bounded controller-
+    local RAG retrieval and print the excerpts.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Reads at most
+    `RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP` bytes per eligible
+    source; NEVER writes; NEVER mutates any canonical artifact;
+    NEVER opens a network socket; NEVER spawns a subprocess;
+    NEVER persists an index or hit log on disk; NEVER widens
+    the Phase 10I library-callable cap; NEVER lets retrieved
+    excerpts substitute for canonical artifact content
+    (excerpts are tagged `[rag-advisory]` per the Phase 10O
+    mirror rule).
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[local-rag-retrieval] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the retrieval runtime MUST NOT "
+            "silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[local-rag-retrieval] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop "
+            f"App Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ "
+            f"to be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_source_ids": frozenset(
+            getattr(args, "acknowledge_source", None) or []
+        ),
+    }
+    query = getattr(args, "query", None) or ""
+    top_k = getattr(args, "top_k", None)
+    result = retrieve_local_rag_excerpts(
+        controller_root,
+        operator_inputs=operator_inputs,
+        query=query,
+        top_k=top_k,
+    )
+    for line in render_local_rag_retrieval_result_text(result):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10X: Autonomous Run Console And Completion Ledger.
+#
+# Layers a bounded READ-ONLY autonomous-run console / completion-
+# ledger surface on top of the shipped Phase 10M desktop app.
+# Ships:
+#   - `build_desktop_run_console_view(controller_root)` READ-ONLY
+#     library that derives the active step, pending steps, blocked /
+#     deferred work, fix-cycle state, and completion progress
+#     ENTIRELY from canonical artifacts: `.agent-loop/loop-state.
+#     json` (validated via `load_loop_state(...)`; HaltError soft-
+#     failed per the Phase 10L rule), `.agent-loop/phase-plan.md`
+#     (append-only phase history), `.agent-loop/current-phase.md`
+#     and `.agent-loop/current-task.md` (active-step mirrors), and
+#     `TASK.md` (project scope). NO new state store; NO parallel
+#     state; NO hidden UI-only fields.
+#   - `render_desktop_run_console_text(view)` per-line renderer with
+#     explicit `[canonical mirror]` / `[advisory]` / `[refused]` /
+#     `[run-console]` / `[completion-ledger]` / `[cycle]` / `[fix-
+#     cycle]` attribution.
+#   - `build_desktop_run_console_controls(view)` COPY-PASTE-ONLY
+#     widget list (each button copies a shipped `python scripts/
+#     agent_loop.py <inspect|status|inspect-artifacts>` invocation
+#     to clipboard; the console NEVER dispatches a command in-
+#     process, NEVER widens the Phase 10I library-callable cap).
+#   - `view-desktop-run-console` Phase 7C CLI reporter (always
+#     exits 0 on report content once the controller-root selection
+#     succeeds; `--controller-root <PATH>` REQUIRED per the Phase
+#     10L Controller-Root Selection Flow).
+#
+# The surface is VISIBILITY-ONLY: it NEVER writes any canonical
+# artifact, NEVER appends to `.agent-loop/orchestrator.log`,
+# NEVER advances loop-state, NEVER invokes `_halt(...)`, NEVER
+# spawns a subprocess, NEVER opens a network socket, NEVER
+# persists a run-console cache, NEVER subscribes to a background
+# watcher, NEVER widens the Phase 10I three-control library-
+# callable cap, and NEVER introduces a second control plane
+# outside the shipped Python runtime.
+# ---------------------------------------------------------------------------
+
+DESKTOP_RUN_CONSOLE_SIGNAL_VERSION = "phase-10x-v1"
+
+DESKTOP_RUN_CONSOLE_PRECEDENCE_NOTE = (
+    "Phase 10X autonomous run console and completion ledger. "
+    "This surface is VISIBILITY-ONLY: every field is derived from "
+    "canonical artifacts (loop-state.json / phase-plan.md / "
+    "current-phase.md / current-task.md / TASK.md) with explicit "
+    "`[canonical mirror]` attribution. No field is invented and no "
+    "hidden UI-only field is introduced. The Phase 10I three-"
+    "control library-callable cap is preserved exactly; ZERO new "
+    "library-callable controls are introduced. The surface NEVER "
+    "mutates any canonical artifact, NEVER appends to "
+    "`.agent-loop/orchestrator.log`, NEVER advances loop-state, "
+    "NEVER invokes `_halt(...)`, NEVER spawns a subprocess, "
+    "NEVER opens a network socket, NEVER persists a run-console "
+    "cache or completion-ledger snapshot on disk, NEVER "
+    "subscribes to a background watcher, NEVER contacts a remote "
+    "index / hosted service, NEVER auto-resumes a halted cycle, "
+    "NEVER retries a failed cycle, NEVER refreshes a token, and "
+    "NEVER auto-activates the next phase (per the Phase 4 "
+    "planner / activator separation). The console is a bounded "
+    "read-only reporter over the shipped Phase 3A orchestrator "
+    "contract, NOT a second control plane"
+)
+
+RUN_CONSOLE_ACTIVITY_STATES = (
+    "running",
+    "awaiting_review",
+    "awaiting_claude",
+    "awaiting_fix",
+    "awaiting_human",
+    "phase_complete",
+    "halted_recoverable",
+    "halted_requires_human",
+    "unknown",
+)
+
+RUN_CONSOLE_CYCLE_STATES = (
+    "within_budget",
+    "at_last_cycle",
+    "over_budget",
+    "unknown",
+)
+
+RUN_CONSOLE_COMPLETION_STATES = (
+    "pending",
+    "in_progress",
+    "complete",
+    "unknown",
+)
+
+RUN_CONSOLE_FIX_CYCLE_STATES = (
+    "not_in_fix_cycle",
+    "in_fix_cycle",
+    "unknown",
+)
+
+RUN_CONSOLE_REFUSAL_REASONS = (
+    "controller_root_invalid",
+    "loop_state_unreadable",
+    "phase_plan_unreadable",
+)
+
+# Fixed-cap bound on the number of phase-plan headers the run
+# console mirrors per invocation. The cap is intentionally tight so
+# the surface stays operator-scannable; a future runtime slice MAY
+# widen it only by explicitly editing this constant AND the matching
+# tests.
+RUN_CONSOLE_PHASE_PLAN_HEADER_CAP = 200
+
+
+_RUN_CONSOLE_PHASE_HEADER_RE = re.compile(
+    r"^## (?P<phase>(?:Fix )?Phase (?:[0-9]+[A-Z]?|[A-Z]))"
+    r"(?: - (?P<title>[^\n]+))?$",
+    re.MULTILINE,
+)
+
+
+def _run_console_derive_activity_state(
+    status: Optional[str],
+    last_verdict: Optional[str] = None,
+) -> str:
+    """Map a loop-state status to a closed run-console activity
+    state. Pure computation; no IO.
+
+    Fix-cycle disambiguation: `awaiting_claude_implementation`
+    can mean either the normal pre-implementation state (Claude
+    has not yet produced the phase summary; `last_verdict is
+    None`) OR the post-review fix state (`last_verdict ==
+    "NEEDS_FIXES"`; Claude must address the review findings). The
+    two are semantically distinct and MUST NOT collapse into a
+    single label, so this helper branches on `last_verdict` and
+    surfaces `awaiting_fix` ONLY when a fix cycle is actually in
+    flight. The `_run_console_derive_fix_cycle_state(...)` helper
+    stays the single source of truth for the fix-cycle boundary;
+    this label is a UI shortcut that must agree with it.
+    """
+    if not isinstance(status, str) or not status:
+        return "unknown"
+    if status in (
+        "claude_implementing",
+        "claude_fixing",
+        "evidence_capture",
+    ):
+        return "running"
+    if status == "awaiting_codex_review":
+        return "awaiting_review"
+    if status == "awaiting_claude_implementation":
+        if last_verdict == "NEEDS_FIXES":
+            return "awaiting_fix"
+        return "awaiting_claude"
+    if status == "phase_complete_awaiting_human_approval":
+        return "phase_complete"
+    if status in (
+        "halted_failed_requires_human",
+        "halted_max_cycles_reached",
+    ):
+        return "halted_requires_human"
+    if status.startswith("halted_awaiting_human"):
+        return "awaiting_human"
+    if status.startswith("halted_"):
+        return "halted_recoverable"
+    return "unknown"
+
+
+def _run_console_derive_cycle_state(
+    cycle_count: Optional[int], max_cycles: Optional[int],
+) -> str:
+    """Return a closed cycle-state label from the canonical
+    `cycle_count` / `max_cycles` pair. Pure computation; no IO.
+    """
+    if (
+        not isinstance(cycle_count, int)
+        or not isinstance(max_cycles, int)
+    ):
+        return "unknown"
+    if max_cycles <= 0:
+        return "unknown"
+    if cycle_count < 0:
+        return "unknown"
+    if cycle_count >= max_cycles:
+        return "over_budget"
+    if cycle_count == max_cycles - 1:
+        return "at_last_cycle"
+    return "within_budget"
+
+
+def _run_console_derive_fix_cycle_state(
+    status: Optional[str], last_verdict: Optional[str],
+) -> str:
+    """Return a closed fix-cycle-state label. A fix cycle is in
+    flight when the last verdict was `NEEDS_FIXES` AND the loop is
+    still awaiting Claude implementation or actively running Claude.
+    Pure computation; no IO.
+    """
+    if not isinstance(status, str) or not status:
+        return "unknown"
+    if last_verdict == "NEEDS_FIXES" and status in (
+        "awaiting_claude_implementation",
+        "claude_fixing",
+        "claude_implementing",
+        "evidence_capture",
+        HALTED_PRE_FIX_PROMPT,
+        HALTED_PRE_CODEX_REVIEW_FIX,
+    ):
+        return "in_fix_cycle"
+    return "not_in_fix_cycle"
+
+
+def _run_console_parse_phase_plan_headers(text: str) -> list:
+    """Return an ordered list of `{"phase_id": str, "title": str}`
+    dicts extracted from the phase-plan.md markdown. Bounded to the
+    first `RUN_CONSOLE_PHASE_PLAN_HEADER_CAP` matches so a malformed
+    plan cannot balloon the surface. Pure computation; no IO.
+    """
+    entries: list = []
+    for match in _RUN_CONSOLE_PHASE_HEADER_RE.finditer(text):
+        entries.append({
+            "phase_id": match.group("phase"),
+            "title": (match.group("title") or "").strip(),
+        })
+        if len(entries) >= RUN_CONSOLE_PHASE_PLAN_HEADER_CAP:
+            break
+    return entries
+
+
+def _run_console_derive_completion_ledger(
+    phase_headers: list,
+    active_phase_id: Optional[str],
+    active_sub_phase_id: Optional[str],
+    activity_state: str,
+) -> list:
+    """Return a per-phase completion-ledger list. Each entry
+    carries `phase_id`, `title`, and one of
+    `RUN_CONSOLE_COMPLETION_STATES` for `completion_state`. The
+    active phase / sub-phase surfaces as `in_progress` (or
+    `complete` when `activity_state == "phase_complete"`); any
+    phase listed BEFORE the active one is `complete`; any phase
+    listed AFTER is `pending`. If neither the active phase nor the
+    active sub-phase appear in the plan, every entry surfaces as
+    `unknown` so the surface never silently guesses. Pure
+    computation; no IO.
+    """
+    active_ids = tuple(
+        p for p in (active_phase_id, active_sub_phase_id)
+        if isinstance(p, str) and p
+    )
+    active_idx: Optional[int] = None
+    for i, entry in enumerate(phase_headers):
+        if entry["phase_id"] in active_ids:
+            active_idx = i
+    ledger: list = []
+    for i, entry in enumerate(phase_headers):
+        if active_idx is None:
+            state = "unknown"
+        elif i < active_idx:
+            state = "complete"
+        elif i == active_idx:
+            state = (
+                "complete"
+                if activity_state == "phase_complete"
+                else "in_progress"
+            )
+        else:
+            state = "pending"
+        ledger.append({
+            "phase_id": entry["phase_id"],
+            "title": entry["title"],
+            "completion_state": state,
+        })
+    return ledger
+
+
+def _run_console_completion_progress(ledger: list) -> dict:
+    """Return an integer completion-progress snapshot derived from
+    a completion ledger. Pure computation; no IO.
+    """
+    total = len(ledger)
+    complete = sum(
+        1 for e in ledger if e["completion_state"] == "complete"
+    )
+    in_progress = sum(
+        1 for e in ledger
+        if e["completion_state"] == "in_progress"
+    )
+    pending = sum(
+        1 for e in ledger if e["completion_state"] == "pending"
+    )
+    unknown = sum(
+        1 for e in ledger if e["completion_state"] == "unknown"
+    )
+    return {
+        "total_phases": total,
+        "complete_count": complete,
+        "in_progress_count": in_progress,
+        "pending_count": pending,
+        "unknown_count": unknown,
+    }
+
+
+def _run_console_read_optional_text(path: Path) -> Optional[str]:
+    """Return the first line (stripped) of a small text artifact
+    like `current-phase.md` or `current-task.md`, or `None` on any
+    IO error / missing file. Bounded read: only the first 4 KiB is
+    consulted so a malformed artifact can never balloon the surface.
+    """
+    try:
+        raw = path.read_bytes()[:4096]
+    except OSError:
+        return None
+    text = raw.decode("utf-8", errors="replace").strip()
+    return text or None
+
+
+def build_desktop_run_console_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10X: assemble the bounded autonomous run console /
+    completion ledger view.
+
+    READ-ONLY. Derives every field from canonical artifacts
+    (`.agent-loop/loop-state.json`, `.agent-loop/phase-plan.md`,
+    `.agent-loop/current-phase.md`, `.agent-loop/current-task.md`,
+    `TASK.md`). The `load_loop_state(...)` validator HaltError is
+    soft-failed to `loop_state=None` per the Phase 10L "MUST NOT
+    propagate validator HaltErrors as canonical halt persistence"
+    rule.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    opens a network socket, never invokes `_halt(...)`, never
+    persists a run-console cache, never subscribes to a background
+    watcher, never auto-resumes a halted cycle, never widens the
+    Phase 10I library-callable cap.
+    """
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+    plan_path = al / "phase-plan.md"
+    current_phase_path = al / "current-phase.md"
+    current_task_path = al / "current-task.md"
+
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+
+    active_phase_id: Optional[str] = None
+    active_sub_phase_id: Optional[str] = None
+    active_task: Optional[str] = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    cycle_count_value: Optional[int] = None
+    max_cycles_value: Optional[int] = None
+    last_verdict: Optional[str] = None
+    last_verdict_phase: Optional[str] = None
+    if isinstance(loop_state, dict):
+        for key, target in (
+            ("phase", "active_phase_id"),
+            ("sub_phase", "active_sub_phase_id"),
+            ("task", "active_task"),
+            ("status", "status_value"),
+            ("approval_mode", "approval_mode"),
+            ("last_verdict", "last_verdict"),
+            ("last_verdict_phase", "last_verdict_phase"),
+        ):
+            candidate = loop_state.get(key)
+            if isinstance(candidate, str):
+                if target == "active_phase_id":
+                    active_phase_id = candidate
+                elif target == "active_sub_phase_id":
+                    active_sub_phase_id = candidate
+                elif target == "active_task":
+                    active_task = candidate
+                elif target == "status_value":
+                    status_value = candidate
+                elif target == "approval_mode":
+                    approval_mode = candidate
+                elif target == "last_verdict":
+                    last_verdict = candidate
+                elif target == "last_verdict_phase":
+                    last_verdict_phase = candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            cycle_count_value = cycle_candidate
+        max_candidate = loop_state.get("max_cycles")
+        if isinstance(max_candidate, int):
+            max_cycles_value = max_candidate
+
+    activity_state = _run_console_derive_activity_state(
+        status_value, last_verdict,
+    )
+    cycle_state = _run_console_derive_cycle_state(
+        cycle_count_value, max_cycles_value,
+    )
+    fix_cycle_state = _run_console_derive_fix_cycle_state(
+        status_value, last_verdict,
+    )
+
+    phase_plan_headers: list = []
+    phase_plan_readable = False
+    if plan_path.exists():
+        try:
+            plan_text = plan_path.read_text(
+                encoding="utf-8", errors="replace",
+            )
+            phase_plan_headers = (
+                _run_console_parse_phase_plan_headers(plan_text)
+            )
+            phase_plan_readable = True
+        except OSError:
+            phase_plan_headers = []
+            phase_plan_readable = False
+
+    # The completion-ledger active-phase lookup uses the sub-phase
+    # (Phase 10X) as the finest-grained match; the top-level phase
+    # (Phase 10) is a fallback so a not-yet-authored sub-phase does
+    # not silently mark every earlier phase as `unknown`.
+    completion_ledger = _run_console_derive_completion_ledger(
+        phase_plan_headers,
+        active_phase_id=(
+            active_phase_id.split(" - ")[0].strip()
+            if isinstance(active_phase_id, str)
+            else None
+        ),
+        active_sub_phase_id=(
+            active_sub_phase_id.split(" - ")[0].strip()
+            if isinstance(active_sub_phase_id, str)
+            else None
+        ),
+        activity_state=activity_state,
+    )
+    completion_progress = _run_console_completion_progress(
+        completion_ledger,
+    )
+
+    current_phase_mirror = _run_console_read_optional_text(
+        current_phase_path,
+    )
+    current_task_mirror = _run_console_read_optional_text(
+        current_task_path,
+    )
+
+    return {
+        "view_signal_version": (
+            DESKTOP_RUN_CONSOLE_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "loop_state_readable": (
+            isinstance(loop_state, dict)
+        ),
+        "phase_plan_readable": phase_plan_readable,
+        "active_phase_id": active_phase_id,
+        "active_sub_phase_id": active_sub_phase_id,
+        "active_task_summary": active_task,
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "activity_state": activity_state,
+        "cycle_count": cycle_count_value,
+        "max_cycles": max_cycles_value,
+        "cycle_state": cycle_state,
+        "last_verdict": last_verdict,
+        "last_verdict_phase": last_verdict_phase,
+        "fix_cycle_state": fix_cycle_state,
+        "current_phase_md_mirror": current_phase_mirror,
+        "current_task_md_mirror": current_task_mirror,
+        "phase_plan_header_cap": (
+            RUN_CONSOLE_PHASE_PLAN_HEADER_CAP
+        ),
+        "phase_plan_headers": phase_plan_headers,
+        "completion_ledger": completion_ledger,
+        "completion_progress": completion_progress,
+        "activity_states": list(RUN_CONSOLE_ACTIVITY_STATES),
+        "cycle_states": list(RUN_CONSOLE_CYCLE_STATES),
+        "completion_states": list(RUN_CONSOLE_COMPLETION_STATES),
+        "fix_cycle_states": list(RUN_CONSOLE_FIX_CYCLE_STATES),
+        "refusal_reasons": list(RUN_CONSOLE_REFUSAL_REASONS),
+        "precedence_note": (
+            DESKTOP_RUN_CONSOLE_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_run_console_text(view: dict) -> list:
+    """Phase 10X: format the assembled run console view as text
+    lines. Attribution tags (`[canonical mirror]`, `[advisory]`,
+    `[refused]`, `[run-console]`, `[completion-ledger]`, `[cycle]`,
+    `[fix-cycle]`) keep the reporter output legible.
+    """
+    lines: list = []
+    lines.append(
+        f"[desktop-run-console] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] loop_state_readable: "
+        f"{view['loop_state_readable']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] phase_plan_readable: "
+        f"{view['phase_plan_readable']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] active_phase_id: "
+        f"{view['active_phase_id']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] active_sub_phase_id: "
+        f"{view['active_sub_phase_id']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] active_task_summary: "
+        f"{view['active_task_summary']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [run-console] activity_state: "
+        f"{view['activity_state']!r}"
+    )
+    lines.append(
+        f"  [cycle] cycle_count={view['cycle_count']!r} "
+        f"max_cycles={view['max_cycles']!r} cycle_state="
+        f"{view['cycle_state']!r}"
+    )
+    lines.append(
+        f"  [fix-cycle] last_verdict={view['last_verdict']!r} "
+        f"last_verdict_phase="
+        f"{view['last_verdict_phase']!r} fix_cycle_state="
+        f"{view['fix_cycle_state']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_phase_md_mirror: "
+        f"{view['current_phase_md_mirror']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_task_md_mirror: "
+        f"{view['current_task_md_mirror']!r}"
+    )
+    lines.append(
+        f"  [advisory] activity_states (closed Phase 10X "
+        f"enumeration): {view['activity_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] cycle_states (closed Phase 10X "
+        f"enumeration): {view['cycle_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] completion_states (closed Phase 10X "
+        f"enumeration): {view['completion_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] fix_cycle_states (closed Phase 10X "
+        f"enumeration): {view['fix_cycle_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10X "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    progress = view.get("completion_progress") or {}
+    lines.append(
+        f"  [completion-ledger] progress: "
+        f"total_phases={progress.get('total_phases')!r} "
+        f"complete_count={progress.get('complete_count')!r} "
+        f"in_progress_count={progress.get('in_progress_count')!r} "
+        f"pending_count={progress.get('pending_count')!r} "
+        f"unknown_count={progress.get('unknown_count')!r}"
+    )
+    lines.append(
+        f"  [completion-ledger] phase_plan_header_cap: "
+        f"{view['phase_plan_header_cap']!r}"
+    )
+    for entry in view.get("completion_ledger", []):
+        state = entry["completion_state"]
+        tag = (
+            "[completion-ledger]"
+            if state in ("complete", "in_progress")
+            else (
+                "[refused]"
+                if state == "unknown"
+                else "[completion-ledger]"
+            )
+        )
+        lines.append(
+            f"  {tag} phase_id={entry['phase_id']!r} "
+            f"title={entry['title']!r} completion_state="
+            f"{state!r}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_run_console_controls(view: dict) -> list:
+    """Phase 10X: return a closed list of desktop widget
+    descriptors. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control cap
+    is preserved exactly.
+
+    The three descriptors surface bounded inspection commands the
+    operator MAY run to drill into the current activity state:
+    `status`, `inspect-artifacts`, and `check-state`. Every button
+    stays `enabled=True` because these are shipped read-only CLI
+    reporters; the console does not gate the operator's ability
+    to inspect canonical artifacts.
+    """
+    return [
+        {
+            "id": "run_console_copy_status",
+            "label": (
+                "Copy `python scripts/agent_loop.py status` "
+                "invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py status"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "run_console_visibility",
+        },
+        {
+            "id": "run_console_copy_inspect_artifacts",
+            "label": (
+                "Copy `python scripts/agent_loop.py "
+                "inspect-artifacts` invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py inspect-artifacts"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "run_console_visibility",
+        },
+        {
+            "id": "run_console_copy_check_state",
+            "label": (
+                "Copy `python scripts/agent_loop.py check-state` "
+                "invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py check-state"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "run_console_visibility",
+        },
+    ]
+
+
+def cmd_view_desktop_run_console(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10X operator entry: render the autonomous run console
+    / completion ledger.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates any
+    canonical artifact, NEVER appends to `.agent-loop/orchestrator
+    .log`, NEVER advances loop-state, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket, NEVER
+    persists a run-console cache on disk, NEVER auto-resumes a
+    halted cycle, NEVER widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-run-console] REFUSED: --controller-root is "
+            "required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop run console MUST NOT silently pick a default "
+            "root from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment variable, "
+            "or a packaging-time configured path. Supply the "
+            "controller root explicitly via `--controller-root "
+            "<PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-run-console] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ to "
+            f"be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_run_console_view(controller_root)
+    for line in render_desktop_run_console_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -28718,6 +31448,194 @@ def build_parser() -> argparse.ArgumentParser:
             "source id."
         ),
     )
+    rag_retrieval_controls = sub.add_parser(
+        "view-desktop-rag-retrieval-controls",
+        help=(
+            "Phase 10W desktop app RAG local index and "
+            "retrieval controls surface: render the closed "
+            "bounded controls view (query char cap, per-source "
+            "byte cap, top-K cap, excerpt window chars) plus "
+            "per-source retrieval-eligibility state derived "
+            "from the Phase 10V registry + operator inputs. "
+            "READ-ONLY: never reads source CONTENT; actual "
+            "content reads happen only via "
+            "`run-local-rag-retrieval`. Phase 7C reporter "
+            "pattern: always exits 0 on report content; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never contacts a remote index / vector "
+            "database; never widens the Phase 10I library-"
+            "callable control cap."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop RAG retrieval controls view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT "
+            "silently pick a default root. Omitting this flag "
+            "returns exit 2 with a "
+            "`[desktop-rag-retrieval-controls] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--acknowledge-source",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-source "
+            "advisory-labeling acknowledgement. Repeat the "
+            "flag once per source id."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session retrieval query. When "
+            "supplied the controls view re-derives "
+            "`retrieval_eligible` per source to reflect the "
+            "shipped runtime's `query_empty` / `query_too_long` "
+            "refusal branches; when omitted every source "
+            "surfaces as ineligible until the operator supplies "
+            "a query. NEVER read from any persistent store."
+        ),
+    )
+    run_local_rag = sub.add_parser(
+        "run-local-rag-retrieval",
+        help=(
+            "Phase 10W bounded controller-local RAG "
+            "retrieval driver: read at most "
+            f"{RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP} bytes per "
+            "acknowledged source, tokenize lowercase "
+            "alphanumeric words, rank by bounded term-overlap, "
+            "and return at most "
+            f"{RAG_RETRIEVAL_TOP_K_CAP} excerpts each bounded "
+            f"to {RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS} chars. "
+            "Every excerpt is tagged `[rag-advisory]` per the "
+            "Phase 10O advisory-vs-canonical mirror rule and "
+            "NEVER substitutes for canonical artifact content. "
+            "CONTROLLER-LOCAL ONLY: refuses fail-closed on any "
+            "source path resolving outside the controller "
+            "root. Phase 7C reporter pattern: always exits 0 "
+            "on report content once the controller-root "
+            "selection succeeds; never mutates any canonical "
+            "artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never contacts a remote index / vector "
+            "database / hosted retrieval service; never "
+            "persists a retrieval cache or hit log; never "
+            "widens the Phase 10I library-callable cap."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "retrieval runtime targets. Per the Phase 10L "
+            "Controller-Root Selection Flow the runtime MUST "
+            "NOT silently pick a default root."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED-in-practice per-session operator-"
+            "supplied identity. Retrieval refuses fail-closed "
+            "if this flag is omitted. Per the Phase 10V "
+            "contract MUST NOT be auto-filled from $USER / "
+            "whoami / packaging-time identity / any persistent "
+            "RAG-side identity store."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--acknowledge-source",
+        action="append",
+        default=None,
+        help=(
+            "REQUIRED-in-practice repeatable per-session per-"
+            "source advisory-labeling acknowledgement. "
+            "Retrieval refuses fail-closed if no source is "
+            "acknowledged. Repeat the flag once per source id."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED per-invocation operator query text. "
+            f"Bounded to {RAG_RETRIEVAL_QUERY_CHAR_CAP} chars; "
+            "longer queries are refused fail-closed."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help=(
+            "OPTIONAL per-invocation top-K value. Defaults to "
+            f"{RAG_RETRIEVAL_TOP_K_DEFAULT}; capped at "
+            f"{RAG_RETRIEVAL_TOP_K_CAP}."
+        ),
+    )
+    run_console = sub.add_parser(
+        "view-desktop-run-console",
+        help=(
+            "Phase 10X autonomous run console and completion "
+            "ledger: render a bounded READ-ONLY view over "
+            "canonical artifacts (loop-state.json, phase-plan.md, "
+            "current-phase.md, current-task.md) exposing the "
+            "active step, activity state (closed enumeration), "
+            "cycle progress, fix-cycle state, and a per-phase "
+            "completion ledger. Phase 7C reporter pattern: "
+            "always exits 0 on report content once the "
+            "controller-root selection succeeds; never mutates "
+            "any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network socket; "
+            "never persists a run-console cache; never auto-"
+            "resumes a halted cycle; never widens the Phase 10I "
+            "library-callable control cap."
+        ),
+    )
+    run_console.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop run console renders against. Per the Phase "
+            "10L Controller-Root Selection Flow the desktop "
+            "shell MUST NOT silently pick a default root. "
+            "Omitting this flag returns exit 2 with a "
+            "`[desktop-run-console] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -28999,6 +31917,11 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-rag-source-selection": (
         cmd_view_desktop_rag_source_selection
     ),
+    "view-desktop-rag-retrieval-controls": (
+        cmd_view_desktop_rag_retrieval_controls
+    ),
+    "run-local-rag-retrieval": cmd_run_local_rag_retrieval,
+    "view-desktop-run-console": cmd_view_desktop_run_console,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
