@@ -4,16 +4,16 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10V - RAG Source Selection Contract And Desktop UX
+Phase 10W - RAG Local Index And Retrieval Controls
 
 ## Status
-Phase 10U is complete and approved to advance. Phase 10V is now active as the next mainline slice focused on defining how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance and freshness are exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts.
+Phase 10V is complete and approved to advance. Phase 10W is now active as the next mainline slice focused on adding the first bounded controller-local RAG index and retrieval-control runtime on top of the shipped source-selection contract.
 
 ## Task
-Implement Phase 10V for the agent loop. This slice should define how repo-local docs, PRDs, notes, standards, and other knowledge sources can be selected from the desktop app, how provenance and freshness are exposed to the operator, and how advisory-only retrieval remains distinct from canonical artifacts.
+Implement Phase 10W for the agent loop. This slice should add the first bounded local RAG index and retrieval-control runtime so the loop can pull only the most relevant repo-local PRD sections, docs, decisions, standards, and failure/fix patterns into a run without replacing canonical artifacts.
 
 ## Notes
 
-- keep this slice bounded to the RAG source-selection contract and desktop UX; do not jump into indexing, retrieval runtime, or concurrency work yet
-- preserve the shipped ownership boundaries, evidence-review model, approval semantics, desktop-app boundaries, and canonical-artifact-first model while defining bounded advisory-only RAG source selection
-- do not widen into hidden orchestration, silent in-flight loop mutation, background ingestion/indexing, packaging, or auto-update work
+- keep this slice bounded to a controller-local RAG index and retrieval-control runtime; do not jump into remote retrieval, concurrency, packaging, or fully autonomous orchestration work
+- preserve the shipped ownership boundaries, evidence-review model, approval semantics, desktop-app boundaries, and canonical-artifact-first model while adding bounded local retrieval
+- do not widen into hidden orchestration, silent in-flight loop mutation, background daemons/watchers, packaging, or auto-update work

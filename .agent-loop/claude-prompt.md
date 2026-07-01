@@ -1,42 +1,41 @@
 # Claude Code Task
 
 ## Phase
-Phase 10V - RAG Source Selection Contract And Desktop UX
+Phase 10W - RAG Local Index And Retrieval Controls
 
 ## Objective
-Implement Phase 10V for the agent loop. This slice should define how repo-local
-docs, PRDs, notes, standards, and other knowledge sources can be selected from
-the desktop app, how provenance and freshness are exposed to the operator, and
-how advisory-only retrieval remains distinct from canonical artifacts.
+Implement Phase 10W for the agent loop. This slice should add the first bounded
+local RAG index and retrieval-control runtime so the loop can pull only the
+most relevant repo-local PRD sections, docs, decisions, standards, and
+failure/fix patterns into a run without replacing canonical artifacts.
 
 ## Context
-Implement the RAG Source Selection Contract And Desktop UX slice for the agent
-loop. This slice should define how repo-local docs, PRDs, notes, standards, and
-other knowledge sources can be selected from the desktop app, how provenance
-and freshness are exposed to the operator, and how advisory-only retrieval
-remains distinct from canonical artifacts.
+Implement the RAG Local Index And Retrieval Controls slice for the agent loop.
+This slice should add the first bounded local indexing and retrieval-control
+runtime on top of the shipped Phase 10V source-selection contract, while
+keeping retrieved content advisory and preserving canonical artifacts as the
+source of truth.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10V as active
-- `.agent-loop/phase-plan.md` records Phase 10U as closed history and contains
-  a `## Phase 10V - RAG Source Selection Contract And Desktop UX` section with
+  and `.agent-loop/loop-state.json` identify Phase 10 / 10W as active
+- `.agent-loop/phase-plan.md` records Phase 10V as closed history and contains
+  a `## Phase 10W - RAG Local Index And Retrieval Controls` section with
   concrete objective, done criteria, and exclusions
-- add a concrete RAG source-selection contract and desktop UX definition
-  covering repo-local docs, PRDs, notes, standards, and other bounded
-  knowledge sources
-- define how provenance, freshness, and advisory-only retrieval labeling are
-  exposed to the operator without turning RAG output into canonical project
-  state
+- add the first bounded local indexing/retrieval runtime for the Phase 10V
+  source-selection surface, scoped to controller-local sources only
+- define how index freshness, retrieval scope, ranking boundaries, and excerpt
+  provenance are exposed without letting retrieved content replace canonical
+  artifacts on disk
 - preserve approval gating, evidence review, external-workspace boundaries,
   desktop/UI boundaries, MCP boundaries, and the Phase 10I library-callable cap
   instead of introducing hidden automation, silent mutation, or a parallel
   state store
-- add focused validation proving the RAG source-selection contract surface is
-  bounded, auditable, and does not widen into RAG indexing/runtime retrieval
-  execution, packaging, or controlled-concurrency work
-- `README.md` reflects that Phase 10V is active and that RAG source selection
-  contract and desktop UX are now the implementation focus
+- add focused validation proving the local index/retrieval path is bounded,
+  auditable, controller-local, and does not widen into remote retrieval,
+  autonomous agent overlap, or hidden background ingestion
+- `README.md` reflects that Phase 10W is active and that bounded local RAG
+  index/retrieval controls are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -49,10 +48,10 @@ remains distinct from canonical artifacts.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no actual RAG index builder, retrieval runtime, embedding pipeline,
-  background watcher, or knowledge-ingestion execution path
+- no remote/vector database, hosted retrieval service, or network-backed index
 - no GitHub, policy-pack, packaging, system-tray, or controlled-concurrency
   runtime work
+- no hidden daemon, crawler, or watcher farm outside the shipped Python runtime
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
