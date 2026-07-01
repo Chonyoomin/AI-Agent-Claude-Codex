@@ -15483,7 +15483,17 @@ def _launch_desktop_app_window(
         # _app_view default empty-input snapshot; the Tk action
         # surface below is the authoritative operator-input
         # plane. Operator identity + acknowledged source ids
-        # are reused from the Phase 10T / 10V widgets.
+        # are reused from the Phase 10T / 10V widgets; the live
+        # query + top-K are read from the Phase 10W widgets and
+        # threaded into the view builder so per-source
+        # `retrieval_eligible` and the per-source Button
+        # `enabled` bit re-derive on every poll (per the fix-
+        # cycle contract, a button MUST NOT be enabled while the
+        # actual runtime would refuse fail-closed with
+        # `query_empty` or `query_too_long`).
+        live_query = (
+            rag_retrieval_query_var.get().strip()
+        )
         live_retrieval_operator_inputs = {
             "identity": mcp_identity_var.get().strip(),
             "acknowledged_source_ids": frozenset(
@@ -15491,6 +15501,7 @@ def _launch_desktop_app_window(
                     rag_source_ack_vars.items()
                 ) if var.get()
             ),
+            "query": live_query,
         }
         live_retrieval_view = _desktop_safe_call_view(
             lambda root_arg: (
@@ -15511,9 +15522,6 @@ def _launch_desktop_app_window(
                 build_desktop_rag_retrieval_controls(
                     live_retrieval_view,
                 )
-            )
-            live_query = (
-                rag_retrieval_query_var.get().strip()
             )
             live_top_k_raw = (
                 rag_retrieval_top_k_var.get().strip()
@@ -22911,6 +22919,7 @@ RAG_RETRIEVAL_APPROVAL_REQUIREMENTS = (
     "approval_mode_supports_retrieval",
     "phase_10w_runtime_available",
     "controller_local_scope_only",
+    "operator_query_supplied",
     "query_within_char_cap",
     "per_source_within_byte_cap",
 )
@@ -22921,7 +22930,6 @@ RAG_RETRIEVAL_REFUSAL_REASONS = (
     "operator_acknowledgement_missing",
     "query_empty",
     "query_too_long",
-    "no_sources_selected",
     "source_path_missing",
     "source_path_outside_controller_root",
     "runtime_not_available",
@@ -22953,6 +22961,7 @@ def _desktop_rag_retrieval_normalize_operator_inputs(
         return {
             "identity": "",
             "acknowledged_source_ids": frozenset(),
+            "query": "",
         }
     if not isinstance(operator_inputs, dict):
         raise HaltError(
@@ -22987,11 +22996,24 @@ def _desktop_rag_retrieval_normalize_operator_inputs(
                 f"not iterable ({ack!r})"
             ),
         )
+    query = operator_inputs.get("query", "")
+    if query is None:
+        query = ""
+    if not isinstance(query, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs.query is not a string "
+                f"({query!r})"
+            ),
+        )
     return {
         "identity": identity.strip(),
         "acknowledged_source_ids": frozenset(
             str(s) for s in ack
         ),
+        "query": query,
     }
 
 
@@ -23109,6 +23131,7 @@ def _desktop_rag_retrieval_compute_approval_state(
     operator_acknowledged_advisory_labeling: bool,
     operator_supplied_identity: bool,
     controller_local_scope_only: bool,
+    operator_query_supplied: bool,
     query_within_char_cap: bool,
     per_source_within_byte_cap: bool,
 ) -> dict:
@@ -23196,6 +23219,20 @@ def _desktop_rag_retrieval_compute_approval_state(
                 )
             ),
         },
+        "operator_query_supplied": {
+            "satisfied": bool(operator_query_supplied),
+            "reason": (
+                "operator has supplied a non-empty retrieval "
+                "query this session"
+                if operator_query_supplied
+                else (
+                    "operator retrieval query is empty; per the "
+                    "Phase 10W contract the runtime refuses "
+                    "fail-closed with `query_empty` when the "
+                    "query is empty or not a string"
+                )
+            ),
+        },
         "query_within_char_cap": {
             "satisfied": bool(query_within_char_cap),
             "reason": (
@@ -23271,6 +23308,11 @@ def build_desktop_rag_retrieval_controls_view(
     )
     identity_supplied = bool(inputs["identity"])
     ack_set = inputs["acknowledged_source_ids"]
+    live_query = inputs["query"]
+    query_supplied = bool(live_query)
+    query_char_ok = (
+        len(live_query) <= RAG_RETRIEVAL_QUERY_CHAR_CAP
+    )
     now_ts = time.time()
     sources = []
     for spec in _DESKTOP_RAG_SOURCE_SELECTION_REGISTRY:
@@ -23300,7 +23342,8 @@ def build_desktop_rag_retrieval_controls_view(
                 ),
                 operator_supplied_identity=identity_supplied,
                 controller_local_scope_only=inside_root,
-                query_within_char_cap=True,
+                operator_query_supplied=query_supplied,
+                query_within_char_cap=query_char_ok,
                 per_source_within_byte_cap=True,
             )
         )
@@ -23316,6 +23359,8 @@ def build_desktop_rag_retrieval_controls_view(
                     "approval_mode_supports_retrieval",
                     "phase_10w_runtime_available",
                     "controller_local_scope_only",
+                    "operator_query_supplied",
+                    "query_within_char_cap",
                 )
             )
         )
@@ -23370,6 +23415,8 @@ def build_desktop_rag_retrieval_controls_view(
         "operator_inputs": {
             "identity": inputs["identity"],
             "acknowledged_source_ids": sorted(ack_set),
+            "query": live_query,
+            "query_char_count": len(live_query),
         },
         "index_states": list(RAG_RETRIEVAL_INDEX_STATES),
         "ranking_modes": list(RAG_RETRIEVAL_RANKING_MODES),
@@ -23462,6 +23509,14 @@ def render_desktop_rag_retrieval_controls_text(
         f"acknowledged_source_ids (per-session): "
         f"{op_inputs.get('acknowledged_source_ids', [])!r}"
     )
+    live_query = op_inputs.get("query", "")
+    query_present = bool(live_query)
+    lines.append(
+        f"  [rag-retrieval] operator_inputs.query "
+        f"(per-session): supplied={query_present!r} "
+        f"query_char_count="
+        f"{op_inputs.get('query_char_count', 0)!r}"
+    )
     for source in view.get("sources", []):
         eligible = source["retrieval_eligible"]
         tag = (
@@ -23501,6 +23556,8 @@ def render_desktop_rag_retrieval_controls_text(
             "approval_mode_supports_retrieval",
             "phase_10w_runtime_available",
             "controller_local_scope_only",
+            "operator_query_supplied",
+            "query_within_char_cap",
         ):
             entry = source["approval_state"].get(req, {})
             satisfied = entry.get("satisfied", False)
@@ -23583,11 +23640,12 @@ def retrieve_local_rag_excerpts(
       - query is empty / not a string / longer than
         `RAG_RETRIEVAL_QUERY_CHAR_CAP`
       - operator identity is missing
-      - no source was acknowledged AND at least one candidate
-        source exists
+      - no source was acknowledged this session
       - approval_mode is `strict`
       - a selected source path resolves outside the controller
         root
+      - every acknowledged source is missing on disk
+        (`source_path_missing`)
 
     Never writes, never mutates any canonical artifact, never
     opens a network socket, never spawns a subprocess, never
@@ -23788,13 +23846,13 @@ def retrieve_local_rag_excerpts(
         })
         indexed_ids.append(source_id)
     if not indexed_ids:
-        result_base["refusal_reason"] = "no_sources_selected"
+        result_base["refusal_reason"] = "source_path_missing"
         result_base["refusal_message"] = (
-            "Phase 10W retrieval refused: no acknowledged "
-            "source is present on disk; supply "
+            "Phase 10W retrieval refused: every acknowledged "
+            "source is missing on disk; supply "
             "`--acknowledge-source <ID>` for at least one "
             "source whose canonical path resolves inside the "
-            "controller root and exists on disk"
+            "controller root AND exists on disk"
         )
         result_base["sources_refused_ids"] = refused_ids
         return result_base
@@ -23963,6 +24021,7 @@ def cmd_view_desktop_rag_retrieval_controls(
         "acknowledged_source_ids": frozenset(
             getattr(args, "acknowledge_source", None) or []
         ),
+        "query": getattr(args, "query", None) or "",
     }
     view = build_desktop_rag_retrieval_controls_view(
         controller_root, operator_inputs=operator_inputs,
@@ -30677,6 +30736,20 @@ def build_parser() -> argparse.ArgumentParser:
             "OPTIONAL repeatable per-session per-source "
             "advisory-labeling acknowledgement. Repeat the "
             "flag once per source id."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session retrieval query. When "
+            "supplied the controls view re-derives "
+            "`retrieval_eligible` per source to reflect the "
+            "shipped runtime's `query_empty` / `query_too_long` "
+            "refusal branches; when omitted every source "
+            "surfaces as ineligible until the operator supplies "
+            "a query. NEVER read from any persistent store."
         ),
     )
     run_local_rag = sub.add_parser(

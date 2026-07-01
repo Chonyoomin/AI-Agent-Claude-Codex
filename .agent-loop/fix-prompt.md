@@ -1,10 +1,10 @@
 # Claude Code Fix Task
 
 ## Objective
-Fix only the current Claude-owned Phase 10V review issues found by Codex.
+Fix only the current Claude-owned Phase 10W review issues found by Codex.
 
 ## Context
-The latest Phase 10V implementation was reviewed by Codex and received the
+The latest Phase 10W implementation was reviewed by Codex and received the
 verdict `NEEDS_FIXES`.
 
 Read:
@@ -12,59 +12,51 @@ Read:
 - `.agent-loop/claude-prompt.md`
 - `.agent-loop/codex-review.md`
 - `scripts/agent_loop.py`
-- `tests/test_desktop_rag_source_selection.py`
-- `tests/test_desktop_app.py`
+- `tests/test_desktop_rag_retrieval_controls.py`
 - `README.md`
-- `docs/rag-source-selection-contract.md`
 - `TASK.md`
 - `.agent-loop/phase-plan.md`
 
 ## Required fixes
-- Fix the Phase 10V descriptor-validation gap in
-  `scripts/agent_loop.py`. The contract and docs say
-  `path_canonical_rel` must be a POSIX-style relative path, but
-  `_desktop_rag_source_selection_validate_descriptor(...)` does not
-  enforce that invariant. Harden the validator so malformed future
-  registry entries cannot point outside the controller root via
-  absolute paths or parent-directory traversal, while preserving the
-  current bounded repo-local source model.
-- Add focused tests in `tests/test_desktop_rag_source_selection.py`
-  that fail if `path_canonical_rel` is absolute, escapes the
-  controller root, or otherwise violates the repo-relative POSIX-path
-  contract described in `docs/rag-source-selection-contract.md`.
-- Fix the Phase 10V README overstatement. The current README says the
-  shipped five-entry registry lets tests exercise every closed branch,
-  but the real shipped registry only guarantees coverage of every
-  `source_type`; the `advisory_label_rule ==
-  "refused_until_policy_update"` branch is covered only by a mutated
-  test spec, not by a shipped registry entry. Update `README.md` so
-  it accurately describes the registry and test coverage without
-  overstating runtime or registry guarantees.
-- Keep the fix inside the approved Phase 10V boundaries. Do not add
-  actual RAG retrieval transport, chunking, ranking, embeddings,
-  vector indexing, content reads, background watchers, network IO,
-  subprocess dispatch, hidden persisted state, or any widening of the
-  Phase 10I library-callable cap.
+- Fix the Phase 10W desktop retrieval-eligibility mismatch in
+  `scripts/agent_loop.py`. The desktop retrieval controls currently enable a
+  source button without considering whether the operator has supplied a valid
+  non-empty query, even though the real `run-local-rag-retrieval` runtime
+  refuses `query_empty`. Make the desktop retrieval-controls surface and live
+  `_refresh()` button enablement match the actual runtime contract so a button
+  does not advertise a runnable path that the shipped runtime will immediately
+  refuse.
+- Add focused regression coverage in
+  `tests/test_desktop_rag_retrieval_controls.py` for the query-sensitive
+  eligibility behavior. The tests should fail if a source is marked
+  `retrieval_eligible=True` or a retrieval button becomes enabled while the live
+  query is empty or otherwise invalid for the actual retrieval runtime.
+- Fix the Phase 10W refusal-vocabulary mismatch. Either make
+  `retrieve_local_rag_excerpts(...)` actually emit `source_path_missing` on the
+  missing-source path, or remove/adjust the enum and docs so the shipped refusal
+  contract matches the real runtime exactly. Preserve a closed refusal
+  vocabulary and add focused tests that anchor whichever behavior you keep.
+- Update `README.md` so the 10W desktop retrieval-controls paragraph accurately
+  describes the shipped eligibility and refusal behavior after the code fix.
+- Keep the fix inside the approved Phase 10W boundaries. Do not add remote
+  retrieval, vector databases, hosted services, background daemons/watchers,
+  hidden persistence, or any widening of the Phase 10I library-callable cap.
 
 ## Constraints
 - Fix only the listed issues.
-- Do not redesign later phases such as 10W or beyond.
-- Do not introduce actual RAG runtime behavior, content retrieval,
-  embeddings/indexing, new CLI/library surfaces outside the approved
-  Phase 10V scope, or any hidden persisted control plane.
-- Do not silently mutate in-flight `loop-state.json` approval state or
-  other canonical controller fields outside approved canonical write
-  paths.
-- Do not add subprocess spawning, shell execution, network IO, or
-  canonical artifact writes beyond the shipped bounded desktop/runtime
-  contracts.
+- Do not redesign later phases such as 10X or beyond.
+- Do not introduce remote retrieval transport, embeddings/vector indexing,
+  hidden background ingestion, subprocess dispatch, network IO, or canonical
+  artifact writes outside the shipped bounded Phase 10W contracts.
+- Do not silently mutate in-flight `loop-state.json` approval state or other
+  canonical controller fields outside approved canonical write paths.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
 - Do not edit `.agent-loop/loop-state.json` or
   `.agent-loop/orchestrator.log` by hand.
 - Do not delete files unless explicitly required and approved.
-- Preserve the original Phase 10V objective and the shipped Phase 10I
-  / 10L / 10O / 10S / 10T / 10U boundary rules.
+- Preserve the original Phase 10W objective and the shipped Phase 10I / 10L /
+  10O / 10V boundary rules.
 - Prefer minimal, targeted changes.
 
 ## Required output

@@ -173,6 +173,7 @@ class ConstantsTests(unittest.TestCase):
                 "approval_mode_supports_retrieval",
                 "phase_10w_runtime_available",
                 "controller_local_scope_only",
+                "operator_query_supplied",
                 "query_within_char_cap",
                 "per_source_within_byte_cap",
             ),
@@ -187,11 +188,25 @@ class ConstantsTests(unittest.TestCase):
                 "operator_acknowledgement_missing",
                 "query_empty",
                 "query_too_long",
-                "no_sources_selected",
                 "source_path_missing",
                 "source_path_outside_controller_root",
                 "runtime_not_available",
             ),
+        )
+
+    def test_no_sources_selected_reason_removed_from_enum(
+        self,
+    ) -> None:
+        # Fix cycle: `no_sources_selected` was a documented
+        # refusal reason but was never actually emitted by the
+        # runtime; the "every acknowledged source missing on
+        # disk" branch now correctly emits `source_path_missing`.
+        # Anchor that the removed member is no longer in the
+        # closed enum so a future runtime cannot silently
+        # re-introduce it without also editing this test.
+        self.assertNotIn(
+            "no_sources_selected",
+            agent_loop.RAG_RETRIEVAL_REFUSAL_REASONS,
         )
 
     def test_permitted_approval_modes(self) -> None:
@@ -414,6 +429,7 @@ class ApprovalStateTests(unittest.TestCase):
                 operator_acknowledged_advisory_labeling=False,
                 operator_supplied_identity=False,
                 controller_local_scope_only=False,
+                operator_query_supplied=False,
                 query_within_char_cap=False,
                 per_source_within_byte_cap=False,
             )
@@ -431,6 +447,7 @@ class ApprovalStateTests(unittest.TestCase):
                 operator_acknowledged_advisory_labeling=True,
                 operator_supplied_identity=True,
                 controller_local_scope_only=True,
+                operator_query_supplied=True,
                 query_within_char_cap=True,
                 per_source_within_byte_cap=True,
             )
@@ -449,6 +466,7 @@ class ApprovalStateTests(unittest.TestCase):
                 operator_acknowledged_advisory_labeling=False,
                 operator_supplied_identity=False,
                 controller_local_scope_only=False,
+                operator_query_supplied=False,
                 query_within_char_cap=False,
                 per_source_within_byte_cap=False,
             )
@@ -457,6 +475,41 @@ class ApprovalStateTests(unittest.TestCase):
             state["approval_mode_supports_retrieval"][
                 "satisfied"
             ],
+        )
+
+    def test_operator_query_supplied_toggles(self) -> None:
+        # Fix cycle: `operator_query_supplied` is the closed
+        # requirement that models the runtime `query_empty`
+        # refusal branch in the eligibility surface.
+        empty = (
+            agent_loop._desktop_rag_retrieval_compute_approval_state(
+                approval_mode="review",
+                phase_10w_runtime_available=True,
+                operator_acknowledged_advisory_labeling=True,
+                operator_supplied_identity=True,
+                controller_local_scope_only=True,
+                operator_query_supplied=False,
+                query_within_char_cap=True,
+                per_source_within_byte_cap=True,
+            )
+        )
+        self.assertFalse(
+            empty["operator_query_supplied"]["satisfied"],
+        )
+        supplied = (
+            agent_loop._desktop_rag_retrieval_compute_approval_state(
+                approval_mode="review",
+                phase_10w_runtime_available=True,
+                operator_acknowledged_advisory_labeling=True,
+                operator_supplied_identity=True,
+                controller_local_scope_only=True,
+                operator_query_supplied=True,
+                query_within_char_cap=True,
+                per_source_within_byte_cap=True,
+            )
+        )
+        self.assertTrue(
+            supplied["operator_query_supplied"]["satisfied"],
         )
 
 
@@ -526,6 +579,7 @@ class BuildControlsViewTests(unittest.TestCase):
                         "acknowledged_source_ids": [
                             "repo_local_docs_readme",
                         ],
+                        "query": "claude phase",
                     },
                 )
             )
@@ -540,6 +594,136 @@ class BuildControlsViewTests(unittest.TestCase):
             if s["id"] != "repo_local_docs_readme"
         )
         self.assertFalse(other["retrieval_eligible"])
+
+    def test_source_ineligible_when_query_empty(self) -> None:
+        # Fix-cycle regression: even with identity + ack +
+        # source-present + inside-root, a source MUST NOT be
+        # marked retrieval_eligible while the operator query is
+        # empty, because the shipped `retrieve_local_rag_excerpts`
+        # runtime would immediately refuse with `query_empty`.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_rag_retrieval_controls_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        "acknowledged_source_ids": [
+                            "repo_local_docs_readme",
+                        ],
+                        "query": "",
+                    },
+                )
+            )
+        readme = next(
+            s for s in view["sources"]
+            if s["id"] == "repo_local_docs_readme"
+        )
+        self.assertFalse(readme["retrieval_eligible"])
+        self.assertFalse(
+            readme["approval_state"][
+                "operator_query_supplied"
+            ]["satisfied"],
+        )
+
+    def test_source_ineligible_when_query_too_long(self) -> None:
+        # Fix-cycle regression: a query longer than
+        # `RAG_RETRIEVAL_QUERY_CHAR_CAP` triggers the runtime
+        # `query_too_long` refusal, so the eligibility surface
+        # MUST NOT advertise the source as retrieval_eligible.
+        long_query = "x" * (
+            agent_loop.RAG_RETRIEVAL_QUERY_CHAR_CAP + 1
+        )
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_rag_retrieval_controls_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        "acknowledged_source_ids": [
+                            "repo_local_docs_readme",
+                        ],
+                        "query": long_query,
+                    },
+                )
+            )
+        readme = next(
+            s for s in view["sources"]
+            if s["id"] == "repo_local_docs_readme"
+        )
+        self.assertFalse(readme["retrieval_eligible"])
+        self.assertFalse(
+            readme["approval_state"][
+                "query_within_char_cap"
+            ]["satisfied"],
+        )
+
+    def test_controls_button_disabled_when_query_empty(
+        self,
+    ) -> None:
+        # Fix-cycle regression: the desktop control descriptor's
+        # `enabled` field must track `retrieval_eligible`; with
+        # an empty query the button MUST NOT advertise a runnable
+        # path that the shipped runtime would immediately refuse.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_rag_retrieval_controls_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        "acknowledged_source_ids": [
+                            "repo_local_docs_readme",
+                        ],
+                        "query": "",
+                    },
+                )
+            )
+            controls = (
+                agent_loop.build_desktop_rag_retrieval_controls(
+                    view,
+                )
+            )
+        readme_control = next(
+            c for c in controls
+            if c["id"] == "repo_local_docs_readme"
+        )
+        self.assertFalse(readme_control["enabled"])
+        self.assertFalse(
+            readme_control["retrieval_eligible"],
+        )
+
+    def test_controls_button_enabled_when_query_supplied(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_rag_retrieval_controls_view(
+                    controller,
+                    operator_inputs={
+                        "identity": "me",
+                        "acknowledged_source_ids": [
+                            "repo_local_docs_readme",
+                        ],
+                        "query": "claude phase",
+                    },
+                )
+            )
+            controls = (
+                agent_loop.build_desktop_rag_retrieval_controls(
+                    view,
+                )
+            )
+        readme_control = next(
+            c for c in controls
+            if c["id"] == "repo_local_docs_readme"
+        )
+        self.assertTrue(readme_control["enabled"])
+        self.assertTrue(
+            readme_control["retrieval_eligible"],
+        )
 
     def test_view_soft_fails_on_missing_loop_state(self) -> None:
         with TemporaryDirectory() as td:
@@ -688,12 +872,15 @@ class RetrieveExcerptsTests(unittest.TestCase):
             result["refusal_reason"], "approval_mode_strict",
         )
 
-    def test_no_sources_selected_refuses_when_paths_absent(
+    def test_source_path_missing_refuses_when_paths_absent(
         self,
     ) -> None:
         # Delete every registered source path so nothing gets
-        # indexed; retrieval MUST refuse with
-        # `no_sources_selected`.
+        # indexed; the retrieval runtime MUST refuse fail-closed
+        # with `source_path_missing` (fix cycle: previously the
+        # runtime emitted the never-otherwise-used
+        # `no_sources_selected` reason, breaking the closed
+        # refusal-vocabulary contract).
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
             for spec in (
@@ -713,7 +900,11 @@ class RetrieveExcerptsTests(unittest.TestCase):
                 query="claude",
             )
         self.assertEqual(
-            result["refusal_reason"], "no_sources_selected",
+            result["refusal_reason"], "source_path_missing",
+        )
+        self.assertIn(
+            "repo_local_docs_readme",
+            result["sources_refused_ids"],
         )
 
     def test_top_k_clamped_to_cap(self) -> None:
@@ -857,6 +1048,7 @@ class BuildControlsTests(unittest.TestCase):
                         "acknowledged_source_ids": [
                             "repo_local_docs_readme",
                         ],
+                        "query": "claude phase",
                     },
                 )
             )
@@ -896,6 +1088,7 @@ class CmdHandlerTests(unittest.TestCase):
             "controller_root": None,
             "operator_identity": None,
             "acknowledge_source": None,
+            "query": None,
         }
         defaults.update(kwargs)
         return argparse.Namespace(**defaults)
@@ -995,6 +1188,65 @@ class CmdHandlerTests(unittest.TestCase):
         self.assertIn("[rag-advisory]", output)
         self.assertIn("built_this_invocation", output)
 
+    def test_controls_cli_query_flag_toggles_eligibility(
+        self,
+    ) -> None:
+        # Fix-cycle regression: the `--query` flag on the view
+        # CLI MUST re-derive per-source `retrieval_eligible` so
+        # the reporter surfaces the same eligibility state the
+        # Tk widget derives from live keystrokes. Omitting the
+        # flag keeps every source ineligible even when identity +
+        # acknowledgement are supplied.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            empty_out = io.StringIO()
+            with redirect_stdout(empty_out):
+                rc_empty = (
+                    agent_loop.cmd_view_desktop_rag_retrieval_controls(
+                        self._controls_args(
+                            controller_root=str(controller),
+                            operator_identity="me",
+                            acknowledge_source=[
+                                "repo_local_docs_readme",
+                            ],
+                        ),
+                    )
+                )
+            supplied_out = io.StringIO()
+            with redirect_stdout(supplied_out):
+                rc_supplied = (
+                    agent_loop.cmd_view_desktop_rag_retrieval_controls(
+                        self._controls_args(
+                            controller_root=str(controller),
+                            operator_identity="me",
+                            acknowledge_source=[
+                                "repo_local_docs_readme",
+                            ],
+                            query="claude phase",
+                        ),
+                    )
+                )
+        self.assertEqual(rc_empty, 0)
+        self.assertEqual(rc_supplied, 0)
+        empty_out_text = empty_out.getvalue()
+        supplied_out_text = supplied_out.getvalue()
+        # With no query, the acknowledged readme surfaces as
+        # `retrieval_eligible=False`.
+        self.assertIn(
+            "id='repo_local_docs_readme'",
+            empty_out_text,
+        )
+        self.assertRegex(
+            empty_out_text,
+            r"id='repo_local_docs_readme'[^\n]*retrieval_eligible=False",
+        )
+        # With a live query, the same source now surfaces as
+        # eligible.
+        self.assertRegex(
+            supplied_out_text,
+            r"id='repo_local_docs_readme'[^\n]*retrieval_eligible=True",
+        )
+
     def test_handlers_registered(self) -> None:
         self.assertIn(
             "view-desktop-rag-retrieval-controls",
@@ -1011,10 +1263,12 @@ class CmdHandlerTests(unittest.TestCase):
             "--controller-root", ".",
             "--operator-identity", "me",
             "--acknowledge-source", "repo_local_docs_readme",
+            "--query", "claude phase",
         ])
         self.assertEqual(
             args.cmd, "view-desktop-rag-retrieval-controls",
         )
+        self.assertEqual(args.query, "claude phase")
         args2 = parser.parse_args([
             "run-local-rag-retrieval",
             "--controller-root", ".",
