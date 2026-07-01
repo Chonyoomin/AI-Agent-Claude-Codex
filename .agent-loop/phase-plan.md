@@ -4922,6 +4922,54 @@ approval gates, or ownership boundaries.
 - no change to `scripts/run_checks.sh`
 - no Git automation
 
+## Phase 10X - Autonomous Run Console And Completion Ledger
+
+### Objective
+
+Add the first desktop-facing autonomous run console and completion-ledger
+surface so PRD-to-completion mode becomes understandable and auditable from the
+UI. This slice should expose the active run step, pending steps, blocked or
+deferred work, fix-cycle state, and completion progress from canonical
+artifacts without creating a hidden second control plane.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10X as active
+- the repository adds a bounded run-console/completion-ledger surface to the
+  shipped desktop app and related reporters
+- the implementation defines how active work, pending work, blocked or deferred
+  work, fix-cycle state, and completion progress are derived from canonical
+  artifacts rather than hidden UI-only state
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, MCP/RAG boundaries, and
+  the Phase 10I library-callable cap instead of introducing hidden automation,
+  silent mutation, or a parallel state store
+- focused validation proves the run-console path is bounded, auditable, and
+  visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10X is active and that the autonomous run
+  console / completion ledger are now the implementation focus
+
+### Exclusions
+
+- no capacity auto-resume, token-refresh detection, retry/backoff automation,
+  or operator-override runtime beyond passive visibility
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of the run console
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
 ## Phase 10P - Desktop App Operator Setup And CLI Onboarding
 
 ### Status

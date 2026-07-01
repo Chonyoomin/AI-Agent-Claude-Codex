@@ -1,41 +1,41 @@
 # Claude Code Task
 
 ## Phase
-Phase 10W - RAG Local Index And Retrieval Controls
+Phase 10X - Autonomous Run Console And Completion Ledger
 
 ## Objective
-Implement Phase 10W for the agent loop. This slice should add the first bounded
-local RAG index and retrieval-control runtime so the loop can pull only the
-most relevant repo-local PRD sections, docs, decisions, standards, and
-failure/fix patterns into a run without replacing canonical artifacts.
+Implement Phase 10X for the agent loop. This slice should add the first desktop
+autonomous run console and completion ledger so PRD-to-completion mode exposes
+the active step, pending work, blocked or deferred work, fix-cycle state, and
+completion progress without introducing a hidden second control plane.
 
 ## Context
-Implement the RAG Local Index And Retrieval Controls slice for the agent loop.
-This slice should add the first bounded local indexing and retrieval-control
-runtime on top of the shipped Phase 10V source-selection contract, while
-keeping retrieved content advisory and preserving canonical artifacts as the
-source of truth.
+Implement the Autonomous Run Console And Completion Ledger slice for the agent
+loop. This is the next desktop-runtime step after the shipped Phase 10W local
+RAG retrieval controls. The goal is to make autonomous-run progress legible and
+auditable from the UI and reporters while continuing to treat canonical
+artifacts as the source of truth.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
-  and `.agent-loop/loop-state.json` identify Phase 10 / 10W as active
-- `.agent-loop/phase-plan.md` records Phase 10V as closed history and contains
-  a `## Phase 10W - RAG Local Index And Retrieval Controls` section with
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10X as active
+- `.agent-loop/phase-plan.md` records Phase 10W as closed history and contains
+  a `## Phase 10X - Autonomous Run Console And Completion Ledger` section with
   concrete objective, done criteria, and exclusions
-- add the first bounded local indexing/retrieval runtime for the Phase 10V
-  source-selection surface, scoped to controller-local sources only
-- define how index freshness, retrieval scope, ranking boundaries, and excerpt
-  provenance are exposed without letting retrieved content replace canonical
-  artifacts on disk
+- add the first bounded run-console / completion-ledger surface to the shipped
+  desktop app and related reporters
+- define how the active step, pending steps, blocked or deferred work,
+  fix-cycle state, and completion progress are derived from canonical artifacts
+  without creating hidden UI-only state that competes with the repo artifacts
 - preserve approval gating, evidence review, external-workspace boundaries,
-  desktop/UI boundaries, MCP boundaries, and the Phase 10I library-callable cap
+  desktop/UI boundaries, MCP/RAG boundaries, and the Phase 10I library-callable
+  cap
   instead of introducing hidden automation, silent mutation, or a parallel
   state store
-- add focused validation proving the local index/retrieval path is bounded,
-  auditable, controller-local, and does not widen into remote retrieval,
-  autonomous agent overlap, or hidden background ingestion
-- `README.md` reflects that Phase 10W is active and that bounded local RAG
-  index/retrieval controls are now the implementation focus
+- add focused validation proving the run-console path is bounded, auditable,
+  and visibility-only with respect to orchestration state
+- `README.md` reflects that Phase 10X is active and that the autonomous run
+  console / completion ledger are now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -48,15 +48,17 @@ source of truth.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no remote/vector database, hosted retrieval service, or network-backed index
-- no GitHub, policy-pack, packaging, system-tray, or controlled-concurrency
-  runtime work
-- no hidden daemon, crawler, or watcher farm outside the shipped Python runtime
+- no capacity auto-resume, token-refresh detection, retry/backoff automation,
+  or operator-override runtime beyond passive visibility
+- no hidden background control plane or second orchestrator that bypasses the
+  shipped Python runtime
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
-- no rewrite of current shipped behavior just to make future MCP or autonomy
-  work easier
+- no concurrent Codex/Claude overlap execution, model-policy extensibility, or
+  hidden orchestration added under the banner of the run console
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
