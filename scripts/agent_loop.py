@@ -14110,6 +14110,18 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         this slice; ZERO new library-callable controls are
         introduced and the Phase 10I three-control cap is
         preserved exactly)
+      - `rag_retrieval_controls_view`: the Phase 10W view dict
+        returned by
+        `build_desktop_rag_retrieval_controls_view(controller_root)`,
+        OR a soft-error envelope (added Phase 10W so the
+        shipped desktop app exposes the bounded local RAG
+        retrieval controls alongside the other sub-views;
+        `phase_10w_runtime_available=True` on this slice
+        because the CLI provides the actual retrieval driver;
+        the sub-view itself is READ-ONLY and NEVER reads
+        source CONTENT; ZERO new library-callable controls are
+        introduced and the Phase 10I three-control cap is
+        preserved exactly)
       - `precedence_note`: literal `DESKTOP_APP_PRECEDENCE_NOTE`
 
     The desktop shell MUST NOT mutate the returned sub-view dicts
@@ -14144,6 +14156,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     rag_source_selection_view = _desktop_safe_call_view(
         build_desktop_rag_source_selection_view, controller_root,
     )
+    rag_retrieval_controls_view = _desktop_safe_call_view(
+        build_desktop_rag_retrieval_controls_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14158,6 +14173,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "mcp_assistance_view": mcp_assistance_view,
         "mcp_action_guardrails_view": mcp_action_guardrails_view,
         "rag_source_selection_view": rag_source_selection_view,
+        "rag_retrieval_controls_view": (
+            rag_retrieval_controls_view
+        ),
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14248,6 +14266,17 @@ def _desktop_render_sub_view_lines(
             render_desktop_rag_source_selection_text(sub_view),
         )
         return lines
+    if key == "rag_retrieval_controls_view":
+        # Re-use the shipped Phase 10W renderer verbatim so the
+        # RAG retrieval controls attribution tags ([rag-source]
+        # / [rag-retrieval] / [rag-provenance] / [rag-freshness]
+        # / [rag-approval] / [refused]) stay consistent with
+        # the standalone
+        # `view-desktop-rag-retrieval-controls` output.
+        lines.extend(
+            render_desktop_rag_retrieval_controls_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14320,6 +14349,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "rag_source_selection_view",
             "RAG Source Selection (Phase 10V)",
+        ),
+        (
+            "rag_retrieval_controls_view",
+            "RAG Retrieval Controls (Phase 10W)",
         ),
     ):
         sub = view.get(key, {})
@@ -14836,6 +14869,13 @@ def _launch_desktop_app_window(
         text="RAG Source Selection (Phase 10V)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    rag_retrieval_frame = tk.Frame(control_frame)
+    rag_retrieval_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        rag_retrieval_frame,
+        text="RAG Retrieval Controls (Phase 10W)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     # Phase 10T fix cycle: per-session operator-input widgets so
     # the shipped Tk surface actually exposes a selectable read-
     # only MCP assistance path. State is held in-memory ONLY
@@ -14891,6 +14931,43 @@ def _launch_desktop_app_window(
     rag_source_ack_frame.pack(side=tk.TOP, fill=tk.X)
     rag_source_ack_vars: dict = {}
     rag_source_ack_widgets: list = []
+    # Phase 10W: per-session retrieval controls widgets. Query
+    # StringVar and top-K StringVar are held in-memory only;
+    # closing the window discards every value.
+    tk.Label(
+        rag_retrieval_frame,
+        text=(
+            "Retrieval query (per-session; bounded to "
+            f"{RAG_RETRIEVAL_QUERY_CHAR_CAP} chars):"
+        ),
+        wraplength=240, justify=tk.LEFT, anchor=tk.W,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    rag_retrieval_query_var = tk.StringVar(value="")
+    rag_retrieval_query_entry = tk.Entry(
+        rag_retrieval_frame,
+        textvariable=rag_retrieval_query_var,
+    )
+    rag_retrieval_query_entry.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    tk.Label(
+        rag_retrieval_frame,
+        text=(
+            "Top-K (capped at "
+            f"{RAG_RETRIEVAL_TOP_K_CAP}):"
+        ),
+        wraplength=240, justify=tk.LEFT, anchor=tk.W,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    rag_retrieval_top_k_var = tk.StringVar(
+        value=str(RAG_RETRIEVAL_TOP_K_DEFAULT),
+    )
+    rag_retrieval_top_k_entry = tk.Entry(
+        rag_retrieval_frame,
+        textvariable=rag_retrieval_top_k_var,
+    )
+    rag_retrieval_top_k_entry.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -14915,6 +14992,7 @@ def _launch_desktop_app_window(
     mcp_assistance_button_widgets: list = []
     mcp_action_guardrails_button_widgets: list = []
     rag_source_selection_button_widgets: list = []
+    rag_retrieval_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15400,6 +15478,72 @@ def _launch_desktop_app_window(
             rag_source_selection_controls_signature = (
                 next_rag_source_selection_controls_signature
             )
+        # Phase 10W live retrieval-controls re-derivation. The
+        # ScrolledText panel above shows the assemble_desktop
+        # _app_view default empty-input snapshot; the Tk action
+        # surface below is the authoritative operator-input
+        # plane. Operator identity + acknowledged source ids
+        # are reused from the Phase 10T / 10V widgets.
+        live_retrieval_operator_inputs = {
+            "identity": mcp_identity_var.get().strip(),
+            "acknowledged_source_ids": frozenset(
+                sid for sid, var in (
+                    rag_source_ack_vars.items()
+                ) if var.get()
+            ),
+        }
+        live_retrieval_view = _desktop_safe_call_view(
+            lambda root_arg: (
+                build_desktop_rag_retrieval_controls_view(
+                    root_arg,
+                    operator_inputs=(
+                        live_retrieval_operator_inputs
+                    ),
+                )
+            ),
+            controller_root,
+        )
+        if (
+            isinstance(live_retrieval_view, dict)
+            and "sources" in live_retrieval_view
+        ):
+            base_retrieval_controls = (
+                build_desktop_rag_retrieval_controls(
+                    live_retrieval_view,
+                )
+            )
+            live_query = (
+                rag_retrieval_query_var.get().strip()
+            )
+            live_top_k_raw = (
+                rag_retrieval_top_k_var.get().strip()
+            )
+            try:
+                live_top_k = int(live_top_k_raw)
+            except (TypeError, ValueError):
+                live_top_k = RAG_RETRIEVAL_TOP_K_DEFAULT
+            if live_top_k < 1:
+                live_top_k = 1
+            if live_top_k > RAG_RETRIEVAL_TOP_K_CAP:
+                live_top_k = RAG_RETRIEVAL_TOP_K_CAP
+            for control in base_retrieval_controls:
+                control["clipboard_payload"] = (
+                    "python scripts/agent_loop.py "
+                    "run-local-rag-retrieval "
+                    "--controller-root <PATH> "
+                    "--operator-identity <NAME> "
+                    f"--acknowledge-source {control['id']} "
+                    f"--query \"{live_query or '<QUERY>'}\" "
+                    f"--top-k {live_top_k}"
+                )
+            retrieval_controls = base_retrieval_controls
+        else:
+            retrieval_controls = []
+        _rebuild_button_row(
+            rag_retrieval_frame,
+            retrieval_controls,
+            rag_retrieval_button_widgets,
+        )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
 
@@ -22667,6 +22811,1237 @@ def cmd_view_desktop_rag_source_selection(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10W: RAG Local Index And Retrieval Controls.
+#
+# Layers the first bounded controller-local RAG indexing + retrieval
+# runtime on top of the Phase 10V source-selection contract. This
+# slice ships:
+#   - a bounded `build_desktop_rag_retrieval_controls_view(...)`
+#     read-only controls view that mirrors closed enums, bounded
+#     caps, and per-source retrieval-eligibility state; NEVER
+#     reads source CONTENT (only Phase 10V freshness probe is
+#     consulted).
+#   - a bounded `retrieve_local_rag_excerpts(...)` retrieval
+#     library that DOES read at most `RAG_RETRIEVAL_PER_SOURCE_
+#     BYTE_CAP` bytes per source, tokenizes lowercase alphanumeric
+#     words, ranks via bounded term-overlap, and returns at most
+#     `RAG_RETRIEVAL_TOP_K_CAP` excerpts each bounded to
+#     `RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS`.
+#   - a `view-desktop-rag-retrieval-controls` CLI reporter and a
+#     `run-local-rag-retrieval` CLI retrieval driver, both Phase
+#     7C reporter-pattern (always exit 0 on report content once
+#     the controller-root selection succeeds).
+#
+# The surface is CONTROLLER-LOCAL ONLY: retrieval refuses fail-
+# closed when a source path resolves outside the controller root.
+# NEVER opens a network socket, NEVER spawns a subprocess, NEVER
+# contacts a remote index / vector database / hosted retrieval
+# service, NEVER persists an index or hit log on disk, NEVER
+# subscribes to a background watcher, NEVER mutates any canonical
+# artifact, NEVER appends to `.agent-loop/orchestrator.log`,
+# NEVER advances loop-state, NEVER invokes `_halt(...)`, NEVER
+# auto-fills any operator-identity field, NEVER widens the Phase
+# 10I library-callable cap, and NEVER lets retrieved excerpts
+# substitute for canonical artifact content (every excerpt
+# carries `[rag-advisory]` provenance tagging per the Phase 10O
+# advisory-vs-canonical mirror rule and the Phase 10V source-of-
+# truth preservation rule).
+# ---------------------------------------------------------------------------
+
+DESKTOP_RAG_RETRIEVAL_CONTROLS_SIGNAL_VERSION = "phase-10w-v1"
+
+DESKTOP_RAG_RETRIEVAL_CONTROLS_PRECEDENCE_NOTE = (
+    "Phase 10W RAG local index and retrieval controls surface. "
+    "The shipped Phase 10O MCP integration contract, Phase 10S "
+    "MCP server selection UX contract, Phase 10T MCP read-only "
+    "assistance surface, Phase 10U MCP action guardrails "
+    "surface, and Phase 10V RAG source selection contract "
+    "govern this surface's advisory-vs-canonical mirror rule "
+    "verbatim: every retrieved excerpt is `[rag-advisory]` ONLY "
+    "and NEVER substitutes for the canonical Phase 2A evidence "
+    "files / git diff / Claude summary / Codex review / "
+    "loop-state.json / memory entries. The Phase 10I three-"
+    "control library-callable cap is preserved exactly; ZERO "
+    "new library-callable controls are introduced. Retrieval is "
+    "CONTROLLER-LOCAL ONLY: retrieval refuses fail-closed when a "
+    "source path resolves outside the controller root. The "
+    "surface NEVER opens a network socket, NEVER spawns a "
+    "subprocess, NEVER contacts a remote index / vector "
+    "database / hosted retrieval service, NEVER persists an "
+    "index or hit log on disk, NEVER subscribes to a background "
+    "watcher, NEVER mutates any canonical artifact "
+    "(loop-state.json / orchestrator.log / external-target.json "
+    "/ runtime-config.json / TASK.md / proposed-phase.md / "
+    "claude-prompt.md / claude-summary.md / codex-review.md / "
+    "fix-prompt.md / current-task.md / current-phase.md / "
+    "phase-plan.md / prd-intake.json / final-acceptance.json / "
+    "any Phase 2A evidence file / any Phase 6 memory entry), "
+    "NEVER appends to `.agent-loop/orchestrator.log`, NEVER "
+    "advances loop-state, NEVER invokes `_halt(...)`, NEVER "
+    "auto-fills any --*-by operator-identity argument or "
+    "approval-mode value, NEVER introduces a RAG-side database "
+    "/ preference store / recents list / identity token / "
+    "session token, and NEVER widens the Phase 10I cap"
+)
+
+# Bounded caps enforced by every Phase 10W entry point. The
+# constants are intentionally tight so retrieval stays operator-
+# controllable; a future runtime slice MAY widen them only by
+# explicitly editing these constants AND the matching tests.
+RAG_RETRIEVAL_QUERY_CHAR_CAP = 512
+RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP = 8192
+RAG_RETRIEVAL_TOP_K_CAP = 5
+RAG_RETRIEVAL_TOP_K_DEFAULT = 3
+RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS = 240
+
+RAG_RETRIEVAL_INDEX_STATES = (
+    "empty",
+    "built_this_invocation",
+    "refused_until_policy_update",
+)
+
+RAG_RETRIEVAL_RANKING_MODES = (
+    "term_overlap_bounded",
+    "refused_until_policy_update",
+)
+
+RAG_RETRIEVAL_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_advisory_labeling",
+    "operator_supplied_identity",
+    "approval_mode_supports_retrieval",
+    "phase_10w_runtime_available",
+    "controller_local_scope_only",
+    "query_within_char_cap",
+    "per_source_within_byte_cap",
+)
+
+RAG_RETRIEVAL_REFUSAL_REASONS = (
+    "approval_mode_strict",
+    "operator_identity_missing",
+    "operator_acknowledgement_missing",
+    "query_empty",
+    "query_too_long",
+    "no_sources_selected",
+    "source_path_missing",
+    "source_path_outside_controller_root",
+    "runtime_not_available",
+)
+
+RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+
+def _desktop_rag_retrieval_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10W
+    retrieval controls surface. Returns a closed dict with:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when not yet supplied. Per Phase
+        10S MUST NOT be auto-filled from any persistent source.
+      - `acknowledged_source_ids` (frozenset[str]): the set of
+        source ids whose per-source advisory-labeling rule the
+        operator has acknowledged this session.
+
+    `None` returns the defaults. A non-dict value raises
+    HaltError per the Phase 10S descriptor-validation pattern.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_source_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_source_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop RAG retrieval controls refused: "
+                f"operator_inputs.acknowledged_source_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_source_ids": frozenset(
+            str(s) for s in ack
+        ),
+    }
+
+
+def _desktop_rag_retrieval_source_path_inside_controller_root(
+    controller_root: Path, source_path: Path,
+) -> bool:
+    """Return True iff `source_path` resolves INSIDE the
+    controller root. Pure lexical + resolve-based check; no IO
+    beyond `Path.resolve()`. Phase 10W refuses fail-closed on
+    any source path that resolves outside the controller root -
+    this preserves the controller-local scope boundary even if
+    a future registry entry passes the Phase 10V descriptor
+    validator (e.g. via a symlink pointing outside the repo).
+    """
+    try:
+        controller_resolved = controller_root.resolve()
+        source_resolved = source_path.resolve()
+    except OSError:
+        return False
+    try:
+        source_resolved.relative_to(controller_resolved)
+        return True
+    except ValueError:
+        return False
+
+
+def _desktop_rag_retrieval_read_source_bounded(
+    path: Path,
+) -> tuple:
+    """Read at most `RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP + 1` bytes
+    from `path` and return `(text, bytes_read, was_truncated)`.
+    Reading `cap + 1` lets the caller detect whether the source
+    file exceeds the cap without reading unbounded bytes. Any
+    OSError returns `("", 0, False)` so retrieval degrades
+    gracefully. Bytes are decoded as UTF-8 with `errors="replace"`
+    so binary or mixed-encoding sources do not raise.
+    """
+    try:
+        with path.open("rb") as fh:
+            raw = fh.read(RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP + 1)
+    except OSError:
+        return ("", 0, False)
+    was_truncated = len(raw) > RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP
+    if was_truncated:
+        raw = raw[:RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP]
+    text = raw.decode("utf-8", errors="replace")
+    return (text, len(raw), was_truncated)
+
+
+# Split on any non-alphanumeric character so the tokenizer is
+# fully lexical and stays platform-stable. Compiled once at
+# module load.
+_RAG_RETRIEVAL_TOKENIZE_RE = re.compile(r"[a-z0-9]+")
+
+
+def _desktop_rag_retrieval_tokenize(text: str) -> list:
+    """Lowercase alphanumeric tokenization. Pure; deterministic.
+    """
+    return _RAG_RETRIEVAL_TOKENIZE_RE.findall(text.lower())
+
+
+def _desktop_rag_retrieval_score_source(
+    source_tokens: list, query_tokens: list,
+) -> tuple:
+    """Return `(score, matched_query_tokens)` where `score` is
+    a bounded term-overlap ratio: the number of DISTINCT query
+    tokens that appear at least once in the source, divided by
+    the number of DISTINCT query tokens. Returns `(0.0, ())`
+    when either input is empty.
+    """
+    if not source_tokens or not query_tokens:
+        return (0.0, ())
+    source_set = set(source_tokens)
+    query_set = list(dict.fromkeys(query_tokens))
+    matched = tuple(t for t in query_set if t in source_set)
+    if not query_set:
+        return (0.0, ())
+    return (len(matched) / len(query_set), matched)
+
+
+def _desktop_rag_retrieval_extract_excerpt(
+    text: str, query_tokens: list,
+) -> str:
+    """Return a bounded excerpt of at most
+    `RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS` characters centered on
+    the FIRST query-token match. When no query token matches,
+    return the leading window bytes of the text as fallback.
+    Pure; no IO.
+    """
+    if not text:
+        return ""
+    window = RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS
+    lowered = text.lower()
+    first_hit: Optional[int] = None
+    for token in query_tokens:
+        pos = lowered.find(token)
+        if pos >= 0:
+            if first_hit is None or pos < first_hit:
+                first_hit = pos
+    if first_hit is None:
+        excerpt = text[:window]
+    else:
+        half = window // 2
+        start = max(0, first_hit - half)
+        excerpt = text[start:start + window]
+    # Collapse newlines into spaces so a single-line reviewer
+    # scan still sees every token.
+    return excerpt.replace("\n", " ").replace("\r", " ").strip()
+
+
+def _desktop_rag_retrieval_compute_approval_state(
+    *,
+    approval_mode: Optional[str],
+    phase_10w_runtime_available: bool,
+    operator_acknowledged_advisory_labeling: bool,
+    operator_supplied_identity: bool,
+    controller_local_scope_only: bool,
+    query_within_char_cap: bool,
+    per_source_within_byte_cap: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10W approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_acknowledged_advisory_labeling": {
+            "satisfied": bool(
+                operator_acknowledged_advisory_labeling
+            ),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-source advisory-labeling rule this session"
+                if operator_acknowledged_advisory_labeling
+                else (
+                    "advisory-labeling rule not acknowledged "
+                    "this session; per the Phase 10V contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10V contract identity MUST be "
+                    "operator-supplied"
+                )
+            ),
+        },
+        "approval_mode_supports_retrieval": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10W contract retrieval "
+                    f"MUST refuse fail-closed in `strict` mode"
+                )
+            ),
+        },
+        "phase_10w_runtime_available": {
+            "satisfied": bool(phase_10w_runtime_available),
+            "reason": (
+                "Phase 10W bounded local retrieval runtime is "
+                "shipped and reachable"
+                if phase_10w_runtime_available
+                else (
+                    "Phase 10W runtime is not available on "
+                    "this invocation"
+                )
+            ),
+        },
+        "controller_local_scope_only": {
+            "satisfied": bool(controller_local_scope_only),
+            "reason": (
+                "every selected source path resolves inside "
+                "the controller root"
+                if controller_local_scope_only
+                else (
+                    "at least one selected source path "
+                    "resolves outside the controller root; "
+                    "per the Phase 10W contract retrieval "
+                    "MUST refuse fail-closed on any non-"
+                    "controller-local source"
+                )
+            ),
+        },
+        "query_within_char_cap": {
+            "satisfied": bool(query_within_char_cap),
+            "reason": (
+                f"query length is within the closed Phase 10W "
+                f"cap of {RAG_RETRIEVAL_QUERY_CHAR_CAP} "
+                f"characters"
+                if query_within_char_cap
+                else (
+                    f"query length exceeds the closed Phase "
+                    f"10W cap of {RAG_RETRIEVAL_QUERY_CHAR_CAP} "
+                    f"characters"
+                )
+            ),
+        },
+        "per_source_within_byte_cap": {
+            "satisfied": bool(per_source_within_byte_cap),
+            "reason": (
+                f"per-source read is bounded to "
+                f"{RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP} bytes"
+                if per_source_within_byte_cap
+                else (
+                    f"per-source read cap of "
+                    f"{RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP} "
+                    f"bytes was NOT enforced this invocation"
+                )
+            ),
+        },
+    }
+
+
+def build_desktop_rag_retrieval_controls_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10W: assemble the bounded desktop RAG retrieval
+    controls view. This is a READ-ONLY controls view: it mirrors
+    closed enums, bounded caps, and per-source retrieval-
+    eligibility state derived from the shipped Phase 10V
+    `_DESKTOP_RAG_SOURCE_SELECTION_REGISTRY` + the operator
+    inputs. This view NEVER reads source CONTENT (only the Phase
+    10V freshness probe is consulted for last_modified UTC and
+    size_bytes); actual content reads happen only when the
+    operator explicitly invokes `retrieve_local_rag_excerpts(...)`
+    or `run-local-rag-retrieval`.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never opens a network socket, never invokes `_halt(...)`,
+    never widens the Phase 10I library-callable cap. The
+    shipped `load_loop_state(...)` validator HaltError soft-fails
+    so the surface stays operable when the controller's loop-
+    state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    inputs = _desktop_rag_retrieval_normalize_operator_inputs(
+        operator_inputs,
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_source_ids"]
+    now_ts = time.time()
+    sources = []
+    for spec in _DESKTOP_RAG_SOURCE_SELECTION_REGISTRY:
+        _desktop_rag_source_selection_validate_descriptor(spec)
+        source_id = spec["id"]
+        freshness_probe = (
+            _desktop_rag_source_selection_probe_freshness(
+                controller_root, spec, now_ts=now_ts,
+            )
+        )
+        acknowledged = source_id in ack_set
+        source_present = bool(freshness_probe["exists"])
+        candidate_path = (
+            controller_root / spec["path_canonical_rel"]
+        )
+        inside_root = (
+            _desktop_rag_retrieval_source_path_inside_controller_root(
+                controller_root, candidate_path,
+            )
+        )
+        approval_state = (
+            _desktop_rag_retrieval_compute_approval_state(
+                approval_mode=approval_mode,
+                phase_10w_runtime_available=True,
+                operator_acknowledged_advisory_labeling=(
+                    acknowledged
+                ),
+                operator_supplied_identity=identity_supplied,
+                controller_local_scope_only=inside_root,
+                query_within_char_cap=True,
+                per_source_within_byte_cap=True,
+            )
+        )
+        eligible = (
+            source_present
+            and inside_root
+            and all(
+                approval_state[req]["satisfied"]
+                for req in RAG_RETRIEVAL_APPROVAL_REQUIREMENTS
+                if req in (
+                    "operator_acknowledged_advisory_labeling",
+                    "operator_supplied_identity",
+                    "approval_mode_supports_retrieval",
+                    "phase_10w_runtime_available",
+                    "controller_local_scope_only",
+                )
+            )
+        )
+        sources.append({
+            "id": source_id,
+            "display_name": spec["display_name"],
+            "source_type": spec["source_type"],
+            "provenance": spec["provenance"],
+            "advisory_label_rule": (
+                spec["advisory_label_rule"]
+            ),
+            "path_canonical_rel": (
+                spec["path_canonical_rel"]
+            ),
+            "path_canonical": (
+                freshness_probe["path_canonical"]
+            ),
+            "source_path_present_in_repo": source_present,
+            "controller_local_scope_only": inside_root,
+            "last_modified_utc": (
+                freshness_probe["last_modified_utc"]
+            ),
+            "size_bytes": freshness_probe["size_bytes"],
+            "freshness_state": (
+                freshness_probe["freshness_state"]
+            ),
+            "operator_acknowledged": acknowledged,
+            "approval_state": approval_state,
+            "retrieval_eligible": eligible,
+        })
+    return {
+        "view_signal_version": (
+            DESKTOP_RAG_RETRIEVAL_CONTROLS_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10w_runtime_available": True,
+        "index_state_default": "empty",
+        "ranking_mode_default": "term_overlap_bounded",
+        "query_char_cap": RAG_RETRIEVAL_QUERY_CHAR_CAP,
+        "per_source_byte_cap": (
+            RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP
+        ),
+        "top_k_cap": RAG_RETRIEVAL_TOP_K_CAP,
+        "top_k_default": RAG_RETRIEVAL_TOP_K_DEFAULT,
+        "excerpt_window_chars": (
+            RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS
+        ),
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_source_ids": sorted(ack_set),
+        },
+        "index_states": list(RAG_RETRIEVAL_INDEX_STATES),
+        "ranking_modes": list(RAG_RETRIEVAL_RANKING_MODES),
+        "approval_requirements": list(
+            RAG_RETRIEVAL_APPROVAL_REQUIREMENTS
+        ),
+        "refusal_reasons": list(RAG_RETRIEVAL_REFUSAL_REASONS),
+        "sources": sources,
+        "precedence_note": (
+            DESKTOP_RAG_RETRIEVAL_CONTROLS_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_rag_retrieval_controls_text(
+    view: dict,
+) -> list:
+    """Phase 10W: format the assembled retrieval controls view
+    as text lines. Attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[rag-retrieval]`, `[rag-source]`,
+    `[rag-provenance]`, `[rag-freshness]`, `[rag-advisory]`,
+    `[rag-approval]`, `[refused]`) keep attribution consistent
+    with the Phase 10T / 10U / 10V vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-rag-retrieval-controls] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10w_runtime_available (bounded "
+        f"controller-local runtime): "
+        f"{view['phase_10w_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [rag-retrieval] query_char_cap="
+        f"{view['query_char_cap']!r} "
+        f"per_source_byte_cap={view['per_source_byte_cap']!r} "
+        f"top_k_cap={view['top_k_cap']!r} "
+        f"top_k_default={view['top_k_default']!r} "
+        f"excerpt_window_chars="
+        f"{view['excerpt_window_chars']!r}"
+    )
+    lines.append(
+        f"  [advisory] index_state_default="
+        f"{view['index_state_default']!r} "
+        f"ranking_mode_default={view['ranking_mode_default']!r}"
+    )
+    lines.append(
+        f"  [advisory] index_states (closed Phase 10W "
+        f"enumeration): {view['index_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] ranking_modes (closed Phase 10W "
+        f"enumeration): {view['ranking_modes']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase 10W "
+        f"enumeration): {view['approval_requirements']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10W "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [rag-approval] operator_inputs.identity "
+        f"(per-session): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [rag-approval] operator_inputs."
+        f"acknowledged_source_ids (per-session): "
+        f"{op_inputs.get('acknowledged_source_ids', [])!r}"
+    )
+    for source in view.get("sources", []):
+        eligible = source["retrieval_eligible"]
+        tag = (
+            "[rag-source]" if eligible else "[refused]"
+        )
+        lines.append(
+            f"  {tag} id={source['id']!r} "
+            f"display_name={source['display_name']!r} "
+            f"source_type={source['source_type']!r} "
+            f"retrieval_eligible={eligible!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] provenance="
+            f"{source['provenance']!r} "
+            f"advisory_label_rule="
+            f"{source['advisory_label_rule']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] path_canonical_rel="
+            f"{source['path_canonical_rel']!r} "
+            f"path_canonical={source['path_canonical']!r}"
+        )
+        lines.append(
+            f"    [rag-freshness] "
+            f"source_path_present_in_repo="
+            f"{source['source_path_present_in_repo']!r} "
+            f"controller_local_scope_only="
+            f"{source['controller_local_scope_only']!r} "
+            f"freshness_state={source['freshness_state']!r} "
+            f"last_modified_utc="
+            f"{source['last_modified_utc']!r} "
+            f"size_bytes={source['size_bytes']!r}"
+        )
+        for req in (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_retrieval",
+            "phase_10w_runtime_available",
+            "controller_local_scope_only",
+        ):
+            entry = source["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[rag-approval]" if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: "
+                f"satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_rag_retrieval_controls(view: dict) -> list:
+    """Phase 10W desktop control surface: return a closed list
+    of widget descriptors ready for binding to actual desktop-
+    side controls. Each `enabled` is True only when the per-
+    source `retrieval_eligible` is True; disabled controls
+    still surface with the refusal state visible to the
+    reviewer.
+    """
+    controls: list = []
+    top_k = view.get("top_k_default", RAG_RETRIEVAL_TOP_K_DEFAULT)
+    for source in view.get("sources", []):
+        eligible = source["retrieval_eligible"]
+        clipboard_payload = (
+            "python scripts/agent_loop.py "
+            "run-local-rag-retrieval "
+            "--controller-root <PATH> "
+            "--operator-identity <NAME> "
+            f"--acknowledge-source {source['id']} "
+            "--query \"<QUERY>\" "
+            f"--top-k {top_k}"
+        )
+        controls.append({
+            "id": source["id"],
+            "label": (
+                f"Copy retrieval command: "
+                f"{source['display_name']} "
+                f"[{'eligible' if eligible else 'refused'}]"
+            ),
+            "enabled": eligible,
+            "source_type": source["source_type"],
+            "provenance": source["provenance"],
+            "advisory_label_rule": (
+                source["advisory_label_rule"]
+            ),
+            "freshness_state": source["freshness_state"],
+            "retrieval_eligible": eligible,
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "rag_retrieval_controls_ux",
+        })
+    return controls
+
+
+def retrieve_local_rag_excerpts(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict],
+    query: str,
+    top_k: Optional[int] = None,
+) -> dict:
+    """Phase 10W bounded controller-local RAG retrieval.
+
+    Reads at most `RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP` bytes per
+    eligible source, tokenizes lowercase alphanumeric words,
+    ranks by bounded term-overlap, and returns at most
+    `RAG_RETRIEVAL_TOP_K_CAP` (capped) excerpts each bounded to
+    `RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS`. Every excerpt carries
+    `[rag-advisory]` provenance tagging per the Phase 10O
+    advisory-vs-canonical mirror rule.
+
+    Refuses fail-closed via the returned dict's `refusal_reason`
+    field (never raises) when:
+      - query is empty / not a string / longer than
+        `RAG_RETRIEVAL_QUERY_CHAR_CAP`
+      - operator identity is missing
+      - no source was acknowledged AND at least one candidate
+        source exists
+      - approval_mode is `strict`
+      - a selected source path resolves outside the controller
+        root
+
+    Never writes, never mutates any canonical artifact, never
+    opens a network socket, never spawns a subprocess, never
+    persists a retrieval cache or hit log, never invokes
+    `_halt(...)`, never contacts a remote index / vector
+    database / hosted retrieval service, never widens the
+    Phase 10I library-callable cap.
+    """
+    result_base = {
+        "phase_10w_runtime_available": True,
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "query": query if isinstance(query, str) else "",
+        "query_char_count": (
+            len(query) if isinstance(query, str) else 0
+        ),
+        "top_k_requested": None,
+        "top_k_returned": 0,
+        "index_state": "empty",
+        "ranking_mode": "term_overlap_bounded",
+        "sources_indexed_ids": [],
+        "sources_refused_ids": [],
+        "excerpts": [],
+        "refusal_reason": None,
+        "refusal_message": None,
+    }
+    if not isinstance(query, str) or not query:
+        result_base["refusal_reason"] = "query_empty"
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: query is empty or "
+            "not a string; supply an operator query via "
+            "`--query \"<TEXT>\"`"
+        )
+        return result_base
+    if len(query) > RAG_RETRIEVAL_QUERY_CHAR_CAP:
+        result_base["refusal_reason"] = "query_too_long"
+        result_base["refusal_message"] = (
+            f"Phase 10W retrieval refused: query length "
+            f"{len(query)} exceeds the closed cap "
+            f"{RAG_RETRIEVAL_QUERY_CHAR_CAP}; shorten the "
+            f"query and retry"
+        )
+        return result_base
+    inputs = _desktop_rag_retrieval_normalize_operator_inputs(
+        operator_inputs,
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_source_ids"]
+    if not identity_supplied:
+        result_base["refusal_reason"] = (
+            "operator_identity_missing"
+        )
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: operator identity "
+            "not supplied; per the Phase 10V contract identity "
+            "MUST be operator-supplied and MUST NOT be auto-"
+            "filled from `$USER` / `whoami` / packaging-time "
+            "identity / any persistent RAG-side identity store"
+        )
+        return result_base
+    if not ack_set:
+        result_base["refusal_reason"] = (
+            "operator_acknowledgement_missing"
+        )
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: no source id has "
+            "been acknowledged this session; supply "
+            "`--acknowledge-source <ID>` (repeatable) for each "
+            "source the operator explicitly opts in to"
+        )
+        return result_base
+    # Load loop-state approval mode.
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    if approval_mode not in (
+        RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES
+    ):
+        result_base["refusal_reason"] = "approval_mode_strict"
+        result_base["refusal_message"] = (
+            f"Phase 10W retrieval refused: controller loop-"
+            f"state.approval_mode={approval_mode!r} is not in "
+            f"the permitted set "
+            f"{sorted(RAG_RETRIEVAL_PERMITTED_APPROVAL_MODES)!r}"
+        )
+        return result_base
+    if top_k is None:
+        top_k_effective = RAG_RETRIEVAL_TOP_K_DEFAULT
+    else:
+        try:
+            top_k_effective = int(top_k)
+        except (TypeError, ValueError):
+            top_k_effective = RAG_RETRIEVAL_TOP_K_DEFAULT
+    if top_k_effective < 1:
+        top_k_effective = 1
+    if top_k_effective > RAG_RETRIEVAL_TOP_K_CAP:
+        top_k_effective = RAG_RETRIEVAL_TOP_K_CAP
+    result_base["top_k_requested"] = (
+        top_k if isinstance(top_k, int) else None
+    )
+    query_tokens = _desktop_rag_retrieval_tokenize(query)
+    candidates = []
+    indexed_ids = []
+    refused_ids = []
+    for spec in _DESKTOP_RAG_SOURCE_SELECTION_REGISTRY:
+        _desktop_rag_source_selection_validate_descriptor(spec)
+        source_id = spec["id"]
+        if source_id not in ack_set:
+            refused_ids.append(source_id)
+            continue
+        candidate_path = (
+            controller_root / spec["path_canonical_rel"]
+        )
+        if not (
+            _desktop_rag_retrieval_source_path_inside_controller_root(
+                controller_root, candidate_path,
+            )
+        ):
+            # Preserve controller-local scope: refuse fail-
+            # closed on ANY selected source whose path
+            # resolves outside the controller root, even if
+            # the operator acknowledged it.
+            result_base["refusal_reason"] = (
+                "source_path_outside_controller_root"
+            )
+            result_base["refusal_message"] = (
+                f"Phase 10W retrieval refused: source "
+                f"{source_id!r} resolves outside the "
+                f"controller root; per the Phase 10W contract "
+                f"retrieval MUST refuse fail-closed on any "
+                f"non-controller-local source"
+            )
+            result_base["sources_indexed_ids"] = indexed_ids
+            result_base["sources_refused_ids"] = (
+                refused_ids + [source_id]
+            )
+            return result_base
+        if not candidate_path.exists():
+            refused_ids.append(source_id)
+            continue
+        text, bytes_read, was_truncated = (
+            _desktop_rag_retrieval_read_source_bounded(
+                candidate_path,
+            )
+        )
+        source_tokens = (
+            _desktop_rag_retrieval_tokenize(text)
+        )
+        score, matched = (
+            _desktop_rag_retrieval_score_source(
+                source_tokens, query_tokens,
+            )
+        )
+        freshness_probe = (
+            _desktop_rag_source_selection_probe_freshness(
+                controller_root, spec,
+            )
+        )
+        candidates.append({
+            "source_id": source_id,
+            "source_display_name": spec["display_name"],
+            "source_path_canonical": (
+                candidate_path.resolve().as_posix()
+            ),
+            "provenance": spec["provenance"],
+            "advisory_label_rule": (
+                spec["advisory_label_rule"]
+            ),
+            "freshness_state": (
+                freshness_probe["freshness_state"]
+            ),
+            "last_modified_utc": (
+                freshness_probe["last_modified_utc"]
+            ),
+            "score": score,
+            "tokens_matched": list(matched),
+            "excerpt_text": (
+                _desktop_rag_retrieval_extract_excerpt(
+                    text, query_tokens,
+                )
+            ),
+            "excerpt_window_chars": (
+                RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS
+            ),
+            "bytes_read": bytes_read,
+            "source_was_truncated": was_truncated,
+        })
+        indexed_ids.append(source_id)
+    if not indexed_ids:
+        result_base["refusal_reason"] = "no_sources_selected"
+        result_base["refusal_message"] = (
+            "Phase 10W retrieval refused: no acknowledged "
+            "source is present on disk; supply "
+            "`--acknowledge-source <ID>` for at least one "
+            "source whose canonical path resolves inside the "
+            "controller root and exists on disk"
+        )
+        result_base["sources_refused_ids"] = refused_ids
+        return result_base
+    # Rank descending by score; ties break by source id for
+    # deterministic ordering.
+    ranked = sorted(
+        candidates,
+        key=lambda c: (-c["score"], c["source_id"]),
+    )
+    top_excerpts = ranked[:top_k_effective]
+    # Tag every returned excerpt as `[rag-advisory]` per the
+    # Phase 10O advisory-vs-canonical mirror rule.
+    for excerpt in top_excerpts:
+        excerpt["provenance_tag"] = "[rag-advisory]"
+    result_base["index_state"] = "built_this_invocation"
+    result_base["sources_indexed_ids"] = indexed_ids
+    result_base["sources_refused_ids"] = refused_ids
+    result_base["excerpts"] = top_excerpts
+    result_base["top_k_returned"] = len(top_excerpts)
+    return result_base
+
+
+def render_local_rag_retrieval_result_text(
+    result: dict,
+) -> list:
+    """Format the retrieval result dict as text lines. When the
+    retrieval refused, the refusal reason and message surface
+    with `[refused]` attribution. When the retrieval succeeded,
+    each excerpt surfaces with `[rag-advisory]` attribution per
+    the Phase 10O advisory-vs-canonical mirror rule.
+    """
+    lines = []
+    lines.append(
+        f"[local-rag-retrieval] result "
+        f"(phase_10w_runtime_available="
+        f"{result['phase_10w_runtime_available']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror): "
+        f"{result['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [rag-retrieval] query={result['query']!r} "
+        f"query_char_count={result['query_char_count']!r} "
+        f"top_k_requested={result['top_k_requested']!r} "
+        f"top_k_returned={result['top_k_returned']!r} "
+        f"index_state={result['index_state']!r} "
+        f"ranking_mode={result['ranking_mode']!r}"
+    )
+    lines.append(
+        f"  [rag-retrieval] sources_indexed_ids: "
+        f"{result['sources_indexed_ids']!r}"
+    )
+    lines.append(
+        f"  [rag-retrieval] sources_refused_ids: "
+        f"{result['sources_refused_ids']!r}"
+    )
+    if result["refusal_reason"] is not None:
+        lines.append(
+            f"  [refused] refusal_reason="
+            f"{result['refusal_reason']!r}"
+        )
+        lines.append(
+            f"  [refused] refusal_message="
+            f"{result['refusal_message']!r}"
+        )
+        return lines
+    if not result["excerpts"]:
+        lines.append(
+            "  [rag-retrieval] no excerpts returned"
+        )
+        return lines
+    for idx, excerpt in enumerate(result["excerpts"], 1):
+        lines.append(
+            f"  [rag-advisory] excerpt {idx}: "
+            f"source_id={excerpt['source_id']!r} "
+            f"score={excerpt['score']!r} "
+            f"freshness_state="
+            f"{excerpt['freshness_state']!r} "
+            f"last_modified_utc="
+            f"{excerpt['last_modified_utc']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] source_display_name="
+            f"{excerpt['source_display_name']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] source_path_canonical="
+            f"{excerpt['source_path_canonical']!r}"
+        )
+        lines.append(
+            f"    [rag-provenance] provenance="
+            f"{excerpt['provenance']!r} "
+            f"advisory_label_rule="
+            f"{excerpt['advisory_label_rule']!r}"
+        )
+        lines.append(
+            f"    [rag-retrieval] tokens_matched="
+            f"{excerpt['tokens_matched']!r} "
+            f"bytes_read={excerpt['bytes_read']!r} "
+            f"source_was_truncated="
+            f"{excerpt['source_was_truncated']!r}"
+        )
+        lines.append(
+            f"    [rag-advisory] excerpt_text: "
+            f"{excerpt['excerpt_text']!r}"
+        )
+    return lines
+
+
+def cmd_view_desktop_rag_retrieval_controls(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10W operator entry: print the desktop RAG retrieval
+    controls view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Per the Phase
+    10L Desktop App Shell Contract this handler NEVER mutates
+    any canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER mutates
+    `.agent-loop/loop-state.json`, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket,
+    NEVER reads source CONTENT (only the Phase 10V freshness
+    probe is consulted), NEVER widens the Phase 10I library-
+    callable control cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-rag-retrieval-controls] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop RAG retrieval "
+            "controls surface MUST NOT silently pick a "
+            "default root from an auto-discovered repo root, "
+            "the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Supply the controller root "
+            "explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-rag-retrieval-controls] REFUSED: "
+            f"controller root "
+            f"{validation['root_path']!r} is missing "
+            f"required markers {missing!r}; per the Phase 10L "
+            f"Desktop App Shell Contract the desktop shell "
+            f"requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_source_ids": frozenset(
+            getattr(args, "acknowledge_source", None) or []
+        ),
+    }
+    view = build_desktop_rag_retrieval_controls_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_rag_retrieval_controls_text(view):
+        print(line)
+    return 0
+
+
+def cmd_run_local_rag_retrieval(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10W operator entry: actually run bounded controller-
+    local RAG retrieval and print the excerpts.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. Reads at most
+    `RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP` bytes per eligible
+    source; NEVER writes; NEVER mutates any canonical artifact;
+    NEVER opens a network socket; NEVER spawns a subprocess;
+    NEVER persists an index or hit log on disk; NEVER widens
+    the Phase 10I library-callable cap; NEVER lets retrieved
+    excerpts substitute for canonical artifact content
+    (excerpts are tagged `[rag-advisory]` per the Phase 10O
+    mirror rule).
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[local-rag-retrieval] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the retrieval runtime MUST NOT "
+            "silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[local-rag-retrieval] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop "
+            f"App Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ "
+            f"to be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_source_ids": frozenset(
+            getattr(args, "acknowledge_source", None) or []
+        ),
+    }
+    query = getattr(args, "query", None) or ""
+    top_k = getattr(args, "top_k", None)
+    result = retrieve_local_rag_excerpts(
+        controller_root,
+        operator_inputs=operator_inputs,
+        query=query,
+        top_k=top_k,
+    )
+    for line in render_local_rag_retrieval_result_text(result):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -29249,6 +30624,145 @@ def build_parser() -> argparse.ArgumentParser:
             "source id."
         ),
     )
+    rag_retrieval_controls = sub.add_parser(
+        "view-desktop-rag-retrieval-controls",
+        help=(
+            "Phase 10W desktop app RAG local index and "
+            "retrieval controls surface: render the closed "
+            "bounded controls view (query char cap, per-source "
+            "byte cap, top-K cap, excerpt window chars) plus "
+            "per-source retrieval-eligibility state derived "
+            "from the Phase 10V registry + operator inputs. "
+            "READ-ONLY: never reads source CONTENT; actual "
+            "content reads happen only via "
+            "`run-local-rag-retrieval`. Phase 7C reporter "
+            "pattern: always exits 0 on report content; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never contacts a remote index / vector "
+            "database; never widens the Phase 10I library-"
+            "callable control cap."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop RAG retrieval controls view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT "
+            "silently pick a default root. Omitting this flag "
+            "returns exit 2 with a "
+            "`[desktop-rag-retrieval-controls] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    rag_retrieval_controls.add_argument(
+        "--acknowledge-source",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-source "
+            "advisory-labeling acknowledgement. Repeat the "
+            "flag once per source id."
+        ),
+    )
+    run_local_rag = sub.add_parser(
+        "run-local-rag-retrieval",
+        help=(
+            "Phase 10W bounded controller-local RAG "
+            "retrieval driver: read at most "
+            f"{RAG_RETRIEVAL_PER_SOURCE_BYTE_CAP} bytes per "
+            "acknowledged source, tokenize lowercase "
+            "alphanumeric words, rank by bounded term-overlap, "
+            "and return at most "
+            f"{RAG_RETRIEVAL_TOP_K_CAP} excerpts each bounded "
+            f"to {RAG_RETRIEVAL_EXCERPT_WINDOW_CHARS} chars. "
+            "Every excerpt is tagged `[rag-advisory]` per the "
+            "Phase 10O advisory-vs-canonical mirror rule and "
+            "NEVER substitutes for canonical artifact content. "
+            "CONTROLLER-LOCAL ONLY: refuses fail-closed on any "
+            "source path resolving outside the controller "
+            "root. Phase 7C reporter pattern: always exits 0 "
+            "on report content once the controller-root "
+            "selection succeeds; never mutates any canonical "
+            "artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never contacts a remote index / vector "
+            "database / hosted retrieval service; never "
+            "persists a retrieval cache or hit log; never "
+            "widens the Phase 10I library-callable cap."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "retrieval runtime targets. Per the Phase 10L "
+            "Controller-Root Selection Flow the runtime MUST "
+            "NOT silently pick a default root."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED-in-practice per-session operator-"
+            "supplied identity. Retrieval refuses fail-closed "
+            "if this flag is omitted. Per the Phase 10V "
+            "contract MUST NOT be auto-filled from $USER / "
+            "whoami / packaging-time identity / any persistent "
+            "RAG-side identity store."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--acknowledge-source",
+        action="append",
+        default=None,
+        help=(
+            "REQUIRED-in-practice repeatable per-session per-"
+            "source advisory-labeling acknowledgement. "
+            "Retrieval refuses fail-closed if no source is "
+            "acknowledged. Repeat the flag once per source id."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--query",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED per-invocation operator query text. "
+            f"Bounded to {RAG_RETRIEVAL_QUERY_CHAR_CAP} chars; "
+            "longer queries are refused fail-closed."
+        ),
+    )
+    run_local_rag.add_argument(
+        "--top-k",
+        type=int,
+        default=None,
+        help=(
+            "OPTIONAL per-invocation top-K value. Defaults to "
+            f"{RAG_RETRIEVAL_TOP_K_DEFAULT}; capped at "
+            f"{RAG_RETRIEVAL_TOP_K_CAP}."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -29530,6 +31044,10 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-rag-source-selection": (
         cmd_view_desktop_rag_source_selection
     ),
+    "view-desktop-rag-retrieval-controls": (
+        cmd_view_desktop_rag_retrieval_controls
+    ),
+    "run-local-rag-retrieval": cmd_run_local_rag_retrieval,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
