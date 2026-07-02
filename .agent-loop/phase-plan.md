@@ -5460,6 +5460,15 @@ artifacts without creating a hidden second control plane.
 
 ## Phase 10Y - Capacity Recovery And Resume Console
 
+### Status
+
+Complete and approved by human to advance to Phase 10Z. Phase 10Y closed with
+terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the desktop capacity-
+recovery / resume-console surface, closed capacity-halt / checkpoint / resume-
+policy / retry state enumerations, bounded checkpoint mirror, and the fix-
+cycle CONFIRMED-halt allowlist for the `resume` button were verified in the
+current repo state.
+
 ### Objective
 
 Add the first desktop-facing capacity recovery and resume-console surface so

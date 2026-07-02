@@ -14165,6 +14165,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     resume_console_view = _desktop_safe_call_view(
         build_desktop_resume_console_view, controller_root,
     )
+    selection_view = _desktop_safe_call_view(
+        build_desktop_selection_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14184,6 +14187,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         ),
         "run_console_view": run_console_view,
         "resume_console_view": resume_console_view,
+        "selection_view": selection_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14307,6 +14311,17 @@ def _desktop_render_sub_view_lines(
             render_desktop_resume_console_text(sub_view),
         )
         return lines
+    if key == "selection_view":
+        # Re-use the shipped Phase 10Z renderer verbatim so the
+        # selection attribution tags ([selection] / [preset-
+        # category] / [preset-approval] / [preset-enablement] /
+        # [deferred-runtime] / [canonical mirror] / [advisory] /
+        # [refused]) stay consistent with the standalone
+        # `view-desktop-selection` output.
+        lines.extend(
+            render_desktop_selection_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14391,6 +14406,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "resume_console_view",
             "Capacity Recovery Console (Phase 10Y)",
+        ),
+        (
+            "selection_view",
+            "Selection UX (Phase 10Z)",
         ),
     ):
         sub = view.get(key, {})
@@ -15020,6 +15039,13 @@ def _launch_desktop_app_window(
         text="Capacity Recovery Console (Phase 10Y)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    selection_frame = tk.Frame(control_frame)
+    selection_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        selection_frame,
+        text="Selection UX (Phase 10Z)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15047,6 +15073,7 @@ def _launch_desktop_app_window(
     rag_retrieval_button_widgets: list = []
     run_console_button_widgets: list = []
     resume_console_button_widgets: list = []
+    selection_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15661,6 +15688,36 @@ def _launch_desktop_app_window(
             resume_console_frame,
             resume_console_controls,
             resume_console_button_widgets,
+        )
+        # Phase 10Z: rebuild the selection button row from the
+        # cached sub-view. `build_desktop_selection_controls` is
+        # READ-ONLY (each button copies an operator-visible
+        # enablement request template to clipboard); ZERO new
+        # library-callable controls are introduced. Since
+        # `phase_10z_runtime_available=False` in this slice every
+        # button surfaces `enabled=False` regardless of operator
+        # input - the Tk shell renders the disabled buttons
+        # anyway so the operator can see the preset catalog and
+        # copy the request template.
+        selection_sub_view = view.get("selection_view", {})
+        if (
+            isinstance(selection_sub_view, dict)
+            and selection_sub_view.get("view") is None
+            and "error" in selection_sub_view
+        ):
+            selection_controls = []
+        elif isinstance(selection_sub_view, dict):
+            selection_controls = (
+                build_desktop_selection_controls(
+                    selection_sub_view,
+                )
+            )
+        else:
+            selection_controls = []
+        _rebuild_button_row(
+            selection_frame,
+            selection_controls,
+            selection_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -25501,6 +25558,848 @@ def cmd_view_desktop_resume_console(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10Z: Model, Policy Pack, And Template Selection UX.
+#
+# Layers a bounded READ-ONLY selection-UX contract on top of the
+# shipped Phase 10M desktop app. Ships:
+#   - `build_desktop_selection_view(controller_root, *,
+#     operator_inputs=None)` READ-ONLY library that mirrors the
+#     canonical `loop-state.json` approval mode + a per-session
+#     operator-input dict, and derives per-preset approval /
+#     enablement state from the closed `_DESKTOP_SELECTION
+#     _REGISTRY`. The registry ships three concrete presets
+#     spanning every closed `preset_category`
+#     (`model` / `policy_pack` / `project_template`) so every
+#     descriptor validator branch is exercised end-to-end.
+#   - `render_desktop_selection_text(view)` per-line renderer
+#     with explicit `[canonical mirror]` / `[advisory]` /
+#     `[selection]` / `[preset-category]` / `[preset-approval]`
+#     / `[preset-enablement]` / `[refused]` / `[deferred-
+#     runtime]` attribution.
+#   - `build_desktop_selection_controls(view)` COPY-PASTE-ONLY
+#     widget list. The Phase 10Z fail-closed default is that
+#     `phase_10z_runtime_available=False` in this slice, so every
+#     preset ALWAYS surfaces as `refused_until_policy_update`
+#     regardless of operator input; the shipped Tk panel
+#     therefore renders every button `enabled=False` with a
+#     copy-paste payload pinned at the operator-visible
+#     enablement request template so the operator can raise the
+#     request through the shipped review channel instead of
+#     silently mutating a hidden preset store.
+#   - `view-desktop-selection` Phase 7C CLI reporter (always
+#     exits 0 on report content once the controller-root
+#     selection succeeds; `--controller-root <PATH>` REQUIRED
+#     per the Phase 10L Controller-Root Selection Flow).
+#
+# The surface is VISIBILITY / SELECTION-CONTRACT ONLY: it NEVER
+# writes any canonical artifact, NEVER writes a selection cache,
+# NEVER mutates a shipped model / policy-pack / template store,
+# NEVER appends to `.agent-loop/orchestrator.log`, NEVER advances
+# loop-state, NEVER invokes `_halt(...)`, NEVER spawns a
+# subprocess, NEVER opens a network socket, NEVER refreshes a
+# preset from a hosted service, NEVER schedules a background
+# watcher, NEVER auto-activates the next phase, and NEVER widens
+# the Phase 10I three-control library-callable cap.
+# ---------------------------------------------------------------------------
+
+DESKTOP_SELECTION_SIGNAL_VERSION = "phase-10z-v1"
+
+DESKTOP_SELECTION_PRECEDENCE_NOTE = (
+    "Phase 10Z model, policy pack, and template selection UX. "
+    "This surface is a SELECTION-CONTRACT SLICE only: every "
+    "preset descriptor is a closed enumeration mirror derived "
+    "from the shipped `_DESKTOP_SELECTION_REGISTRY` with "
+    "explicit `[canonical mirror]` / `[preset-category]` "
+    "attribution. No preset is invented at runtime and no "
+    "hidden UI-only selection field is introduced. The Phase "
+    "10I three-control library-callable cap is preserved "
+    "exactly; ZERO new library-callable controls are "
+    "introduced. Since `phase_10z_runtime_available=False` in "
+    "this slice every preset ALWAYS surfaces as "
+    "`refused_until_policy_update` regardless of operator "
+    "input - the actual selection-runtime is deferred to a "
+    "future Phase 10+ runtime slice. The surface NEVER mutates "
+    "any canonical artifact, NEVER writes a selection cache, "
+    "NEVER mutates a shipped model / policy-pack / template "
+    "store, NEVER appends to `.agent-loop/orchestrator.log`, "
+    "NEVER advances loop-state, NEVER invokes `_halt(...)`, "
+    "NEVER spawns a subprocess, NEVER opens a network socket, "
+    "NEVER refreshes a preset from a hosted service, NEVER "
+    "schedules a background watcher, NEVER auto-activates the "
+    "next phase (per the Phase 4 planner / activator "
+    "separation), and NEVER introduces a preset-side database / "
+    "preference store / recents list / identity token / session "
+    "token"
+)
+
+SELECTION_PRESET_CATEGORIES = (
+    "model",
+    "policy_pack",
+    "project_template",
+)
+
+SELECTION_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_until_policy_update",
+)
+
+SELECTION_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_preset_scope",
+    "operator_supplied_identity",
+    "approval_mode_supports_selection",
+    "phase_10z_runtime_available",
+    "policy_rule_permits_selection",
+)
+
+SELECTION_REFUSAL_REASONS = (
+    "approval_mode_strict",
+    "operator_identity_missing",
+    "operator_acknowledgement_missing",
+    "policy_rule_refuses_selection",
+    "runtime_not_available",
+)
+
+SELECTION_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+
+# Closed selection registry. Every entry MUST satisfy the pure
+# `_desktop_selection_validate_descriptor(...)` validator. The
+# registry intentionally ships three entries - one per closed
+# `preset_category` - so every category branch is exercised end-
+# to-end without inventing a wider preset taxonomy in this slice.
+_DESKTOP_SELECTION_REGISTRY: tuple = (
+    {
+        "id": "shipped_default_model",
+        "display_name": "Shipped Default Model",
+        "preset_category": "model",
+        "preset_summary": (
+            "The shipped default Claude / Codex model pair the "
+            "orchestrator already uses when no override is set. "
+            "Selecting this preset is a no-op advisory today; "
+            "any actual override runtime is deferred to a "
+            "future Phase 10+ runtime slice."
+        ),
+        "safety_copy": (
+            "This preset is advisory-only in Phase 10Z. Do not "
+            "expect it to mutate the running model choice."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_preset_scope",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10z_runtime_available",
+            "policy_rule_permits_selection",
+        ),
+        "deferred_runtime_marker": (
+            "Model override runtime is deferred; the shipped "
+            "runtime picks the Claude / Codex model per the "
+            "current adapter config."
+        ),
+        "refusal_reason_template": (
+            "Phase 10Z runtime is not available; every preset "
+            "surfaces as `refused_until_policy_update` in this "
+            "slice."
+        ),
+    },
+    {
+        "id": "shipped_default_policy_pack",
+        "display_name": "Shipped Default Policy Pack",
+        "preset_category": "policy_pack",
+        "preset_summary": (
+            "The shipped default policy pack the orchestrator "
+            "already applies: the AGENTS.md + CLAUDE.md + "
+            "Phase 5A approval modes contract. This preset is "
+            "an advisory-only mirror in Phase 10Z."
+        ),
+        "safety_copy": (
+            "This preset is advisory-only in Phase 10Z. Do not "
+            "expect it to mutate the active policy pack."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_preset_scope",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10z_runtime_available",
+            "policy_rule_permits_selection",
+        ),
+        "deferred_runtime_marker": (
+            "Policy-pack override runtime is deferred; the "
+            "shipped runtime enforces AGENTS.md + CLAUDE.md + "
+            "Phase 5A verbatim."
+        ),
+        "refusal_reason_template": (
+            "Phase 10Z runtime is not available; every preset "
+            "surfaces as `refused_until_policy_update` in this "
+            "slice."
+        ),
+    },
+    {
+        "id": "shipped_default_project_template",
+        "display_name": "Shipped Default Project Template",
+        "preset_category": "project_template",
+        "preset_summary": (
+            "The shipped default project template the "
+            "orchestrator already writes: a bare AGENTS.md + "
+            "CLAUDE.md + TASK.md + `.agent-loop/` layout. This "
+            "preset is an advisory-only mirror in Phase 10Z."
+        ),
+        "safety_copy": (
+            "This preset is advisory-only in Phase 10Z. Do not "
+            "expect it to mutate an existing project template."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_preset_scope",
+            "operator_supplied_identity",
+            "approval_mode_supports_selection",
+            "phase_10z_runtime_available",
+            "policy_rule_permits_selection",
+        ),
+        "deferred_runtime_marker": (
+            "Project-template override runtime is deferred; the "
+            "shipped orchestrator writes the shipped layout "
+            "verbatim."
+        ),
+        "refusal_reason_template": (
+            "Phase 10Z runtime is not available; every preset "
+            "surfaces as `refused_until_policy_update` in this "
+            "slice."
+        ),
+    },
+)
+
+
+def _desktop_selection_validate_descriptor(spec: dict) -> None:
+    """Fail-closed validate a single selection descriptor. Refuses
+    via HaltError on any missing required field, wrong-typed
+    value, unknown `preset_category`, or unknown
+    `approval_requirements` member.
+    """
+    required = (
+        "id",
+        "display_name",
+        "preset_category",
+        "preset_summary",
+        "safety_copy",
+        "approval_requirements",
+        "deferred_runtime_marker",
+        "refusal_reason_template",
+    )
+    for key in required:
+        if key not in spec:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop selection descriptor missing "
+                    f"required field {key!r}: {spec!r}"
+                ),
+            )
+    if not isinstance(spec["id"], str) or not spec["id"]:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection descriptor `id` is not a "
+                f"non-empty string: {spec['id']!r}"
+            ),
+        )
+    if spec["preset_category"] not in (
+        SELECTION_PRESET_CATEGORIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection descriptor "
+                f"`preset_category` is not one of "
+                f"{sorted(SELECTION_PRESET_CATEGORIES)!r}: "
+                f"{spec['preset_category']!r}"
+            ),
+        )
+    if not isinstance(spec["approval_requirements"], tuple):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection descriptor "
+                f"`approval_requirements` MUST be a tuple: "
+                f"{spec['approval_requirements']!r}"
+            ),
+        )
+    for req in spec["approval_requirements"]:
+        if req not in SELECTION_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop selection descriptor "
+                    f"`approval_requirements` includes unknown "
+                    f"member {req!r}; MUST be one of "
+                    f"{sorted(SELECTION_APPROVAL_REQUIREMENTS)!r}"
+                ),
+            )
+
+
+def _desktop_selection_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10Z
+    selection UX. Returns a closed dict with:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when not yet supplied. Per Phase
+        10S source-of-truth preservation MUST NOT be auto-filled
+        from any persistent source.
+      - `acknowledged_preset_ids` (frozenset[str]): the set of
+        preset ids whose safety copy the operator has explicitly
+        acknowledged this session.
+      - `policy_permitted_preset_ids` (frozenset[str]): the set
+        of preset ids the operator-side policy rule explicitly
+        permits this session (additive allow-list; a missing id
+        surfaces as `policy_rule_refuses_selection`).
+
+    A `None` returns the defaults. A non-dict value raises
+    HaltError per the Phase 10S descriptor-validation pattern.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_preset_ids": frozenset(),
+            "policy_permitted_preset_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection refused: operator_inputs "
+                f"is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection refused: operator_inputs"
+                f".identity is not a string ({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_preset_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection refused: operator_inputs"
+                f".acknowledged_preset_ids is not iterable "
+                f"({ack!r})"
+            ),
+        )
+    permit = operator_inputs.get(
+        "policy_permitted_preset_ids", frozenset(),
+    )
+    if not isinstance(permit, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop selection refused: operator_inputs"
+                f".policy_permitted_preset_ids is not iterable "
+                f"({permit!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_preset_ids": frozenset(
+            str(s) for s in ack
+        ),
+        "policy_permitted_preset_ids": frozenset(
+            str(s) for s in permit
+        ),
+    }
+
+
+def _desktop_selection_compute_approval_state(
+    *,
+    approval_mode: Optional[str],
+    phase_10z_runtime_available: bool,
+    operator_acknowledged_preset_scope: bool,
+    operator_supplied_identity: bool,
+    policy_rule_permits_selection: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10Z approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in SELECTION_PERMITTED_APPROVAL_MODES
+    )
+    return {
+        "operator_acknowledged_preset_scope": {
+            "satisfied": bool(
+                operator_acknowledged_preset_scope,
+            ),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-preset scope this session"
+                if operator_acknowledged_preset_scope
+                else (
+                    "preset scope not acknowledged this "
+                    "session; per the Phase 10Z contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10S source-of-truth preservation "
+                    "rule identity MUST be operator-supplied"
+                )
+            ),
+        },
+        "approval_mode_supports_selection": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(SELECTION_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(SELECTION_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10Z contract selection "
+                    f"MUST refuse fail-closed in `strict` mode"
+                )
+            ),
+        },
+        "phase_10z_runtime_available": {
+            "satisfied": bool(phase_10z_runtime_available),
+            "reason": (
+                "Phase 10Z runtime is shipped and reachable"
+                if phase_10z_runtime_available
+                else (
+                    "Phase 10Z runtime is not available on "
+                    "this invocation; every preset surfaces "
+                    "as `refused_until_policy_update` in this "
+                    "slice"
+                )
+            ),
+        },
+        "policy_rule_permits_selection": {
+            "satisfied": bool(policy_rule_permits_selection),
+            "reason": (
+                "operator-side policy rule explicitly permits "
+                "the selection this session"
+                if policy_rule_permits_selection
+                else (
+                    "operator-side policy rule does not "
+                    "permit the selection this session; per "
+                    "the Phase 10Z contract the policy pack "
+                    "is a fail-closed opt-in allow-list, not "
+                    "a refusal set"
+                )
+            ),
+        },
+    }
+
+
+def _desktop_selection_compute_enablement_state(
+    approval_state: dict,
+    phase_10z_runtime_available: bool,
+) -> tuple:
+    """Return `(enablement_state, enablement_reason)`. Pure
+    computation; no IO.
+
+    Since `phase_10z_runtime_available` is hard-coded `False` in
+    this slice, every preset ALWAYS surfaces as
+    `refused_until_policy_update`. When the runtime does ship,
+    promotion to `enabled_pending_runtime` requires every closed
+    approval requirement to be satisfied.
+    """
+    if not phase_10z_runtime_available:
+        return (
+            "refused_until_policy_update",
+            (
+                "Phase 10Z selection runtime is not available "
+                "on this invocation"
+            ),
+        )
+    unmet = [
+        req for req in SELECTION_APPROVAL_REQUIREMENTS
+        if not approval_state.get(req, {}).get(
+            "satisfied", False,
+        )
+    ]
+    if unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"approval requirements not yet satisfied: "
+                f"{unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10Z approval requirement satisfied "
+            "and the runtime is reachable"
+        ),
+    )
+
+
+def build_desktop_selection_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10Z: assemble the bounded desktop selection UX view.
+
+    READ-ONLY. Mirrors the canonical `loop-state.json` approval
+    mode (HaltError from the shipped `load_loop_state(...)`
+    validator is soft-failed per the Phase 10L "MUST NOT
+    propagate validator HaltErrors as canonical halt
+    persistence" rule), normalizes per-session operator inputs,
+    validates every registry entry, and returns a closed per-
+    preset descriptor list.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never opens a network socket, never invokes `_halt(...)`,
+    never persists a selection cache on disk, never refreshes a
+    preset from a hosted service, never widens the Phase 10I
+    library-callable cap.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        s_candidate = loop_state.get("status")
+        if isinstance(s_candidate, str):
+            status_value = s_candidate
+        m_candidate = loop_state.get("approval_mode")
+        if isinstance(m_candidate, str):
+            approval_mode = m_candidate
+    inputs = _desktop_selection_normalize_operator_inputs(
+        operator_inputs,
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_preset_ids"]
+    permit_set = inputs["policy_permitted_preset_ids"]
+
+    presets: list = []
+    for spec in _DESKTOP_SELECTION_REGISTRY:
+        _desktop_selection_validate_descriptor(spec)
+        preset_id = spec["id"]
+        acknowledged = preset_id in ack_set
+        permitted = preset_id in permit_set
+        approval_state = (
+            _desktop_selection_compute_approval_state(
+                approval_mode=approval_mode,
+                phase_10z_runtime_available=False,
+                operator_acknowledged_preset_scope=acknowledged,
+                operator_supplied_identity=identity_supplied,
+                policy_rule_permits_selection=permitted,
+            )
+        )
+        enablement_state, enablement_reason = (
+            _desktop_selection_compute_enablement_state(
+                approval_state,
+                phase_10z_runtime_available=False,
+            )
+        )
+        presets.append({
+            "id": preset_id,
+            "display_name": spec["display_name"],
+            "preset_category": spec["preset_category"],
+            "preset_summary": spec["preset_summary"],
+            "safety_copy": spec["safety_copy"],
+            "approval_requirements": list(
+                spec["approval_requirements"],
+            ),
+            "approval_state": approval_state,
+            "enablement_state": enablement_state,
+            "enablement_reason": enablement_reason,
+            "deferred_runtime_marker": (
+                spec["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                spec["refusal_reason_template"]
+            ),
+        })
+
+    return {
+        "view_signal_version": (
+            DESKTOP_SELECTION_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10z_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_preset_ids": sorted(ack_set),
+            "policy_permitted_preset_ids": sorted(permit_set),
+        },
+        "preset_categories": list(
+            SELECTION_PRESET_CATEGORIES,
+        ),
+        "enablement_states": list(
+            SELECTION_ENABLEMENT_STATES,
+        ),
+        "approval_requirements": list(
+            SELECTION_APPROVAL_REQUIREMENTS,
+        ),
+        "refusal_reasons": list(SELECTION_REFUSAL_REASONS),
+        "presets": presets,
+        "precedence_note": DESKTOP_SELECTION_PRECEDENCE_NOTE,
+    }
+
+
+def render_desktop_selection_text(view: dict) -> list:
+    """Phase 10Z: format the assembled selection view as text
+    lines. Attribution tags (`[canonical mirror]`, `[advisory]`,
+    `[selection]`, `[preset-category]`, `[preset-approval]`,
+    `[preset-enablement]`, `[refused]`, `[deferred-runtime]`)
+    keep the reporter output legible.
+    """
+    lines: list = []
+    lines.append(
+        f"[desktop-selection] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10z_runtime_available (contract "
+        f"slice only): {view['phase_10z_runtime_available']!r}"
+    )
+    op = view.get("operator_inputs") or {}
+    identity = op.get("identity", "")
+    lines.append(
+        f"  [selection] operator_inputs.identity "
+        f"(per-session): supplied={bool(identity)!r} "
+        f"value={identity if identity else ''!r}"
+    )
+    lines.append(
+        f"  [selection] operator_inputs."
+        f"acknowledged_preset_ids (per-session): "
+        f"{op.get('acknowledged_preset_ids', [])!r}"
+    )
+    lines.append(
+        f"  [selection] operator_inputs."
+        f"policy_permitted_preset_ids (per-session): "
+        f"{op.get('policy_permitted_preset_ids', [])!r}"
+    )
+    lines.append(
+        f"  [advisory] preset_categories (closed Phase 10Z "
+        f"enumeration): {view['preset_categories']!r}"
+    )
+    lines.append(
+        f"  [advisory] enablement_states (closed Phase 10Z "
+        f"enumeration): {view['enablement_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase "
+        f"10Z enumeration): {view['approval_requirements']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10Z "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    for preset in view.get("presets", []):
+        enablement = preset["enablement_state"]
+        tag = (
+            "[selection]"
+            if enablement == "enabled_pending_runtime"
+            else "[refused]"
+        )
+        lines.append(
+            f"  {tag} id={preset['id']!r} "
+            f"display_name={preset['display_name']!r} "
+            f"preset_category={preset['preset_category']!r} "
+            f"enablement_state={enablement!r}"
+        )
+        lines.append(
+            f"    [preset-category] preset_summary="
+            f"{preset['preset_summary']!r}"
+        )
+        lines.append(
+            f"    [preset-category] safety_copy="
+            f"{preset['safety_copy']!r}"
+        )
+        lines.append(
+            f"    [preset-enablement] enablement_reason="
+            f"{preset['enablement_reason']!r}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker="
+            f"{preset['deferred_runtime_marker']!r}"
+        )
+        for req in preset["approval_requirements"]:
+            entry = preset["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[preset-approval]" if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: "
+                f"satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_selection_controls(view: dict) -> list:
+    """Phase 10Z: return a closed list of desktop widget
+    descriptors. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control
+    cap is preserved exactly.
+
+    Since `phase_10z_runtime_available=False` in this slice,
+    every button surfaces `enabled=False` and the clipboard
+    payload is pinned at the operator-visible enablement request
+    template so an operator can raise the request through the
+    shipped review channel instead of silently mutating a
+    hidden preset store.
+    """
+    controls: list = []
+    for preset in view.get("presets", []):
+        enablement = preset["enablement_state"]
+        enabled = enablement == "enabled_pending_runtime"
+        clipboard_payload = (
+            "# Phase 10Z selection request template. Copy the "
+            "block below into a review issue / operator note "
+            "instead of mutating any hidden preset store.\n"
+            f"preset_id: {preset['id']}\n"
+            f"preset_category: {preset['preset_category']}\n"
+            f"display_name: {preset['display_name']}\n"
+            "requested_action: enable_pending_runtime\n"
+            "operator_identity: <NAME>\n"
+            "policy_rule_permits_selection: yes\n"
+            "safety_copy_acknowledged: yes"
+        )
+        controls.append({
+            "id": preset["id"],
+            "label": (
+                f"Copy selection request template: "
+                f"{preset['display_name']} [{enablement}]"
+            ),
+            "enabled": enabled,
+            "preset_category": preset["preset_category"],
+            "enablement_state": enablement,
+            "enablement_reason": preset["enablement_reason"],
+            "deferred_runtime_marker": (
+                preset["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                preset["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "selection_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_selection(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10Z operator entry: render the desktop selection UX.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates
+    any canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER advances loop-state,
+    NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER
+    opens a network socket, NEVER refreshes a preset from a
+    hosted service, NEVER writes a selection cache, NEVER
+    widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-selection] REFUSED: --controller-root is "
+            "required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop selection surface MUST NOT silently pick "
+            "a default root from an auto-discovered repo root, "
+            "the OS-level current working directory, an "
+            "environment variable, or a packaging-time "
+            "configured path. Supply the controller root "
+            "explicitly via `--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-selection] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop "
+            f"App Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ "
+            f"to be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_preset_ids": frozenset(
+            getattr(args, "acknowledge_preset", None) or []
+        ),
+        "policy_permitted_preset_ids": frozenset(
+            getattr(args, "policy_permit_preset", None) or []
+        ),
+    }
+    view = build_desktop_selection_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_selection_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -32309,6 +33208,69 @@ def build_parser() -> argparse.ArgumentParser:
             "message."
         ),
     )
+    selection = sub.add_parser(
+        "view-desktop-selection",
+        help=(
+            "Phase 10Z model, policy pack, and template "
+            "selection UX: render a bounded READ-ONLY view over "
+            "the closed `_DESKTOP_SELECTION_REGISTRY` plus per-"
+            "session operator inputs. Every preset currently "
+            "surfaces as `refused_until_policy_update` because "
+            "`phase_10z_runtime_available=False` in this slice; "
+            "the shipped selection-runtime is deferred to a "
+            "future Phase 10+ runtime slice. Phase 7C reporter "
+            "pattern: always exits 0 on report content once "
+            "the controller-root selection succeeds; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never refreshes a preset from a hosted "
+            "service; never writes a selection cache; never "
+            "widens the Phase 10I library-callable control cap."
+        ),
+    )
+    selection.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop selection view renders against. Per the "
+            "Phase 10L Controller-Root Selection Flow the "
+            "desktop shell MUST NOT silently pick a default "
+            "root. Omitting this flag returns exit 2 with a "
+            "`[desktop-selection] REFUSED: ...` stderr message."
+        ),
+    )
+    selection.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    selection.add_argument(
+        "--acknowledge-preset",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-preset scope "
+            "acknowledgement. Repeat the flag once per preset "
+            "id."
+        ),
+    )
+    selection.add_argument(
+        "--policy-permit-preset",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-preset policy-"
+            "pack allow-list. Repeat the flag once per preset "
+            "id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -32596,6 +33558,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "run-local-rag-retrieval": cmd_run_local_rag_retrieval,
     "view-desktop-run-console": cmd_view_desktop_run_console,
     "view-desktop-resume-console": cmd_view_desktop_resume_console,
+    "view-desktop-selection": cmd_view_desktop_selection,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

@@ -688,6 +688,10 @@ class RenderDesktopAppTextTests(unittest.TestCase):
                 "error": "test resume console error",
                 "view": None,
             },
+            "selection_view": {
+                "error": "test selection error",
+                "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
@@ -718,6 +722,9 @@ class RenderDesktopAppTextTests(unittest.TestCase):
         )
         self.assertIn(
             "[error] 'test resume console error'", output,
+        )
+        self.assertIn(
+            "[error] 'test selection error'", output,
         )
 
 
