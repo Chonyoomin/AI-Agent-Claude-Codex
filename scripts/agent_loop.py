@@ -14162,6 +14162,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     run_console_view = _desktop_safe_call_view(
         build_desktop_run_console_view, controller_root,
     )
+    resume_console_view = _desktop_safe_call_view(
+        build_desktop_resume_console_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14180,6 +14183,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
             rag_retrieval_controls_view
         ),
         "run_console_view": run_console_view,
+        "resume_console_view": resume_console_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14292,6 +14296,17 @@ def _desktop_render_sub_view_lines(
             render_desktop_run_console_text(sub_view),
         )
         return lines
+    if key == "resume_console_view":
+        # Re-use the shipped Phase 10Y renderer verbatim so the
+        # resume-console attribution tags ([resume-console] /
+        # [capacity-halt] / [checkpoint] / [resume-policy] /
+        # [retry] / [canonical mirror] / [advisory] / [refused])
+        # stay consistent with the standalone
+        # `view-desktop-resume-console` output.
+        lines.extend(
+            render_desktop_resume_console_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14372,6 +14387,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "run_console_view",
             "Run Console (Phase 10X)",
+        ),
+        (
+            "resume_console_view",
+            "Capacity Recovery Console (Phase 10Y)",
         ),
     ):
         sub = view.get(key, {})
@@ -14994,6 +15013,13 @@ def _launch_desktop_app_window(
         text="Run Console (Phase 10X)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    resume_console_frame = tk.Frame(control_frame)
+    resume_console_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        resume_console_frame,
+        text="Capacity Recovery Console (Phase 10Y)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15020,6 +15046,7 @@ def _launch_desktop_app_window(
     rag_source_selection_button_widgets: list = []
     rag_retrieval_button_widgets: list = []
     run_console_button_widgets: list = []
+    resume_console_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15603,6 +15630,37 @@ def _launch_desktop_app_window(
             run_console_frame,
             run_console_controls,
             run_console_button_widgets,
+        )
+        # Phase 10Y: rebuild the resume-console button row from
+        # the cached sub-view. `build_desktop_resume_console
+        # _controls` is READ-ONLY (each button is a shipped
+        # copy-paste recovery / inspection command); the
+        # `resume` and `auto-continue` buttons re-derive
+        # `enabled` from the live capacity-halt state so an
+        # operator does not advertise a runnable path the shipped
+        # runtime would immediately refuse. ZERO new library-
+        # callable controls are introduced.
+        resume_console_sub_view = view.get(
+            "resume_console_view", {},
+        )
+        if (
+            isinstance(resume_console_sub_view, dict)
+            and resume_console_sub_view.get("view") is None
+            and "error" in resume_console_sub_view
+        ):
+            resume_console_controls = []
+        elif isinstance(resume_console_sub_view, dict):
+            resume_console_controls = (
+                build_desktop_resume_console_controls(
+                    resume_console_sub_view,
+                )
+            )
+        else:
+            resume_console_controls = []
+        _rebuild_button_row(
+            resume_console_frame,
+            resume_console_controls,
+            resume_console_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -24866,6 +24924,583 @@ def cmd_view_desktop_run_console(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10Y: Capacity Recovery And Resume Console.
+#
+# Layers a bounded READ-ONLY capacity-recovery / resume-console
+# surface on top of the shipped Phase 10M desktop app and the
+# Phase 10X run console. Ships:
+#   - `build_desktop_resume_console_view(controller_root)` READ-
+#     ONLY library that derives the capacity-halt state, checkpoint
+#     presence, bounded resume-policy state, and retry / backoff
+#     state ENTIRELY from canonical artifacts: `.agent-loop/loop-
+#     state.json` (validated via `load_loop_state(...)`; HaltError
+#     soft-failed per the Phase 10L rule), the checkpoint memory
+#     directory `.agent-loop/memory/checkpoint/`, and the shipped
+#     `STATUS_RECOVERY_HINTS` map for the operator-facing recovery
+#     hint text. NO new state store; NO parallel state; NO hidden
+#     UI-only fields.
+#   - `render_desktop_resume_console_text(view)` per-line renderer
+#     with explicit `[canonical mirror]` / `[advisory]` / `[refused]`
+#     / `[resume-console]` / `[capacity-halt]` / `[checkpoint]` /
+#     `[resume-policy]` / `[retry]` attribution.
+#   - `build_desktop_resume_console_controls(view)` COPY-PASTE-ONLY
+#     widget list. Each button copies a shipped read-only or
+#     operator-invoked recovery command (`resume`, `auto-continue`,
+#     `check-state`); the console NEVER dispatches a command in-
+#     process, NEVER polls a token endpoint, NEVER refreshes a
+#     token, NEVER widens the Phase 10I library-callable cap.
+#   - `view-desktop-resume-console` Phase 7C CLI reporter (always
+#     exits 0 on report content once the controller-root selection
+#     succeeds; `--controller-root <PATH>` REQUIRED per the Phase
+#     10L Controller-Root Selection Flow).
+#
+# The surface is VISIBILITY-ONLY: it NEVER writes any canonical
+# artifact, NEVER appends to `.agent-loop/orchestrator.log`,
+# NEVER advances loop-state, NEVER invokes `_halt(...)`, NEVER
+# spawns a subprocess, NEVER opens a network socket, NEVER
+# refreshes a token, NEVER polls a capacity endpoint, NEVER
+# retries a failed cycle, NEVER schedules a background watcher,
+# NEVER widens the Phase 10I three-control library-callable cap,
+# and NEVER introduces a second control plane outside the shipped
+# Python runtime.
+# ---------------------------------------------------------------------------
+
+DESKTOP_RESUME_CONSOLE_SIGNAL_VERSION = "phase-10y-v1"
+
+DESKTOP_RESUME_CONSOLE_PRECEDENCE_NOTE = (
+    "Phase 10Y capacity recovery and resume console. This surface "
+    "is VISIBILITY-ONLY: every field is derived from canonical "
+    "artifacts (loop-state.json / .agent-loop/memory/checkpoint/) "
+    "with explicit `[canonical mirror]` attribution. No field is "
+    "invented and no hidden UI-only field is introduced. The "
+    "Phase 10I three-control library-callable cap is preserved "
+    "exactly; ZERO new library-callable controls are introduced. "
+    "The surface NEVER mutates any canonical artifact, NEVER "
+    "appends to `.agent-loop/orchestrator.log`, NEVER advances "
+    "loop-state, NEVER invokes `_halt(...)`, NEVER spawns a "
+    "subprocess, NEVER opens a network socket, NEVER polls a "
+    "token / capacity endpoint, NEVER refreshes a token, NEVER "
+    "retries a failed cycle, NEVER schedules a background "
+    "watcher, NEVER auto-resumes a halted cycle beyond the "
+    "shipped Phase 6F/6G checkpoint / auto-continue budget, and "
+    "NEVER auto-activates the next phase (per the Phase 4 "
+    "planner / activator separation). The console is a bounded "
+    "read-only reporter over the shipped Phase 6E / 6F / 6G "
+    "checkpoint / resume / continuation contract, NOT a second "
+    "control plane"
+)
+
+RESUME_CONSOLE_CAPACITY_HALT_STATES = (
+    "not_halted",
+    "awaiting_token_exhaustion_continuation",
+    "halted_capacity_recoverable",
+    "halted_capacity_terminal",
+    "unknown",
+)
+
+RESUME_CONSOLE_CHECKPOINT_STATES = (
+    "not_present",
+    "present",
+    "present_multiple",
+    "unknown",
+)
+
+RESUME_CONSOLE_RESUME_POLICY_STATES = (
+    "manual_resume_only",
+    "bounded_auto_continue_available",
+    "autonomous_bounded",
+    "unknown",
+)
+
+RESUME_CONSOLE_RETRY_STATES = (
+    "not_in_retry",
+    "within_retry_budget",
+    "at_max_cycles",
+    "unknown",
+)
+
+RESUME_CONSOLE_REFUSAL_REASONS = (
+    "controller_root_invalid",
+    "loop_state_unreadable",
+    "checkpoint_dir_unreadable",
+)
+
+# Closed subset of `RESUME_CONSOLE_CAPACITY_HALT_STATES` that
+# constitutes a CONFIRMED halt in flight. The Phase 10Y fix cycle
+# uses this frozenset as the single source of truth for
+# `resume`-button eligibility so `unknown` (a soft-fail read of a
+# missing/malformed `loop-state.json`) and `not_halted` both fail
+# closed instead of advertising a runnable path the shipped
+# runtime would immediately refuse.
+_RESUME_CONSOLE_CONFIRMED_HALT_STATES = frozenset({
+    "awaiting_token_exhaustion_continuation",
+    "halted_capacity_recoverable",
+    "halted_capacity_terminal",
+})
+
+# Bounded cap on the number of checkpoint entries the resume
+# console mirrors per invocation. The cap is intentionally tight
+# so the surface stays operator-scannable; a future runtime slice
+# MAY widen it only by explicitly editing this constant AND the
+# matching tests.
+RESUME_CONSOLE_CHECKPOINT_MIRROR_CAP = 25
+
+
+def _resume_console_derive_capacity_halt_state(
+    status: Optional[str],
+) -> str:
+    """Map a loop-state status to a closed resume-console capacity-
+    halt state. Pure computation; no IO.
+
+    The token-exhaustion halt maps to the dedicated
+    `awaiting_token_exhaustion_continuation` label so a reviewer
+    can immediately tell that this is the specific capacity halt
+    the shipped Phase 6F/6G runtime supports. Other recoverable
+    halts (input missing, review malformed, human stop, etc.) map
+    to `halted_capacity_recoverable`; the two human-required
+    terminal halts map to `halted_capacity_terminal`. Non-halted
+    statuses map to `not_halted`.
+    """
+    if not isinstance(status, str) or not status:
+        return "unknown"
+    if status == HALTED_TOKEN_EXHAUSTION:
+        return "awaiting_token_exhaustion_continuation"
+    if status in (
+        "halted_failed_requires_human",
+        "halted_max_cycles_reached",
+    ):
+        return "halted_capacity_terminal"
+    if status.startswith("halted_"):
+        return "halted_capacity_recoverable"
+    return "not_halted"
+
+
+def _resume_console_read_checkpoint_names(
+    controller_root: Path,
+) -> tuple:
+    """Return `(names, readable)` where `names` is the sorted list
+    of file names under `.agent-loop/memory/checkpoint/` (bounded
+    to `RESUME_CONSOLE_CHECKPOINT_MIRROR_CAP` entries) and
+    `readable` is True iff the directory could be enumerated. A
+    missing directory returns `([], True)` because the Phase 6A
+    contract permits an absent memory layer.
+    """
+    ckpt_dir = (
+        controller_root / ".agent-loop" / "memory" / "checkpoint"
+    )
+    if not ckpt_dir.exists():
+        return ([], True)
+    try:
+        entries = sorted(
+            p.name for p in ckpt_dir.iterdir() if p.is_file()
+        )
+    except OSError:
+        return ([], False)
+    if len(entries) > RESUME_CONSOLE_CHECKPOINT_MIRROR_CAP:
+        entries = entries[
+            -RESUME_CONSOLE_CHECKPOINT_MIRROR_CAP:
+        ]
+    return (entries, True)
+
+
+def _resume_console_derive_checkpoint_state(
+    checkpoint_names: list,
+) -> str:
+    """Return a closed checkpoint-state label. Pure computation;
+    no IO.
+    """
+    count = len(checkpoint_names)
+    if count == 0:
+        return "not_present"
+    if count == 1:
+        return "present"
+    return "present_multiple"
+
+
+def _resume_console_derive_resume_policy_state(
+    approval_mode: Optional[str],
+    capacity_halt_state: str,
+) -> str:
+    """Return a closed resume-policy-state label. Pure
+    computation; no IO.
+
+    `strict` and `review` modes surface as `manual_resume_only`
+    (the operator MUST drive `resume` / `auto-continue` explicitly
+    per the Phase 5C strict-gate / Phase 5B review contract). The
+    `autonomous` mode surfaces as `autonomous_bounded` because
+    Phase 5D's shipped autonomous mode is a bounded strict-gate
+    bypass (still capped by `max_cycles`); it is NOT the unshipped
+    Phase 9 fully-autonomous mode. When a token-exhaustion halt
+    is in flight, the label surfaces as
+    `bounded_auto_continue_available` because the shipped Phase
+    6G auto-continue command applies to that specific halt.
+    """
+    if capacity_halt_state == (
+        "awaiting_token_exhaustion_continuation"
+    ):
+        return "bounded_auto_continue_available"
+    if approval_mode == APPROVAL_MODE_AUTONOMOUS:
+        return "autonomous_bounded"
+    if approval_mode in (
+        APPROVAL_MODE_REVIEW, APPROVAL_MODE_STRICT,
+    ):
+        return "manual_resume_only"
+    return "unknown"
+
+
+def _resume_console_derive_retry_state(
+    cycle_count: Optional[int], max_cycles: Optional[int],
+) -> str:
+    """Return a closed retry-state label. Pure computation; no IO.
+
+    `at_max_cycles` fires when `cycle_count >= max_cycles`; the
+    orchestrator's max-cycles halt lives here so an operator can
+    immediately see they have exhausted the retry budget.
+    """
+    if (
+        not isinstance(cycle_count, int)
+        or not isinstance(max_cycles, int)
+        or max_cycles <= 0
+        or cycle_count < 0
+    ):
+        return "unknown"
+    if cycle_count >= max_cycles:
+        return "at_max_cycles"
+    if cycle_count == 0:
+        return "not_in_retry"
+    return "within_retry_budget"
+
+
+def build_desktop_resume_console_view(
+    controller_root: Path,
+) -> dict:
+    """Phase 10Y: assemble the bounded capacity-recovery /
+    resume-console view.
+
+    READ-ONLY. Derives every field from canonical artifacts
+    (`.agent-loop/loop-state.json`,
+    `.agent-loop/memory/checkpoint/`, `STATUS_RECOVERY_HINTS`).
+    The `load_loop_state(...)` validator HaltError is soft-failed
+    to `loop_state=None` per the Phase 10L "MUST NOT propagate
+    validator HaltErrors as canonical halt persistence" rule.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    opens a network socket, never invokes `_halt(...)`, never
+    persists a resume-console cache, never subscribes to a
+    background watcher, never polls a token / capacity endpoint,
+    never refreshes a token, never auto-resumes a halted cycle
+    beyond the shipped Phase 6F/6G checkpoint / auto-continue
+    budget, never widens the Phase 10I library-callable cap.
+    """
+    al = controller_root / ".agent-loop"
+    state_path = al / "loop-state.json"
+
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    cycle_count_value: Optional[int] = None
+    max_cycles_value: Optional[int] = None
+    awaiting_human_for: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            cycle_count_value = cycle_candidate
+        max_candidate = loop_state.get("max_cycles")
+        if isinstance(max_candidate, int):
+            max_cycles_value = max_candidate
+        awh_candidate = loop_state.get("awaiting_human_for")
+        if isinstance(awh_candidate, str):
+            awaiting_human_for = awh_candidate
+
+    capacity_halt_state = (
+        _resume_console_derive_capacity_halt_state(status_value)
+    )
+    checkpoint_names, checkpoint_dir_readable = (
+        _resume_console_read_checkpoint_names(controller_root)
+    )
+    checkpoint_state = (
+        _resume_console_derive_checkpoint_state(checkpoint_names)
+    )
+    resume_policy_state = (
+        _resume_console_derive_resume_policy_state(
+            approval_mode, capacity_halt_state,
+        )
+    )
+    retry_state = _resume_console_derive_retry_state(
+        cycle_count_value, max_cycles_value,
+    )
+
+    recovery_hint = _status_recovery_hint(status_value)
+
+    return {
+        "view_signal_version": (
+            DESKTOP_RESUME_CONSOLE_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "loop_state_readable": (
+            isinstance(loop_state, dict)
+        ),
+        "checkpoint_dir_readable": checkpoint_dir_readable,
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "cycle_count": cycle_count_value,
+        "max_cycles": max_cycles_value,
+        "awaiting_human_for": awaiting_human_for,
+        "capacity_halt_state": capacity_halt_state,
+        "checkpoint_state": checkpoint_state,
+        "checkpoint_count": len(checkpoint_names),
+        "checkpoint_names": list(checkpoint_names),
+        "checkpoint_mirror_cap": (
+            RESUME_CONSOLE_CHECKPOINT_MIRROR_CAP
+        ),
+        "resume_policy_state": resume_policy_state,
+        "retry_state": retry_state,
+        "recovery_hint": recovery_hint,
+        "capacity_halt_states": list(
+            RESUME_CONSOLE_CAPACITY_HALT_STATES
+        ),
+        "checkpoint_states": list(
+            RESUME_CONSOLE_CHECKPOINT_STATES
+        ),
+        "resume_policy_states": list(
+            RESUME_CONSOLE_RESUME_POLICY_STATES
+        ),
+        "retry_states": list(RESUME_CONSOLE_RETRY_STATES),
+        "refusal_reasons": list(RESUME_CONSOLE_REFUSAL_REASONS),
+        "precedence_note": (
+            DESKTOP_RESUME_CONSOLE_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_resume_console_text(view: dict) -> list:
+    """Phase 10Y: format the assembled resume-console view as text
+    lines. Attribution tags (`[canonical mirror]`, `[advisory]`,
+    `[refused]`, `[resume-console]`, `[capacity-halt]`,
+    `[checkpoint]`, `[resume-policy]`, `[retry]`) keep the reporter
+    output legible.
+    """
+    lines: list = []
+    lines.append(
+        f"[desktop-resume-console] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] loop_state_readable: "
+        f"{view['loop_state_readable']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] checkpoint_dir_readable: "
+        f"{view['checkpoint_dir_readable']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] cycle_count="
+        f"{view['cycle_count']!r} max_cycles="
+        f"{view['max_cycles']!r} awaiting_human_for="
+        f"{view['awaiting_human_for']!r}"
+    )
+    lines.append(
+        f"  [capacity-halt] capacity_halt_state: "
+        f"{view['capacity_halt_state']!r}"
+    )
+    lines.append(
+        f"  [checkpoint] checkpoint_state="
+        f"{view['checkpoint_state']!r} checkpoint_count="
+        f"{view['checkpoint_count']!r} "
+        f"checkpoint_mirror_cap="
+        f"{view['checkpoint_mirror_cap']!r}"
+    )
+    for name in view.get("checkpoint_names", []):
+        lines.append(f"    [checkpoint] name={name!r}")
+    lines.append(
+        f"  [resume-policy] resume_policy_state: "
+        f"{view['resume_policy_state']!r}"
+    )
+    lines.append(
+        f"  [retry] retry_state: {view['retry_state']!r}"
+    )
+    lines.append(
+        f"  [resume-console] recovery_hint (Phase 7C mirror): "
+        f"{view['recovery_hint']!r}"
+    )
+    lines.append(
+        f"  [advisory] capacity_halt_states (closed Phase 10Y "
+        f"enumeration): {view['capacity_halt_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] checkpoint_states (closed Phase 10Y "
+        f"enumeration): {view['checkpoint_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] resume_policy_states (closed Phase 10Y "
+        f"enumeration): {view['resume_policy_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] retry_states (closed Phase 10Y "
+        f"enumeration): {view['retry_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10Y "
+        f"refusal vocabulary): {view['refusal_reasons']!r}"
+    )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_resume_console_controls(view: dict) -> list:
+    """Phase 10Y: return a closed list of desktop widget
+    descriptors. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control cap
+    is preserved exactly.
+
+    The three descriptors surface bounded recovery commands the
+    operator MAY run: `resume` (single-hop resume), `auto-continue`
+    (Phase 6G bounded automatic chaining, applies specifically to
+    the token-exhaustion halt), and `check-state` (Phase 7C
+    read-only inspector). The `resume` and `auto-continue`
+    buttons are ENABLED only when the shipped runtime would
+    actually accept the operation: `auto-continue` requires the
+    capacity halt to be `awaiting_token_exhaustion_continuation`;
+    `resume` requires a CONFIRMED halt drawn from the closed
+    Phase 10Y halt vocabulary. The `unknown` state (produced when
+    `build_desktop_resume_console_view(...)` cannot read a valid
+    `loop-state.json`) fails closed: the operator MUST NOT be
+    invited to paste `resume` when the surface cannot confirm a
+    halt is in flight. `check-state` is always enabled because
+    it is a pure reporter.
+    """
+    capacity_halt_state = view.get(
+        "capacity_halt_state", "unknown",
+    )
+    resume_enabled = capacity_halt_state in _RESUME_CONSOLE_CONFIRMED_HALT_STATES
+    auto_continue_enabled = (
+        capacity_halt_state
+        == "awaiting_token_exhaustion_continuation"
+    )
+    return [
+        {
+            "id": "resume_console_copy_resume",
+            "label": (
+                "Copy `python scripts/agent_loop.py resume` "
+                "invocation"
+            ),
+            "enabled": resume_enabled,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py resume"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "resume_console_recovery",
+        },
+        {
+            "id": "resume_console_copy_auto_continue",
+            "label": (
+                "Copy `python scripts/agent_loop.py "
+                "auto-continue` invocation"
+            ),
+            "enabled": auto_continue_enabled,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py auto-continue"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "resume_console_recovery",
+        },
+        {
+            "id": "resume_console_copy_check_state",
+            "label": (
+                "Copy `python scripts/agent_loop.py check-state` "
+                "invocation"
+            ),
+            "enabled": True,
+            "clipboard_payload": (
+                "python scripts/agent_loop.py check-state"
+            ),
+            "dispatch_mode": "copy_paste",
+            "category": "resume_console_recovery",
+        },
+    ]
+
+
+def cmd_view_desktop_resume_console(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10Y operator entry: render the capacity recovery /
+    resume console.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates any
+    canonical artifact, NEVER appends to `.agent-loop/orchestrator
+    .log`, NEVER advances loop-state, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket, NEVER
+    persists a resume-console cache on disk, NEVER polls a
+    capacity / token endpoint, NEVER auto-resumes a halted cycle,
+    NEVER widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-resume-console] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop resume console MUST NOT silently pick a "
+            "default root from an auto-discovered repo root, the "
+            "OS-level current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-resume-console] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop App "
+            f"Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ to "
+            f"be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    view = build_desktop_resume_console_view(controller_root)
+    for line in render_desktop_resume_console_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -31636,6 +32271,44 @@ def build_parser() -> argparse.ArgumentParser:
             "message."
         ),
     )
+    resume_console = sub.add_parser(
+        "view-desktop-resume-console",
+        help=(
+            "Phase 10Y capacity recovery and resume console: "
+            "render a bounded READ-ONLY view over canonical "
+            "artifacts (loop-state.json, "
+            ".agent-loop/memory/checkpoint/) exposing the "
+            "capacity-halt state (closed enumeration), checkpoint "
+            "presence, bounded resume-policy state, and retry / "
+            "backoff state so an operator can see token / rate-"
+            "limit halts, checkpoint presence, and the shipped "
+            "recovery hint at a glance. Phase 7C reporter pattern: "
+            "always exits 0 on report content once the controller-"
+            "root selection succeeds; never mutates any canonical "
+            "artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances loop-"
+            "state; never invokes `_halt(...)`; never spawns a "
+            "subprocess; never opens a network socket; never polls "
+            "a capacity endpoint; never refreshes a token; never "
+            "auto-resumes a halted cycle beyond the shipped Phase "
+            "6F/6G checkpoint / auto-continue budget; never widens "
+            "the Phase 10I library-callable control cap."
+        ),
+    )
+    resume_console.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop resume console renders against. Per the "
+            "Phase 10L Controller-Root Selection Flow the desktop "
+            "shell MUST NOT silently pick a default root. "
+            "Omitting this flag returns exit 2 with a "
+            "`[desktop-resume-console] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -31922,6 +32595,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     ),
     "run-local-rag-retrieval": cmd_run_local_rag_retrieval,
     "view-desktop-run-console": cmd_view_desktop_run_console,
+    "view-desktop-resume-console": cmd_view_desktop_resume_console,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
