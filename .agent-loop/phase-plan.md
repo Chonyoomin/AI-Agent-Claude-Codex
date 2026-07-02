@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10V - RAG Source Selection Contract And Desktop UX)
+Phase 10 - Future Product Features (sub-phase: Phase 10Z - Model, Policy Pack, And Template Selection UX)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5498,6 +5498,50 @@ control plane.
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no concurrent Codex/Claude overlap execution, model-policy extensibility, or
   hidden orchestration added under the banner of capacity recovery
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10Z - Model, Policy Pack, And Template Selection UX
+
+### Objective
+
+Define and implement the first bounded desktop-managed selection flow for model
+choices, policy packs, project templates, and related high-level run presets
+without letting those settings become a hidden second source of truth.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10Z as active
+- the repository adds the first bounded desktop surface for selecting model
+  options, policy packs, project templates, and related run presets
+- the implementation defines how those selections are represented and applied
+  through canonical artifacts and explicit operator actions rather than hidden
+  UI-only state
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, existing run-profile
+  semantics, and the Phase 10I library-callable cap instead of introducing
+  hidden automation, silent mutation, or a parallel control plane
+- focused validation proves the selection UX is bounded, auditable, and scoped
+  to operator-visible configuration flows
+- `README.md` reflects that Phase 10Z is active and that model, policy-pack,
+  and template selection UX is now the implementation focus
+
+### Exclusions
+
+- no hidden model-selection state store, silent preset mutation, or background
+  control plane that bypasses the shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, packaging work, or hidden
+  orchestration added under the banner of selection UX
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`

@@ -64,11 +64,12 @@ New operators on a clean clone should start with the shipped operator docs under
 
 The shipped CLI surface (`python scripts/agent_loop.py --help`) is the canonical authority on subcommand availability; the operator docs describe how to drive each subcommand and how to recover from each persisted halt status. Future capabilities tracked in `ROADMAP.md` (Phase 9 Fully Autonomous PRD-To-Product Mode, Phase 10 Future Product Features, MCP support, external UI) are explicitly roadmap-only and are not part of the current shipped behavior.
 
-Current implementation focus: Phase 10Y, `Capacity Recovery And Resume Console`.
-This is the next desktop-runtime slice after the shipped run console,
-focused on surfacing capacity-halt visibility, checkpoint presence, and resume
-policy state from canonical artifacts without replacing the existing control
-plane.
+Current implementation focus: Phase 10Z, `Model, Policy Pack, And Template
+Selection UX`.
+This is the next desktop-runtime slice after the shipped capacity recovery and
+resume console, focused on bounded desktop-managed model, policy-pack, and
+template selection flows that map back to canonical artifacts without replacing
+the existing control plane.
 
 ## Repository Files
 

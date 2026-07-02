@@ -4,16 +4,27 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10Y - Capacity Recovery And Resume Console
+Phase 10Z - Model, Policy Pack, And Template Selection UX
 
 ## Status
-Phase 10X is complete and approved to advance. Phase 10Y is now active as the next mainline slice focused on surfacing capacity-halt visibility, checkpoint presence, bounded resume policy, and operator recovery controls in the desktop app.
+Phase 10Y is complete and approved to advance. Phase 10Z is now active as the
+next mainline slice focused on adding the first bounded desktop-managed
+selection flow for models, policy packs, and project templates without letting
+those choices become a hidden second source of truth.
 
 ## Task
-Implement Phase 10Y for the agent loop. This slice should add the first desktop capacity recovery and resume console so token or rate-limit halts, checkpoint presence, bounded automatic-resume policy, retry or backoff state, and operator override or resume actions are understandable without introducing a hidden second control plane.
+Implement Phase 10Z for the agent loop. This slice should define and implement
+the first bounded desktop-managed selection UX for model choices, policy packs,
+project templates, and other high-level run presets without letting those
+settings become a hidden second source of truth.
 
 ## Notes
 
-- keep this slice bounded to a desktop-facing capacity-recovery and resume-console surface; do not jump into model/policy selection, concurrency, packaging, or hidden orchestration work
-- preserve the shipped ownership boundaries, evidence-review model, approval semantics, checkpoint/continuation boundaries, and canonical-artifact-first model while surfacing halt-recovery state in the UI
-- do not widen into silent loop mutation, background daemons/watchers, packaging, or auto-update work
+- keep this slice bounded to a desktop-facing selection surface for models,
+  policy packs, templates, and related presets; do not jump into packaging,
+  controlled concurrency, or hidden orchestration work
+- preserve the shipped ownership boundaries, evidence-review model, approval
+  semantics, existing run-profile semantics, and canonical-artifact-first model
+  while surfacing selection state in the UI
+- do not widen into silent preset mutation, background daemons/watchers,
+  packaging, or auto-update work
