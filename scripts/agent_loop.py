@@ -26290,17 +26290,29 @@ def build_desktop_selection_controls(view: dict) -> list:
     library-callable control) so the Phase 10I three-control
     cap is preserved exactly.
 
-    Since `phase_10z_runtime_available=False` in this slice,
-    every button surfaces `enabled=False` and the clipboard
-    payload is pinned at the operator-visible enablement request
-    template so an operator can raise the request through the
-    shipped review channel instead of silently mutating a
-    hidden preset store.
+    The ONLY runtime action wired to each button is copying an
+    operator-visible enablement-request TEMPLATE into the OS
+    clipboard so the operator can raise the request through the
+    shipped review channel. That copy is non-mutating: it never
+    invokes a runtime, never touches any canonical artifact,
+    never mutates a hidden preset store. Every descriptor
+    therefore surfaces `enabled=True` so the shipped GUI can
+    expose the copy path in every slice.
+
+    The underlying preset-runtime state (which IS gated by
+    `phase_10z_runtime_available`) is surfaced separately on
+    each descriptor via `enablement_state` (canonical mirror),
+    `runtime_enabled` (True only when the preset itself is
+    `enabled_pending_runtime`), the `refusal_reason_template`
+    field, and the appended `[<enablement_state>]` tag on the
+    button label so an operator reading the shipped UI can see
+    that the runtime is still deferred even though the copy
+    affordance is clickable.
     """
     controls: list = []
     for preset in view.get("presets", []):
         enablement = preset["enablement_state"]
-        enabled = enablement == "enabled_pending_runtime"
+        runtime_enabled = enablement == "enabled_pending_runtime"
         clipboard_payload = (
             "# Phase 10Z selection request template. Copy the "
             "block below into a review issue / operator note "
@@ -26319,7 +26331,8 @@ def build_desktop_selection_controls(view: dict) -> list:
                 f"Copy selection request template: "
                 f"{preset['display_name']} [{enablement}]"
             ),
-            "enabled": enabled,
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
             "preset_category": preset["preset_category"],
             "enablement_state": enablement,
             "enablement_reason": preset["enablement_reason"],

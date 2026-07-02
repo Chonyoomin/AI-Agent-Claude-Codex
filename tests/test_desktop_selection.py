@@ -11,7 +11,9 @@ Exercises:
     surfaces as `refused_until_policy_update`)
   - renderer per-line attribution
   - `build_desktop_selection_controls(...)` widget shape
-    (COPY-PASTE only; every button disabled by contract)
+    (COPY-PASTE only; every button clickable for clipboard-copy;
+    per-preset `runtime_enabled` mirrors the deferred runtime
+    state and the label discloses the enablement state)
   - `cmd_view_desktop_selection(...)` CLI handler + Phase 7C
     exit-0 pattern
   - integration into `assemble_desktop_app_view(...)` +
@@ -521,9 +523,18 @@ class SelectionControlsBuilderTests(unittest.TestCase):
                 control["dispatch_mode"], "copy_paste",
             )
             self.assertEqual(control["category"], "selection_ux")
-            # Fail-closed default: EVERY button disabled in this
-            # slice regardless of operator input.
-            self.assertFalse(control["enabled"], control["id"])
+            # Copy affordance stays clickable in every slice --
+            # the click ONLY copies a template into the OS
+            # clipboard, so it is non-mutating even when the
+            # underlying runtime is deferred.
+            self.assertTrue(control["enabled"], control["id"])
+            # The underlying preset-runtime state IS gated by
+            # phase_10z_runtime_available -- surface it on a
+            # distinct descriptor field so future consumers can
+            # branch on it independently of the copy affordance.
+            self.assertFalse(
+                control["runtime_enabled"], control["id"],
+            )
 
     def test_clipboard_payload_is_operator_visible_template(
         self,
@@ -552,6 +563,118 @@ class SelectionControlsBuilderTests(unittest.TestCase):
             self.assertNotIn(
                 "python scripts/agent_loop.py", payload,
             )
+
+    def test_controls_stay_clickable_when_every_operator_input_supplied(
+        self,
+    ) -> None:
+        # Regression for the Phase 10Z fix cycle: the README +
+        # inline docs advertise the buttons as a copy-to-clipboard
+        # affordance, so the shipped GUI MUST expose them as
+        # clickable even when every operator-side input is
+        # supplied and the underlying preset-runtime state is
+        # still `refused_until_policy_update`. If the code ever
+        # regresses to marking these `enabled=False`, this test
+        # fails so the affordance mismatch cannot be reintroduced
+        # silently.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = agent_loop.build_desktop_selection_view(
+                controller,
+                operator_inputs={
+                    "identity": "me",
+                    "acknowledged_preset_ids": [
+                        "shipped_default_model",
+                        "shipped_default_policy_pack",
+                        "shipped_default_project_template",
+                    ],
+                    "policy_permitted_preset_ids": [
+                        "shipped_default_model",
+                        "shipped_default_policy_pack",
+                        "shipped_default_project_template",
+                    ],
+                },
+            )
+            controls = (
+                agent_loop.build_desktop_selection_controls(view)
+            )
+        self.assertTrue(controls)
+        for control in controls:
+            self.assertTrue(control["enabled"], control["id"])
+            # Runtime is still deferred in this slice -- the
+            # distinct `runtime_enabled` flag stays False so the
+            # shipped GUI can style the button / show a caption
+            # / branch on it without depending on the `enabled`
+            # flag that gates the copy affordance.
+            self.assertFalse(
+                control["runtime_enabled"], control["id"],
+            )
+            self.assertEqual(
+                control["enablement_state"],
+                "refused_until_policy_update",
+                control["id"],
+            )
+
+    def test_control_label_discloses_enablement_state(
+        self,
+    ) -> None:
+        # Since the button stays clickable even when the runtime
+        # is deferred, the operator MUST be able to see the
+        # deferred-runtime state on the shipped GUI itself. The
+        # label appends the closed enablement-state tag exactly
+        # so a reader of the shipped UI never mistakes the copy
+        # affordance for an executed runtime action.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = agent_loop.build_desktop_selection_view(
+                controller,
+            )
+            controls = (
+                agent_loop.build_desktop_selection_controls(view)
+            )
+        for control in controls:
+            self.assertIn(
+                f"[{control['enablement_state']}]",
+                control["label"],
+                control["id"],
+            )
+            self.assertIn(
+                "Copy selection request template:",
+                control["label"],
+                control["id"],
+            )
+
+    def test_click_only_copies_template_never_runs_runtime(
+        self,
+    ) -> None:
+        # The button `command` in `_launch_desktop_app_window`
+        # is `_copy_to_clipboard(clipboard_payload, label)` and
+        # nothing else. Anchor the invariant here so a future
+        # descriptor cannot ship a `runtime_command`, `on_click`,
+        # `subprocess`, or `library_call` field that would let
+        # the click execute a shipped runtime.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = agent_loop.build_desktop_selection_view(
+                controller,
+            )
+            controls = (
+                agent_loop.build_desktop_selection_controls(view)
+            )
+        forbidden = {
+            "runtime_command",
+            "on_click",
+            "subprocess",
+            "library_call",
+            "callable",
+            "handler",
+        }
+        for control in controls:
+            for field in forbidden:
+                self.assertNotIn(field, control, control["id"])
+            # The one action wired to the button IS the
+            # clipboard-copy payload -- keep it a plain string
+            # (no callable) so it can never be invoked as code.
+            self.assertIsInstance(control["clipboard_payload"], str)
 
 
 # ---------------------------------------------------------------------------
