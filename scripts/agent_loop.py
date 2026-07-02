@@ -25025,6 +25025,19 @@ RESUME_CONSOLE_REFUSAL_REASONS = (
     "checkpoint_dir_unreadable",
 )
 
+# Closed subset of `RESUME_CONSOLE_CAPACITY_HALT_STATES` that
+# constitutes a CONFIRMED halt in flight. The Phase 10Y fix cycle
+# uses this frozenset as the single source of truth for
+# `resume`-button eligibility so `unknown` (a soft-fail read of a
+# missing/malformed `loop-state.json`) and `not_halted` both fail
+# closed instead of advertising a runnable path the shipped
+# runtime would immediately refuse.
+_RESUME_CONSOLE_CONFIRMED_HALT_STATES = frozenset({
+    "awaiting_token_exhaustion_continuation",
+    "halted_capacity_recoverable",
+    "halted_capacity_terminal",
+})
+
 # Bounded cap on the number of checkpoint entries the resume
 # console mirrors per invocation. The cap is intentionally tight
 # so the surface stays operator-scannable; a future runtime slice
@@ -25377,13 +25390,18 @@ def build_desktop_resume_console_controls(view: dict) -> list:
     buttons are ENABLED only when the shipped runtime would
     actually accept the operation: `auto-continue` requires the
     capacity halt to be `awaiting_token_exhaustion_continuation`;
-    `resume` requires any halted status. `check-state` is always
-    enabled because it is a pure reporter.
+    `resume` requires a CONFIRMED halt drawn from the closed
+    Phase 10Y halt vocabulary. The `unknown` state (produced when
+    `build_desktop_resume_console_view(...)` cannot read a valid
+    `loop-state.json`) fails closed: the operator MUST NOT be
+    invited to paste `resume` when the surface cannot confirm a
+    halt is in flight. `check-state` is always enabled because
+    it is a pure reporter.
     """
     capacity_halt_state = view.get(
         "capacity_halt_state", "unknown",
     )
-    resume_enabled = capacity_halt_state != "not_halted"
+    resume_enabled = capacity_halt_state in _RESUME_CONSOLE_CONFIRMED_HALT_STATES
     auto_continue_enabled = (
         capacity_halt_state
         == "awaiting_token_exhaustion_continuation"

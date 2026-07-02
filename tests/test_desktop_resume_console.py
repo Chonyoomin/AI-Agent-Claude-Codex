@@ -702,6 +702,134 @@ class ResumeConsoleControlsBuilderTests(unittest.TestCase):
         )
         self.assertFalse(auto["enabled"])
 
+    def test_resume_disabled_when_capacity_halt_unknown(self) -> None:
+        # Fix-cycle regression: `capacity_halt_state == "unknown"`
+        # is produced when `build_desktop_resume_console_view(...)`
+        # soft-fails an unreadable / malformed `loop-state.json`.
+        # The Phase 10Y contract says `resume` is enabled only
+        # when a CONFIRMED halt is in flight, so `unknown` MUST
+        # fail closed: the operator cannot be invited to paste a
+        # `resume` invocation when the surface cannot confirm a
+        # halt exists.
+        view = {"capacity_halt_state": "unknown"}
+        controls = (
+            agent_loop.build_desktop_resume_console_controls(view)
+        )
+        resume = next(
+            c for c in controls
+            if c["id"] == "resume_console_copy_resume"
+        )
+        auto = next(
+            c for c in controls
+            if c["id"] == "resume_console_copy_auto_continue"
+        )
+        check = next(
+            c for c in controls
+            if c["id"] == "resume_console_copy_check_state"
+        )
+        self.assertFalse(resume["enabled"])
+        self.assertFalse(auto["enabled"])
+        # `check-state` remains enabled because it is a pure
+        # Phase 7C reporter (safe even when loop-state is
+        # unreadable).
+        self.assertTrue(check["enabled"])
+
+    def test_resume_disabled_end_to_end_when_loop_state_unreadable(
+        self,
+    ) -> None:
+        # Fix-cycle regression, end-to-end: point the resume
+        # console at a controller root whose `.agent-loop/loop-
+        # state.json` cannot be loaded (missing). The view builder
+        # MUST soft-fail to `loop_state_readable=False` +
+        # `capacity_halt_state="unknown"`, and the paired controls
+        # builder MUST disable both `resume` and `auto-continue`.
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            controller.mkdir()
+            for name in (
+                "AGENTS.md", "CLAUDE.md", "TASK.md", "README.md",
+            ):
+                (controller / name).write_text(
+                    "x", encoding="utf-8",
+                )
+            (controller / ".agent-loop").mkdir()
+            view = agent_loop.build_desktop_resume_console_view(
+                controller,
+            )
+            controls = (
+                agent_loop.build_desktop_resume_console_controls(
+                    view,
+                )
+            )
+        self.assertFalse(view["loop_state_readable"])
+        self.assertEqual(view["capacity_halt_state"], "unknown")
+        by_id = {c["id"]: c for c in controls}
+        self.assertFalse(
+            by_id["resume_console_copy_resume"]["enabled"],
+        )
+        self.assertFalse(
+            by_id[
+                "resume_console_copy_auto_continue"
+            ]["enabled"],
+        )
+        self.assertTrue(
+            by_id["resume_console_copy_check_state"]["enabled"],
+        )
+
+    def test_resume_enabled_on_every_confirmed_halt_state(
+        self,
+    ) -> None:
+        # Positive lock-in: for each closed CONFIRMED-halt member
+        # (`awaiting_token_exhaustion_continuation`,
+        # `halted_capacity_recoverable`,
+        # `halted_capacity_terminal`), the `resume` button MUST be
+        # enabled. This anchors the closed vocabulary so a future
+        # helper edit that regresses the allowlist trips a red
+        # test.
+        for halt_state in (
+            "awaiting_token_exhaustion_continuation",
+            "halted_capacity_recoverable",
+            "halted_capacity_terminal",
+        ):
+            with self.subTest(halt_state=halt_state):
+                view = {"capacity_halt_state": halt_state}
+                controls = (
+                    agent_loop.build_desktop_resume_console_controls(
+                        view,
+                    )
+                )
+                resume = next(
+                    c for c in controls
+                    if c["id"] == "resume_console_copy_resume"
+                )
+                self.assertTrue(resume["enabled"], halt_state)
+
+    def test_confirmed_halt_states_closed_allowlist(self) -> None:
+        # Anchor the fix-cycle constant: the allowlist MUST be a
+        # strict subset of the closed capacity-halt vocabulary and
+        # MUST NOT include `not_halted` or `unknown` (both must
+        # fail closed).
+        allowlist = (
+            agent_loop._RESUME_CONSOLE_CONFIRMED_HALT_STATES
+        )
+        self.assertEqual(
+            allowlist,
+            frozenset({
+                "awaiting_token_exhaustion_continuation",
+                "halted_capacity_recoverable",
+                "halted_capacity_terminal",
+            }),
+        )
+        self.assertTrue(
+            allowlist.issubset(
+                set(
+                    agent_loop.RESUME_CONSOLE_CAPACITY_HALT_STATES,
+                ),
+            ),
+        )
+        self.assertNotIn("not_halted", allowlist)
+        self.assertNotIn("unknown", allowlist)
+
     def test_controls_clipboard_payloads_are_shipped_subcommands(
         self,
     ) -> None:
