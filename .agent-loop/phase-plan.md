@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10AC - Overlap-Safe Detection Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5567,14 +5567,18 @@ without letting those settings become a hidden second source of truth.
 
 ## Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice
 
+Complete and approved by human to advance to Phase 10AB. Phase 10AA closed with
+the bounded human-facing memory-vault export surface, including bounded
+canonical excerpts, durable-memory filename indexes, and explicit
+canonical-source precedence.
+
 ### Status
 
-Active. Phase 10AA is the current implementation focus after Phase 10Z closed
-with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
-advance. Phase 10AA scope is the first bounded human-facing memory-vault
-export surface, covering durable-memory entries, decision summaries, and
-architecture snapshots derived from shipped `.agent-loop/memory/` entries and
-canonical project artifacts without introducing a competing source of truth.
+Complete and approved by human to advance to Phase 10AB. Phase 10AA closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the memory-vault
+export view builder, bounded per-source excerpt reader, durable-memory JSON
+filename index, `[vault-excerpt]` / `[vault-entry-index]` renderer tags,
+and end-to-end sentinel regressions were verified in the current repo state.
 
 ### Objective
 
@@ -5612,6 +5616,114 @@ as the source of truth.
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no concurrent Codex/Claude overlap execution, packaging work, or hidden
   orchestration added under the banner of memory-vault exports
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AB - Controlled Concurrent Operation Contract
+
+### Status
+
+Complete and approved by human to advance to Phase 10AC. Phase 10AB closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the controlled-
+concurrency contract surface, ownership-map and rule-registry layer,
+standalone concurrency reporter, desktop-app integration, focused validation,
+and README alignment were all verified in the current repo state.
+
+### Objective
+
+Define the overlap rules, ownership boundaries, stale-artifact detection,
+review/fix invalidation rules, and recovery behavior required before any
+concurrent Codex/Claude work is allowed.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AB as active
+- the repository defines the overlap rules, ownership boundaries,
+  stale-artifact detection rules, review/fix invalidation rules, and recovery
+  behavior required before any concurrent Codex/Claude work is allowed
+- the implementation documents how overlap-safe work is distinguished from
+  invalidating work, how stale prompts/reviews/fix prompts are detected, and
+  how the loop must refuse or recover when overlap invalidates the active task
+  context
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, existing run-profile semantics, and the
+  canonical-artifact-first model instead of introducing hidden automation,
+  silent mutation, or active background overlap
+- focused validation proves the controlled-concurrency contract is explicit,
+  bounded, auditable, and fail-closed
+- `README.md` reflects that Phase 10AB is active and that controlled
+  concurrent-operation contract work is now the implementation focus
+
+### Exclusions
+
+- no actual overlapping Codex/Claude runtime, silent background orchestration,
+  or hidden parallel worker model
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no packaging work, hidden orchestration, or live concurrency added under the
+  banner of this contract slice
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AC - Overlap-Safe Detection Initial Slice
+
+### Status
+
+Active. Phase 10AC is the current implementation focus after Phase 10AB
+closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
+approved the advance. Phase 10AC scope is the first bounded unsafe-overlap
+detection slice: implementing detection and refusal behavior so the system can
+tell when concurrent work would invalidate the active task context, WITHOUT
+yet allowing Codex-owned concurrent work or any actual overlapping runtime.
+
+### Objective
+
+Implement detection and refusal paths for unsafe overlap so the system can
+tell when concurrent work would invalidate the active task context.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AC as active
+- the repository adds a bounded overlap-safe detection surface using the
+  controlled-concurrency contract defined in Phase 10AB
+- the implementation distinguishes overlap-safe work from invalidating work
+  for the shipped roles and canonical artifacts, and surfaces explicit refusal
+  or recovery paths when the active context is stale or invalidated
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of introducing hidden automation,
+  silent mutation, or active background overlap
+- focused validation proves the overlap-detection and refusal path is
+  explicit, bounded, auditable, and fail-closed
+- `README.md` reflects that Phase 10AC is active and that overlap-safe
+  detection work is now the implementation focus
+
+### Exclusions
+
+- no actual overlapping Codex/Claude runtime, silent background orchestration,
+  or hidden parallel worker model
+- no Codex-owned concurrent work beyond bounded detection and refusal; that is
+  deferred to Phase 10AD
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no packaging work, hidden orchestration, or live concurrency added under the
+  banner of this detection slice
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`

@@ -14171,6 +14171,12 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     memory_vault_view = _desktop_safe_call_view(
         build_desktop_memory_vault_view, controller_root,
     )
+    concurrency_view = _desktop_safe_call_view(
+        build_desktop_concurrency_view, controller_root,
+    )
+    overlap_detection_view = _desktop_safe_call_view(
+        build_desktop_overlap_detection_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14192,6 +14198,8 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "resume_console_view": resume_console_view,
         "selection_view": selection_view,
         "memory_vault_view": memory_vault_view,
+        "concurrency_view": concurrency_view,
+        "overlap_detection_view": overlap_detection_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14337,6 +14345,30 @@ def _desktop_render_sub_view_lines(
             render_desktop_memory_vault_text(sub_view),
         )
         return lines
+    if key == "concurrency_view":
+        # Re-use the shipped Phase 10AB renderer verbatim so the
+        # concurrency contract attribution tags ([concurrency-
+        # rule] / [concurrency-overlap] / [concurrency-owner] /
+        # [concurrency-invalidation] / [concurrency-recovery] /
+        # [concurrency-approval] / [concurrency-enablement] /
+        # [ownership-map] / [deferred-runtime] / [canonical
+        # mirror] / [advisory] / [refused]) stay consistent
+        # with the standalone `view-desktop-concurrency` output.
+        lines.extend(
+            render_desktop_concurrency_text(sub_view),
+        )
+        return lines
+    if key == "overlap_detection_view":
+        # Re-use the shipped Phase 10AC renderer verbatim so the
+        # overlap-detection attribution tags ([overlap-signal]
+        # / [overlap-severity] / [overlap-recovery] / [overlap-
+        # overall] / [deferred-runtime] / [canonical mirror] /
+        # [advisory] / [refused]) stay consistent with the
+        # standalone `view-desktop-overlap-detection` output.
+        lines.extend(
+            render_desktop_overlap_detection_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14429,6 +14461,14 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "memory_vault_view",
             "Memory Vault Export (Phase 10AA)",
+        ),
+        (
+            "concurrency_view",
+            "Controlled Concurrent Operation (Phase 10AB)",
+        ),
+        (
+            "overlap_detection_view",
+            "Overlap-Safe Detection (Phase 10AC)",
         ),
     ):
         sub = view.get(key, {})
@@ -15072,6 +15112,20 @@ def _launch_desktop_app_window(
         text="Memory Vault Export (Phase 10AA)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    concurrency_frame = tk.Frame(control_frame)
+    concurrency_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        concurrency_frame,
+        text="Controlled Concurrent Operation (Phase 10AB)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    overlap_detection_frame = tk.Frame(control_frame)
+    overlap_detection_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        overlap_detection_frame,
+        text="Overlap-Safe Detection (Phase 10AC)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15101,6 +15155,8 @@ def _launch_desktop_app_window(
     resume_console_button_widgets: list = []
     selection_button_widgets: list = []
     memory_vault_button_widgets: list = []
+    concurrency_button_widgets: list = []
+    overlap_detection_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15775,6 +15831,63 @@ def _launch_desktop_app_window(
             memory_vault_frame,
             memory_vault_controls,
             memory_vault_button_widgets,
+        )
+        # Phase 10AB: rebuild the controlled-concurrency contract
+        # button row from the cached sub-view. Copy-paste ONLY;
+        # every button copies an operator-visible contract
+        # acknowledgement template to clipboard (matching the
+        # Phase 10Z fix-cycle affordance). ZERO new library-
+        # callable controls are introduced. Every button stays
+        # clickable so the copy-to-clipboard path is exposed even
+        # in the deferred-runtime slice.
+        concurrency_sub_view = view.get("concurrency_view", {})
+        if (
+            isinstance(concurrency_sub_view, dict)
+            and concurrency_sub_view.get("view") is None
+            and "error" in concurrency_sub_view
+        ):
+            concurrency_controls = []
+        elif isinstance(concurrency_sub_view, dict):
+            concurrency_controls = (
+                build_desktop_concurrency_controls(
+                    concurrency_sub_view,
+                )
+            )
+        else:
+            concurrency_controls = []
+        _rebuild_button_row(
+            concurrency_frame,
+            concurrency_controls,
+            concurrency_button_widgets,
+        )
+        # Phase 10AC: rebuild the overlap-safe detection button
+        # row from the cached sub-view. Copy-paste ONLY; every
+        # button copies an operator-visible recovery-
+        # acknowledgement TEMPLATE to clipboard. ZERO new
+        # library-callable controls are introduced. Every button
+        # stays clickable per the Phase 10Z / 10AA / 10AB
+        # affordance pattern.
+        overlap_detection_sub_view = view.get(
+            "overlap_detection_view", {},
+        )
+        if (
+            isinstance(overlap_detection_sub_view, dict)
+            and overlap_detection_sub_view.get("view") is None
+            and "error" in overlap_detection_sub_view
+        ):
+            overlap_detection_controls = []
+        elif isinstance(overlap_detection_sub_view, dict):
+            overlap_detection_controls = (
+                build_desktop_overlap_detection_controls(
+                    overlap_detection_sub_view,
+                )
+            )
+        else:
+            overlap_detection_controls = []
+        _rebuild_button_row(
+            overlap_detection_frame,
+            overlap_detection_controls,
+            overlap_detection_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -26497,17 +26610,26 @@ def cmd_view_desktop_selection(
 # runtime state is surfaced separately via a distinct `runtime_enabled`
 # field and the appended `[<enablement_state>]` label tag.
 #
+# The surface renders bounded readable export bodies (Phase 10AA fix
+# cycle): each canonical-artifact mirror source surfaces a head-of-file
+# excerpt truncated at MEMORY_VAULT_EXCERPT_BYTE_LIMIT bytes, and each
+# durable-memory JSON directory source surfaces a name-only index bounded
+# at MEMORY_VAULT_ENTRY_INDEX_LIMIT entries. The shipped canonical file
+# remains the sole source of truth for full canonical-artifact bodies and
+# the shipped `read_memory_entry(...)` primitive remains the sole reader
+# for durable-memory JSON body content.
+#
 # The surface NEVER writes, NEVER mutates canonical artifacts, NEVER
 # appends to `.agent-loop/orchestrator.log`, NEVER advances loop-state,
 # NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
-# network socket, NEVER reads durable-memory content (only stat / mtime /
-# size / entry count via `Path.iterdir()`), NEVER reads canonical
-# artifact content (only stat / mtime / size), NEVER writes an export
-# file, NEVER persists an export cache, NEVER subscribes to a background
-# watcher, NEVER auto-fills any operator-identity field, NEVER widens the
-# Phase 10I library-callable cap, NEVER introduces a memory-vault side
-# database / preference store / recents list / identity token / session
-# token, and NEVER actually renders any export content in this slice.
+# network socket, NEVER reads durable-memory JSON BODY content (only
+# stat / mtime / size / directory entry names via `Path.iterdir()`),
+# NEVER reads MORE than MEMORY_VAULT_EXCERPT_BYTE_LIMIT bytes of any
+# canonical artifact, NEVER writes an export file, NEVER persists an
+# export cache, NEVER subscribes to a background watcher, NEVER auto-
+# fills any operator-identity field, NEVER widens the Phase 10I library-
+# callable cap, NEVER introduces a memory-vault side database /
+# preference store / recents list / identity token / session token.
 # ---------------------------------------------------------------------------
 
 DESKTOP_MEMORY_VAULT_SIGNAL_VERSION = "phase-10aa-v1"
@@ -26530,25 +26652,38 @@ DESKTOP_MEMORY_VAULT_PRECEDENCE_NOTE = (
     "`advisory_label_rule`, unknown `approval_requirements` member, or "
     "non-POSIX / absolute / drive-prefixed / parent-traversal "
     "`path_canonical_rel`. `phase_10aa_runtime_available` is hard-coded "
-    "`False` in this slice so EVERY export surfaces as "
-    "`refused_until_policy_update` regardless of operator input. The "
-    "surface NEVER spawns a subprocess, NEVER opens a network socket, "
-    "NEVER reads durable-memory content (only stat / mtime / size / "
-    "entry count via `Path.iterdir()`), NEVER reads canonical artifact "
-    "content (only stat / mtime / size), NEVER writes an export file, "
-    "NEVER persists an export cache, NEVER subscribes to a background "
-    "watcher, NEVER mutates any canonical artifact (loop-state.json / "
-    "orchestrator.log / external-target.json / runtime-config.json / "
-    "TASK.md / proposed-phase.md / claude-prompt.md / claude-summary.md "
-    "/ codex-review.md / fix-prompt.md / current-task.md / current-"
-    "phase.md / phase-plan.md / prd-intake.json / final-acceptance.json "
-    "/ any Phase 2A evidence file / any Phase 6 memory entry), NEVER "
-    "appends to `.agent-loop/orchestrator.log`, NEVER advances loop-"
-    "state, NEVER invokes `_halt(...)`, NEVER auto-fills any "
-    "--*-by operator-identity argument or approval-mode value, NEVER "
-    "introduces a memory-vault side database / preference store / "
-    "recents list / identity token / session token, and NEVER widens "
-    "the Phase 10I cap"
+    "`False` in this slice so EVERY export's per-source ENABLEMENT "
+    "state surfaces as `refused_until_policy_update` regardless of "
+    "operator input; the bounded human-readable excerpt itself is "
+    "surfaced whenever the source file / directory exists so the "
+    "shipped UI / CLI actually renders a readable memory-vault export "
+    "body (per the Phase 10AA fix cycle). Canonical-artifact mirror "
+    "sources surface a HEAD-BOUNDED excerpt truncated at "
+    "`MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes; the shipped canonical "
+    "file remains the sole source of truth for the full body and is "
+    "NEVER modified. Shipped durable-memory JSON directory sources "
+    "surface a NAME-ONLY index bounded at "
+    "`MEMORY_VAULT_ENTRY_INDEX_LIMIT` most-recent shipped `.json` "
+    "filenames; the surface NEVER reads durable-memory JSON body "
+    "content (the shipped `read_memory_entry(...)` primitive remains "
+    "the sole reader for the JSON body). The surface NEVER spawns a "
+    "subprocess, NEVER opens a network socket, NEVER reads durable-"
+    "memory JSON BODY content (only stat / mtime / size / directory "
+    "entry names via `Path.iterdir()`), NEVER reads MORE than "
+    "`MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes of any canonical artifact, "
+    "NEVER writes an export file, NEVER persists an export cache, "
+    "NEVER subscribes to a background watcher, NEVER mutates any "
+    "canonical artifact (loop-state.json / orchestrator.log / "
+    "external-target.json / runtime-config.json / TASK.md / proposed-"
+    "phase.md / claude-prompt.md / claude-summary.md / codex-review.md "
+    "/ fix-prompt.md / current-task.md / current-phase.md / phase-"
+    "plan.md / prd-intake.json / final-acceptance.json / any Phase 2A "
+    "evidence file / any Phase 6 memory entry), NEVER appends to "
+    "`.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER "
+    "invokes `_halt(...)`, NEVER auto-fills any --*-by operator-"
+    "identity argument or approval-mode value, NEVER introduces a "
+    "memory-vault side database / preference store / recents list / "
+    "identity token / session token, and NEVER widens the Phase 10I cap"
 )
 
 MEMORY_VAULT_EXPORT_CATEGORIES = (
@@ -26608,6 +26743,28 @@ MEMORY_VAULT_PERMITTED_APPROVAL_MODES = frozenset({
 })
 
 MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS = 30 * 24 * 3600
+
+# Phase 10AA fix cycle: bounded per-source excerpt cap. Canonical
+# artifact mirror sources (`AGENTS.md`, `.agent-loop/claude-summary.md`,
+# `.agent-loop/phase-plan.md`) surface a head-of-file excerpt truncated
+# at this many bytes so the shipped desktop app / CLI actually renders
+# a readable human-facing memory-vault export body rather than metadata
+# only. Set to 2000 bytes (roughly 40 lines) so a reviewer sees the
+# opening context without the surface silently mirroring a full canonical
+# artifact into a competing source of truth. The shipped canonical file
+# itself is unmodified and remains the sole source of truth for the full
+# body.
+MEMORY_VAULT_EXCERPT_BYTE_LIMIT = 2000
+
+# Phase 10AA fix cycle: bounded per-directory-source entry-index cap.
+# Durable-memory directory sources (`.agent-loop/memory/decision`,
+# `.agent-loop/memory/summary`) surface a name-only index of up to this
+# many most-recent shipped JSON entries. The surface NEVER reads the
+# JSON body content (that stays owned by `read_memory_entry(...)`); the
+# name-only index lets the operator see WHICH shipped decision / summary
+# entries exist without letting the memory-vault surface become a
+# competing durable-memory reader.
+MEMORY_VAULT_ENTRY_INDEX_LIMIT = 10
 
 _MEMORY_VAULT_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
     "id",
@@ -27142,6 +27299,89 @@ def _desktop_memory_vault_probe_freshness(
     }
 
 
+def _desktop_memory_vault_read_excerpt(
+    controller_root: Path, spec: dict,
+) -> dict:
+    """Phase 10AA fix cycle: return a bounded human-readable
+    excerpt for one memory-vault export descriptor.
+
+    For `canonical_artifact_mirror` file sources, reads the head
+    of the file (up to `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes)
+    and returns it as a UTF-8 string with a `truncated` bool
+    indicating whether the file was longer than the cap. This
+    is the readable body the Phase 10AA export contract
+    promises; the shipped canonical file remains unmodified and
+    the sole source of truth for the full body.
+
+    For `shipped_memory_json` directory sources, reads the
+    sorted (reverse-alphabetic == newest-first, since the Phase
+    6A writer name format is `<UTC-timestamp>-<hash>.json`) list
+    of shipped `.json` filenames bounded to
+    `MEMORY_VAULT_ENTRY_INDEX_LIMIT` entries and returns them
+    as `entry_index`. The surface NEVER reads any JSON body
+    content; the name-only index lets the operator see WHICH
+    shipped decision / summary entries exist without letting the
+    memory-vault surface become a competing durable-memory
+    reader.
+
+    Missing / unreadable sources return an empty envelope
+    (`excerpt_text=None`, `entry_index=None`). Pure read-only
+    IO; never raises, never mutates.
+    """
+    path = (
+        controller_root / spec["path_canonical_rel"]
+    ).resolve()
+    envelope = {
+        "excerpt_text": None,
+        "excerpt_bytes_read": None,
+        "excerpt_truncated": None,
+        "entry_index": None,
+        "entry_index_truncated": None,
+    }
+    source_kind = spec["source_kind"]
+    try:
+        if source_kind == "canonical_artifact_mirror":
+            if not path.is_file():
+                return envelope
+            cap = MEMORY_VAULT_EXCERPT_BYTE_LIMIT
+            with path.open("rb") as handle:
+                head_bytes = handle.read(cap + 1)
+            truncated = len(head_bytes) > cap
+            if truncated:
+                head_bytes = head_bytes[:cap]
+            try:
+                excerpt_text = head_bytes.decode(
+                    "utf-8", errors="replace",
+                )
+            except UnicodeDecodeError:
+                excerpt_text = head_bytes.decode(
+                    "latin-1", errors="replace",
+                )
+            envelope["excerpt_text"] = excerpt_text
+            envelope["excerpt_bytes_read"] = len(head_bytes)
+            envelope["excerpt_truncated"] = truncated
+            return envelope
+        if source_kind == "shipped_memory_json":
+            if not path.is_dir():
+                return envelope
+            names = sorted(
+                (
+                    child.name for child in path.iterdir()
+                    if child.is_file()
+                    and child.suffix == ".json"
+                ),
+                reverse=True,
+            )
+            cap = MEMORY_VAULT_ENTRY_INDEX_LIMIT
+            truncated = len(names) > cap
+            envelope["entry_index"] = names[:cap]
+            envelope["entry_index_truncated"] = truncated
+            return envelope
+    except OSError:
+        return envelope
+    return envelope
+
+
 def _desktop_memory_vault_compute_approval_state(
     spec: dict,
     *,
@@ -27326,6 +27566,7 @@ def _desktop_memory_vault_export_descriptor(
     spec: dict,
     *,
     freshness_probe: dict,
+    excerpt_envelope: dict,
     approval_mode: Optional[str],
     phase_10aa_runtime_available: bool,
     operator_acknowledged_advisory_labeling: bool,
@@ -27373,6 +27614,17 @@ def _desktop_memory_vault_export_descriptor(
         "freshness_state": freshness_probe["freshness_state"],
         "description": spec["description"],
         "safety_copy": spec["safety_copy"],
+        "excerpt_text": excerpt_envelope["excerpt_text"],
+        "excerpt_bytes_read": (
+            excerpt_envelope["excerpt_bytes_read"]
+        ),
+        "excerpt_truncated": (
+            excerpt_envelope["excerpt_truncated"]
+        ),
+        "entry_index": excerpt_envelope["entry_index"],
+        "entry_index_truncated": (
+            excerpt_envelope["entry_index_truncated"]
+        ),
         "approval_requirements": list(
             spec["approval_requirements"]
         ),
@@ -27407,11 +27659,22 @@ def build_desktop_memory_vault_view(
     acknowledgement / identity state held in-memory only; NEVER
     persisted to disk, NEVER carried across sessions.
 
-    Never writes, never mutates, never spawns a subprocess,
-    never invokes `_halt(...)`, never reads durable-memory
-    content (only stat / mtime / size / entry count via
-    `Path.iterdir()`), never reads canonical artifact content
-    (only stat / mtime / size), never widens the Phase 10I
+    Per the Phase 10AA fix cycle, canonical-artifact mirror
+    sources surface a head-bounded excerpt truncated at
+    `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes and durable-memory
+    JSON directory sources surface a name-only index bounded at
+    `MEMORY_VAULT_ENTRY_INDEX_LIMIT` most-recent shipped `.json`
+    filenames. The shipped canonical file / shipped memory JSON
+    entry remains the sole source of truth for the FULL body;
+    the memory-vault surface never mirrors the full body and
+    never reads durable-memory JSON body content.
+
+    Never writes, never mutates canonical artifacts, never
+    spawns a subprocess, never invokes `_halt(...)`, never
+    reads MORE than `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes of
+    any canonical artifact, never reads durable-memory JSON
+    body content (only stat / mtime / size / directory entry
+    names via `Path.iterdir()`), never widens the Phase 10I
     library-callable cap, never opens a network socket. The
     shipped `load_loop_state(...)` validator HaltError soft-fails
     so the surface stays operable when the controller's
@@ -27447,10 +27710,14 @@ def build_desktop_memory_vault_view(
         freshness_probe = _desktop_memory_vault_probe_freshness(
             controller_root, spec, now_ts=now_ts,
         )
+        excerpt_envelope = _desktop_memory_vault_read_excerpt(
+            controller_root, spec,
+        )
         exports.append(
             _desktop_memory_vault_export_descriptor(
                 spec,
                 freshness_probe=freshness_probe,
+                excerpt_envelope=excerpt_envelope,
                 approval_mode=approval_mode,
                 phase_10aa_runtime_available=False,
                 operator_acknowledged_advisory_labeling=(
@@ -27472,6 +27739,8 @@ def build_desktop_memory_vault_view(
         "freshness_stale_threshold_seconds": (
             MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS
         ),
+        "excerpt_byte_limit": MEMORY_VAULT_EXCERPT_BYTE_LIMIT,
+        "entry_index_limit": MEMORY_VAULT_ENTRY_INDEX_LIMIT,
         "operator_inputs": {
             "identity": inputs["identity"],
             "acknowledged_export_ids": sorted(ack_set),
@@ -27534,6 +27803,19 @@ def render_desktop_memory_vault_text(view: dict) -> list:
     lines.append(
         f"  [advisory] freshness_stale_threshold_seconds: "
         f"{view['freshness_stale_threshold_seconds']!r}"
+    )
+    lines.append(
+        f"  [advisory] excerpt_byte_limit (per-source head-"
+        f"bounded excerpt cap for canonical-artifact mirror "
+        f"sources; the shipped canonical file remains the sole "
+        f"source of truth for the full body): "
+        f"{view['excerpt_byte_limit']!r}"
+    )
+    lines.append(
+        f"  [advisory] entry_index_limit (per-source name-only "
+        f"index cap for shipped durable-memory JSON directory "
+        f"sources; the surface NEVER reads JSON body content): "
+        f"{view['entry_index_limit']!r}"
     )
     lines.append(
         f"  [advisory] export_categories (closed Phase 10AA "
@@ -27621,6 +27903,44 @@ def render_desktop_memory_vault_text(view: dict) -> list:
             f"size_bytes={export['size_bytes']!r} "
             f"entry_count={export['entry_count']!r}"
         )
+        excerpt_text = export.get("excerpt_text")
+        if excerpt_text is not None:
+            lines.append(
+                f"    [vault-excerpt] excerpt_bytes_read="
+                f"{export['excerpt_bytes_read']!r} "
+                f"excerpt_truncated="
+                f"{export['excerpt_truncated']!r} (head-of-"
+                f"file bounded by view['excerpt_byte_limit']; "
+                f"the shipped canonical file remains the sole "
+                f"source of truth for the full body):"
+            )
+            for excerpt_line in excerpt_text.splitlines():
+                lines.append(f"      | {excerpt_line}")
+            if not excerpt_text.endswith("\n"):
+                lines.append("      | (no trailing newline)")
+            if export["excerpt_truncated"]:
+                lines.append(
+                    "      | ... [truncated at excerpt_byte_"
+                    "limit; read the shipped canonical file "
+                    "directly for the full body]"
+                )
+        entry_index = export.get("entry_index")
+        if entry_index is not None:
+            lines.append(
+                f"    [vault-entry-index] entry_index_truncated="
+                f"{export['entry_index_truncated']!r} (name-"
+                f"only index bounded by "
+                f"view['entry_index_limit']; the surface NEVER "
+                f"reads JSON body content):"
+            )
+            for entry_name in entry_index:
+                lines.append(f"      * {entry_name}")
+            if export["entry_index_truncated"]:
+                lines.append(
+                    "      ... [truncated at entry_index_"
+                    "limit; read `read_memory_entry(...)` "
+                    "directly for the full JSON body]"
+                )
         for req in export["approval_requirements"]:
             entry = export["approval_state"].get(req, {})
             satisfied = entry.get("satisfied", False)
@@ -27734,11 +28054,15 @@ def cmd_view_desktop_memory_vault(
     any canonical artifact, NEVER appends to
     `.agent-loop/orchestrator.log`, NEVER advances loop-state,
     NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER
-    opens a network socket, NEVER reads durable-memory content
-    (only stat / mtime / size / entry count via `Path.iterdir()`),
-    NEVER reads canonical artifact content (only stat / mtime /
-    size), NEVER writes an export file, NEVER persists an export
-    cache, NEVER widens the Phase 10I library-callable cap.
+    opens a network socket, NEVER reads durable-memory JSON
+    BODY content (only stat / mtime / size / directory entry
+    names via `Path.iterdir()`), NEVER reads MORE than
+    `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes of any canonical
+    artifact (the surface surfaces a bounded head-of-file
+    excerpt so the shipped export body is human-readable, per
+    the Phase 10AA fix cycle), NEVER writes an export file,
+    NEVER persists an export cache, NEVER widens the Phase 10I
+    library-callable cap.
     """
     root_arg = getattr(args, "controller_root", None)
     if not root_arg:
@@ -27783,6 +28107,2664 @@ def cmd_view_desktop_memory_vault(
         controller_root, operator_inputs=operator_inputs,
     )
     for line in render_desktop_memory_vault_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AB - Controlled Concurrent Operation Contract.
+#
+# CONTRACT-ONLY slice. Defines the overlap rules, ownership boundaries, stale-
+# artifact detection, review/fix invalidation rules, and refusal/recovery
+# behavior required BEFORE any concurrent Codex/Claude runtime is ever allowed.
+# NO active overlapping runtime, background orchestration, parallel worker
+# model, or hidden concurrency ships in this slice.
+#
+# The Phase 10AB surface derives its state from canonical shipped artifacts
+# ONLY (`.agent-loop/loop-state.json`, `.agent-loop/claude-prompt.md`,
+# `.agent-loop/codex-review.md`, `.agent-loop/fix-prompt.md`,
+# `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
+# `.agent-loop/claude-summary.md`, `.agent-loop/phase-plan.md`, `TASK.md`,
+# `AGENTS.md`, `CLAUDE.md`), reads only stat / mtime / size for each artifact,
+# and NEVER reads artifact BODY content. Every per-artifact ownership,
+# staleness, and refusal / recovery entry is closed and validated fail-closed.
+#
+# The Phase 10Z fix-cycle affordance contract is preserved verbatim: each
+# shipped Tk button surfaces `enabled=True` (the click ONLY copies an
+# operator-visible request TEMPLATE into the OS clipboard) plus a distinct
+# `runtime_enabled=False` field indicating the concurrency runtime is
+# deferred. ZERO new library-callable controls are introduced; the Phase 10I
+# three-control library-callable cap is preserved exactly.
+#
+# The surface NEVER writes, NEVER mutates canonical artifacts, NEVER appends
+# to `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a network
+# socket, NEVER reads canonical artifact BODY content (only stat / mtime /
+# size), NEVER writes a concurrency cache, NEVER persists a background
+# watcher, NEVER auto-fills any operator-identity field, NEVER introduces
+# any actual concurrency runtime, background worker, or parallel worker
+# model. It is a bounded READ-ONLY contract mirror only.
+# ---------------------------------------------------------------------------
+
+DESKTOP_CONCURRENCY_SIGNAL_VERSION = "phase-10ab-v1"
+
+DESKTOP_CONCURRENCY_PRECEDENCE_NOTE = (
+    "Phase 10AB controlled concurrent operation contract slice. The "
+    "shipped Phase 3A orchestrator contract, Phase 4 planner / activator "
+    "separation, Phase 5A approval-modes contract, Phase 6A/6B durable-"
+    "memory storage contract, Phase 10L desktop-app contract, and Phase "
+    "10AA memory-vault export contract govern this surface's overlap / "
+    "ownership / staleness / invalidation / recovery vocabulary verbatim. "
+    "The Phase 10I three-control library-callable cap is preserved "
+    "exactly; ZERO new library-callable controls are introduced. Every "
+    "concurrency-rule descriptor is validated against the closed Phase "
+    "10AB descriptor shape and refused fail-closed on any missing "
+    "required field, wrong-typed value, unknown `overlap_state`, "
+    "unknown `owner_role`, unknown `invalidation_trigger`, unknown "
+    "`recovery_action`, unknown `approval_requirements` member, or "
+    "non-POSIX / absolute / drive-prefixed / parent-traversal artifact "
+    "`path_canonical_rel`. `phase_10ab_runtime_available` is hard-coded "
+    "`False` in this slice so EVERY concurrency rule's per-rule "
+    "ENABLEMENT state surfaces as `refused_until_policy_update` "
+    "regardless of operator input; the shipped desktop surface renders "
+    "the closed rule catalog + the shipped ownership map + the per-"
+    "artifact staleness state so an operator can see the concurrency "
+    "contract at a glance. The surface NEVER spawns a subprocess, NEVER "
+    "opens a network socket, NEVER reads canonical artifact BODY "
+    "content (only stat / mtime / size), NEVER launches or coordinates "
+    "any actual concurrent Codex/Claude runtime, NEVER schedules a "
+    "background watcher, NEVER writes a concurrency cache, NEVER "
+    "mutates any canonical artifact, NEVER appends to `.agent-loop/"
+    "orchestrator.log`, NEVER advances loop-state, NEVER invokes "
+    "`_halt(...)`, NEVER auto-fills any --*-by operator-identity "
+    "argument or approval-mode value, NEVER introduces a concurrency-"
+    "side database / preference store / recents list / identity token "
+    "/ session token, and NEVER widens the Phase 10I cap"
+)
+
+# Overlap-state vocabulary. `no_overlap` = single-active-work-stream
+# baseline. `overlap_safe_read_only` = the shipped contract permits
+# concurrent reads on canonical artifacts (Phase 7C reporters, desktop-
+# app poll cycle). `overlap_invalidating` = any concurrent write on the
+# named artifact invalidates the active review / fix context. `unknown` =
+# fail-closed default when the state cannot be derived.
+CONCURRENCY_OVERLAP_STATES = (
+    "no_overlap",
+    "overlap_safe_read_only",
+    "overlap_invalidating",
+    "unknown",
+)
+
+# Ownership-role vocabulary. Every shipped canonical artifact maps to
+# exactly one owner_role. `claude_owned` = Claude writes (the
+# implementation agent). `codex_owned` = Codex writes (the planner /
+# reviewer agent). `orchestrator_owned` = the shipped Python runtime
+# writes (loop-state, evidence, orchestrator.log). `human_owned` =
+# only the human operator writes (AGENTS.md, CLAUDE.md).
+# `shared_read_only` = every role may read but no role may write.
+CONCURRENCY_OWNERSHIP_ROLES = (
+    "claude_owned",
+    "codex_owned",
+    "orchestrator_owned",
+    "human_owned",
+    "shared_read_only",
+)
+
+# Staleness-state vocabulary derived from the shipped loop-state.json
+# mirror (`phase`, `sub_phase`, `cycle_count`). `fresh` = the artifact
+# is bound to the current active phase / cycle_count. `stale_phase` =
+# the artifact predates the active phase. `stale_cycle` = the artifact
+# predates the active cycle_count. `missing` = the artifact is absent.
+# `unknown` = fail-closed default.
+CONCURRENCY_STALENESS_STATES = (
+    "fresh",
+    "stale_phase",
+    "stale_cycle",
+    "missing",
+    "unknown",
+)
+
+# Invalidation-trigger vocabulary. Every closed member names a
+# canonical, observable event that MUST invalidate any in-flight review
+# / fix context per this contract.
+CONCURRENCY_INVALIDATION_TRIGGERS = (
+    "codex_review_verdict_changed",
+    "claude_prompt_replaced",
+    "fix_prompt_replaced",
+    "loop_state_advanced",
+    "phase_activation_advanced",
+    "cycle_count_advanced",
+)
+
+# Recovery-action vocabulary. Every closed member names an explicit
+# operator-visible action the loop MUST take when overlap is detected.
+CONCURRENCY_RECOVERY_ACTIONS = (
+    "re_read_active_prompt",
+    "re_read_codex_review",
+    "refresh_loop_state",
+    "manual_operator_intervention",
+    "refused_until_policy_update",
+)
+
+# Refusal-reason vocabulary. Every closed member names a specific
+# reason the concurrency contract MUST refuse fail-closed.
+CONCURRENCY_REFUSAL_REASONS = (
+    "overlap_not_permitted",
+    "stale_artifact_detected",
+    "invalidation_trigger_active",
+    "runtime_not_available",
+    "approval_mode_strict",
+)
+
+# Enablement-state vocabulary matches the Phase 10Z / 10AA closed
+# three-state machine.
+CONCURRENCY_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_until_policy_update",
+)
+
+# Approval-requirement vocabulary (closed).
+CONCURRENCY_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_contract",
+    "operator_supplied_identity",
+    "approval_mode_supports_concurrency",
+    "phase_10ab_runtime_available",
+    "no_invalidation_trigger_active",
+)
+
+# Mirrors the Phase 10T / 10U / 10V / 10Z permitted-mode set so the
+# concurrency boundary stays consistent.
+CONCURRENCY_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+_CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "overlap_state",
+    "owner_role_writer",
+    "owner_role_reader",
+    "invalidation_trigger",
+    "recovery_action",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+_CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_TUPLE_FIELDS = (
+    "approval_requirements",
+)
+
+# Closed shipped ownership map: every named canonical artifact maps to
+# exactly one owner_role. Order-preserving tuple so the rendered output
+# is deterministic. Every path is POSIX-style repo-relative bounded
+# inside the controller root.
+_DESKTOP_CONCURRENCY_OWNERSHIP_MAP: tuple = (
+    (".agent-loop/loop-state.json", "orchestrator_owned"),
+    (".agent-loop/orchestrator.log", "orchestrator_owned"),
+    (".agent-loop/git-diff.patch", "orchestrator_owned"),
+    (".agent-loop/git-status.log", "orchestrator_owned"),
+    (".agent-loop/test-output.log", "orchestrator_owned"),
+    (".agent-loop/lint-output.log", "orchestrator_owned"),
+    (".agent-loop/typecheck-output.log", "orchestrator_owned"),
+    (".agent-loop/build-output.log", "orchestrator_owned"),
+    (".agent-loop/codex-review.md", "codex_owned"),
+    (".agent-loop/claude-prompt.md", "codex_owned"),
+    (".agent-loop/fix-prompt.md", "codex_owned"),
+    (".agent-loop/current-task.md", "codex_owned"),
+    (".agent-loop/current-phase.md", "codex_owned"),
+    (".agent-loop/phase-plan.md", "codex_owned"),
+    ("TASK.md", "codex_owned"),
+    (".agent-loop/claude-summary.md", "claude_owned"),
+    ("AGENTS.md", "human_owned"),
+    ("CLAUDE.md", "human_owned"),
+    ("README.md", "shared_read_only"),
+)
+
+_DESKTOP_CONCURRENCY_RULE_REGISTRY: tuple = (
+    {
+        "id": "codex_review_verdict_supersedes_in_flight_claude_work",
+        "display_name": (
+            "Codex review verdict supersedes in-flight Claude "
+            "work"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "codex_owned",
+        "owner_role_reader": "claude_owned",
+        "invalidation_trigger": (
+            "codex_review_verdict_changed"
+        ),
+        "recovery_action": "re_read_codex_review",
+        "description": (
+            "When Codex writes a new `.agent-loop/codex-"
+            "review.md` verdict block (a `## Verdict` header "
+            "with the closed vocabulary `APPROVED_FOR_HUMAN_"
+            "REVIEW` / `NEEDS_FIXES` / `FAILED_REQUIRES_"
+            "HUMAN`), any in-flight Claude implementation "
+            "against the same phase / sub_phase is "
+            "invalidated. Claude MUST re-read the shipped "
+            "`.agent-loop/codex-review.md` and the shipped "
+            "`.agent-loop/fix-prompt.md` before continuing."
+        ),
+        "safety_copy": (
+            "Overlap between a Codex review write and an in-"
+            "flight Claude implementation is UNSAFE. The "
+            "shipped Phase 10AB contract refuses to permit "
+            "either work stream to silently ignore the other."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "overlap-detection runtime is deferred to a "
+            "future Phase 10+ runtime slice tracked in "
+            "`ROADMAP.md`. The Phase 10AB desktop surface "
+            "NEVER launches any actual concurrent worker, "
+            "NEVER coordinates a background overlap watcher, "
+            "NEVER opens a network socket, and NEVER writes a "
+            "concurrency cache."
+        ),
+        "refusal_reason_template": (
+            "`codex_review_verdict_supersedes_in_flight_"
+            "claude_work` refused: Phase 10AB ships the "
+            "contract only; every rule surfaces as "
+            "`refused_until_policy_update` in this slice."
+        ),
+    },
+    {
+        "id": "claude_prompt_replacement_invalidates_prior_run",
+        "display_name": (
+            "Claude prompt replacement invalidates any prior "
+            "Claude implementation run"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "codex_owned",
+        "owner_role_reader": "claude_owned",
+        "invalidation_trigger": "claude_prompt_replaced",
+        "recovery_action": "re_read_active_prompt",
+        "description": (
+            "When Codex writes a new `.agent-loop/claude-"
+            "prompt.md`, any prior Claude implementation "
+            "cycle bound to the previous prompt content is "
+            "invalidated. Claude MUST re-read the shipped "
+            "prompt in full before any new implementation "
+            "step; a diff against the previous mtime MUST "
+            "fail closed and refuse silent continuation."
+        ),
+        "safety_copy": (
+            "The shipped `.agent-loop/claude-prompt.md` is "
+            "the canonical source of truth for the active "
+            "Claude implementation contract; a silent "
+            "continuation past a prompt replacement is a "
+            "concurrency bug."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "prompt-mtime watch runtime is deferred to a "
+            "future Phase 10+ runtime slice tracked in "
+            "`ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`claude_prompt_replacement_invalidates_prior_"
+            "run` refused: Phase 10AB ships the contract "
+            "only."
+        ),
+    },
+    {
+        "id": "fix_prompt_replacement_invalidates_prior_fix",
+        "display_name": (
+            "Fix prompt replacement invalidates any prior "
+            "fix-cycle run"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "codex_owned",
+        "owner_role_reader": "claude_owned",
+        "invalidation_trigger": "fix_prompt_replaced",
+        "recovery_action": "re_read_active_prompt",
+        "description": (
+            "When Codex writes a new `.agent-loop/fix-"
+            "prompt.md`, any prior Claude fix-cycle bound to "
+            "the previous fix-prompt content is invalidated. "
+            "Claude MUST re-read the shipped fix-prompt in "
+            "full and apply the new fix scope before any "
+            "further fix-cycle step."
+        ),
+        "safety_copy": (
+            "A fix prompt is scoped to specific findings; "
+            "silent continuation past a fix-prompt "
+            "replacement can widen or narrow the fix scope "
+            "unintentionally."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "fix-prompt watch runtime is deferred to a "
+            "future Phase 10+ runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`fix_prompt_replacement_invalidates_prior_fix` "
+            "refused: Phase 10AB ships the contract only."
+        ),
+    },
+    {
+        "id": "loop_state_advancement_invalidates_context",
+        "display_name": (
+            "Loop-state advancement invalidates any prior "
+            "review / fix context"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "orchestrator_owned",
+        "owner_role_reader": "shared_read_only",
+        "invalidation_trigger": "loop_state_advanced",
+        "recovery_action": "refresh_loop_state",
+        "description": (
+            "When the shipped orchestrator advances `.agent-"
+            "loop/loop-state.json` (a `status` change or a "
+            "`cycle_count` increment), any prior review / "
+            "fix context bound to the previous loop-state is "
+            "invalidated. Every agent MUST reload the shipped "
+            "loop-state before continuing; a silent "
+            "continuation past a loop-state advancement is a "
+            "concurrency bug."
+        ),
+        "safety_copy": (
+            "`.agent-loop/loop-state.json` is the canonical "
+            "orchestrator state; treating a stale copy as "
+            "current risks a wrong-cycle claim, a wrong-"
+            "verdict claim, or a silent phase overlap."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "loop-state watch runtime is deferred to a "
+            "future Phase 10+ runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`loop_state_advancement_invalidates_context` "
+            "refused: Phase 10AB ships the contract only."
+        ),
+    },
+    {
+        "id": "shared_canonical_artifact_reads_stay_overlap_safe",
+        "display_name": (
+            "Shared canonical artifact READS remain overlap-"
+            "safe"
+        ),
+        "overlap_state": "overlap_safe_read_only",
+        "owner_role_writer": "shared_read_only",
+        "owner_role_reader": "shared_read_only",
+        "invalidation_trigger": (
+            "loop_state_advanced"
+        ),
+        "recovery_action": "refresh_loop_state",
+        "description": (
+            "Concurrent READS on canonical artifacts (Phase "
+            "7C reporters, the Phase 10M desktop-app poll "
+            "cycle, the Phase 10AA memory-vault export "
+            "surface, the Phase 10AB concurrency view "
+            "itself) are permitted as long as the reader "
+            "does not mutate. This rule anchors the "
+            "read-only baseline the shipped reporter contract "
+            "already ships."
+        ),
+        "safety_copy": (
+            "Concurrent read-only reporting is safe by design "
+            "as long as the reporter never mutates. The Phase "
+            "10AB contract preserves this baseline."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "overlap-safety runtime is deferred to a future "
+            "Phase 10+ runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`shared_canonical_artifact_reads_stay_overlap_"
+            "safe` refused: Phase 10AB ships the contract "
+            "only."
+        ),
+    },
+    {
+        "id": "human_owned_artifacts_freeze_concurrent_write",
+        "display_name": (
+            "Human-owned artifacts freeze any concurrent "
+            "agent write"
+        ),
+        "overlap_state": "no_overlap",
+        "owner_role_writer": "human_owned",
+        "owner_role_reader": "shared_read_only",
+        "invalidation_trigger": "phase_activation_advanced",
+        "recovery_action": "manual_operator_intervention",
+        "description": (
+            "`AGENTS.md` and `CLAUDE.md` are human-owned; no "
+            "concurrent Codex/Claude write is permitted. Any "
+            "change to a human-owned artifact requires "
+            "explicit operator action outside the shipped "
+            "runtime; the shipped agents MUST refuse fail-"
+            "closed on any request that would mutate a human-"
+            "owned artifact."
+        ),
+        "safety_copy": (
+            "Governance and standards artifacts are frozen "
+            "against automated writes. This preserves the "
+            "shipped Phase 3A / Phase 4A ownership rules."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "human-owned-artifact freeze enforcement is "
+            "already covered by the shipped Phase 3A / 10L "
+            "refusal boundaries and this contract mirrors "
+            "them explicitly."
+        ),
+        "refusal_reason_template": (
+            "`human_owned_artifacts_freeze_concurrent_write` "
+            "refused: Phase 10AB ships the contract only."
+        ),
+    },
+)
+
+
+def _desktop_concurrency_validate_rule_descriptor(
+    spec: dict,
+) -> None:
+    """Phase 10AB rule-descriptor validator: refuse fail-closed
+    on any missing required field, wrong-typed value, unknown
+    closed-enumeration member. Pure validation; no IO, no
+    mutation, no `_halt(...)`.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor is not a dict "
+                f"({type(spec).__name__})"
+            ),
+        )
+    for field in (
+        _CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_STRING_FIELDS
+    ):
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"descriptor field {field!r} is missing "
+                    f"or non-string ({value!r})"
+                ),
+            )
+    for field in (
+        _CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_TUPLE_FIELDS
+    ):
+        value = spec.get(field)
+        if not isinstance(value, tuple) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"descriptor field {field!r} is missing, "
+                    f"non-tuple, or empty ({value!r})"
+                ),
+            )
+    if spec["overlap_state"] not in CONCURRENCY_OVERLAP_STATES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor overlap_state="
+                f"{spec['overlap_state']!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_OVERLAP_STATES!r}"
+            ),
+        )
+    for role_field in ("owner_role_writer", "owner_role_reader"):
+        if spec[role_field] not in (
+            CONCURRENCY_OWNERSHIP_ROLES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"descriptor {role_field}="
+                    f"{spec[role_field]!r} is not in the "
+                    f"closed Phase 10AB enumeration "
+                    f"{CONCURRENCY_OWNERSHIP_ROLES!r}"
+                ),
+            )
+    if spec["invalidation_trigger"] not in (
+        CONCURRENCY_INVALIDATION_TRIGGERS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor invalidation_trigger="
+                f"{spec['invalidation_trigger']!r} is not in "
+                f"the closed Phase 10AB enumeration "
+                f"{CONCURRENCY_INVALIDATION_TRIGGERS!r}"
+            ),
+        )
+    if spec["recovery_action"] not in (
+        CONCURRENCY_RECOVERY_ACTIONS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor recovery_action="
+                f"{spec['recovery_action']!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_RECOVERY_ACTIONS!r}"
+            ),
+        )
+    for req in spec["approval_requirements"]:
+        if req not in CONCURRENCY_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"approval_requirements member {req!r} is "
+                    f"not in the closed Phase 10AB enumeration "
+                    f"{CONCURRENCY_APPROVAL_REQUIREMENTS!r}"
+                ),
+            )
+
+
+def _desktop_concurrency_validate_ownership_entry(
+    entry: tuple,
+) -> None:
+    """Phase 10AB: refuse fail-closed on any ownership-map entry
+    whose path is non-POSIX / absolute / drive-prefixed / parent-
+    traversal, or whose role is not in the closed vocabulary.
+    """
+    if (
+        not isinstance(entry, tuple) or len(entry) != 2
+        or not isinstance(entry[0], str)
+        or not isinstance(entry[1], str)
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership entry {entry!r} is not a "
+                f"(path_str, role_str) tuple"
+            ),
+        )
+    path_rel, role = entry
+    if not path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop concurrency contract refused: "
+                "ownership entry path is empty"
+            ),
+        )
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} contains a "
+                f"backslash; per the Phase 10AB contract this "
+                f"MUST be a POSIX-style relative path"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} is absolute"
+            ),
+        )
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} carries a "
+                f"Windows-style drive prefix"
+            ),
+        )
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} contains a "
+                f"parent-directory traversal segment"
+            ),
+        )
+    if role not in CONCURRENCY_OWNERSHIP_ROLES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership role={role!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_OWNERSHIP_ROLES!r}"
+            ),
+        )
+
+
+def _desktop_concurrency_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Phase 10AB normalizer. Accepts `{identity,
+    acknowledged_rule_ids}` (per-session, in-memory only, NEVER
+    persisted).
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_rule_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_rule_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"operator_inputs.acknowledged_rule_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_rule_ids": frozenset(
+            str(s) for s in ack
+        ),
+    }
+
+
+def _desktop_concurrency_probe_artifact_staleness(
+    controller_root: Path,
+    path_rel: str,
+    *,
+    active_phase: Optional[str] = None,
+    active_cycle_count: Optional[int] = None,
+    active_ts: Optional[float] = None,
+) -> dict:
+    """Pure stat / mtime / size probe of one shipped canonical
+    artifact plus a derived staleness label.
+
+    Returns `{path_canonical, exists, last_modified_utc,
+    last_modified_ts, size_bytes, staleness_state}`. NEVER reads
+    artifact CONTENT; only `Path.stat()` is consulted. Pure
+    read-only IO; never raises.
+
+    `staleness_state` is derived as follows: `missing` if the
+    file does not exist; `unknown` if the loop-state cannot
+    supply an `active_ts` reference. Otherwise, when the
+    artifact mtime is older than the shipped loop-state mtime
+    minus one poll-cycle grace window, the artifact is marked
+    `stale_cycle`; a much older artifact (older than a shipped
+    active-phase-history grace window) is marked `stale_phase`.
+    The default is `fresh`.
+    """
+    path = (controller_root / path_rel).resolve()
+    exists = False
+    mtime_ts: Optional[float] = None
+    size_bytes: Optional[int] = None
+    staleness_state = "missing"
+    try:
+        st = path.stat()
+        exists = True
+        mtime_ts = float(st.st_mtime)
+        size_bytes = int(st.st_size)
+        if active_ts is None:
+            staleness_state = "unknown"
+        else:
+            age_seconds = active_ts - mtime_ts
+            # Phase-scale grace window: 7 days. A file older
+            # than this predates the active phase in almost
+            # every realistic loop; the loop typically advances
+            # phases faster than that.
+            if age_seconds > 7 * 24 * 3600:
+                staleness_state = "stale_phase"
+            # Cycle-scale grace window: 1 hour. A file older
+            # than this is treated as belonging to a prior
+            # cycle relative to the shipped loop-state.
+            elif age_seconds > 3600:
+                staleness_state = "stale_cycle"
+            else:
+                staleness_state = "fresh"
+    except FileNotFoundError:
+        staleness_state = "missing"
+    except OSError:
+        staleness_state = "unknown"
+    last_modified_utc: Optional[str] = None
+    if mtime_ts is not None:
+        last_modified_utc = (
+            datetime.fromtimestamp(mtime_ts, tz=timezone.utc)
+            .isoformat()
+        )
+    return {
+        "path_canonical": path.as_posix(),
+        "path_canonical_rel": path_rel,
+        "exists": exists,
+        "last_modified_utc": last_modified_utc,
+        "last_modified_ts": mtime_ts,
+        "size_bytes": size_bytes,
+        "staleness_state": staleness_state,
+    }
+
+
+def _desktop_concurrency_compute_approval_state(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10ab_runtime_available: bool,
+    operator_acknowledged_contract: bool,
+    operator_supplied_identity: bool,
+    no_invalidation_trigger_active: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10AB approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            CONCURRENCY_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_acknowledged_contract": {
+            "satisfied": bool(operator_acknowledged_contract),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-rule contract this session"
+                if operator_acknowledged_contract
+                else (
+                    "contract not acknowledged this session; "
+                    "per the Phase 10AB contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action and MUST NOT be pre-"
+                    "acknowledged from any prior session or "
+                    "saved preference"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10AB contract identity MUST be "
+                    "operator-supplied and MUST NOT be auto-"
+                    "filled from `$USER`, `whoami`, a "
+                    "packaging-time-configured identity, or "
+                    "any persistent concurrency-side identity "
+                    "store"
+                )
+            ),
+        },
+        "approval_mode_supports_concurrency": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(CONCURRENCY_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(CONCURRENCY_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10AB contract "
+                    f"concurrency MUST refuse fail-closed in "
+                    f"`strict` mode"
+                )
+            ),
+        },
+        "phase_10ab_runtime_available": {
+            "satisfied": bool(phase_10ab_runtime_available),
+            "reason": (
+                "Phase 10AB concurrency runtime is shipped "
+                "and reachable"
+                if phase_10ab_runtime_available
+                else (
+                    "Phase 10AB ships the CONTRACT only; the "
+                    "actual overlap-detection runtime is "
+                    "deferred to a future Phase 10 runtime "
+                    "slice tracked in `ROADMAP.md`"
+                )
+            ),
+        },
+        "no_invalidation_trigger_active": {
+            "satisfied": bool(no_invalidation_trigger_active),
+            "reason": (
+                "no closed invalidation trigger is active on "
+                "the current loop-state"
+                if no_invalidation_trigger_active
+                else (
+                    "one or more closed invalidation triggers "
+                    "are active on the current loop-state; "
+                    "per the Phase 10AB contract concurrency "
+                    "MUST refuse fail-closed until the trigger "
+                    "is resolved (see the shipped recovery "
+                    "action for the rule)"
+                )
+            ),
+        },
+    }
+
+
+def _desktop_concurrency_compute_enablement_state(
+    spec: dict, *, approval_state: dict,
+) -> tuple:
+    """Phase 10AB enablement-state computation. Returns
+    `(state_value, reason)` where `state_value` is one of
+    `CONCURRENCY_ENABLEMENT_STATES`.
+
+    Default: `refused_until_policy_update`. Promotion to
+    `enabled_pending_runtime` requires every approval
+    requirement satisfied. Until the runtime ships every rule
+    stays `refused_until_policy_update` regardless of operator
+    input (the closed `phase_10ab_runtime_available` requirement
+    is hard-coded `False` in this slice).
+    """
+    runtime_side_reqs = {
+        "phase_10ab_runtime_available",
+        "no_invalidation_trigger_active",
+    }
+    runtime_unmet = [
+        req for req in spec["approval_requirements"]
+        if req in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if runtime_unmet:
+        return (
+            "refused_until_policy_update",
+            (
+                f"Phase 10AB runtime-side requirements are "
+                f"not satisfied: {runtime_unmet!r}; per the "
+                f"Phase 10AB fail-closed default concurrency "
+                f"is refused until the runtime slice ships "
+                f"AND no invalidation trigger is active"
+            ),
+        )
+    operator_unmet = [
+        req for req in spec["approval_requirements"]
+        if req not in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if operator_unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"one or more Phase 10AB operator-side "
+                f"approval requirements are not satisfied: "
+                f"{operator_unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10AB approval requirement is "
+            "satisfied; the Phase 10AB slice still ships the "
+            "contract only so a future Phase 10 runtime slice "
+            "MUST actually perform overlap detection "
+            "(tracked in `ROADMAP.md`)"
+        ),
+    )
+
+
+def _desktop_concurrency_rule_descriptor(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10ab_runtime_available: bool,
+    operator_acknowledged_contract: bool,
+    operator_supplied_identity: bool,
+    no_invalidation_trigger_active: bool,
+) -> dict:
+    """Return the operator-visible per-rule descriptor (closed
+    shape; matches the Phase 10AB contract field list).
+    """
+    approval_state = (
+        _desktop_concurrency_compute_approval_state(
+            spec,
+            approval_mode=approval_mode,
+            phase_10ab_runtime_available=(
+                phase_10ab_runtime_available
+            ),
+            operator_acknowledged_contract=(
+                operator_acknowledged_contract
+            ),
+            operator_supplied_identity=(
+                operator_supplied_identity
+            ),
+            no_invalidation_trigger_active=(
+                no_invalidation_trigger_active
+            ),
+        )
+    )
+    enablement_state, enablement_reason = (
+        _desktop_concurrency_compute_enablement_state(
+            spec, approval_state=approval_state,
+        )
+    )
+    return {
+        "id": spec["id"],
+        "display_name": spec["display_name"],
+        "overlap_state": spec["overlap_state"],
+        "owner_role_writer": spec["owner_role_writer"],
+        "owner_role_reader": spec["owner_role_reader"],
+        "invalidation_trigger": spec["invalidation_trigger"],
+        "recovery_action": spec["recovery_action"],
+        "description": spec["description"],
+        "safety_copy": spec["safety_copy"],
+        "approval_requirements": list(
+            spec["approval_requirements"]
+        ),
+        "approval_state": approval_state,
+        "enablement_state": enablement_state,
+        "enablement_reason": enablement_reason,
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+    }
+
+
+def build_desktop_concurrency_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AB: assemble the bounded desktop controlled-
+    concurrency contract view. Surfaces the closed
+    `_DESKTOP_CONCURRENCY_RULE_REGISTRY` + the closed
+    `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` + per-artifact staleness
+    derived from `Path.stat()` alongside the closed refusal /
+    recovery vocabularies.
+
+    `phase_10ab_runtime_available` is hard-coded `False` in this
+    slice so every rule's per-rule ENABLEMENT state surfaces as
+    `refused_until_policy_update`; the shipped desktop surface
+    renders the closed rule catalog + ownership map + per-
+    artifact staleness so an operator can see the concurrency
+    contract at a glance.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never invokes `_halt(...)`, never reads canonical artifact
+    BODY content (only stat / mtime / size), never widens the
+    Phase 10I library-callable cap, never opens a network
+    socket. The shipped `load_loop_state(...)` validator
+    HaltError soft-fails so the surface stays operable when the
+    controller's loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_sub_phase: Optional[str] = None
+    active_cycle_count: Optional[int] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        phase_candidate = loop_state.get("phase")
+        if isinstance(phase_candidate, str):
+            active_phase = phase_candidate
+        sub_phase_candidate = loop_state.get("sub_phase")
+        if isinstance(sub_phase_candidate, str):
+            active_sub_phase = sub_phase_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            active_cycle_count = cycle_candidate
+    active_ts: Optional[float] = None
+    try:
+        active_ts = float(state_path.stat().st_mtime)
+    except (FileNotFoundError, OSError):
+        active_ts = None
+    inputs = (
+        _desktop_concurrency_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_rule_ids"]
+    rules = []
+    for spec in _DESKTOP_CONCURRENCY_RULE_REGISTRY:
+        _desktop_concurrency_validate_rule_descriptor(spec)
+        rule_id = spec["id"]
+        rules.append(
+            _desktop_concurrency_rule_descriptor(
+                spec,
+                approval_mode=approval_mode,
+                # Hard-coded False in this slice; the contract
+                # boundary that keeps every rule refused until
+                # a future runtime slice ships.
+                phase_10ab_runtime_available=False,
+                operator_acknowledged_contract=(
+                    rule_id in ack_set
+                ),
+                operator_supplied_identity=identity_supplied,
+                # No live invalidation-trigger detection in
+                # this contract slice; the closed field
+                # surfaces as False so the fail-closed default
+                # is exact.
+                no_invalidation_trigger_active=False,
+            )
+        )
+    ownership_entries = []
+    for entry in _DESKTOP_CONCURRENCY_OWNERSHIP_MAP:
+        _desktop_concurrency_validate_ownership_entry(entry)
+        path_rel, role = entry
+        probe = (
+            _desktop_concurrency_probe_artifact_staleness(
+                controller_root, path_rel,
+                active_phase=active_phase,
+                active_cycle_count=active_cycle_count,
+                active_ts=active_ts,
+            )
+        )
+        ownership_entries.append({
+            "path_canonical_rel": path_rel,
+            "path_canonical": probe["path_canonical"],
+            "owner_role": role,
+            "exists": probe["exists"],
+            "last_modified_utc": probe["last_modified_utc"],
+            "size_bytes": probe["size_bytes"],
+            "staleness_state": probe["staleness_state"],
+        })
+    return {
+        "view_signal_version": (
+            DESKTOP_CONCURRENCY_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "current_loop_state_phase": active_phase,
+        "current_loop_state_sub_phase": active_sub_phase,
+        "current_loop_state_cycle_count": active_cycle_count,
+        "phase_10ab_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_rule_ids": sorted(ack_set),
+        },
+        "overlap_states": list(CONCURRENCY_OVERLAP_STATES),
+        "ownership_roles": list(CONCURRENCY_OWNERSHIP_ROLES),
+        "staleness_states": list(
+            CONCURRENCY_STALENESS_STATES
+        ),
+        "invalidation_triggers": list(
+            CONCURRENCY_INVALIDATION_TRIGGERS
+        ),
+        "recovery_actions": list(
+            CONCURRENCY_RECOVERY_ACTIONS
+        ),
+        "refusal_reasons": list(CONCURRENCY_REFUSAL_REASONS),
+        "enablement_states": list(
+            CONCURRENCY_ENABLEMENT_STATES
+        ),
+        "approval_requirements": list(
+            CONCURRENCY_APPROVAL_REQUIREMENTS
+        ),
+        "rules": rules,
+        "ownership_map": ownership_entries,
+        "precedence_note": (
+            DESKTOP_CONCURRENCY_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_concurrency_text(view: dict) -> list:
+    """Phase 10AB: format the assembled concurrency contract
+    view as text lines. Per-line attribution tags
+    (`[canonical mirror]`, `[advisory]`, `[concurrency-rule]`,
+    `[concurrency-overlap]`, `[concurrency-owner]`,
+    `[concurrency-invalidation]`, `[concurrency-recovery]`,
+    `[concurrency-approval]`, `[concurrency-enablement]`,
+    `[deferred-runtime]`, `[ownership-map]`, `[refused]`) keep
+    attribution consistent with the Phase 10V / 10Z / 10AA tag
+    vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-concurrency] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_phase: "
+        f"{view['current_loop_state_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_sub_phase: "
+        f"{view['current_loop_state_sub_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_cycle"
+        f"_count: {view['current_loop_state_cycle_count']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10ab_runtime_available (Phase "
+        f"10AB ships the contract only; the actual overlap-"
+        f"detection runtime is deferred to a future Phase 10 "
+        f"runtime slice): "
+        f"{view['phase_10ab_runtime_available']!r}"
+    )
+    for enum_key, enum_label in (
+        ("overlap_states", "Phase 10AB overlap-state closed enumeration"),
+        ("ownership_roles", "Phase 10AB ownership-role closed enumeration"),
+        ("staleness_states", "Phase 10AB staleness-state closed enumeration"),
+        (
+            "invalidation_triggers",
+            "Phase 10AB invalidation-trigger closed enumeration",
+        ),
+        (
+            "recovery_actions",
+            "Phase 10AB recovery-action closed enumeration",
+        ),
+        ("refusal_reasons", "Phase 10AB refusal-reason closed vocabulary"),
+        (
+            "enablement_states",
+            "Phase 10AB enablement-state closed state machine",
+        ),
+        (
+            "approval_requirements",
+            "Phase 10AB approval-requirement closed enumeration",
+        ),
+    ):
+        lines.append(
+            f"  [advisory] {enum_key} ({enum_label}): "
+            f"{view[enum_key]!r}"
+        )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [concurrency-approval] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / "
+        f"concurrency-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [concurrency-approval] operator_inputs."
+        f"acknowledged_rule_ids (per-session operator-clicked "
+        f"contract acknowledgement; NEVER persisted across "
+        f"sessions): "
+        f"{op_inputs.get('acknowledged_rule_ids', [])!r}"
+    )
+    for rule in view.get("rules", []):
+        is_refused = (
+            rule["enablement_state"]
+            == "refused_until_policy_update"
+        )
+        tag = (
+            "[refused]" if is_refused else "[concurrency-rule]"
+        )
+        lines.append(
+            f"  {tag} id={rule['id']!r} "
+            f"display_name={rule['display_name']!r} "
+            f"enablement_state={rule['enablement_state']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{rule['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{rule['safety_copy']}"
+        )
+        lines.append(
+            f"    [concurrency-overlap] overlap_state="
+            f"{rule['overlap_state']!r}"
+        )
+        lines.append(
+            f"    [concurrency-owner] writer="
+            f"{rule['owner_role_writer']!r} reader="
+            f"{rule['owner_role_reader']!r}"
+        )
+        lines.append(
+            f"    [concurrency-invalidation] invalidation_"
+            f"trigger={rule['invalidation_trigger']!r}"
+        )
+        lines.append(
+            f"    [concurrency-recovery] recovery_action="
+            f"{rule['recovery_action']!r}"
+        )
+        for req in rule["approval_requirements"]:
+            entry = rule["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[concurrency-approval]"
+                if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+        lines.append(
+            f"    [concurrency-enablement] enablement_reason: "
+            f"{rule['enablement_reason']}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{rule['deferred_runtime_marker']}"
+        )
+        if is_refused:
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{rule['refusal_reason_template']}"
+            )
+    lines.append(
+        f"[ownership-map] Phase 10AB shipped ownership map "
+        f"({len(view.get('ownership_map', []))} entries; "
+        f"per-artifact staleness derived from stat only, "
+        f"NEVER reads artifact body):"
+    )
+    for entry in view.get("ownership_map", []):
+        stale_tag = (
+            "[refused]"
+            if entry["staleness_state"] in (
+                "stale_phase", "stale_cycle", "unknown",
+                "missing",
+            )
+            else "[ownership-map]"
+        )
+        lines.append(
+            f"  {stale_tag} path_canonical_rel="
+            f"{entry['path_canonical_rel']!r} "
+            f"owner_role={entry['owner_role']!r} "
+            f"exists={entry['exists']!r} "
+            f"staleness_state="
+            f"{entry['staleness_state']!r} "
+            f"last_modified_utc="
+            f"{entry['last_modified_utc']!r} "
+            f"size_bytes={entry['size_bytes']!r}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_concurrency_controls(view: dict) -> list:
+    """Phase 10AB: return a closed list of desktop widget
+    descriptors ready for binding to actual desktop-side
+    controls. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control
+    cap is preserved exactly.
+
+    Matches the Phase 10Z fix-cycle affordance pattern: every
+    button surfaces `enabled=True` (the click ONLY copies an
+    operator-visible acknowledgement TEMPLATE into the OS
+    clipboard, which is non-mutating). The underlying
+    concurrency-runtime state (which IS gated by
+    `phase_10ab_runtime_available`) is surfaced separately via
+    `runtime_enabled` (False in this slice) and the appended
+    `[<enablement_state>]` tag on the button label.
+    """
+    controls: list = []
+    for rule in view.get("rules", []):
+        enablement = rule["enablement_state"]
+        runtime_enabled = (
+            enablement == "enabled_pending_runtime"
+        )
+        clipboard_payload = (
+            "# Phase 10AB controlled-concurrency contract "
+            "acknowledgement template. Copy the block below "
+            "into a review issue / operator note instead of "
+            "mutating any hidden concurrency cache.\n"
+            f"rule_id: {rule['id']}\n"
+            f"overlap_state: {rule['overlap_state']}\n"
+            f"owner_role_writer: {rule['owner_role_writer']}\n"
+            f"owner_role_reader: {rule['owner_role_reader']}\n"
+            f"invalidation_trigger: {rule['invalidation_trigger']}\n"
+            f"recovery_action: {rule['recovery_action']}\n"
+            "requested_action: acknowledge_contract\n"
+            "operator_identity: <NAME>\n"
+            "no_invalidation_trigger_active: yes"
+        )
+        controls.append({
+            "id": rule["id"],
+            "label": (
+                f"Copy concurrency-contract acknowledgement "
+                f"template: {rule['display_name']} "
+                f"[{enablement}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
+            "overlap_state": rule["overlap_state"],
+            "owner_role_writer": rule["owner_role_writer"],
+            "owner_role_reader": rule["owner_role_reader"],
+            "invalidation_trigger": (
+                rule["invalidation_trigger"]
+            ),
+            "recovery_action": rule["recovery_action"],
+            "enablement_state": enablement,
+            "enablement_reason": rule["enablement_reason"],
+            "deferred_runtime_marker": (
+                rule["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                rule["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "concurrency_contract_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_concurrency(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AB operator entry: render the desktop
+    controlled-concurrency contract view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates
+    any canonical artifact, NEVER appends to `.agent-loop/
+    orchestrator.log`, NEVER advances loop-state, NEVER invokes
+    `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
+    network socket, NEVER reads canonical artifact BODY content
+    (only stat / mtime / size), NEVER writes a concurrency
+    cache, NEVER launches or coordinates any actual concurrent
+    Codex/Claude runtime, NEVER widens the Phase 10I library-
+    callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-concurrency] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop concurrency contract surface MUST NOT "
+            "silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Supply the "
+            "controller root explicitly via `--controller-"
+            "root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-concurrency] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop "
+            f"App Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ "
+            f"to be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_rule_ids": frozenset(
+            getattr(args, "acknowledge_rule", None) or []
+        ),
+    }
+    view = build_desktop_concurrency_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_concurrency_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AC - Overlap-Safe Detection Initial Slice.
+#
+# DETECTION-ONLY slice. Turns the Phase 10AB Controlled Concurrent Operation
+# Contract vocabulary (`CONCURRENCY_INVALIDATION_TRIGGERS`,
+# `CONCURRENCY_RECOVERY_ACTIONS`) into a bounded observable-mtime detection +
+# refusal layer so the system can tell when concurrent work would invalidate
+# the active task context. NO active overlapping runtime, background
+# orchestration, parallel worker model, or hidden concurrency ships in this
+# slice; the shipped surface only OBSERVES the on-disk mtime relationships
+# between the shipped canonical artifacts and surfaces an explicit refusal /
+# recovery hint when a Phase 10AB invalidation trigger is observably active.
+#
+# The Phase 10AC surface derives every signal from `Path.stat()` mtime
+# comparisons between pairs of shipped canonical artifacts ONLY. It NEVER
+# reads any artifact BODY content. Every per-signal state is closed and
+# validated fail-closed. The Phase 10Z / 10AA / 10AB copy-only affordance
+# contract is preserved verbatim: each shipped Tk button surfaces
+# `enabled=True` (the click ONLY copies an operator-visible acknowledgement
+# TEMPLATE into the OS clipboard) plus a distinct `runtime_enabled=False`
+# field indicating the detection-runtime is deferred. ZERO new library-
+# callable controls are introduced; the Phase 10I three-control library-
+# callable cap is preserved exactly.
+#
+# The surface NEVER writes, NEVER mutates canonical artifacts, NEVER appends
+# to `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a network
+# socket, NEVER reads canonical artifact BODY content (only stat / mtime /
+# size), NEVER writes a detection cache, NEVER launches or coordinates any
+# actual concurrent Codex/Claude runtime, NEVER schedules a background
+# watcher, NEVER auto-fills any operator-identity field.
+# ---------------------------------------------------------------------------
+
+DESKTOP_OVERLAP_DETECTION_SIGNAL_VERSION = "phase-10ac-v1"
+
+DESKTOP_OVERLAP_DETECTION_PRECEDENCE_NOTE = (
+    "Phase 10AC overlap-safe detection initial slice. Builds on the "
+    "shipped Phase 10AB Controlled Concurrent Operation Contract "
+    "vocabulary (`CONCURRENCY_INVALIDATION_TRIGGERS`, "
+    "`CONCURRENCY_RECOVERY_ACTIONS`) verbatim; every detection signal "
+    "resolves to exactly one closed invalidation trigger and exactly "
+    "one closed recovery action. The shipped Phase 10L desktop-app "
+    "contract, Phase 3A orchestrator contract, Phase 4 planner / "
+    "activator separation, and Phase 10Z / 10AA / 10AB copy-only "
+    "affordance contract govern this surface's ownership rule "
+    "verbatim. The Phase 10I three-control library-callable cap is "
+    "preserved exactly; ZERO new library-callable controls are "
+    "introduced. Every signal descriptor is validated against the "
+    "closed Phase 10AC descriptor shape and refused fail-closed on any "
+    "missing required field, wrong-typed value, unknown "
+    "`invalidation_trigger`, unknown `recovery_action`, unknown "
+    "`severity_when_triggered`, or non-POSIX / absolute / drive-"
+    "prefixed / parent-traversal artifact `path_canonical_rel`. "
+    "`phase_10ac_runtime_available` is hard-coded `False` in this "
+    "slice so the shipped surface reports DETECTION signals only and "
+    "never launches any actual concurrent Codex/Claude runtime. "
+    "Signals are derived purely from `Path.stat()` mtime comparisons "
+    "between the shipped canonical artifacts; the surface NEVER reads "
+    "any artifact BODY content, NEVER spawns a subprocess, NEVER "
+    "opens a network socket, NEVER launches or coordinates any actual "
+    "concurrent Codex/Claude runtime, NEVER schedules a background "
+    "watcher, NEVER writes a detection cache, NEVER mutates any "
+    "canonical artifact, NEVER appends to `.agent-loop/orchestrator."
+    "log`, NEVER advances loop-state, NEVER invokes `_halt(...)`, "
+    "NEVER auto-fills any --*-by operator-identity argument or "
+    "approval-mode value, NEVER introduces a detection-side database "
+    "/ preference store / recents list / identity token / session "
+    "token, and NEVER widens the Phase 10I cap"
+)
+
+# Closed detection-signal-state vocabulary. `no_signal` = the observed
+# mtime relationship shows no invalidation trigger. `signal_detected` =
+# an observable trigger is active but not high-severity (informational
+# warning). `refused_pending_recovery` = a high-severity trigger is
+# observably active; the loop MUST refuse continuation until the
+# shipped recovery action is completed. `unknown` = fail-closed
+# default when either the reference or the target artifact is missing
+# and the trigger cannot be determined.
+OVERLAP_DETECTION_SIGNAL_STATES = (
+    "no_signal",
+    "signal_detected",
+    "refused_pending_recovery",
+    "unknown",
+)
+
+# Closed severity-level vocabulary. `info` = the trigger is not
+# active. `warning` = the trigger is observably active but does not
+# force a refusal on its own (e.g. loop-state advanced past the last
+# claude-summary write in a normal cycle). `refusal` = the trigger is
+# observably active AND high-severity; the loop MUST refuse
+# continuation until the shipped recovery action is completed.
+# `unknown` = fail-closed default when the state cannot be derived.
+OVERLAP_DETECTION_SEVERITY_LEVELS = (
+    "info",
+    "warning",
+    "refusal",
+    "unknown",
+)
+
+_OVERLAP_DETECTION_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "invalidation_trigger",
+    "recovery_action",
+    "reference_path_canonical_rel",
+    "target_path_canonical_rel",
+    "severity_when_triggered",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+
+def _overlap_detection_validate_path_rel(path_rel: str) -> None:
+    """Refuse fail-closed on any non-POSIX / absolute / drive-
+    prefixed / parent-traversal `path_canonical_rel`, matching
+    the Phase 10V / 10AA / 10AB path-shape guard verbatim.
+    """
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"path={path_rel!r} contains a backslash"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"path={path_rel!r} is absolute"
+            ),
+        )
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"path={path_rel!r} carries a Windows-style "
+                f"drive prefix"
+            ),
+        )
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"path={path_rel!r} contains a parent-directory "
+                f"traversal segment"
+            ),
+        )
+
+
+_DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY: tuple = (
+    {
+        "id": "codex_review_supersedes_claude_summary",
+        "display_name": (
+            "Codex review supersedes latest Claude summary"
+        ),
+        "invalidation_trigger": (
+            "codex_review_verdict_changed"
+        ),
+        "recovery_action": "re_read_codex_review",
+        "reference_path_canonical_rel": (
+            ".agent-loop/codex-review.md"
+        ),
+        "target_path_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "severity_when_triggered": "refusal",
+        "description": (
+            "Detection: `.agent-loop/codex-review.md` mtime is "
+            "newer than the latest `.agent-loop/claude-"
+            "summary.md`. Under the Phase 10AB contract the "
+            "shipped review verdict supersedes any Claude "
+            "summary that predates it, so continuation MUST "
+            "refuse fail-closed until Claude re-reads the "
+            "shipped review and either applies the fix or "
+            "advances the phase per the shipped verdict."
+        ),
+        "safety_copy": (
+            "A Codex review whose mtime is newer than the "
+            "shipped Claude summary always invalidates the "
+            "summary; treating the summary as current after "
+            "the review lands is a concurrency bug per Phase "
+            "10AB."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AC ships the DETECTION only; the actual "
+            "runtime that enforces refusal on downstream "
+            "orchestrator entry points is deferred to a "
+            "future Phase 10 runtime slice tracked in "
+            "`ROADMAP.md`. The Phase 10AC desktop surface "
+            "NEVER launches any actual concurrent Codex/"
+            "Claude worker, NEVER opens a network socket."
+        ),
+        "refusal_reason_template": (
+            "`codex_review_supersedes_claude_summary` "
+            "detected: `.agent-loop/codex-review.md` mtime is "
+            "newer than the latest `.agent-loop/claude-"
+            "summary.md`; re-read the shipped review before "
+            "continuing."
+        ),
+    },
+    {
+        "id": "claude_prompt_replaced_after_summary",
+        "display_name": (
+            "Claude prompt replaced after latest Claude summary"
+        ),
+        "invalidation_trigger": "claude_prompt_replaced",
+        "recovery_action": "re_read_active_prompt",
+        "reference_path_canonical_rel": (
+            ".agent-loop/claude-prompt.md"
+        ),
+        "target_path_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "severity_when_triggered": "refusal",
+        "description": (
+            "Detection: `.agent-loop/claude-prompt.md` mtime "
+            "is newer than the latest `.agent-loop/claude-"
+            "summary.md`. Under the Phase 10AB contract a "
+            "prompt replacement invalidates any prior Claude "
+            "implementation cycle; continuation MUST refuse "
+            "until Claude re-reads the shipped prompt in full."
+        ),
+        "safety_copy": (
+            "Silent continuation past a Claude prompt "
+            "replacement is a concurrency bug per Phase 10AB."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AC ships the DETECTION only; the actual "
+            "prompt-mtime watch enforcement is deferred to a "
+            "future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`claude_prompt_replaced_after_summary` detected: "
+            "re-read `.agent-loop/claude-prompt.md` before "
+            "continuing."
+        ),
+    },
+    {
+        "id": "fix_prompt_replaced_after_summary",
+        "display_name": (
+            "Fix prompt replaced after latest Claude summary"
+        ),
+        "invalidation_trigger": "fix_prompt_replaced",
+        "recovery_action": "re_read_active_prompt",
+        "reference_path_canonical_rel": (
+            ".agent-loop/fix-prompt.md"
+        ),
+        "target_path_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "severity_when_triggered": "refusal",
+        "description": (
+            "Detection: `.agent-loop/fix-prompt.md` mtime is "
+            "newer than the latest `.agent-loop/claude-"
+            "summary.md`. Under the Phase 10AB contract a fix-"
+            "prompt replacement invalidates any prior Claude "
+            "fix cycle; continuation MUST refuse until Claude "
+            "re-reads the shipped fix-prompt."
+        ),
+        "safety_copy": (
+            "Silent continuation past a fix-prompt "
+            "replacement can widen or narrow the fix scope "
+            "unintentionally per Phase 10AB."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AC ships the DETECTION only; the actual "
+            "fix-prompt watch enforcement is deferred to a "
+            "future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`fix_prompt_replaced_after_summary` detected: "
+            "re-read `.agent-loop/fix-prompt.md` before "
+            "continuing."
+        ),
+    },
+    {
+        "id": "loop_state_advanced_past_summary",
+        "display_name": (
+            "Loop-state advanced past latest Claude summary"
+        ),
+        "invalidation_trigger": "loop_state_advanced",
+        "recovery_action": "refresh_loop_state",
+        "reference_path_canonical_rel": (
+            ".agent-loop/loop-state.json"
+        ),
+        "target_path_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "severity_when_triggered": "warning",
+        "description": (
+            "Detection: `.agent-loop/loop-state.json` mtime is "
+            "newer than the latest `.agent-loop/claude-"
+            "summary.md`. This MAY simply reflect a normal "
+            "orchestrator advance (a `status` change or "
+            "cycle_count increment) after the summary was "
+            "written; the shipped Phase 10AC surface flags "
+            "this as a `warning` severity so the operator can "
+            "confirm the loop-state advance was intentional."
+        ),
+        "safety_copy": (
+            "A loop-state advance after the summary write is "
+            "usually benign but MAY indicate that a fresh "
+            "cycle started without a corresponding new "
+            "summary. Confirm the loop-state reflects the "
+            "current phase / cycle_count before continuing."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AC ships the DETECTION only; the actual "
+            "loop-state watch enforcement is deferred to a "
+            "future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`loop_state_advanced_past_summary` detected at "
+            "`warning` severity; refresh the shipped loop-"
+            "state before continuing."
+        ),
+    },
+    {
+        "id": "phase_activation_advanced_past_summary",
+        "display_name": (
+            "Phase activation advanced past latest Claude "
+            "summary"
+        ),
+        "invalidation_trigger": (
+            "phase_activation_advanced"
+        ),
+        "recovery_action": "re_read_active_prompt",
+        "reference_path_canonical_rel": (
+            ".agent-loop/current-phase.md"
+        ),
+        "target_path_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "severity_when_triggered": "refusal",
+        "description": (
+            "Detection: `.agent-loop/current-phase.md` mtime "
+            "is newer than the latest `.agent-loop/claude-"
+            "summary.md`. Under the Phase 10AB contract a "
+            "phase activation advance invalidates any prior "
+            "review / fix context; continuation MUST refuse "
+            "until Claude re-reads the shipped active prompt."
+        ),
+        "safety_copy": (
+            "A shipped phase activation advance MUST reset "
+            "the active implementation prompt; silently "
+            "continuing past it risks a wrong-phase claim."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AC ships the DETECTION only; the actual "
+            "phase-activation watch enforcement is deferred "
+            "to a future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`phase_activation_advanced_past_summary` "
+            "detected: re-read `.agent-loop/claude-prompt.md` "
+            "before continuing."
+        ),
+    },
+)
+
+
+def _desktop_overlap_detection_validate_signal_descriptor(
+    spec: dict,
+) -> None:
+    """Phase 10AC signal-descriptor validator: refuse fail-closed
+    on any missing required field, wrong-typed value, unknown
+    closed-enumeration member, or non-POSIX / absolute / drive-
+    prefixed / parent-traversal `path_canonical_rel`. Pure
+    validation; no IO, no mutation, no `_halt(...)`.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: descriptor "
+                f"is not a dict ({type(spec).__name__})"
+            ),
+        )
+    for field in (
+        _OVERLAP_DETECTION_DESCRIPTOR_REQUIRED_STRING_FIELDS
+    ):
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop overlap detection refused: "
+                    f"descriptor field {field!r} is missing "
+                    f"or non-string ({value!r})"
+                ),
+            )
+    if spec["invalidation_trigger"] not in (
+        CONCURRENCY_INVALIDATION_TRIGGERS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"descriptor invalidation_trigger="
+                f"{spec['invalidation_trigger']!r} is not in "
+                f"the closed Phase 10AB enumeration "
+                f"{CONCURRENCY_INVALIDATION_TRIGGERS!r}"
+            ),
+        )
+    if spec["recovery_action"] not in (
+        CONCURRENCY_RECOVERY_ACTIONS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"descriptor recovery_action="
+                f"{spec['recovery_action']!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_RECOVERY_ACTIONS!r}"
+            ),
+        )
+    if spec["severity_when_triggered"] not in (
+        OVERLAP_DETECTION_SEVERITY_LEVELS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"descriptor severity_when_triggered="
+                f"{spec['severity_when_triggered']!r} is not "
+                f"in the closed Phase 10AC enumeration "
+                f"{OVERLAP_DETECTION_SEVERITY_LEVELS!r}"
+            ),
+        )
+    _overlap_detection_validate_path_rel(
+        spec["reference_path_canonical_rel"],
+    )
+    _overlap_detection_validate_path_rel(
+        spec["target_path_canonical_rel"],
+    )
+
+
+def _desktop_overlap_detection_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Phase 10AC normalizer. Accepts `{identity,
+    acknowledged_signal_ids}` (per-session, in-memory only,
+    NEVER persisted).
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_signal_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_signal_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop overlap detection refused: "
+                f"operator_inputs.acknowledged_signal_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_signal_ids": frozenset(
+            str(s) for s in ack
+        ),
+    }
+
+
+def _desktop_overlap_detection_probe_mtime_pair(
+    controller_root: Path,
+    reference_rel: str,
+    target_rel: str,
+) -> dict:
+    """Pure `Path.stat()` mtime probe of one (reference, target)
+    artifact pair. Returns `{reference_path, target_path,
+    reference_exists, target_exists, reference_mtime,
+    target_mtime, reference_mtime_utc, target_mtime_utc,
+    reference_newer_than_target}`. NEVER reads artifact CONTENT.
+    Pure read-only IO; never raises.
+    """
+    ref_path = (controller_root / reference_rel).resolve()
+    tgt_path = (controller_root / target_rel).resolve()
+    reference_mtime: Optional[float] = None
+    target_mtime: Optional[float] = None
+    reference_exists = False
+    target_exists = False
+    try:
+        st = ref_path.stat()
+        reference_exists = True
+        reference_mtime = float(st.st_mtime)
+    except (FileNotFoundError, OSError):
+        reference_exists = False
+    try:
+        st = tgt_path.stat()
+        target_exists = True
+        target_mtime = float(st.st_mtime)
+    except (FileNotFoundError, OSError):
+        target_exists = False
+    reference_mtime_utc: Optional[str] = None
+    target_mtime_utc: Optional[str] = None
+    if reference_mtime is not None:
+        reference_mtime_utc = (
+            datetime.fromtimestamp(
+                reference_mtime, tz=timezone.utc,
+            ).isoformat()
+        )
+    if target_mtime is not None:
+        target_mtime_utc = (
+            datetime.fromtimestamp(
+                target_mtime, tz=timezone.utc,
+            ).isoformat()
+        )
+    reference_newer_than_target: Optional[bool] = None
+    if reference_mtime is not None and target_mtime is not None:
+        reference_newer_than_target = (
+            reference_mtime > target_mtime
+        )
+    return {
+        "reference_path": ref_path.as_posix(),
+        "target_path": tgt_path.as_posix(),
+        "reference_exists": reference_exists,
+        "target_exists": target_exists,
+        "reference_mtime": reference_mtime,
+        "target_mtime": target_mtime,
+        "reference_mtime_utc": reference_mtime_utc,
+        "target_mtime_utc": target_mtime_utc,
+        "reference_newer_than_target": (
+            reference_newer_than_target
+        ),
+    }
+
+
+def _desktop_overlap_detection_evaluate_signal(
+    spec: dict, controller_root: Path,
+) -> dict:
+    """Return the per-signal state envelope for one signal
+    descriptor. Applies the pure mtime-pair probe and derives
+    `{signal_state, severity, triggered, recovery_action,
+    refusal_reason_template}` per the Phase 10AC contract.
+    Pure IO through `_desktop_overlap_detection_probe_mtime_pair`;
+    never mutates, never raises.
+    """
+    probe = _desktop_overlap_detection_probe_mtime_pair(
+        controller_root,
+        spec["reference_path_canonical_rel"],
+        spec["target_path_canonical_rel"],
+    )
+    triggered = False
+    signal_state = "no_signal"
+    severity = "info"
+    reason = (
+        "reference artifact mtime is NOT newer than the "
+        "target; the closed Phase 10AB invalidation trigger "
+        "is not observably active on this poll"
+    )
+    if (
+        not probe["reference_exists"]
+        or not probe["target_exists"]
+    ):
+        signal_state = "unknown"
+        severity = "unknown"
+        reason = (
+            "reference or target artifact is missing; the "
+            "Phase 10AC detection cannot determine the "
+            "trigger state and fails closed as `unknown`"
+        )
+    elif probe["reference_newer_than_target"]:
+        triggered = True
+        severity = spec["severity_when_triggered"]
+        if severity == "refusal":
+            signal_state = "refused_pending_recovery"
+            reason = (
+                "reference artifact mtime is newer than the "
+                "target; the closed Phase 10AB invalidation "
+                "trigger is observably active AND its "
+                "severity is `refusal`, so the shipped Phase "
+                "10AC surface refuses continuation until the "
+                "shipped recovery action is completed"
+            )
+        else:
+            signal_state = "signal_detected"
+            reason = (
+                "reference artifact mtime is newer than the "
+                "target; the closed Phase 10AB invalidation "
+                "trigger is observably active at "
+                f"`{severity}` severity"
+            )
+    return {
+        "id": spec["id"],
+        "display_name": spec["display_name"],
+        "invalidation_trigger": spec["invalidation_trigger"],
+        "recovery_action": spec["recovery_action"],
+        "reference_path_canonical_rel": (
+            spec["reference_path_canonical_rel"]
+        ),
+        "target_path_canonical_rel": (
+            spec["target_path_canonical_rel"]
+        ),
+        "reference_path": probe["reference_path"],
+        "target_path": probe["target_path"],
+        "reference_exists": probe["reference_exists"],
+        "target_exists": probe["target_exists"],
+        "reference_mtime_utc": probe["reference_mtime_utc"],
+        "target_mtime_utc": probe["target_mtime_utc"],
+        "reference_newer_than_target": (
+            probe["reference_newer_than_target"]
+        ),
+        "triggered": triggered,
+        "signal_state": signal_state,
+        "severity": severity,
+        "severity_when_triggered": (
+            spec["severity_when_triggered"]
+        ),
+        "reason": reason,
+        "description": spec["description"],
+        "safety_copy": spec["safety_copy"],
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+    }
+
+
+def _desktop_overlap_detection_derive_overall_state(
+    signals: list,
+) -> dict:
+    """Aggregate individual signal envelopes into an overall
+    Phase 10AC detection state. Returns
+    `{overall_signal_state, overall_severity, triggered_count,
+    refusal_signal_ids, warning_signal_ids, unknown_signal_ids,
+    reason}`. Pure computation; no IO.
+    """
+    refusal_ids: list = []
+    warning_ids: list = []
+    unknown_ids: list = []
+    triggered_count = 0
+    for sig in signals:
+        state = sig.get("signal_state")
+        if state == "refused_pending_recovery":
+            refusal_ids.append(sig["id"])
+            triggered_count += 1
+        elif state == "signal_detected":
+            warning_ids.append(sig["id"])
+            triggered_count += 1
+        elif state == "unknown":
+            unknown_ids.append(sig["id"])
+    if refusal_ids:
+        overall_state = "refused_pending_recovery"
+        overall_severity = "refusal"
+        reason = (
+            f"one or more high-severity Phase 10AC signals "
+            f"are observably triggered: {refusal_ids!r}; the "
+            f"shipped surface refuses continuation until the "
+            f"shipped recovery action is completed"
+        )
+    elif warning_ids:
+        overall_state = "signal_detected"
+        overall_severity = "warning"
+        reason = (
+            f"one or more Phase 10AC signals are observably "
+            f"active at `warning` severity: {warning_ids!r}; "
+            f"the shipped surface does not force refusal but "
+            f"the operator SHOULD verify the shipped context "
+            f"before continuing"
+        )
+    elif unknown_ids and len(unknown_ids) == len(signals):
+        overall_state = "unknown"
+        overall_severity = "unknown"
+        reason = (
+            f"every Phase 10AC signal is `unknown` (reference "
+            f"or target artifacts missing): {unknown_ids!r}; "
+            f"the shipped surface fails closed as `unknown` "
+            f"until the shipped canonical artifacts exist"
+        )
+    else:
+        overall_state = "no_signal"
+        overall_severity = "info"
+        reason = (
+            "no Phase 10AC invalidation trigger is observably "
+            "active on this poll; the shipped surface reports "
+            "the context as overlap-safe"
+        )
+    return {
+        "overall_signal_state": overall_state,
+        "overall_severity": overall_severity,
+        "triggered_count": triggered_count,
+        "refusal_signal_ids": refusal_ids,
+        "warning_signal_ids": warning_ids,
+        "unknown_signal_ids": unknown_ids,
+        "reason": reason,
+    }
+
+
+def build_desktop_overlap_detection_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AC: assemble the bounded desktop overlap-safe
+    detection view. Surfaces the closed
+    `_DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY` with per-
+    signal `Path.stat()` mtime-pair probes, per-signal
+    triggered / severity / state, and the aggregate overall
+    detection state per the Phase 10AC contract.
+
+    `phase_10ac_runtime_available` is hard-coded `False` in this
+    slice so the shipped surface reports DETECTION signals only
+    and never launches any actual concurrent Codex/Claude
+    runtime.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never invokes `_halt(...)`, never reads canonical artifact
+    BODY content (only stat / mtime), never widens the Phase
+    10I library-callable cap, never opens a network socket.
+    The shipped `load_loop_state(...)` validator HaltError
+    soft-fails so the surface stays operable when the
+    controller's loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_sub_phase: Optional[str] = None
+    active_cycle_count: Optional[int] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        phase_candidate = loop_state.get("phase")
+        if isinstance(phase_candidate, str):
+            active_phase = phase_candidate
+        sub_phase_candidate = loop_state.get("sub_phase")
+        if isinstance(sub_phase_candidate, str):
+            active_sub_phase = sub_phase_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            active_cycle_count = cycle_candidate
+    inputs = (
+        _desktop_overlap_detection_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    ack_set = inputs["acknowledged_signal_ids"]
+    signals = []
+    for spec in _DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY:
+        _desktop_overlap_detection_validate_signal_descriptor(
+            spec,
+        )
+        envelope = (
+            _desktop_overlap_detection_evaluate_signal(
+                spec, controller_root,
+            )
+        )
+        envelope["operator_acknowledged"] = (
+            envelope["id"] in ack_set
+        )
+        signals.append(envelope)
+    overall = (
+        _desktop_overlap_detection_derive_overall_state(signals)
+    )
+    return {
+        "view_signal_version": (
+            DESKTOP_OVERLAP_DETECTION_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "current_loop_state_phase": active_phase,
+        "current_loop_state_sub_phase": active_sub_phase,
+        "current_loop_state_cycle_count": active_cycle_count,
+        "phase_10ac_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_signal_ids": sorted(ack_set),
+        },
+        "signal_states": list(
+            OVERLAP_DETECTION_SIGNAL_STATES
+        ),
+        "severity_levels": list(
+            OVERLAP_DETECTION_SEVERITY_LEVELS
+        ),
+        "invalidation_triggers": list(
+            CONCURRENCY_INVALIDATION_TRIGGERS
+        ),
+        "recovery_actions": list(
+            CONCURRENCY_RECOVERY_ACTIONS
+        ),
+        "signals": signals,
+        "overall": overall,
+        "precedence_note": (
+            DESKTOP_OVERLAP_DETECTION_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_overlap_detection_text(view: dict) -> list:
+    """Phase 10AC: format the assembled overlap-safe detection
+    view as text lines. Per-line attribution tags
+    (`[canonical mirror]`, `[advisory]`, `[overlap-detection]`,
+    `[overlap-signal]`, `[overlap-severity]`, `[overlap-
+    recovery]`, `[overlap-overall]`, `[deferred-runtime]`,
+    `[refused]`) keep attribution consistent with the Phase
+    10V / 10Z / 10AA / 10AB tag vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-overlap-detection] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_phase: "
+        f"{view['current_loop_state_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_sub_phase: "
+        f"{view['current_loop_state_sub_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_cycle"
+        f"_count: {view['current_loop_state_cycle_count']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10ac_runtime_available (Phase "
+        f"10AC ships the DETECTION only; the actual runtime "
+        f"that enforces refusal on downstream orchestrator "
+        f"entry points is deferred to a future Phase 10 "
+        f"runtime slice): "
+        f"{view['phase_10ac_runtime_available']!r}"
+    )
+    for enum_key, enum_label in (
+        (
+            "signal_states",
+            "Phase 10AC signal-state closed enumeration",
+        ),
+        (
+            "severity_levels",
+            "Phase 10AC severity-level closed enumeration",
+        ),
+        (
+            "invalidation_triggers",
+            "Phase 10AB invalidation-trigger closed "
+            "enumeration (re-used verbatim)",
+        ),
+        (
+            "recovery_actions",
+            "Phase 10AB recovery-action closed enumeration "
+            "(re-used verbatim)",
+        ),
+    ):
+        lines.append(
+            f"  [advisory] {enum_key} ({enum_label}): "
+            f"{view[enum_key]!r}"
+        )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [overlap-detection] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / "
+        f"detection-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [overlap-detection] operator_inputs."
+        f"acknowledged_signal_ids (per-session operator-"
+        f"clicked signal acknowledgement; NEVER persisted "
+        f"across sessions): "
+        f"{op_inputs.get('acknowledged_signal_ids', [])!r}"
+    )
+    for signal in view.get("signals", []):
+        signal_state = signal["signal_state"]
+        tag = (
+            "[refused]"
+            if signal_state == "refused_pending_recovery"
+            else "[overlap-signal]"
+        )
+        lines.append(
+            f"  {tag} id={signal['id']!r} "
+            f"display_name={signal['display_name']!r} "
+            f"signal_state={signal_state!r} "
+            f"severity={signal['severity']!r} "
+            f"triggered={signal['triggered']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{signal['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{signal['safety_copy']}"
+        )
+        lines.append(
+            f"    [overlap-signal] invalidation_trigger="
+            f"{signal['invalidation_trigger']!r} "
+            f"reference_path_canonical_rel="
+            f"{signal['reference_path_canonical_rel']!r} "
+            f"target_path_canonical_rel="
+            f"{signal['target_path_canonical_rel']!r}"
+        )
+        lines.append(
+            f"    [overlap-signal] reference_exists="
+            f"{signal['reference_exists']!r} "
+            f"target_exists={signal['target_exists']!r} "
+            f"reference_newer_than_target="
+            f"{signal['reference_newer_than_target']!r} "
+            f"reference_mtime_utc="
+            f"{signal['reference_mtime_utc']!r} "
+            f"target_mtime_utc="
+            f"{signal['target_mtime_utc']!r}"
+        )
+        lines.append(
+            f"    [overlap-severity] severity_when_triggered="
+            f"{signal['severity_when_triggered']!r} reason="
+            f"{signal['reason']!r}"
+        )
+        lines.append(
+            f"    [overlap-recovery] recovery_action="
+            f"{signal['recovery_action']!r} "
+            f"operator_acknowledged="
+            f"{signal.get('operator_acknowledged', False)!r}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{signal['deferred_runtime_marker']}"
+        )
+        if signal_state == "refused_pending_recovery":
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{signal['refusal_reason_template']}"
+            )
+    overall = view.get("overall", {})
+    overall_state = overall.get(
+        "overall_signal_state", "unknown",
+    )
+    overall_tag = (
+        "[refused]"
+        if overall_state == "refused_pending_recovery"
+        else "[overlap-overall]"
+    )
+    lines.append(
+        f"{overall_tag} overall_signal_state={overall_state!r} "
+        f"overall_severity={overall.get('overall_severity')!r} "
+        f"triggered_count={overall.get('triggered_count')!r}"
+    )
+    lines.append(
+        f"  [overlap-overall] refusal_signal_ids="
+        f"{overall.get('refusal_signal_ids', [])!r}"
+    )
+    lines.append(
+        f"  [overlap-overall] warning_signal_ids="
+        f"{overall.get('warning_signal_ids', [])!r}"
+    )
+    lines.append(
+        f"  [overlap-overall] unknown_signal_ids="
+        f"{overall.get('unknown_signal_ids', [])!r}"
+    )
+    lines.append(
+        f"  [overlap-overall] reason: {overall.get('reason')!r}"
+    )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_overlap_detection_controls(view: dict) -> list:
+    """Phase 10AC: return a closed list of desktop widget
+    descriptors. COPY-PASTE ONLY (never a library-callable
+    control) so the Phase 10I three-control cap is preserved
+    exactly. Matches the Phase 10Z / 10AA / 10AB fix-cycle
+    affordance pattern: every button surfaces `enabled=True`
+    (the click ONLY copies an operator-visible recovery-
+    acknowledgement TEMPLATE into the OS clipboard, which is
+    non-mutating).
+    """
+    controls: list = []
+    for signal in view.get("signals", []):
+        state = signal["signal_state"]
+        runtime_enabled = False
+        clipboard_payload = (
+            "# Phase 10AC overlap-safe detection recovery "
+            "acknowledgement template. Copy the block below "
+            "into a review issue / operator note instead of "
+            "mutating any hidden detection cache.\n"
+            f"signal_id: {signal['id']}\n"
+            f"invalidation_trigger: {signal['invalidation_trigger']}\n"
+            f"recovery_action: {signal['recovery_action']}\n"
+            f"signal_state: {state}\n"
+            f"severity: {signal['severity']}\n"
+            "requested_action: acknowledge_and_recover\n"
+            "operator_identity: <NAME>\n"
+            "recovery_action_completed: yes"
+        )
+        controls.append({
+            "id": signal["id"],
+            "label": (
+                f"Copy overlap-recovery acknowledgement "
+                f"template: {signal['display_name']} "
+                f"[{state}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
+            "invalidation_trigger": (
+                signal["invalidation_trigger"]
+            ),
+            "recovery_action": signal["recovery_action"],
+            "signal_state": state,
+            "severity": signal["severity"],
+            "triggered": signal["triggered"],
+            "reason": signal["reason"],
+            "deferred_runtime_marker": (
+                signal["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                signal["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "overlap_detection_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_overlap_detection(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AC operator entry: render the desktop overlap-
+    safe detection view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates
+    any canonical artifact, NEVER appends to `.agent-loop/
+    orchestrator.log`, NEVER advances loop-state, NEVER invokes
+    `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
+    network socket, NEVER reads canonical artifact BODY content
+    (only stat / mtime), NEVER writes a detection cache, NEVER
+    launches or coordinates any actual concurrent Codex/Claude
+    runtime, NEVER widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-overlap-detection] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop overlap-detection "
+            "surface MUST NOT silently pick a default root "
+            "from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-overlap-detection] REFUSED: controller "
+            f"root {validation['root_path']!r} is missing "
+            f"required markers {missing!r}; per the Phase 10L "
+            f"Desktop App Shell Contract the desktop shell "
+            f"requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_signal_ids": frozenset(
+            getattr(args, "acknowledge_signal", None) or []
+        ),
+    }
+    view = build_desktop_overlap_detection_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_overlap_detection_text(view):
         print(line)
     return 0
 
@@ -34676,13 +37658,15 @@ def build_parser() -> argparse.ArgumentParser:
             "`.agent-loop/orchestrator.log`; never advances "
             "loop-state; never invokes `_halt(...)`; never "
             "spawns a subprocess; never opens a network "
-            "socket; never reads durable-memory content (only "
-            "stat / mtime / size / entry count via "
-            "`Path.iterdir()`); never reads canonical artifact "
-            "content (only stat / mtime / size); never writes "
-            "an export file; never persists an export cache; "
-            "never widens the Phase 10I library-callable "
-            "control cap."
+            "socket; never reads durable-memory JSON body "
+            "content (only stat / mtime / size / directory "
+            "entry names via `Path.iterdir()`); never reads "
+            "more than MEMORY_VAULT_EXCERPT_BYTE_LIMIT bytes "
+            "of any canonical artifact (the surface surfaces "
+            "a bounded head-of-file excerpt per the Phase "
+            "10AA fix cycle); never writes an export file; "
+            "never persists an export cache; never widens the "
+            "Phase 10I library-callable control cap."
         ),
     )
     memory_vault.add_argument(
@@ -34715,6 +37699,120 @@ def build_parser() -> argparse.ArgumentParser:
             "OPTIONAL repeatable per-session per-export "
             "advisory-labeling acknowledgement. Repeat the flag "
             "once per export id."
+        ),
+    )
+    concurrency = sub.add_parser(
+        "view-desktop-concurrency",
+        help=(
+            "Phase 10AB controlled concurrent operation "
+            "contract: render a bounded READ-ONLY view over "
+            "the closed `_DESKTOP_CONCURRENCY_RULE_REGISTRY` + "
+            "the closed `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` + "
+            "per-artifact staleness derived from stat only. "
+            "Every rule currently surfaces as `refused_until_"
+            "policy_update` because `phase_10ab_runtime_"
+            "available=False` in this slice; the shipped "
+            "concurrency-runtime is deferred to a future Phase "
+            "10+ runtime slice. Phase 7C reporter pattern: "
+            "always exits 0 on report content once the "
+            "controller-root selection succeeds; never mutates "
+            "any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never reads canonical artifact BODY "
+            "content (only stat / mtime / size); never writes "
+            "a concurrency cache; never launches or "
+            "coordinates any actual concurrent Codex/Claude "
+            "runtime; never widens the Phase 10I library-"
+            "callable control cap."
+        ),
+    )
+    concurrency.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop concurrency view renders against. Per "
+            "the Phase 10L Controller-Root Selection Flow "
+            "the desktop shell MUST NOT silently pick a "
+            "default root. Omitting this flag returns exit 2 "
+            "with a `[desktop-concurrency] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    concurrency.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    concurrency.add_argument(
+        "--acknowledge-rule",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-rule "
+            "contract acknowledgement. Repeat the flag once "
+            "per concurrency rule id."
+        ),
+    )
+    overlap_detection = sub.add_parser(
+        "view-desktop-overlap-detection",
+        help=(
+            "Phase 10AC overlap-safe detection initial slice: "
+            "render a bounded READ-ONLY view over the closed "
+            "`_DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY` "
+            "with per-signal `Path.stat()` mtime-pair probes, "
+            "per-signal triggered / severity / state, and an "
+            "aggregate overall detection state. Phase 7C "
+            "reporter pattern: always exits 0 on report "
+            "content once the controller-root selection "
+            "succeeds; never mutates any canonical artifact; "
+            "never appends to `.agent-loop/orchestrator.log`; "
+            "never advances loop-state; never invokes "
+            "`_halt(...)`; never spawns a subprocess; never "
+            "opens a network socket; never reads canonical "
+            "artifact BODY content (only stat / mtime); "
+            "never writes a detection cache; never launches "
+            "or coordinates any actual concurrent Codex/"
+            "Claude runtime; never widens the Phase 10I "
+            "library-callable control cap."
+        ),
+    )
+    overlap_detection.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop overlap-detection view renders against. "
+            "Per the Phase 10L Controller-Root Selection Flow "
+            "the desktop shell MUST NOT silently pick a "
+            "default root. Omitting this flag returns exit 2 "
+            "with a `[desktop-overlap-detection] REFUSED: "
+            "...` stderr message."
+        ),
+    )
+    overlap_detection.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    overlap_detection.add_argument(
+        "--acknowledge-signal",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-signal "
+            "recovery acknowledgement. Repeat the flag once "
+            "per overlap-detection signal id."
         ),
     )
     distill = sub.add_parser(
@@ -35006,6 +38104,10 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-resume-console": cmd_view_desktop_resume_console,
     "view-desktop-selection": cmd_view_desktop_selection,
     "view-desktop-memory-vault": cmd_view_desktop_memory_vault,
+    "view-desktop-concurrency": cmd_view_desktop_concurrency,
+    "view-desktop-overlap-detection": (
+        cmd_view_desktop_overlap_detection
+    ),
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
