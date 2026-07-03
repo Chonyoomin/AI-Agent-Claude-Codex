@@ -14168,6 +14168,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     selection_view = _desktop_safe_call_view(
         build_desktop_selection_view, controller_root,
     )
+    memory_vault_view = _desktop_safe_call_view(
+        build_desktop_memory_vault_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14188,6 +14191,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "run_console_view": run_console_view,
         "resume_console_view": resume_console_view,
         "selection_view": selection_view,
+        "memory_vault_view": memory_vault_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14322,6 +14326,17 @@ def _desktop_render_sub_view_lines(
             render_desktop_selection_text(sub_view),
         )
         return lines
+    if key == "memory_vault_view":
+        # Re-use the shipped Phase 10AA renderer verbatim so the
+        # memory-vault attribution tags ([vault-export] /
+        # [vault-source] / [vault-freshness] / [vault-approval] /
+        # [vault-enablement] / [deferred-runtime] / [canonical
+        # mirror] / [advisory] / [refused]) stay consistent with
+        # the standalone `view-desktop-memory-vault` output.
+        lines.extend(
+            render_desktop_memory_vault_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14410,6 +14425,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "selection_view",
             "Selection UX (Phase 10Z)",
+        ),
+        (
+            "memory_vault_view",
+            "Memory Vault Export (Phase 10AA)",
         ),
     ):
         sub = view.get(key, {})
@@ -15046,6 +15065,13 @@ def _launch_desktop_app_window(
         text="Selection UX (Phase 10Z)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    memory_vault_frame = tk.Frame(control_frame)
+    memory_vault_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        memory_vault_frame,
+        text="Memory Vault Export (Phase 10AA)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15074,6 +15100,7 @@ def _launch_desktop_app_window(
     run_console_button_widgets: list = []
     resume_console_button_widgets: list = []
     selection_button_widgets: list = []
+    memory_vault_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15718,6 +15745,36 @@ def _launch_desktop_app_window(
             selection_frame,
             selection_controls,
             selection_button_widgets,
+        )
+        # Phase 10AA: rebuild the memory-vault export button row
+        # from the cached sub-view. `build_desktop_memory_vault_controls`
+        # is READ-ONLY (each button copies an operator-visible
+        # enablement-request template to clipboard, matching the
+        # Phase 10Z fix-cycle affordance pattern); ZERO new
+        # library-callable controls are introduced. Every button
+        # stays clickable so the copy-to-clipboard path is exposed
+        # even in the deferred-runtime slice; the underlying
+        # export-runtime state is surfaced via `runtime_enabled`
+        # and the appended `[<enablement_state>]` label tag.
+        memory_vault_sub_view = view.get("memory_vault_view", {})
+        if (
+            isinstance(memory_vault_sub_view, dict)
+            and memory_vault_sub_view.get("view") is None
+            and "error" in memory_vault_sub_view
+        ):
+            memory_vault_controls = []
+        elif isinstance(memory_vault_sub_view, dict):
+            memory_vault_controls = (
+                build_desktop_memory_vault_controls(
+                    memory_vault_sub_view,
+                )
+            )
+        else:
+            memory_vault_controls = []
+        _rebuild_button_row(
+            memory_vault_frame,
+            memory_vault_controls,
+            memory_vault_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -26413,6 +26470,1324 @@ def cmd_view_desktop_selection(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice.
+#
+# Ships the first bounded human-facing memory-vault export surface so operators
+# can browse readable durable-memory views and selected canonical mirrors from
+# the desktop app without letting the exports become a competing source of
+# truth. The surface covers three closed export categories:
+#   - `durable_memory_entry` (derived from shipped `.agent-loop/memory/`
+#     entries via the Phase 6A/6B storage layer)
+#   - `decision_summary` (canonical mirror derived from
+#     `.agent-loop/claude-summary.md`)
+#   - `architecture_snapshot` (canonical mirror derived from `AGENTS.md` and
+#     `.agent-loop/phase-plan.md`)
+#
+# Every export descriptor is validated against a closed shape and refused
+# fail-closed on any missing required field, wrong-typed value, unknown
+# closed-enumeration member, non-POSIX / absolute / drive-prefixed / parent-
+# traversal `path_canonical_rel`, or unknown approval-requirement member.
+#
+# `phase_10aa_runtime_available` is hard-coded `False` in this slice so every
+# export surfaces as `refused_until_policy_update` regardless of operator
+# input; a future Phase 10+ runtime slice tracked in `ROADMAP.md` MAY flip
+# the flag. Per the Phase 10Z fix cycle, the shipped Tk buttons stay
+# clickable so the operator can copy the enablement-request TEMPLATE to
+# clipboard even in the deferred-runtime slice; the underlying export-
+# runtime state is surfaced separately via a distinct `runtime_enabled`
+# field and the appended `[<enablement_state>]` label tag.
+#
+# The surface NEVER writes, NEVER mutates canonical artifacts, NEVER
+# appends to `.agent-loop/orchestrator.log`, NEVER advances loop-state,
+# NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
+# network socket, NEVER reads durable-memory content (only stat / mtime /
+# size / entry count via `Path.iterdir()`), NEVER reads canonical
+# artifact content (only stat / mtime / size), NEVER writes an export
+# file, NEVER persists an export cache, NEVER subscribes to a background
+# watcher, NEVER auto-fills any operator-identity field, NEVER widens the
+# Phase 10I library-callable cap, NEVER introduces a memory-vault side
+# database / preference store / recents list / identity token / session
+# token, and NEVER actually renders any export content in this slice.
+# ---------------------------------------------------------------------------
+
+DESKTOP_MEMORY_VAULT_SIGNAL_VERSION = "phase-10aa-v1"
+
+DESKTOP_MEMORY_VAULT_PRECEDENCE_NOTE = (
+    "Phase 10AA human-facing memory vault export contract and initial "
+    "slice. The shipped Phase 6A/6B durable-memory storage layer, "
+    "Phase 10O MCP integration contract, Phase 10V RAG source selection "
+    "contract, and Phase 10Z selection UX contract govern this surface's "
+    "advisory-vs-canonical mirror rule verbatim: any value the memory-"
+    "vault export surface surfaces is `[advisory]` or `[canonical "
+    "mirror]` ONLY and NEVER substitutes for the canonical Phase 2A "
+    "evidence files / git diff / Claude summary / Codex review / "
+    "loop-state.json / memory entries themselves. The Phase 10I three-"
+    "control library-callable cap is preserved exactly; ZERO new "
+    "library-callable controls are introduced. Every export descriptor "
+    "is validated against the closed Phase 10AA descriptor shape and "
+    "refused fail-closed on any missing required field, wrong-typed "
+    "value, unknown `export_category`, unknown `source_kind`, unknown "
+    "`advisory_label_rule`, unknown `approval_requirements` member, or "
+    "non-POSIX / absolute / drive-prefixed / parent-traversal "
+    "`path_canonical_rel`. `phase_10aa_runtime_available` is hard-coded "
+    "`False` in this slice so EVERY export surfaces as "
+    "`refused_until_policy_update` regardless of operator input. The "
+    "surface NEVER spawns a subprocess, NEVER opens a network socket, "
+    "NEVER reads durable-memory content (only stat / mtime / size / "
+    "entry count via `Path.iterdir()`), NEVER reads canonical artifact "
+    "content (only stat / mtime / size), NEVER writes an export file, "
+    "NEVER persists an export cache, NEVER subscribes to a background "
+    "watcher, NEVER mutates any canonical artifact (loop-state.json / "
+    "orchestrator.log / external-target.json / runtime-config.json / "
+    "TASK.md / proposed-phase.md / claude-prompt.md / claude-summary.md "
+    "/ codex-review.md / fix-prompt.md / current-task.md / current-"
+    "phase.md / phase-plan.md / prd-intake.json / final-acceptance.json "
+    "/ any Phase 2A evidence file / any Phase 6 memory entry), NEVER "
+    "appends to `.agent-loop/orchestrator.log`, NEVER advances loop-"
+    "state, NEVER invokes `_halt(...)`, NEVER auto-fills any "
+    "--*-by operator-identity argument or approval-mode value, NEVER "
+    "introduces a memory-vault side database / preference store / "
+    "recents list / identity token / session token, and NEVER widens "
+    "the Phase 10I cap"
+)
+
+MEMORY_VAULT_EXPORT_CATEGORIES = (
+    "durable_memory_entry",
+    "decision_summary",
+    "architecture_snapshot",
+)
+
+MEMORY_VAULT_SOURCE_KINDS = (
+    "shipped_memory_json",
+    "canonical_artifact_mirror",
+)
+
+MEMORY_VAULT_ADVISORY_LABELS = (
+    # Export values are `[advisory]` only and NEVER substitute for the
+    # canonical source content read directly.
+    "advisory_only_no_canonical_substitution",
+    # Export values are a `[canonical mirror]` -- exactly the shipped
+    # canonical artifact content, surfaced read-only.
+    "canonical_mirror_read_only",
+    # The export is refused fail-closed at the labeling-rule level.
+    "refused_until_policy_update",
+)
+
+MEMORY_VAULT_FRESHNESS_STATES = (
+    "fresh",
+    "stale",
+    "missing",
+    "unknown",
+)
+
+MEMORY_VAULT_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_until_policy_update",
+)
+
+MEMORY_VAULT_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_advisory_labeling",
+    "operator_supplied_identity",
+    "approval_mode_supports_export",
+    "phase_10aa_runtime_available",
+    "source_present_in_repo",
+)
+
+MEMORY_VAULT_REFUSAL_REASONS = (
+    "approval_mode_strict",
+    "operator_identity_missing",
+    "operator_acknowledgement_missing",
+    "source_missing",
+    "runtime_not_available",
+)
+
+MEMORY_VAULT_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS = 30 * 24 * 3600
+
+_MEMORY_VAULT_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "export_category",
+    "source_kind",
+    "advisory_label_rule",
+    "path_canonical_rel",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+_MEMORY_VAULT_DESCRIPTOR_REQUIRED_TUPLE_FIELDS = (
+    "approval_requirements",
+)
+
+_DESKTOP_MEMORY_VAULT_REGISTRY: tuple = (
+    {
+        "id": "durable_memory_decision_index",
+        "display_name": "Durable memory: decision index",
+        "export_category": "durable_memory_entry",
+        "source_kind": "shipped_memory_json",
+        "advisory_label_rule": (
+            "advisory_only_no_canonical_substitution"
+        ),
+        "path_canonical_rel": ".agent-loop/memory/decision",
+        "description": (
+            "Human-readable index of the shipped Phase 6A "
+            "durable-memory `decision` entries. Export MUST "
+            "surface each entry's shipped `phase` / `sub_phase` "
+            "/ `cycle_count` / `source_artifact_path` / "
+            "`created_at` alongside any human-readable body; the "
+            "body is `[advisory]` ONLY and NEVER substitutes for "
+            "the shipped JSON entry read directly via "
+            "`read_memory_entry(...)`."
+        ),
+        "safety_copy": (
+            "This export is advisory-only in Phase 10AA. Do not "
+            "expect it to mutate any shipped durable-memory "
+            "entry; the shipped JSON file remains the sole "
+            "source of truth for durable-memory content."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_export",
+            "phase_10aa_runtime_available",
+            "source_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AA surfaces this export as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual export "
+            "renderer is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`. The Phase "
+            "10AA desktop surface NEVER reads durable-memory "
+            "content (only stat / mtime / size / entry count), "
+            "NEVER spawns a subprocess, NEVER opens a network "
+            "socket."
+        ),
+        "refusal_reason_template": (
+            "`durable_memory_decision_index` export refused: "
+            "one or more Phase 10AA approval requirements are "
+            "not satisfied (see per-requirement state above)."
+        ),
+    },
+    {
+        "id": "durable_memory_summary_index",
+        "display_name": "Durable memory: summary index",
+        "export_category": "durable_memory_entry",
+        "source_kind": "shipped_memory_json",
+        "advisory_label_rule": (
+            "advisory_only_no_canonical_substitution"
+        ),
+        "path_canonical_rel": ".agent-loop/memory/summary",
+        "description": (
+            "Human-readable index of the shipped Phase 6A "
+            "durable-memory `summary` entries. Export MUST "
+            "surface each entry's shipped metadata alongside "
+            "any human-readable body; the body is `[advisory]` "
+            "ONLY and NEVER substitutes for the shipped JSON "
+            "entry read directly via `read_memory_entry(...)`."
+        ),
+        "safety_copy": (
+            "This export is advisory-only in Phase 10AA. Do not "
+            "expect it to mutate any shipped durable-memory "
+            "entry; the shipped JSON file remains the sole "
+            "source of truth for durable-memory content."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_export",
+            "phase_10aa_runtime_available",
+            "source_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AA surfaces this export as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual export "
+            "renderer is implemented in a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`. The Phase "
+            "10AA desktop surface NEVER reads durable-memory "
+            "content (only stat / mtime / size / entry count), "
+            "NEVER spawns a subprocess, NEVER opens a network "
+            "socket."
+        ),
+        "refusal_reason_template": (
+            "`durable_memory_summary_index` export refused: "
+            "one or more Phase 10AA approval requirements are "
+            "not satisfied (see per-requirement state above)."
+        ),
+    },
+    {
+        "id": "decision_summary_from_claude_summary",
+        "display_name": (
+            "Decision summary: latest Claude implementation "
+            "summary"
+        ),
+        "export_category": "decision_summary",
+        "source_kind": "canonical_artifact_mirror",
+        "advisory_label_rule": "canonical_mirror_read_only",
+        "path_canonical_rel": ".agent-loop/claude-summary.md",
+        "description": (
+            "`[canonical mirror]` of the latest shipped Claude "
+            "implementation summary. Export surfaces the file's "
+            "stat metadata (size, last_modified_utc) so a "
+            "reviewer can spot a stale summary at a glance; the "
+            "shipped Markdown file remains the sole source of "
+            "truth for the actual summary text."
+        ),
+        "safety_copy": (
+            "This export is a `[canonical mirror]` view. Do "
+            "not use it as a replacement for reading the "
+            "shipped `.agent-loop/claude-summary.md` directly; "
+            "the export is scoped to freshness metadata + "
+            "advisory framing only."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_export",
+            "phase_10aa_runtime_available",
+            "source_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AA surfaces this export as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual per-export "
+            "content renderer is implemented in a later Phase "
+            "10 runtime slice tracked in `ROADMAP.md`. The "
+            "Phase 10AA desktop surface NEVER reads the "
+            "canonical artifact content, only stat / mtime / "
+            "size."
+        ),
+        "refusal_reason_template": (
+            "`decision_summary_from_claude_summary` export "
+            "refused: one or more Phase 10AA approval "
+            "requirements are not satisfied (see per-"
+            "requirement state above)."
+        ),
+    },
+    {
+        "id": "architecture_snapshot_from_agents_md",
+        "display_name": (
+            "Architecture snapshot: shipped AGENTS.md"
+        ),
+        "export_category": "architecture_snapshot",
+        "source_kind": "canonical_artifact_mirror",
+        "advisory_label_rule": "canonical_mirror_read_only",
+        "path_canonical_rel": "AGENTS.md",
+        "description": (
+            "`[canonical mirror]` of the shipped AGENTS.md. "
+            "Export surfaces the file's stat metadata (size, "
+            "last_modified_utc) so a reviewer can confirm the "
+            "architecture contract has not silently drifted; "
+            "the shipped Markdown file remains the sole source "
+            "of truth for the architecture contract text."
+        ),
+        "safety_copy": (
+            "This export is a `[canonical mirror]` view. Do "
+            "not treat any exported excerpt as authoritative; "
+            "always cross-check against the shipped AGENTS.md "
+            "read directly."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_export",
+            "phase_10aa_runtime_available",
+            "source_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AA surfaces this export as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual per-export "
+            "content renderer is implemented in a later Phase "
+            "10 runtime slice tracked in `ROADMAP.md`. The "
+            "Phase 10AA desktop surface NEVER reads the "
+            "canonical artifact content, only stat / mtime / "
+            "size."
+        ),
+        "refusal_reason_template": (
+            "`architecture_snapshot_from_agents_md` export "
+            "refused: one or more Phase 10AA approval "
+            "requirements are not satisfied (see per-"
+            "requirement state above)."
+        ),
+    },
+    {
+        "id": "architecture_snapshot_from_phase_plan",
+        "display_name": (
+            "Architecture snapshot: shipped phase-plan.md"
+        ),
+        "export_category": "architecture_snapshot",
+        "source_kind": "canonical_artifact_mirror",
+        "advisory_label_rule": "canonical_mirror_read_only",
+        "path_canonical_rel": ".agent-loop/phase-plan.md",
+        "description": (
+            "`[canonical mirror]` of the shipped Phase Plan. "
+            "Export surfaces the file's stat metadata (size, "
+            "last_modified_utc) so a reviewer can spot a stale "
+            "phase-plan at a glance; the shipped Markdown file "
+            "remains the sole source of truth for the phase "
+            "plan itself."
+        ),
+        "safety_copy": (
+            "This export is a `[canonical mirror]` view. Do "
+            "not treat any exported excerpt as authoritative; "
+            "always cross-check against the shipped phase-"
+            "plan.md read directly."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_advisory_labeling",
+            "operator_supplied_identity",
+            "approval_mode_supports_export",
+            "phase_10aa_runtime_available",
+            "source_present_in_repo",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AA surfaces this export as "
+            "`enabled_pending_runtime` once every approval "
+            "requirement is satisfied; the actual per-export "
+            "content renderer is implemented in a later Phase "
+            "10 runtime slice tracked in `ROADMAP.md`. The "
+            "Phase 10AA desktop surface NEVER reads the "
+            "canonical artifact content, only stat / mtime / "
+            "size."
+        ),
+        "refusal_reason_template": (
+            "`architecture_snapshot_from_phase_plan` export "
+            "refused: one or more Phase 10AA approval "
+            "requirements are not satisfied (see per-"
+            "requirement state above)."
+        ),
+    },
+)
+
+
+def _desktop_memory_vault_validate_descriptor(spec: dict) -> None:
+    """Phase 10AA export-descriptor validator: refuse fail-closed
+    on any missing required field, wrong-typed value, unknown
+    closed-enumeration member, or non-POSIX / absolute / drive-
+    prefixed / parent-traversal `path_canonical_rel`. Pure
+    validation; no IO, no mutation, no `_halt(...)`.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"descriptor is not a dict "
+                f"({type(spec).__name__})"
+            ),
+        )
+    for field in _MEMORY_VAULT_DESCRIPTOR_REQUIRED_STRING_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop memory vault export refused: "
+                    f"descriptor field {field!r} is missing or "
+                    f"non-string ({value!r})"
+                ),
+            )
+    for field in _MEMORY_VAULT_DESCRIPTOR_REQUIRED_TUPLE_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, tuple) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop memory vault export refused: "
+                    f"descriptor field {field!r} is missing, "
+                    f"non-tuple, or empty ({value!r})"
+                ),
+            )
+    if spec["export_category"] not in (
+        MEMORY_VAULT_EXPORT_CATEGORIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"descriptor export_category="
+                f"{spec['export_category']!r} is not in the "
+                f"closed Phase 10AA enumeration "
+                f"{MEMORY_VAULT_EXPORT_CATEGORIES!r}"
+            ),
+        )
+    if spec["source_kind"] not in MEMORY_VAULT_SOURCE_KINDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"descriptor source_kind="
+                f"{spec['source_kind']!r} is not in the closed "
+                f"Phase 10AA enumeration "
+                f"{MEMORY_VAULT_SOURCE_KINDS!r}"
+            ),
+        )
+    if spec["advisory_label_rule"] not in (
+        MEMORY_VAULT_ADVISORY_LABELS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"descriptor advisory_label_rule="
+                f"{spec['advisory_label_rule']!r} is not in "
+                f"the closed Phase 10AA enumeration "
+                f"{MEMORY_VAULT_ADVISORY_LABELS!r}"
+            ),
+        )
+    for req in spec["approval_requirements"]:
+        if req not in MEMORY_VAULT_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop memory vault export refused: "
+                    f"approval_requirements member {req!r} is "
+                    f"not in the closed Phase 10AA enumeration "
+                    f"{MEMORY_VAULT_APPROVAL_REQUIREMENTS!r}"
+                ),
+            )
+    path_rel = spec["path_canonical_rel"]
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"path_canonical_rel={path_rel!r} contains a "
+                f"backslash; per the Phase 10AA contract this "
+                f"MUST be a POSIX-style (forward-slash) "
+                f"relative path"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"path_canonical_rel={path_rel!r} is absolute; "
+                f"per the Phase 10AA contract this MUST be "
+                f"relative to the controller root"
+            ),
+        )
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"path_canonical_rel={path_rel!r} carries a "
+                f"Windows-style drive prefix; per the Phase "
+                f"10AA contract this MUST be a POSIX-style "
+                f"relative path bounded inside the controller "
+                f"root"
+            ),
+        )
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"path_canonical_rel={path_rel!r} contains a "
+                f"parent-directory traversal (`..`) segment; "
+                f"per the Phase 10AA contract the path MUST "
+                f"stay bounded inside the controller root"
+            ),
+        )
+
+
+def _desktop_memory_vault_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Normalize per-session operator inputs for the Phase 10AA
+    memory-vault export surface. Returns a closed dict with:
+
+      - `identity` (str): operator-supplied identity for the
+        current session; empty when not yet supplied. Per Phase
+        10S MUST NOT be auto-filled from any persistent source.
+      - `acknowledged_export_ids` (frozenset[str]): the set of
+        export ids whose per-export advisory-labeling rule the
+        operator has acknowledged this session. Per Phase 10AA
+        acknowledgement MUST be a per-session operator action
+        and MUST NOT be pre-acknowledged from any prior session
+        or saved preference.
+
+    `None` returns the defaults. A non-dict / wrong-typed value
+    raises HaltError per the Phase 10AA descriptor-validation
+    pattern.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_export_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_export_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop memory vault export refused: "
+                f"operator_inputs.acknowledged_export_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_export_ids": frozenset(
+            str(s) for s in ack
+        ),
+    }
+
+
+def _desktop_memory_vault_probe_freshness(
+    controller_root: Path,
+    spec: dict,
+    *,
+    now_ts: Optional[float] = None,
+) -> dict:
+    """Pure file-stat probe of a memory-vault export descriptor:
+    returns `{path_canonical, exists, last_modified_utc,
+    last_modified_ts, size_bytes, entry_count, freshness_state}`.
+    NEVER reads source CONTENT; only `Path.stat()` and (for
+    directory sources) `Path.iterdir()` are consulted.
+    `entry_count` is populated only when the resolved path is a
+    directory (used for durable-memory category descriptors); for
+    file sources it is `None`. Pure read-only IO; never raises.
+    """
+    if now_ts is None:
+        now_ts = time.time()
+    path = (
+        controller_root / spec["path_canonical_rel"]
+    ).resolve()
+    exists = False
+    mtime_ts: Optional[float] = None
+    size_bytes: Optional[int] = None
+    entry_count: Optional[int] = None
+    freshness_state = "missing"
+    try:
+        st = path.stat()
+        exists = True
+        mtime_ts = float(st.st_mtime)
+        size_bytes = int(st.st_size)
+        age_seconds = now_ts - mtime_ts
+        if age_seconds < 0:
+            freshness_state = "unknown"
+        elif age_seconds < (
+            MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS
+        ):
+            freshness_state = "fresh"
+        else:
+            freshness_state = "stale"
+        if path.is_dir():
+            try:
+                entry_count = sum(
+                    1 for child in path.iterdir()
+                    if child.is_file()
+                    and child.suffix == ".json"
+                )
+            except OSError:
+                entry_count = None
+    except FileNotFoundError:
+        freshness_state = "missing"
+    except OSError:
+        freshness_state = "unknown"
+    last_modified_utc: Optional[str] = None
+    if mtime_ts is not None:
+        last_modified_utc = (
+            datetime.fromtimestamp(mtime_ts, tz=timezone.utc)
+            .isoformat()
+        )
+    return {
+        "path_canonical": path.as_posix(),
+        "exists": exists,
+        "last_modified_utc": last_modified_utc,
+        "last_modified_ts": mtime_ts,
+        "size_bytes": size_bytes,
+        "entry_count": entry_count,
+        "freshness_state": freshness_state,
+    }
+
+
+def _desktop_memory_vault_compute_approval_state(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10aa_runtime_available: bool,
+    operator_acknowledged_advisory_labeling: bool,
+    operator_supplied_identity: bool,
+    source_present_in_repo: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10AA approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            MEMORY_VAULT_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_acknowledged_advisory_labeling": {
+            "satisfied": bool(
+                operator_acknowledged_advisory_labeling
+            ),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-export advisory-labeling rule this session"
+                if operator_acknowledged_advisory_labeling
+                else (
+                    "advisory-labeling rule not acknowledged "
+                    "this session; per the Phase 10AA contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action and MUST NOT be pre-"
+                    "acknowledged from any prior session or "
+                    "saved preference"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10AA contract identity MUST be "
+                    "operator-supplied and MUST NOT be auto-"
+                    "filled from `$USER`, `whoami`, a "
+                    "packaging-time-configured identity, or "
+                    "any persistent memory-vault-side identity "
+                    "store"
+                )
+            ),
+        },
+        "approval_mode_supports_export": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(MEMORY_VAULT_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(MEMORY_VAULT_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10AA contract export "
+                    f"MUST refuse fail-closed in `strict` mode"
+                )
+            ),
+        },
+        "phase_10aa_runtime_available": {
+            "satisfied": bool(phase_10aa_runtime_available),
+            "reason": (
+                "Phase 10AA export runtime is shipped and "
+                "reachable"
+                if phase_10aa_runtime_available
+                else (
+                    "Phase 10AA ships the contract and the "
+                    "selection UX only; the actual export "
+                    "renderer is deferred to a future Phase 10 "
+                    "runtime slice tracked in `ROADMAP.md`"
+                )
+            ),
+        },
+        "source_present_in_repo": {
+            "satisfied": bool(source_present_in_repo),
+            "reason": (
+                "source path exists on disk at the controller-"
+                "root-resolved canonical location"
+                if source_present_in_repo
+                else (
+                    "source path is not present at the "
+                    "controller-root-resolved canonical "
+                    "location; export refused fail-closed "
+                    "until the source file / directory exists"
+                )
+            ),
+        },
+    }
+
+
+def _desktop_memory_vault_compute_enablement_state(
+    spec: dict,
+    *,
+    approval_state: dict,
+) -> tuple:
+    """Phase 10AA enablement-state computation. Returns
+    `(state_value, reason)` where `state_value` is one of
+    `MEMORY_VAULT_ENABLEMENT_STATES`.
+
+    Default: `refused_until_policy_update`. Promotion to
+    `enabled_pending_runtime` requires every approval requirement
+    satisfied. Until the runtime ships every export stays
+    `refused_until_policy_update` regardless of operator input
+    (the closed `phase_10aa_runtime_available` requirement is
+    hard-coded `False` in this slice). Exports whose
+    `advisory_label_rule == "refused_until_policy_update"` are
+    short-circuited at the labeling-rule level.
+    """
+    if spec["advisory_label_rule"] == (
+        "refused_until_policy_update"
+    ):
+        return (
+            "refused_until_policy_update",
+            (
+                "advisory_label_rule="
+                "`refused_until_policy_update` is refused "
+                "fail-closed by Phase 10AA at the labeling-"
+                "rule level; export deferred to a future "
+                "policy-update slice"
+            ),
+        )
+    runtime_side_reqs = {
+        "phase_10aa_runtime_available",
+        "source_present_in_repo",
+    }
+    runtime_unmet = [
+        req for req in spec["approval_requirements"]
+        if req in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if runtime_unmet:
+        return (
+            "refused_until_policy_update",
+            (
+                f"Phase 10AA runtime-side requirements are not "
+                f"satisfied: {runtime_unmet!r}; per the Phase "
+                f"10AA fail-closed default export is refused "
+                f"until the runtime slice ships AND the source "
+                f"path is present in the repo"
+            ),
+        )
+    operator_unmet = [
+        req for req in spec["approval_requirements"]
+        if req not in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if operator_unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"one or more Phase 10AA operator-side "
+                f"approval requirements are not satisfied: "
+                f"{operator_unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10AA approval requirement is "
+            "satisfied; the Phase 10AA slice still ships the "
+            "contract only so a future Phase 10 runtime slice "
+            "MUST actually perform the export (tracked in "
+            "`ROADMAP.md`)"
+        ),
+    )
+
+
+def _desktop_memory_vault_export_descriptor(
+    spec: dict,
+    *,
+    freshness_probe: dict,
+    approval_mode: Optional[str],
+    phase_10aa_runtime_available: bool,
+    operator_acknowledged_advisory_labeling: bool,
+    operator_supplied_identity: bool,
+) -> dict:
+    """Return the operator-visible per-export descriptor (closed
+    shape; matches the Phase 10AA contract field list).
+    """
+    source_present = bool(freshness_probe["exists"])
+    approval_state = (
+        _desktop_memory_vault_compute_approval_state(
+            spec,
+            approval_mode=approval_mode,
+            phase_10aa_runtime_available=(
+                phase_10aa_runtime_available
+            ),
+            operator_acknowledged_advisory_labeling=(
+                operator_acknowledged_advisory_labeling
+            ),
+            operator_supplied_identity=(
+                operator_supplied_identity
+            ),
+            source_present_in_repo=source_present,
+        )
+    )
+    enablement_state, enablement_reason = (
+        _desktop_memory_vault_compute_enablement_state(
+            spec, approval_state=approval_state,
+        )
+    )
+    return {
+        "id": spec["id"],
+        "display_name": spec["display_name"],
+        "export_category": spec["export_category"],
+        "source_kind": spec["source_kind"],
+        "advisory_label_rule": spec["advisory_label_rule"],
+        "path_canonical_rel": spec["path_canonical_rel"],
+        "path_canonical": freshness_probe["path_canonical"],
+        "source_present_in_repo": source_present,
+        "last_modified_utc": (
+            freshness_probe["last_modified_utc"]
+        ),
+        "size_bytes": freshness_probe["size_bytes"],
+        "entry_count": freshness_probe["entry_count"],
+        "freshness_state": freshness_probe["freshness_state"],
+        "description": spec["description"],
+        "safety_copy": spec["safety_copy"],
+        "approval_requirements": list(
+            spec["approval_requirements"]
+        ),
+        "approval_state": approval_state,
+        "enablement_state": enablement_state,
+        "enablement_reason": enablement_reason,
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+    }
+
+
+def build_desktop_memory_vault_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AA: assemble the bounded desktop memory-vault
+    export view. Surfaces the closed
+    `_DESKTOP_MEMORY_VAULT_REGISTRY` with per-export freshness
+    derived from the on-disk stat metadata, advisory-labeling
+    rule, approval-requirement state, and the closed three-state
+    enablement state machine per the Phase 10AA contract.
+
+    `phase_10aa_runtime_available` is hard-coded `False` in this
+    slice so every export surfaces as `refused_until_policy_update`.
+
+    `operator_inputs` is the per-session operator-supplied
+    acknowledgement / identity state held in-memory only; NEVER
+    persisted to disk, NEVER carried across sessions.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never invokes `_halt(...)`, never reads durable-memory
+    content (only stat / mtime / size / entry count via
+    `Path.iterdir()`), never reads canonical artifact content
+    (only stat / mtime / size), never widens the Phase 10I
+    library-callable cap, never opens a network socket. The
+    shipped `load_loop_state(...)` validator HaltError soft-fails
+    so the surface stays operable when the controller's
+    loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+    inputs = _desktop_memory_vault_normalize_operator_inputs(
+        operator_inputs,
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_export_ids"]
+    now_ts = time.time()
+    exports = []
+    for spec in _DESKTOP_MEMORY_VAULT_REGISTRY:
+        _desktop_memory_vault_validate_descriptor(spec)
+        export_id = spec["id"]
+        freshness_probe = _desktop_memory_vault_probe_freshness(
+            controller_root, spec, now_ts=now_ts,
+        )
+        exports.append(
+            _desktop_memory_vault_export_descriptor(
+                spec,
+                freshness_probe=freshness_probe,
+                approval_mode=approval_mode,
+                phase_10aa_runtime_available=False,
+                operator_acknowledged_advisory_labeling=(
+                    export_id in ack_set
+                ),
+                operator_supplied_identity=identity_supplied,
+            )
+        )
+    return {
+        "view_signal_version": (
+            DESKTOP_MEMORY_VAULT_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "phase_10aa_runtime_available": False,
+        "freshness_stale_threshold_seconds": (
+            MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS
+        ),
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_export_ids": sorted(ack_set),
+        },
+        "export_categories": list(
+            MEMORY_VAULT_EXPORT_CATEGORIES
+        ),
+        "source_kinds": list(MEMORY_VAULT_SOURCE_KINDS),
+        "advisory_labels": list(MEMORY_VAULT_ADVISORY_LABELS),
+        "freshness_states": list(MEMORY_VAULT_FRESHNESS_STATES),
+        "enablement_states": list(
+            MEMORY_VAULT_ENABLEMENT_STATES
+        ),
+        "approval_requirements": list(
+            MEMORY_VAULT_APPROVAL_REQUIREMENTS
+        ),
+        "refusal_reasons": list(MEMORY_VAULT_REFUSAL_REASONS),
+        "exports": exports,
+        "precedence_note": (
+            DESKTOP_MEMORY_VAULT_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_memory_vault_text(view: dict) -> list:
+    """Phase 10AA: format the assembled memory-vault export view
+    as text lines. Per-line attribution tags (`[canonical
+    mirror]`, `[advisory]`, `[vault-export]`, `[vault-source]`,
+    `[vault-freshness]`, `[vault-approval]`, `[vault-
+    enablement]`, `[deferred-runtime]`, `[refused]`) keep the
+    attribution consistent with the Phase 10V / 10Z tag
+    vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-memory-vault] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10aa_runtime_available (Phase "
+        f"10AA ships the contract and export UX only; the "
+        f"export renderer is deferred to a future Phase 10 "
+        f"runtime slice): "
+        f"{view['phase_10aa_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [advisory] freshness_stale_threshold_seconds: "
+        f"{view['freshness_stale_threshold_seconds']!r}"
+    )
+    lines.append(
+        f"  [advisory] export_categories (closed Phase 10AA "
+        f"enumeration): {view['export_categories']!r}"
+    )
+    lines.append(
+        f"  [advisory] source_kinds (closed Phase 10AA "
+        f"enumeration): {view['source_kinds']!r}"
+    )
+    lines.append(
+        f"  [advisory] advisory_labels (closed Phase 10AA "
+        f"enumeration): {view['advisory_labels']!r}"
+    )
+    lines.append(
+        f"  [advisory] freshness_states (closed Phase 10AA "
+        f"state machine): {view['freshness_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] enablement_states (closed Phase 10AA "
+        f"state machine): {view['enablement_states']!r}"
+    )
+    lines.append(
+        f"  [advisory] approval_requirements (closed Phase "
+        f"10AA enumeration): {view['approval_requirements']!r}"
+    )
+    lines.append(
+        f"  [advisory] refusal_reasons (closed Phase 10AA "
+        f"vocabulary): {view['refusal_reasons']!r}"
+    )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [vault-approval] operator_inputs.identity (per-"
+        f"session operator-supplied; NEVER auto-filled from "
+        f"$USER / whoami / packaging-time identity / memory-"
+        f"vault-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [vault-approval] operator_inputs."
+        f"acknowledged_export_ids (per-session operator-"
+        f"clicked advisory-labeling acknowledgement; NEVER "
+        f"persisted across sessions): "
+        f"{op_inputs.get('acknowledged_export_ids', [])!r}"
+    )
+    for export in view.get("exports", []):
+        is_refused = (
+            export["enablement_state"]
+            == "refused_until_policy_update"
+        )
+        tag = "[refused]" if is_refused else "[vault-export]"
+        lines.append(
+            f"  {tag} id={export['id']!r} "
+            f"display_name={export['display_name']!r} "
+            f"export_category={export['export_category']!r} "
+            f"enablement_state={export['enablement_state']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{export['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{export['safety_copy']}"
+        )
+        lines.append(
+            f"    [vault-source] source_kind="
+            f"{export['source_kind']!r} "
+            f"advisory_label_rule="
+            f"{export['advisory_label_rule']!r}"
+        )
+        lines.append(
+            f"    [vault-source] path_canonical_rel="
+            f"{export['path_canonical_rel']!r} "
+            f"path_canonical={export['path_canonical']!r}"
+        )
+        lines.append(
+            f"    [vault-freshness] source_present_in_repo="
+            f"{export['source_present_in_repo']!r} "
+            f"freshness_state={export['freshness_state']!r} "
+            f"last_modified_utc="
+            f"{export['last_modified_utc']!r} "
+            f"size_bytes={export['size_bytes']!r} "
+            f"entry_count={export['entry_count']!r}"
+        )
+        for req in export["approval_requirements"]:
+            entry = export["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[vault-approval]" if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+        lines.append(
+            f"    [vault-enablement] enablement_reason: "
+            f"{export['enablement_reason']}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{export['deferred_runtime_marker']}"
+        )
+        if is_refused:
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{export['refusal_reason_template']}"
+            )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_memory_vault_controls(view: dict) -> list:
+    """Phase 10AA: return a closed list of desktop widget
+    descriptors ready for binding to actual desktop-side
+    controls. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control
+    cap is preserved exactly.
+
+    The ONLY runtime action wired to each button is copying an
+    operator-visible export-request TEMPLATE into the OS
+    clipboard so the operator can raise the request through the
+    shipped review channel. That copy is non-mutating: it never
+    invokes a runtime, never touches any canonical artifact,
+    never mutates a hidden export cache. Every descriptor
+    therefore surfaces `enabled=True` so the shipped GUI can
+    expose the copy path in every slice.
+
+    The underlying export-runtime state (which IS gated by
+    `phase_10aa_runtime_available`) is surfaced separately on
+    each descriptor via `enablement_state` (canonical mirror),
+    `runtime_enabled` (True only when the export itself is
+    `enabled_pending_runtime`), the `refusal_reason_template`
+    field, and the appended `[<enablement_state>]` tag on the
+    button label so an operator reading the shipped UI can see
+    that the runtime is still deferred even though the copy
+    affordance is clickable.
+    """
+    controls: list = []
+    for export in view.get("exports", []):
+        enablement = export["enablement_state"]
+        runtime_enabled = enablement == "enabled_pending_runtime"
+        clipboard_payload = (
+            "# Phase 10AA memory-vault export request template. "
+            "Copy the block below into a review issue / "
+            "operator note instead of mutating any hidden "
+            "export cache.\n"
+            f"export_id: {export['id']}\n"
+            f"export_category: {export['export_category']}\n"
+            f"source_kind: {export['source_kind']}\n"
+            f"path_canonical_rel: {export['path_canonical_rel']}\n"
+            f"display_name: {export['display_name']}\n"
+            "requested_action: enable_pending_runtime\n"
+            "operator_identity: <NAME>\n"
+            "advisory_labeling_acknowledged: yes"
+        )
+        controls.append({
+            "id": export["id"],
+            "label": (
+                f"Copy memory-vault export request template: "
+                f"{export['display_name']} [{enablement}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
+            "export_category": export["export_category"],
+            "source_kind": export["source_kind"],
+            "advisory_label_rule": (
+                export["advisory_label_rule"]
+            ),
+            "freshness_state": export["freshness_state"],
+            "enablement_state": enablement,
+            "enablement_reason": export["enablement_reason"],
+            "deferred_runtime_marker": (
+                export["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                export["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "memory_vault_export_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_memory_vault(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AA operator entry: render the desktop memory-
+    vault export view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates
+    any canonical artifact, NEVER appends to
+    `.agent-loop/orchestrator.log`, NEVER advances loop-state,
+    NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER
+    opens a network socket, NEVER reads durable-memory content
+    (only stat / mtime / size / entry count via `Path.iterdir()`),
+    NEVER reads canonical artifact content (only stat / mtime /
+    size), NEVER writes an export file, NEVER persists an export
+    cache, NEVER widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-memory-vault] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop memory-vault export surface MUST NOT "
+            "silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Supply the "
+            "controller root explicitly via `--controller-root "
+            "<PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-memory-vault] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop "
+            f"App Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ "
+            f"to be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_export_ids": frozenset(
+            getattr(args, "acknowledge_export", None) or []
+        ),
+    }
+    view = build_desktop_memory_vault_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_memory_vault_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -33284,6 +34659,64 @@ def build_parser() -> argparse.ArgumentParser:
             "id."
         ),
     )
+    memory_vault = sub.add_parser(
+        "view-desktop-memory-vault",
+        help=(
+            "Phase 10AA human-facing memory vault export "
+            "contract: render a bounded READ-ONLY view over the "
+            "closed `_DESKTOP_MEMORY_VAULT_REGISTRY` plus per-"
+            "session operator inputs. Every export currently "
+            "surfaces as `refused_until_policy_update` because "
+            "`phase_10aa_runtime_available=False` in this "
+            "slice; the shipped export renderer is deferred to "
+            "a future Phase 10+ runtime slice. Phase 7C reporter "
+            "pattern: always exits 0 on report content once "
+            "the controller-root selection succeeds; never "
+            "mutates any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never reads durable-memory content (only "
+            "stat / mtime / size / entry count via "
+            "`Path.iterdir()`); never reads canonical artifact "
+            "content (only stat / mtime / size); never writes "
+            "an export file; never persists an export cache; "
+            "never widens the Phase 10I library-callable "
+            "control cap."
+        ),
+    )
+    memory_vault.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop memory-vault view renders against. Per the "
+            "Phase 10L Controller-Root Selection Flow the "
+            "desktop shell MUST NOT silently pick a default "
+            "root. Omitting this flag returns exit 2 with a "
+            "`[desktop-memory-vault] REFUSED: ...` stderr "
+            "message."
+        ),
+    )
+    memory_vault.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    memory_vault.add_argument(
+        "--acknowledge-export",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-export "
+            "advisory-labeling acknowledgement. Repeat the flag "
+            "once per export id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -33572,6 +35005,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-run-console": cmd_view_desktop_run_console,
     "view-desktop-resume-console": cmd_view_desktop_resume_console,
     "view-desktop-selection": cmd_view_desktop_selection,
+    "view-desktop-memory-vault": cmd_view_desktop_memory_vault,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,

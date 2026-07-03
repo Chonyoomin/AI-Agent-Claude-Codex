@@ -5567,6 +5567,15 @@ without letting those settings become a hidden second source of truth.
 
 ## Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice
 
+### Status
+
+Active. Phase 10AA is the current implementation focus after Phase 10Z closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
+advance. Phase 10AA scope is the first bounded human-facing memory-vault
+export surface, covering durable-memory entries, decision summaries, and
+architecture snapshots derived from shipped `.agent-loop/memory/` entries and
+canonical project artifacts without introducing a competing source of truth.
+
 ### Objective
 
 Define and implement the first bounded human-facing memory-vault export surface

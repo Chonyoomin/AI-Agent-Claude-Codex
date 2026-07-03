@@ -6176,17 +6176,18 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
     still advertised its own phase as active.
     """
 
-    CANONICAL_ACTIVE_PHASE = "Phase 10Z"
+    CANONICAL_ACTIVE_PHASE = "Phase 10AA"
     # Matches the README per-phase paragraph header form
     # `Phase 10X (Slice Name, active|complete) ...` at the start of
     # a line. The phase id grammar matches the shipped sub-phase
     # naming used in the README (`Phase 10A` through `Phase 10Z`,
-    # plus older numeric-only ids like `Phase 1` / `Phase 9G` and
-    # `Fix Phase A`). We restrict to the canonical "X (slice name,
-    # status)" header form so prose mentions of phase ids inside
-    # paragraph bodies do not get falsely matched.
+    # `Phase 10AA` onward, plus older numeric-only ids like `Phase
+    # 1` / `Phase 9G` and `Fix Phase A`). We restrict to the
+    # canonical "X (slice name, status)" header form so prose
+    # mentions of phase ids inside paragraph bodies do not get
+    # falsely matched.
     _PHASE_HEADER_RE = re.compile(
-        r"^(?P<phase>(?:Fix )?Phase [0-9]+[A-Z]?) "
+        r"^(?P<phase>(?:Fix )?Phase [0-9]+[A-Z]{0,2}) "
         r"\([^)]*?, (?P<status>active|complete)\)",
         re.MULTILINE,
     )
@@ -6239,6 +6240,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         # status-line summary but forgets to flip the per-phase
         # paragraph header.
         completed_sentinels = (
+            "Phase 10Z",
             "Phase 10Y",
             "Phase 10X",
             "Phase 10W",
@@ -6315,23 +6317,26 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
 
     def test_phase_plan_headers_are_in_alphabetic_order(self) -> None:
         # Every Phase 10 sub-phase in the plan MUST appear in
-        # alphabetic (== chronological) order of its trailing
-        # letter. If the ledger regresses (a new section is
-        # inserted before older sections), completed phases
-        # after that insertion point silently surface as
-        # `pending` in the run console.
-        letters = []
+        # chronological order of its trailing suffix. If the
+        # ledger regresses (a new section is inserted before
+        # older sections), completed phases after that insertion
+        # point silently surface as `pending` in the run console.
+        # A double-letter suffix (`Phase 10AA` onward) is
+        # chronologically after every single-letter suffix, so
+        # the sort key uses `(len(suffix), suffix)` rather than
+        # a plain string compare.
+        suffixes = []
         for h in self.headers:
             pid = self._phase_id(h)
             if len(pid) >= len("Phase 10A"):
-                letters.append(pid[-1])
-        # ORDER: A, B, C, ..., X (up through the current active
-        # sub-phase). Strict monotonic non-decreasing.
+                # "Phase 10AA" -> "AA"; "Phase 10Z" -> "Z".
+                suffixes.append(pid[len("Phase 10"):])
+        sort_key = lambda s: (len(s), s)  # noqa: E731
         self.assertEqual(
-            letters, sorted(letters),
+            suffixes, sorted(suffixes, key=sort_key),
             f"phase-plan.md ## Phase 10 headers are not in "
             f"canonical chronological order (got trailing "
-            f"letters {letters!r}); the Phase 10X run-console "
+            f"suffixes {suffixes!r}); the Phase 10X run-console "
             f"derives completion_state purely from header order, "
             f"so an out-of-order header will silently mark "
             f"already-completed phases as `pending`",
@@ -6345,7 +6350,7 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
         # canonical active phase. Bounded, deterministic: only
         # the first non-blank line after a "### Status" header
         # is inspected.
-        canonical_active = "Phase 10Z"  # tracked by the file
+        canonical_active = "Phase 10AA"  # tracked by the file
         lines = self.text.splitlines()
         offending = []
         current_section = None
