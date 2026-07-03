@@ -5574,12 +5574,11 @@ canonical-source precedence.
 
 ### Status
 
-Active. Phase 10AA is the current implementation focus after Phase 10Z closed
-with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
-advance. Phase 10AA scope is the first bounded human-facing memory-vault
-export surface, covering durable-memory entries, decision summaries, and
-architecture snapshots derived from shipped `.agent-loop/memory/` entries and
-canonical project artifacts without introducing a competing source of truth.
+Complete and approved by human to advance to Phase 10AB. Phase 10AA closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the memory-vault
+export view builder, bounded per-source excerpt reader, durable-memory JSON
+filename index, `[vault-excerpt]` / `[vault-entry-index]` renderer tags,
+and end-to-end sentinel regressions were verified in the current repo state.
 
 ### Objective
 
@@ -5627,6 +5626,18 @@ as the source of truth.
 - no Git automation
 
 ## Phase 10AB - Controlled Concurrent Operation Contract
+
+### Status
+
+Active. Phase 10AB is the current implementation focus after Phase 10AA
+closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
+approved the advance. Phase 10AB scope is the controlled-concurrency
+contract slice: defining the overlap rules, ownership boundaries, stale-
+artifact detection, review/fix invalidation rules, and refusal/recovery
+behavior BEFORE any concurrent Codex/Claude runtime is ever allowed. The
+slice itself remains a bounded READ-ONLY contract mirror; no active
+overlapping runtime, background orchestration, or parallel worker model
+ships in this slice.
 
 ### Objective
 

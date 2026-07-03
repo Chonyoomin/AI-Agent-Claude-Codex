@@ -14171,6 +14171,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     memory_vault_view = _desktop_safe_call_view(
         build_desktop_memory_vault_view, controller_root,
     )
+    concurrency_view = _desktop_safe_call_view(
+        build_desktop_concurrency_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14192,6 +14195,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "resume_console_view": resume_console_view,
         "selection_view": selection_view,
         "memory_vault_view": memory_vault_view,
+        "concurrency_view": concurrency_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14337,6 +14341,19 @@ def _desktop_render_sub_view_lines(
             render_desktop_memory_vault_text(sub_view),
         )
         return lines
+    if key == "concurrency_view":
+        # Re-use the shipped Phase 10AB renderer verbatim so the
+        # concurrency contract attribution tags ([concurrency-
+        # rule] / [concurrency-overlap] / [concurrency-owner] /
+        # [concurrency-invalidation] / [concurrency-recovery] /
+        # [concurrency-approval] / [concurrency-enablement] /
+        # [ownership-map] / [deferred-runtime] / [canonical
+        # mirror] / [advisory] / [refused]) stay consistent
+        # with the standalone `view-desktop-concurrency` output.
+        lines.extend(
+            render_desktop_concurrency_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14429,6 +14446,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "memory_vault_view",
             "Memory Vault Export (Phase 10AA)",
+        ),
+        (
+            "concurrency_view",
+            "Controlled Concurrent Operation (Phase 10AB)",
         ),
     ):
         sub = view.get(key, {})
@@ -15072,6 +15093,13 @@ def _launch_desktop_app_window(
         text="Memory Vault Export (Phase 10AA)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    concurrency_frame = tk.Frame(control_frame)
+    concurrency_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        concurrency_frame,
+        text="Controlled Concurrent Operation (Phase 10AB)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15101,6 +15129,7 @@ def _launch_desktop_app_window(
     resume_console_button_widgets: list = []
     selection_button_widgets: list = []
     memory_vault_button_widgets: list = []
+    concurrency_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15775,6 +15804,34 @@ def _launch_desktop_app_window(
             memory_vault_frame,
             memory_vault_controls,
             memory_vault_button_widgets,
+        )
+        # Phase 10AB: rebuild the controlled-concurrency contract
+        # button row from the cached sub-view. Copy-paste ONLY;
+        # every button copies an operator-visible contract
+        # acknowledgement template to clipboard (matching the
+        # Phase 10Z fix-cycle affordance). ZERO new library-
+        # callable controls are introduced. Every button stays
+        # clickable so the copy-to-clipboard path is exposed even
+        # in the deferred-runtime slice.
+        concurrency_sub_view = view.get("concurrency_view", {})
+        if (
+            isinstance(concurrency_sub_view, dict)
+            and concurrency_sub_view.get("view") is None
+            and "error" in concurrency_sub_view
+        ):
+            concurrency_controls = []
+        elif isinstance(concurrency_sub_view, dict):
+            concurrency_controls = (
+                build_desktop_concurrency_controls(
+                    concurrency_sub_view,
+                )
+            )
+        else:
+            concurrency_controls = []
+        _rebuild_button_row(
+            concurrency_frame,
+            concurrency_controls,
+            concurrency_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -27999,6 +28056,1512 @@ def cmd_view_desktop_memory_vault(
 
 
 # ---------------------------------------------------------------------------
+# Phase 10AB - Controlled Concurrent Operation Contract.
+#
+# CONTRACT-ONLY slice. Defines the overlap rules, ownership boundaries, stale-
+# artifact detection, review/fix invalidation rules, and refusal/recovery
+# behavior required BEFORE any concurrent Codex/Claude runtime is ever allowed.
+# NO active overlapping runtime, background orchestration, parallel worker
+# model, or hidden concurrency ships in this slice.
+#
+# The Phase 10AB surface derives its state from canonical shipped artifacts
+# ONLY (`.agent-loop/loop-state.json`, `.agent-loop/claude-prompt.md`,
+# `.agent-loop/codex-review.md`, `.agent-loop/fix-prompt.md`,
+# `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`,
+# `.agent-loop/claude-summary.md`, `.agent-loop/phase-plan.md`, `TASK.md`,
+# `AGENTS.md`, `CLAUDE.md`), reads only stat / mtime / size for each artifact,
+# and NEVER reads artifact BODY content. Every per-artifact ownership,
+# staleness, and refusal / recovery entry is closed and validated fail-closed.
+#
+# The Phase 10Z fix-cycle affordance contract is preserved verbatim: each
+# shipped Tk button surfaces `enabled=True` (the click ONLY copies an
+# operator-visible request TEMPLATE into the OS clipboard) plus a distinct
+# `runtime_enabled=False` field indicating the concurrency runtime is
+# deferred. ZERO new library-callable controls are introduced; the Phase 10I
+# three-control library-callable cap is preserved exactly.
+#
+# The surface NEVER writes, NEVER mutates canonical artifacts, NEVER appends
+# to `.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a network
+# socket, NEVER reads canonical artifact BODY content (only stat / mtime /
+# size), NEVER writes a concurrency cache, NEVER persists a background
+# watcher, NEVER auto-fills any operator-identity field, NEVER introduces
+# any actual concurrency runtime, background worker, or parallel worker
+# model. It is a bounded READ-ONLY contract mirror only.
+# ---------------------------------------------------------------------------
+
+DESKTOP_CONCURRENCY_SIGNAL_VERSION = "phase-10ab-v1"
+
+DESKTOP_CONCURRENCY_PRECEDENCE_NOTE = (
+    "Phase 10AB controlled concurrent operation contract slice. The "
+    "shipped Phase 3A orchestrator contract, Phase 4 planner / activator "
+    "separation, Phase 5A approval-modes contract, Phase 6A/6B durable-"
+    "memory storage contract, Phase 10L desktop-app contract, and Phase "
+    "10AA memory-vault export contract govern this surface's overlap / "
+    "ownership / staleness / invalidation / recovery vocabulary verbatim. "
+    "The Phase 10I three-control library-callable cap is preserved "
+    "exactly; ZERO new library-callable controls are introduced. Every "
+    "concurrency-rule descriptor is validated against the closed Phase "
+    "10AB descriptor shape and refused fail-closed on any missing "
+    "required field, wrong-typed value, unknown `overlap_state`, "
+    "unknown `owner_role`, unknown `invalidation_trigger`, unknown "
+    "`recovery_action`, unknown `approval_requirements` member, or "
+    "non-POSIX / absolute / drive-prefixed / parent-traversal artifact "
+    "`path_canonical_rel`. `phase_10ab_runtime_available` is hard-coded "
+    "`False` in this slice so EVERY concurrency rule's per-rule "
+    "ENABLEMENT state surfaces as `refused_until_policy_update` "
+    "regardless of operator input; the shipped desktop surface renders "
+    "the closed rule catalog + the shipped ownership map + the per-"
+    "artifact staleness state so an operator can see the concurrency "
+    "contract at a glance. The surface NEVER spawns a subprocess, NEVER "
+    "opens a network socket, NEVER reads canonical artifact BODY "
+    "content (only stat / mtime / size), NEVER launches or coordinates "
+    "any actual concurrent Codex/Claude runtime, NEVER schedules a "
+    "background watcher, NEVER writes a concurrency cache, NEVER "
+    "mutates any canonical artifact, NEVER appends to `.agent-loop/"
+    "orchestrator.log`, NEVER advances loop-state, NEVER invokes "
+    "`_halt(...)`, NEVER auto-fills any --*-by operator-identity "
+    "argument or approval-mode value, NEVER introduces a concurrency-"
+    "side database / preference store / recents list / identity token "
+    "/ session token, and NEVER widens the Phase 10I cap"
+)
+
+# Overlap-state vocabulary. `no_overlap` = single-active-work-stream
+# baseline. `overlap_safe_read_only` = the shipped contract permits
+# concurrent reads on canonical artifacts (Phase 7C reporters, desktop-
+# app poll cycle). `overlap_invalidating` = any concurrent write on the
+# named artifact invalidates the active review / fix context. `unknown` =
+# fail-closed default when the state cannot be derived.
+CONCURRENCY_OVERLAP_STATES = (
+    "no_overlap",
+    "overlap_safe_read_only",
+    "overlap_invalidating",
+    "unknown",
+)
+
+# Ownership-role vocabulary. Every shipped canonical artifact maps to
+# exactly one owner_role. `claude_owned` = Claude writes (the
+# implementation agent). `codex_owned` = Codex writes (the planner /
+# reviewer agent). `orchestrator_owned` = the shipped Python runtime
+# writes (loop-state, evidence, orchestrator.log). `human_owned` =
+# only the human operator writes (AGENTS.md, CLAUDE.md).
+# `shared_read_only` = every role may read but no role may write.
+CONCURRENCY_OWNERSHIP_ROLES = (
+    "claude_owned",
+    "codex_owned",
+    "orchestrator_owned",
+    "human_owned",
+    "shared_read_only",
+)
+
+# Staleness-state vocabulary derived from the shipped loop-state.json
+# mirror (`phase`, `sub_phase`, `cycle_count`). `fresh` = the artifact
+# is bound to the current active phase / cycle_count. `stale_phase` =
+# the artifact predates the active phase. `stale_cycle` = the artifact
+# predates the active cycle_count. `missing` = the artifact is absent.
+# `unknown` = fail-closed default.
+CONCURRENCY_STALENESS_STATES = (
+    "fresh",
+    "stale_phase",
+    "stale_cycle",
+    "missing",
+    "unknown",
+)
+
+# Invalidation-trigger vocabulary. Every closed member names a
+# canonical, observable event that MUST invalidate any in-flight review
+# / fix context per this contract.
+CONCURRENCY_INVALIDATION_TRIGGERS = (
+    "codex_review_verdict_changed",
+    "claude_prompt_replaced",
+    "fix_prompt_replaced",
+    "loop_state_advanced",
+    "phase_activation_advanced",
+    "cycle_count_advanced",
+)
+
+# Recovery-action vocabulary. Every closed member names an explicit
+# operator-visible action the loop MUST take when overlap is detected.
+CONCURRENCY_RECOVERY_ACTIONS = (
+    "re_read_active_prompt",
+    "re_read_codex_review",
+    "refresh_loop_state",
+    "manual_operator_intervention",
+    "refused_until_policy_update",
+)
+
+# Refusal-reason vocabulary. Every closed member names a specific
+# reason the concurrency contract MUST refuse fail-closed.
+CONCURRENCY_REFUSAL_REASONS = (
+    "overlap_not_permitted",
+    "stale_artifact_detected",
+    "invalidation_trigger_active",
+    "runtime_not_available",
+    "approval_mode_strict",
+)
+
+# Enablement-state vocabulary matches the Phase 10Z / 10AA closed
+# three-state machine.
+CONCURRENCY_ENABLEMENT_STATES = (
+    "disabled_by_default",
+    "enabled_pending_runtime",
+    "refused_until_policy_update",
+)
+
+# Approval-requirement vocabulary (closed).
+CONCURRENCY_APPROVAL_REQUIREMENTS = (
+    "operator_acknowledged_contract",
+    "operator_supplied_identity",
+    "approval_mode_supports_concurrency",
+    "phase_10ab_runtime_available",
+    "no_invalidation_trigger_active",
+)
+
+# Mirrors the Phase 10T / 10U / 10V / 10Z permitted-mode set so the
+# concurrency boundary stays consistent.
+CONCURRENCY_PERMITTED_APPROVAL_MODES = frozenset({
+    "review",
+    "autonomous",
+})
+
+_CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "overlap_state",
+    "owner_role_writer",
+    "owner_role_reader",
+    "invalidation_trigger",
+    "recovery_action",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+_CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_TUPLE_FIELDS = (
+    "approval_requirements",
+)
+
+# Closed shipped ownership map: every named canonical artifact maps to
+# exactly one owner_role. Order-preserving tuple so the rendered output
+# is deterministic. Every path is POSIX-style repo-relative bounded
+# inside the controller root.
+_DESKTOP_CONCURRENCY_OWNERSHIP_MAP: tuple = (
+    (".agent-loop/loop-state.json", "orchestrator_owned"),
+    (".agent-loop/orchestrator.log", "orchestrator_owned"),
+    (".agent-loop/git-diff.patch", "orchestrator_owned"),
+    (".agent-loop/git-status.log", "orchestrator_owned"),
+    (".agent-loop/test-output.log", "orchestrator_owned"),
+    (".agent-loop/lint-output.log", "orchestrator_owned"),
+    (".agent-loop/typecheck-output.log", "orchestrator_owned"),
+    (".agent-loop/build-output.log", "orchestrator_owned"),
+    (".agent-loop/codex-review.md", "codex_owned"),
+    (".agent-loop/claude-prompt.md", "codex_owned"),
+    (".agent-loop/fix-prompt.md", "codex_owned"),
+    (".agent-loop/current-task.md", "codex_owned"),
+    (".agent-loop/current-phase.md", "codex_owned"),
+    (".agent-loop/phase-plan.md", "codex_owned"),
+    ("TASK.md", "codex_owned"),
+    (".agent-loop/claude-summary.md", "claude_owned"),
+    ("AGENTS.md", "human_owned"),
+    ("CLAUDE.md", "human_owned"),
+    ("README.md", "shared_read_only"),
+)
+
+_DESKTOP_CONCURRENCY_RULE_REGISTRY: tuple = (
+    {
+        "id": "codex_review_verdict_supersedes_in_flight_claude_work",
+        "display_name": (
+            "Codex review verdict supersedes in-flight Claude "
+            "work"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "codex_owned",
+        "owner_role_reader": "claude_owned",
+        "invalidation_trigger": (
+            "codex_review_verdict_changed"
+        ),
+        "recovery_action": "re_read_codex_review",
+        "description": (
+            "When Codex writes a new `.agent-loop/codex-"
+            "review.md` verdict block (a `## Verdict` header "
+            "with the closed vocabulary `APPROVED_FOR_HUMAN_"
+            "REVIEW` / `NEEDS_FIXES` / `FAILED_REQUIRES_"
+            "HUMAN`), any in-flight Claude implementation "
+            "against the same phase / sub_phase is "
+            "invalidated. Claude MUST re-read the shipped "
+            "`.agent-loop/codex-review.md` and the shipped "
+            "`.agent-loop/fix-prompt.md` before continuing."
+        ),
+        "safety_copy": (
+            "Overlap between a Codex review write and an in-"
+            "flight Claude implementation is UNSAFE. The "
+            "shipped Phase 10AB contract refuses to permit "
+            "either work stream to silently ignore the other."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "overlap-detection runtime is deferred to a "
+            "future Phase 10+ runtime slice tracked in "
+            "`ROADMAP.md`. The Phase 10AB desktop surface "
+            "NEVER launches any actual concurrent worker, "
+            "NEVER coordinates a background overlap watcher, "
+            "NEVER opens a network socket, and NEVER writes a "
+            "concurrency cache."
+        ),
+        "refusal_reason_template": (
+            "`codex_review_verdict_supersedes_in_flight_"
+            "claude_work` refused: Phase 10AB ships the "
+            "contract only; every rule surfaces as "
+            "`refused_until_policy_update` in this slice."
+        ),
+    },
+    {
+        "id": "claude_prompt_replacement_invalidates_prior_run",
+        "display_name": (
+            "Claude prompt replacement invalidates any prior "
+            "Claude implementation run"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "codex_owned",
+        "owner_role_reader": "claude_owned",
+        "invalidation_trigger": "claude_prompt_replaced",
+        "recovery_action": "re_read_active_prompt",
+        "description": (
+            "When Codex writes a new `.agent-loop/claude-"
+            "prompt.md`, any prior Claude implementation "
+            "cycle bound to the previous prompt content is "
+            "invalidated. Claude MUST re-read the shipped "
+            "prompt in full before any new implementation "
+            "step; a diff against the previous mtime MUST "
+            "fail closed and refuse silent continuation."
+        ),
+        "safety_copy": (
+            "The shipped `.agent-loop/claude-prompt.md` is "
+            "the canonical source of truth for the active "
+            "Claude implementation contract; a silent "
+            "continuation past a prompt replacement is a "
+            "concurrency bug."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "prompt-mtime watch runtime is deferred to a "
+            "future Phase 10+ runtime slice tracked in "
+            "`ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`claude_prompt_replacement_invalidates_prior_"
+            "run` refused: Phase 10AB ships the contract "
+            "only."
+        ),
+    },
+    {
+        "id": "fix_prompt_replacement_invalidates_prior_fix",
+        "display_name": (
+            "Fix prompt replacement invalidates any prior "
+            "fix-cycle run"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "codex_owned",
+        "owner_role_reader": "claude_owned",
+        "invalidation_trigger": "fix_prompt_replaced",
+        "recovery_action": "re_read_active_prompt",
+        "description": (
+            "When Codex writes a new `.agent-loop/fix-"
+            "prompt.md`, any prior Claude fix-cycle bound to "
+            "the previous fix-prompt content is invalidated. "
+            "Claude MUST re-read the shipped fix-prompt in "
+            "full and apply the new fix scope before any "
+            "further fix-cycle step."
+        ),
+        "safety_copy": (
+            "A fix prompt is scoped to specific findings; "
+            "silent continuation past a fix-prompt "
+            "replacement can widen or narrow the fix scope "
+            "unintentionally."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "fix-prompt watch runtime is deferred to a "
+            "future Phase 10+ runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`fix_prompt_replacement_invalidates_prior_fix` "
+            "refused: Phase 10AB ships the contract only."
+        ),
+    },
+    {
+        "id": "loop_state_advancement_invalidates_context",
+        "display_name": (
+            "Loop-state advancement invalidates any prior "
+            "review / fix context"
+        ),
+        "overlap_state": "overlap_invalidating",
+        "owner_role_writer": "orchestrator_owned",
+        "owner_role_reader": "shared_read_only",
+        "invalidation_trigger": "loop_state_advanced",
+        "recovery_action": "refresh_loop_state",
+        "description": (
+            "When the shipped orchestrator advances `.agent-"
+            "loop/loop-state.json` (a `status` change or a "
+            "`cycle_count` increment), any prior review / "
+            "fix context bound to the previous loop-state is "
+            "invalidated. Every agent MUST reload the shipped "
+            "loop-state before continuing; a silent "
+            "continuation past a loop-state advancement is a "
+            "concurrency bug."
+        ),
+        "safety_copy": (
+            "`.agent-loop/loop-state.json` is the canonical "
+            "orchestrator state; treating a stale copy as "
+            "current risks a wrong-cycle claim, a wrong-"
+            "verdict claim, or a silent phase overlap."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "loop-state watch runtime is deferred to a "
+            "future Phase 10+ runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`loop_state_advancement_invalidates_context` "
+            "refused: Phase 10AB ships the contract only."
+        ),
+    },
+    {
+        "id": "shared_canonical_artifact_reads_stay_overlap_safe",
+        "display_name": (
+            "Shared canonical artifact READS remain overlap-"
+            "safe"
+        ),
+        "overlap_state": "overlap_safe_read_only",
+        "owner_role_writer": "shared_read_only",
+        "owner_role_reader": "shared_read_only",
+        "invalidation_trigger": (
+            "loop_state_advanced"
+        ),
+        "recovery_action": "refresh_loop_state",
+        "description": (
+            "Concurrent READS on canonical artifacts (Phase "
+            "7C reporters, the Phase 10M desktop-app poll "
+            "cycle, the Phase 10AA memory-vault export "
+            "surface, the Phase 10AB concurrency view "
+            "itself) are permitted as long as the reader "
+            "does not mutate. This rule anchors the "
+            "read-only baseline the shipped reporter contract "
+            "already ships."
+        ),
+        "safety_copy": (
+            "Concurrent read-only reporting is safe by design "
+            "as long as the reporter never mutates. The Phase "
+            "10AB contract preserves this baseline."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "overlap-safety runtime is deferred to a future "
+            "Phase 10+ runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`shared_canonical_artifact_reads_stay_overlap_"
+            "safe` refused: Phase 10AB ships the contract "
+            "only."
+        ),
+    },
+    {
+        "id": "human_owned_artifacts_freeze_concurrent_write",
+        "display_name": (
+            "Human-owned artifacts freeze any concurrent "
+            "agent write"
+        ),
+        "overlap_state": "no_overlap",
+        "owner_role_writer": "human_owned",
+        "owner_role_reader": "shared_read_only",
+        "invalidation_trigger": "phase_activation_advanced",
+        "recovery_action": "manual_operator_intervention",
+        "description": (
+            "`AGENTS.md` and `CLAUDE.md` are human-owned; no "
+            "concurrent Codex/Claude write is permitted. Any "
+            "change to a human-owned artifact requires "
+            "explicit operator action outside the shipped "
+            "runtime; the shipped agents MUST refuse fail-"
+            "closed on any request that would mutate a human-"
+            "owned artifact."
+        ),
+        "safety_copy": (
+            "Governance and standards artifacts are frozen "
+            "against automated writes. This preserves the "
+            "shipped Phase 3A / Phase 4A ownership rules."
+        ),
+        "approval_requirements": (
+            "operator_acknowledged_contract",
+            "operator_supplied_identity",
+            "approval_mode_supports_concurrency",
+            "phase_10ab_runtime_available",
+            "no_invalidation_trigger_active",
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AB ships the CONTRACT only; the actual "
+            "human-owned-artifact freeze enforcement is "
+            "already covered by the shipped Phase 3A / 10L "
+            "refusal boundaries and this contract mirrors "
+            "them explicitly."
+        ),
+        "refusal_reason_template": (
+            "`human_owned_artifacts_freeze_concurrent_write` "
+            "refused: Phase 10AB ships the contract only."
+        ),
+    },
+)
+
+
+def _desktop_concurrency_validate_rule_descriptor(
+    spec: dict,
+) -> None:
+    """Phase 10AB rule-descriptor validator: refuse fail-closed
+    on any missing required field, wrong-typed value, unknown
+    closed-enumeration member. Pure validation; no IO, no
+    mutation, no `_halt(...)`.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor is not a dict "
+                f"({type(spec).__name__})"
+            ),
+        )
+    for field in (
+        _CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_STRING_FIELDS
+    ):
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"descriptor field {field!r} is missing "
+                    f"or non-string ({value!r})"
+                ),
+            )
+    for field in (
+        _CONCURRENCY_RULE_DESCRIPTOR_REQUIRED_TUPLE_FIELDS
+    ):
+        value = spec.get(field)
+        if not isinstance(value, tuple) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"descriptor field {field!r} is missing, "
+                    f"non-tuple, or empty ({value!r})"
+                ),
+            )
+    if spec["overlap_state"] not in CONCURRENCY_OVERLAP_STATES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor overlap_state="
+                f"{spec['overlap_state']!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_OVERLAP_STATES!r}"
+            ),
+        )
+    for role_field in ("owner_role_writer", "owner_role_reader"):
+        if spec[role_field] not in (
+            CONCURRENCY_OWNERSHIP_ROLES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"descriptor {role_field}="
+                    f"{spec[role_field]!r} is not in the "
+                    f"closed Phase 10AB enumeration "
+                    f"{CONCURRENCY_OWNERSHIP_ROLES!r}"
+                ),
+            )
+    if spec["invalidation_trigger"] not in (
+        CONCURRENCY_INVALIDATION_TRIGGERS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor invalidation_trigger="
+                f"{spec['invalidation_trigger']!r} is not in "
+                f"the closed Phase 10AB enumeration "
+                f"{CONCURRENCY_INVALIDATION_TRIGGERS!r}"
+            ),
+        )
+    if spec["recovery_action"] not in (
+        CONCURRENCY_RECOVERY_ACTIONS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"descriptor recovery_action="
+                f"{spec['recovery_action']!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_RECOVERY_ACTIONS!r}"
+            ),
+        )
+    for req in spec["approval_requirements"]:
+        if req not in CONCURRENCY_APPROVAL_REQUIREMENTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop concurrency contract refused: "
+                    f"approval_requirements member {req!r} is "
+                    f"not in the closed Phase 10AB enumeration "
+                    f"{CONCURRENCY_APPROVAL_REQUIREMENTS!r}"
+                ),
+            )
+
+
+def _desktop_concurrency_validate_ownership_entry(
+    entry: tuple,
+) -> None:
+    """Phase 10AB: refuse fail-closed on any ownership-map entry
+    whose path is non-POSIX / absolute / drive-prefixed / parent-
+    traversal, or whose role is not in the closed vocabulary.
+    """
+    if (
+        not isinstance(entry, tuple) or len(entry) != 2
+        or not isinstance(entry[0], str)
+        or not isinstance(entry[1], str)
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership entry {entry!r} is not a "
+                f"(path_str, role_str) tuple"
+            ),
+        )
+    path_rel, role = entry
+    if not path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop concurrency contract refused: "
+                "ownership entry path is empty"
+            ),
+        )
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} contains a "
+                f"backslash; per the Phase 10AB contract this "
+                f"MUST be a POSIX-style relative path"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} is absolute"
+            ),
+        )
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} carries a "
+                f"Windows-style drive prefix"
+            ),
+        )
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership path={path_rel!r} contains a "
+                f"parent-directory traversal segment"
+            ),
+        )
+    if role not in CONCURRENCY_OWNERSHIP_ROLES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"ownership role={role!r} is not in the "
+                f"closed Phase 10AB enumeration "
+                f"{CONCURRENCY_OWNERSHIP_ROLES!r}"
+            ),
+        )
+
+
+def _desktop_concurrency_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Phase 10AB normalizer. Accepts `{identity,
+    acknowledged_rule_ids}` (per-session, in-memory only, NEVER
+    persisted).
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_rule_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"operator_inputs is not a dict "
+                f"({type(operator_inputs).__name__})"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"operator_inputs.identity is not a string "
+                f"({identity!r})"
+            ),
+        )
+    ack = operator_inputs.get(
+        "acknowledged_rule_ids", frozenset(),
+    )
+    if not isinstance(ack, (frozenset, set, list, tuple)):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop concurrency contract refused: "
+                f"operator_inputs.acknowledged_rule_ids is "
+                f"not iterable ({ack!r})"
+            ),
+        )
+    return {
+        "identity": identity.strip(),
+        "acknowledged_rule_ids": frozenset(
+            str(s) for s in ack
+        ),
+    }
+
+
+def _desktop_concurrency_probe_artifact_staleness(
+    controller_root: Path,
+    path_rel: str,
+    *,
+    active_phase: Optional[str] = None,
+    active_cycle_count: Optional[int] = None,
+    active_ts: Optional[float] = None,
+) -> dict:
+    """Pure stat / mtime / size probe of one shipped canonical
+    artifact plus a derived staleness label.
+
+    Returns `{path_canonical, exists, last_modified_utc,
+    last_modified_ts, size_bytes, staleness_state}`. NEVER reads
+    artifact CONTENT; only `Path.stat()` is consulted. Pure
+    read-only IO; never raises.
+
+    `staleness_state` is derived as follows: `missing` if the
+    file does not exist; `unknown` if the loop-state cannot
+    supply an `active_ts` reference. Otherwise, when the
+    artifact mtime is older than the shipped loop-state mtime
+    minus one poll-cycle grace window, the artifact is marked
+    `stale_cycle`; a much older artifact (older than a shipped
+    active-phase-history grace window) is marked `stale_phase`.
+    The default is `fresh`.
+    """
+    path = (controller_root / path_rel).resolve()
+    exists = False
+    mtime_ts: Optional[float] = None
+    size_bytes: Optional[int] = None
+    staleness_state = "missing"
+    try:
+        st = path.stat()
+        exists = True
+        mtime_ts = float(st.st_mtime)
+        size_bytes = int(st.st_size)
+        if active_ts is None:
+            staleness_state = "unknown"
+        else:
+            age_seconds = active_ts - mtime_ts
+            # Phase-scale grace window: 7 days. A file older
+            # than this predates the active phase in almost
+            # every realistic loop; the loop typically advances
+            # phases faster than that.
+            if age_seconds > 7 * 24 * 3600:
+                staleness_state = "stale_phase"
+            # Cycle-scale grace window: 1 hour. A file older
+            # than this is treated as belonging to a prior
+            # cycle relative to the shipped loop-state.
+            elif age_seconds > 3600:
+                staleness_state = "stale_cycle"
+            else:
+                staleness_state = "fresh"
+    except FileNotFoundError:
+        staleness_state = "missing"
+    except OSError:
+        staleness_state = "unknown"
+    last_modified_utc: Optional[str] = None
+    if mtime_ts is not None:
+        last_modified_utc = (
+            datetime.fromtimestamp(mtime_ts, tz=timezone.utc)
+            .isoformat()
+        )
+    return {
+        "path_canonical": path.as_posix(),
+        "path_canonical_rel": path_rel,
+        "exists": exists,
+        "last_modified_utc": last_modified_utc,
+        "last_modified_ts": mtime_ts,
+        "size_bytes": size_bytes,
+        "staleness_state": staleness_state,
+    }
+
+
+def _desktop_concurrency_compute_approval_state(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10ab_runtime_available: bool,
+    operator_acknowledged_contract: bool,
+    operator_supplied_identity: bool,
+    no_invalidation_trigger_active: bool,
+) -> dict:
+    """Return a per-requirement-id dict carrying `{satisfied,
+    reason}` entries for every Phase 10AB approval requirement.
+    Pure computation; no IO.
+    """
+    mode_supported = (
+        isinstance(approval_mode, str)
+        and approval_mode in (
+            CONCURRENCY_PERMITTED_APPROVAL_MODES
+        )
+    )
+    return {
+        "operator_acknowledged_contract": {
+            "satisfied": bool(operator_acknowledged_contract),
+            "reason": (
+                "operator has explicitly acknowledged the "
+                "per-rule contract this session"
+                if operator_acknowledged_contract
+                else (
+                    "contract not acknowledged this session; "
+                    "per the Phase 10AB contract "
+                    "acknowledgement MUST be a per-session "
+                    "operator action and MUST NOT be pre-"
+                    "acknowledged from any prior session or "
+                    "saved preference"
+                )
+            ),
+        },
+        "operator_supplied_identity": {
+            "satisfied": bool(operator_supplied_identity),
+            "reason": (
+                "operator has supplied an explicit identity "
+                "value this session"
+                if operator_supplied_identity
+                else (
+                    "operator identity not supplied; per the "
+                    "Phase 10AB contract identity MUST be "
+                    "operator-supplied and MUST NOT be auto-"
+                    "filled from `$USER`, `whoami`, a "
+                    "packaging-time-configured identity, or "
+                    "any persistent concurrency-side identity "
+                    "store"
+                )
+            ),
+        },
+        "approval_mode_supports_concurrency": {
+            "satisfied": mode_supported,
+            "reason": (
+                f"controller loop-state.approval_mode="
+                f"{approval_mode!r} is in the permitted set "
+                f"{sorted(CONCURRENCY_PERMITTED_APPROVAL_MODES)!r}"
+                if mode_supported
+                else (
+                    f"controller loop-state.approval_mode="
+                    f"{approval_mode!r} is not in the "
+                    f"permitted set "
+                    f"{sorted(CONCURRENCY_PERMITTED_APPROVAL_MODES)!r}"
+                    f"; per the Phase 10AB contract "
+                    f"concurrency MUST refuse fail-closed in "
+                    f"`strict` mode"
+                )
+            ),
+        },
+        "phase_10ab_runtime_available": {
+            "satisfied": bool(phase_10ab_runtime_available),
+            "reason": (
+                "Phase 10AB concurrency runtime is shipped "
+                "and reachable"
+                if phase_10ab_runtime_available
+                else (
+                    "Phase 10AB ships the CONTRACT only; the "
+                    "actual overlap-detection runtime is "
+                    "deferred to a future Phase 10 runtime "
+                    "slice tracked in `ROADMAP.md`"
+                )
+            ),
+        },
+        "no_invalidation_trigger_active": {
+            "satisfied": bool(no_invalidation_trigger_active),
+            "reason": (
+                "no closed invalidation trigger is active on "
+                "the current loop-state"
+                if no_invalidation_trigger_active
+                else (
+                    "one or more closed invalidation triggers "
+                    "are active on the current loop-state; "
+                    "per the Phase 10AB contract concurrency "
+                    "MUST refuse fail-closed until the trigger "
+                    "is resolved (see the shipped recovery "
+                    "action for the rule)"
+                )
+            ),
+        },
+    }
+
+
+def _desktop_concurrency_compute_enablement_state(
+    spec: dict, *, approval_state: dict,
+) -> tuple:
+    """Phase 10AB enablement-state computation. Returns
+    `(state_value, reason)` where `state_value` is one of
+    `CONCURRENCY_ENABLEMENT_STATES`.
+
+    Default: `refused_until_policy_update`. Promotion to
+    `enabled_pending_runtime` requires every approval
+    requirement satisfied. Until the runtime ships every rule
+    stays `refused_until_policy_update` regardless of operator
+    input (the closed `phase_10ab_runtime_available` requirement
+    is hard-coded `False` in this slice).
+    """
+    runtime_side_reqs = {
+        "phase_10ab_runtime_available",
+        "no_invalidation_trigger_active",
+    }
+    runtime_unmet = [
+        req for req in spec["approval_requirements"]
+        if req in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if runtime_unmet:
+        return (
+            "refused_until_policy_update",
+            (
+                f"Phase 10AB runtime-side requirements are "
+                f"not satisfied: {runtime_unmet!r}; per the "
+                f"Phase 10AB fail-closed default concurrency "
+                f"is refused until the runtime slice ships "
+                f"AND no invalidation trigger is active"
+            ),
+        )
+    operator_unmet = [
+        req for req in spec["approval_requirements"]
+        if req not in runtime_side_reqs
+        and not approval_state.get(req, {}).get("satisfied")
+    ]
+    if operator_unmet:
+        return (
+            "disabled_by_default",
+            (
+                f"one or more Phase 10AB operator-side "
+                f"approval requirements are not satisfied: "
+                f"{operator_unmet!r}"
+            ),
+        )
+    return (
+        "enabled_pending_runtime",
+        (
+            "every Phase 10AB approval requirement is "
+            "satisfied; the Phase 10AB slice still ships the "
+            "contract only so a future Phase 10 runtime slice "
+            "MUST actually perform overlap detection "
+            "(tracked in `ROADMAP.md`)"
+        ),
+    )
+
+
+def _desktop_concurrency_rule_descriptor(
+    spec: dict,
+    *,
+    approval_mode: Optional[str],
+    phase_10ab_runtime_available: bool,
+    operator_acknowledged_contract: bool,
+    operator_supplied_identity: bool,
+    no_invalidation_trigger_active: bool,
+) -> dict:
+    """Return the operator-visible per-rule descriptor (closed
+    shape; matches the Phase 10AB contract field list).
+    """
+    approval_state = (
+        _desktop_concurrency_compute_approval_state(
+            spec,
+            approval_mode=approval_mode,
+            phase_10ab_runtime_available=(
+                phase_10ab_runtime_available
+            ),
+            operator_acknowledged_contract=(
+                operator_acknowledged_contract
+            ),
+            operator_supplied_identity=(
+                operator_supplied_identity
+            ),
+            no_invalidation_trigger_active=(
+                no_invalidation_trigger_active
+            ),
+        )
+    )
+    enablement_state, enablement_reason = (
+        _desktop_concurrency_compute_enablement_state(
+            spec, approval_state=approval_state,
+        )
+    )
+    return {
+        "id": spec["id"],
+        "display_name": spec["display_name"],
+        "overlap_state": spec["overlap_state"],
+        "owner_role_writer": spec["owner_role_writer"],
+        "owner_role_reader": spec["owner_role_reader"],
+        "invalidation_trigger": spec["invalidation_trigger"],
+        "recovery_action": spec["recovery_action"],
+        "description": spec["description"],
+        "safety_copy": spec["safety_copy"],
+        "approval_requirements": list(
+            spec["approval_requirements"]
+        ),
+        "approval_state": approval_state,
+        "enablement_state": enablement_state,
+        "enablement_reason": enablement_reason,
+        "deferred_runtime_marker": (
+            spec["deferred_runtime_marker"]
+        ),
+        "refusal_reason_template": (
+            spec["refusal_reason_template"]
+        ),
+    }
+
+
+def build_desktop_concurrency_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AB: assemble the bounded desktop controlled-
+    concurrency contract view. Surfaces the closed
+    `_DESKTOP_CONCURRENCY_RULE_REGISTRY` + the closed
+    `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` + per-artifact staleness
+    derived from `Path.stat()` alongside the closed refusal /
+    recovery vocabularies.
+
+    `phase_10ab_runtime_available` is hard-coded `False` in this
+    slice so every rule's per-rule ENABLEMENT state surfaces as
+    `refused_until_policy_update`; the shipped desktop surface
+    renders the closed rule catalog + ownership map + per-
+    artifact staleness so an operator can see the concurrency
+    contract at a glance.
+
+    Never writes, never mutates, never spawns a subprocess,
+    never invokes `_halt(...)`, never reads canonical artifact
+    BODY content (only stat / mtime / size), never widens the
+    Phase 10I library-callable cap, never opens a network
+    socket. The shipped `load_loop_state(...)` validator
+    HaltError soft-fails so the surface stays operable when the
+    controller's loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_sub_phase: Optional[str] = None
+    active_cycle_count: Optional[int] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        phase_candidate = loop_state.get("phase")
+        if isinstance(phase_candidate, str):
+            active_phase = phase_candidate
+        sub_phase_candidate = loop_state.get("sub_phase")
+        if isinstance(sub_phase_candidate, str):
+            active_sub_phase = sub_phase_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            active_cycle_count = cycle_candidate
+    active_ts: Optional[float] = None
+    try:
+        active_ts = float(state_path.stat().st_mtime)
+    except (FileNotFoundError, OSError):
+        active_ts = None
+    inputs = (
+        _desktop_concurrency_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    identity_supplied = bool(inputs["identity"])
+    ack_set = inputs["acknowledged_rule_ids"]
+    rules = []
+    for spec in _DESKTOP_CONCURRENCY_RULE_REGISTRY:
+        _desktop_concurrency_validate_rule_descriptor(spec)
+        rule_id = spec["id"]
+        rules.append(
+            _desktop_concurrency_rule_descriptor(
+                spec,
+                approval_mode=approval_mode,
+                # Hard-coded False in this slice; the contract
+                # boundary that keeps every rule refused until
+                # a future runtime slice ships.
+                phase_10ab_runtime_available=False,
+                operator_acknowledged_contract=(
+                    rule_id in ack_set
+                ),
+                operator_supplied_identity=identity_supplied,
+                # No live invalidation-trigger detection in
+                # this contract slice; the closed field
+                # surfaces as False so the fail-closed default
+                # is exact.
+                no_invalidation_trigger_active=False,
+            )
+        )
+    ownership_entries = []
+    for entry in _DESKTOP_CONCURRENCY_OWNERSHIP_MAP:
+        _desktop_concurrency_validate_ownership_entry(entry)
+        path_rel, role = entry
+        probe = (
+            _desktop_concurrency_probe_artifact_staleness(
+                controller_root, path_rel,
+                active_phase=active_phase,
+                active_cycle_count=active_cycle_count,
+                active_ts=active_ts,
+            )
+        )
+        ownership_entries.append({
+            "path_canonical_rel": path_rel,
+            "path_canonical": probe["path_canonical"],
+            "owner_role": role,
+            "exists": probe["exists"],
+            "last_modified_utc": probe["last_modified_utc"],
+            "size_bytes": probe["size_bytes"],
+            "staleness_state": probe["staleness_state"],
+        })
+    return {
+        "view_signal_version": (
+            DESKTOP_CONCURRENCY_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "current_loop_state_phase": active_phase,
+        "current_loop_state_sub_phase": active_sub_phase,
+        "current_loop_state_cycle_count": active_cycle_count,
+        "phase_10ab_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_rule_ids": sorted(ack_set),
+        },
+        "overlap_states": list(CONCURRENCY_OVERLAP_STATES),
+        "ownership_roles": list(CONCURRENCY_OWNERSHIP_ROLES),
+        "staleness_states": list(
+            CONCURRENCY_STALENESS_STATES
+        ),
+        "invalidation_triggers": list(
+            CONCURRENCY_INVALIDATION_TRIGGERS
+        ),
+        "recovery_actions": list(
+            CONCURRENCY_RECOVERY_ACTIONS
+        ),
+        "refusal_reasons": list(CONCURRENCY_REFUSAL_REASONS),
+        "enablement_states": list(
+            CONCURRENCY_ENABLEMENT_STATES
+        ),
+        "approval_requirements": list(
+            CONCURRENCY_APPROVAL_REQUIREMENTS
+        ),
+        "rules": rules,
+        "ownership_map": ownership_entries,
+        "precedence_note": (
+            DESKTOP_CONCURRENCY_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_concurrency_text(view: dict) -> list:
+    """Phase 10AB: format the assembled concurrency contract
+    view as text lines. Per-line attribution tags
+    (`[canonical mirror]`, `[advisory]`, `[concurrency-rule]`,
+    `[concurrency-overlap]`, `[concurrency-owner]`,
+    `[concurrency-invalidation]`, `[concurrency-recovery]`,
+    `[concurrency-approval]`, `[concurrency-enablement]`,
+    `[deferred-runtime]`, `[ownership-map]`, `[refused]`) keep
+    attribution consistent with the Phase 10V / 10Z / 10AA tag
+    vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-concurrency] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_phase: "
+        f"{view['current_loop_state_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_sub_phase: "
+        f"{view['current_loop_state_sub_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_cycle"
+        f"_count: {view['current_loop_state_cycle_count']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10ab_runtime_available (Phase "
+        f"10AB ships the contract only; the actual overlap-"
+        f"detection runtime is deferred to a future Phase 10 "
+        f"runtime slice): "
+        f"{view['phase_10ab_runtime_available']!r}"
+    )
+    for enum_key, enum_label in (
+        ("overlap_states", "Phase 10AB overlap-state closed enumeration"),
+        ("ownership_roles", "Phase 10AB ownership-role closed enumeration"),
+        ("staleness_states", "Phase 10AB staleness-state closed enumeration"),
+        (
+            "invalidation_triggers",
+            "Phase 10AB invalidation-trigger closed enumeration",
+        ),
+        (
+            "recovery_actions",
+            "Phase 10AB recovery-action closed enumeration",
+        ),
+        ("refusal_reasons", "Phase 10AB refusal-reason closed vocabulary"),
+        (
+            "enablement_states",
+            "Phase 10AB enablement-state closed state machine",
+        ),
+        (
+            "approval_requirements",
+            "Phase 10AB approval-requirement closed enumeration",
+        ),
+    ):
+        lines.append(
+            f"  [advisory] {enum_key} ({enum_label}): "
+            f"{view[enum_key]!r}"
+        )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [concurrency-approval] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / "
+        f"concurrency-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [concurrency-approval] operator_inputs."
+        f"acknowledged_rule_ids (per-session operator-clicked "
+        f"contract acknowledgement; NEVER persisted across "
+        f"sessions): "
+        f"{op_inputs.get('acknowledged_rule_ids', [])!r}"
+    )
+    for rule in view.get("rules", []):
+        is_refused = (
+            rule["enablement_state"]
+            == "refused_until_policy_update"
+        )
+        tag = (
+            "[refused]" if is_refused else "[concurrency-rule]"
+        )
+        lines.append(
+            f"  {tag} id={rule['id']!r} "
+            f"display_name={rule['display_name']!r} "
+            f"enablement_state={rule['enablement_state']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{rule['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{rule['safety_copy']}"
+        )
+        lines.append(
+            f"    [concurrency-overlap] overlap_state="
+            f"{rule['overlap_state']!r}"
+        )
+        lines.append(
+            f"    [concurrency-owner] writer="
+            f"{rule['owner_role_writer']!r} reader="
+            f"{rule['owner_role_reader']!r}"
+        )
+        lines.append(
+            f"    [concurrency-invalidation] invalidation_"
+            f"trigger={rule['invalidation_trigger']!r}"
+        )
+        lines.append(
+            f"    [concurrency-recovery] recovery_action="
+            f"{rule['recovery_action']!r}"
+        )
+        for req in rule["approval_requirements"]:
+            entry = rule["approval_state"].get(req, {})
+            satisfied = entry.get("satisfied", False)
+            req_tag = (
+                "[concurrency-approval]"
+                if satisfied else "[refused]"
+            )
+            lines.append(
+                f"    {req_tag} {req}: satisfied={satisfied!r} "
+                f"reason={entry.get('reason')!r}"
+            )
+        lines.append(
+            f"    [concurrency-enablement] enablement_reason: "
+            f"{rule['enablement_reason']}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{rule['deferred_runtime_marker']}"
+        )
+        if is_refused:
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{rule['refusal_reason_template']}"
+            )
+    lines.append(
+        f"[ownership-map] Phase 10AB shipped ownership map "
+        f"({len(view.get('ownership_map', []))} entries; "
+        f"per-artifact staleness derived from stat only, "
+        f"NEVER reads artifact body):"
+    )
+    for entry in view.get("ownership_map", []):
+        stale_tag = (
+            "[refused]"
+            if entry["staleness_state"] in (
+                "stale_phase", "stale_cycle", "unknown",
+                "missing",
+            )
+            else "[ownership-map]"
+        )
+        lines.append(
+            f"  {stale_tag} path_canonical_rel="
+            f"{entry['path_canonical_rel']!r} "
+            f"owner_role={entry['owner_role']!r} "
+            f"exists={entry['exists']!r} "
+            f"staleness_state="
+            f"{entry['staleness_state']!r} "
+            f"last_modified_utc="
+            f"{entry['last_modified_utc']!r} "
+            f"size_bytes={entry['size_bytes']!r}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_concurrency_controls(view: dict) -> list:
+    """Phase 10AB: return a closed list of desktop widget
+    descriptors ready for binding to actual desktop-side
+    controls. Each descriptor is COPY-PASTE ONLY (never a
+    library-callable control) so the Phase 10I three-control
+    cap is preserved exactly.
+
+    Matches the Phase 10Z fix-cycle affordance pattern: every
+    button surfaces `enabled=True` (the click ONLY copies an
+    operator-visible acknowledgement TEMPLATE into the OS
+    clipboard, which is non-mutating). The underlying
+    concurrency-runtime state (which IS gated by
+    `phase_10ab_runtime_available`) is surfaced separately via
+    `runtime_enabled` (False in this slice) and the appended
+    `[<enablement_state>]` tag on the button label.
+    """
+    controls: list = []
+    for rule in view.get("rules", []):
+        enablement = rule["enablement_state"]
+        runtime_enabled = (
+            enablement == "enabled_pending_runtime"
+        )
+        clipboard_payload = (
+            "# Phase 10AB controlled-concurrency contract "
+            "acknowledgement template. Copy the block below "
+            "into a review issue / operator note instead of "
+            "mutating any hidden concurrency cache.\n"
+            f"rule_id: {rule['id']}\n"
+            f"overlap_state: {rule['overlap_state']}\n"
+            f"owner_role_writer: {rule['owner_role_writer']}\n"
+            f"owner_role_reader: {rule['owner_role_reader']}\n"
+            f"invalidation_trigger: {rule['invalidation_trigger']}\n"
+            f"recovery_action: {rule['recovery_action']}\n"
+            "requested_action: acknowledge_contract\n"
+            "operator_identity: <NAME>\n"
+            "no_invalidation_trigger_active: yes"
+        )
+        controls.append({
+            "id": rule["id"],
+            "label": (
+                f"Copy concurrency-contract acknowledgement "
+                f"template: {rule['display_name']} "
+                f"[{enablement}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
+            "overlap_state": rule["overlap_state"],
+            "owner_role_writer": rule["owner_role_writer"],
+            "owner_role_reader": rule["owner_role_reader"],
+            "invalidation_trigger": (
+                rule["invalidation_trigger"]
+            ),
+            "recovery_action": rule["recovery_action"],
+            "enablement_state": enablement,
+            "enablement_reason": rule["enablement_reason"],
+            "deferred_runtime_marker": (
+                rule["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                rule["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "concurrency_contract_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_concurrency(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AB operator entry: render the desktop
+    controlled-concurrency contract view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates
+    any canonical artifact, NEVER appends to `.agent-loop/
+    orchestrator.log`, NEVER advances loop-state, NEVER invokes
+    `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
+    network socket, NEVER reads canonical artifact BODY content
+    (only stat / mtime / size), NEVER writes a concurrency
+    cache, NEVER launches or coordinates any actual concurrent
+    Codex/Claude runtime, NEVER widens the Phase 10I library-
+    callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-concurrency] REFUSED: --controller-root "
+            "is required per the Phase 10L Desktop App Shell "
+            "Contract's Controller-Root Selection Flow; the "
+            "desktop concurrency contract surface MUST NOT "
+            "silently pick a default root from an auto-"
+            "discovered repo root, the OS-level current "
+            "working directory, an environment variable, or a "
+            "packaging-time configured path. Supply the "
+            "controller root explicitly via `--controller-"
+            "root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(controller_root)
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-concurrency] REFUSED: controller root "
+            f"{validation['root_path']!r} is missing required "
+            f"markers {missing!r}; per the Phase 10L Desktop "
+            f"App Shell Contract the desktop shell requires "
+            f"AGENTS.md / CLAUDE.md / TASK.md / .agent-loop/ "
+            f"to be present before any canonical artifact is "
+            f"rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_rule_ids": frozenset(
+            getattr(args, "acknowledge_rule", None) or []
+        ),
+    }
+    view = build_desktop_concurrency_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_concurrency_text(view):
+        print(line)
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -34930,6 +36493,65 @@ def build_parser() -> argparse.ArgumentParser:
             "once per export id."
         ),
     )
+    concurrency = sub.add_parser(
+        "view-desktop-concurrency",
+        help=(
+            "Phase 10AB controlled concurrent operation "
+            "contract: render a bounded READ-ONLY view over "
+            "the closed `_DESKTOP_CONCURRENCY_RULE_REGISTRY` + "
+            "the closed `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` + "
+            "per-artifact staleness derived from stat only. "
+            "Every rule currently surfaces as `refused_until_"
+            "policy_update` because `phase_10ab_runtime_"
+            "available=False` in this slice; the shipped "
+            "concurrency-runtime is deferred to a future Phase "
+            "10+ runtime slice. Phase 7C reporter pattern: "
+            "always exits 0 on report content once the "
+            "controller-root selection succeeds; never mutates "
+            "any canonical artifact; never appends to "
+            "`.agent-loop/orchestrator.log`; never advances "
+            "loop-state; never invokes `_halt(...)`; never "
+            "spawns a subprocess; never opens a network "
+            "socket; never reads canonical artifact BODY "
+            "content (only stat / mtime / size); never writes "
+            "a concurrency cache; never launches or "
+            "coordinates any actual concurrent Codex/Claude "
+            "runtime; never widens the Phase 10I library-"
+            "callable control cap."
+        ),
+    )
+    concurrency.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop concurrency view renders against. Per "
+            "the Phase 10L Controller-Root Selection Flow "
+            "the desktop shell MUST NOT silently pick a "
+            "default root. Omitting this flag returns exit 2 "
+            "with a `[desktop-concurrency] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    concurrency.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    concurrency.add_argument(
+        "--acknowledge-rule",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-rule "
+            "contract acknowledgement. Repeat the flag once "
+            "per concurrency rule id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -35219,6 +36841,7 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-resume-console": cmd_view_desktop_resume_console,
     "view-desktop-selection": cmd_view_desktop_selection,
     "view-desktop-memory-vault": cmd_view_desktop_memory_vault,
+    "view-desktop-concurrency": cmd_view_desktop_concurrency,
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,
     "langchain-support-eval": cmd_langchain_support_eval,
