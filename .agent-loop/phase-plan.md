@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AB - Controlled Concurrent Operation Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10AC - Overlap-Safe Detection Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5629,15 +5629,11 @@ as the source of truth.
 
 ### Status
 
-Active. Phase 10AB is the current implementation focus after Phase 10AA
-closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
-approved the advance. Phase 10AB scope is the controlled-concurrency
-contract slice: defining the overlap rules, ownership boundaries, stale-
-artifact detection, review/fix invalidation rules, and refusal/recovery
-behavior BEFORE any concurrent Codex/Claude runtime is ever allowed. The
-slice itself remains a bounded READ-ONLY contract mirror; no active
-overlapping runtime, background orchestration, or parallel worker model
-ships in this slice.
+Complete and approved by human to advance to Phase 10AC. Phase 10AB closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the controlled-
+concurrency contract surface, ownership-map and rule-registry layer,
+standalone concurrency reporter, desktop-app integration, focused validation,
+and README alignment were all verified in the current repo state.
 
 ### Objective
 
@@ -5674,6 +5670,60 @@ concurrent Codex/Claude work is allowed.
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no packaging work, hidden orchestration, or live concurrency added under the
   banner of this contract slice
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AC - Overlap-Safe Detection Initial Slice
+
+### Status
+
+Active. Phase 10AC is the current implementation focus after Phase 10AB
+closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
+approved the advance. Phase 10AC scope is the first bounded unsafe-overlap
+detection slice: implementing detection and refusal behavior so the system can
+tell when concurrent work would invalidate the active task context, WITHOUT
+yet allowing Codex-owned concurrent work or any actual overlapping runtime.
+
+### Objective
+
+Implement detection and refusal paths for unsafe overlap so the system can
+tell when concurrent work would invalidate the active task context.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AC as active
+- the repository adds a bounded overlap-safe detection surface using the
+  controlled-concurrency contract defined in Phase 10AB
+- the implementation distinguishes overlap-safe work from invalidating work
+  for the shipped roles and canonical artifacts, and surfaces explicit refusal
+  or recovery paths when the active context is stale or invalidated
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of introducing hidden automation,
+  silent mutation, or active background overlap
+- focused validation proves the overlap-detection and refusal path is
+  explicit, bounded, auditable, and fail-closed
+- `README.md` reflects that Phase 10AC is active and that overlap-safe
+  detection work is now the implementation focus
+
+### Exclusions
+
+- no actual overlapping Codex/Claude runtime, silent background orchestration,
+  or hidden parallel worker model
+- no Codex-owned concurrent work beyond bounded detection and refusal; that is
+  deferred to Phase 10AD
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no packaging work, hidden orchestration, or live concurrency added under the
+  banner of this detection slice
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`

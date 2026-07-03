@@ -4,25 +4,25 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10AB - Controlled Concurrent Operation Contract
+Phase 10AC - Overlap-Safe Detection Initial Slice
 
 ## Status
-Phase 10AA is complete and approved to advance. Phase 10AB is now active as
-the next mainline slice focused on defining the controlled-concurrency
-contract required before any overlapping Codex/Claude work is allowed.
+Phase 10AB is complete and approved to advance. Phase 10AC is now active as
+the next mainline slice focused on implementing overlap-safe detection and
+refusal behavior so the system can tell when concurrent work would invalidate
+the active task context.
 
 ## Task
-Implement Phase 10AB for the agent loop. This slice should define the overlap
-rules, ownership boundaries, stale-artifact detection, review/fix invalidation
-rules, and recovery behavior required before any concurrent Codex/Claude work
-is allowed.
+Implement Phase 10AC for the agent loop. This slice should implement detection
+and refusal paths for unsafe overlap so the system can tell when concurrent
+work would invalidate the active task context.
 
 ## Notes
 
-- keep this slice bounded to the controlled concurrent-operation contract; do
-  not jump into actually enabling overlap execution yet
+- keep this slice bounded to overlap-safe detection and refusal; do not jump
+  into actually enabling overlap execution or Codex-owned concurrent work yet
 - preserve the shipped ownership boundaries, evidence-review model, approval
   semantics, artifact source-of-truth model, and halt/recovery behavior while
-  defining future overlap rules
+  implementing the first unsafe-overlap detection layer
 - do not widen into silent background orchestration, hidden parallel workers,
   packaging, or auto-update work

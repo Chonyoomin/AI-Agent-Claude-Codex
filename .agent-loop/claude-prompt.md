@@ -1,40 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AB - Controlled Concurrent Operation Contract
+Phase 10AC - Overlap-Safe Detection Initial Slice
 
 ## Objective
-Implement Phase 10AB for the agent loop. This slice should define the overlap
-rules, ownership boundaries, stale-artifact detection, review/fix invalidation
-rules, and recovery behavior required before any concurrent Codex/Claude work
-is allowed.
+Implement Phase 10AC for the agent loop. This slice should implement detection
+and refusal paths for unsafe overlap so the system can tell when concurrent
+work would invalidate the active task context.
 
 ## Context
-Implement the Controlled Concurrent Operation Contract slice for the agent
-loop. This is the next mainline step after the shipped Phase 10AA memory-vault
-export slice. The goal is to define the rules and refusal/recovery behavior the
-system must obey before any overlapping Codex/Claude work is ever allowed.
+Implement the Overlap-Safe Detection Initial Slice for the agent loop. This is
+the next mainline step after the shipped Phase 10AB controlled-concurrency
+contract slice. The goal is to turn the Phase 10AB contract vocabulary into a
+bounded detection and refusal layer so the system can tell when concurrent work
+would invalidate the active task context, while still refusing to launch any
+actual overlapping runtime.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AB as active
-- `.agent-loop/phase-plan.md` records Phase 10AA as closed history and contains
-  a `## Phase 10AB - Controlled Concurrent Operation Contract`
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AC as active
+- `.agent-loop/phase-plan.md` records Phase 10AB as closed history and
+  contains a `## Phase 10AC - Overlap-Safe Detection Initial Slice`
   section with concrete objective, done criteria, and exclusions
-- define the overlap rules, ownership boundaries, stale-artifact detection,
-  review/fix invalidation rules, and recovery behavior required before any
-  concurrent Codex/Claude work is allowed
-- define how overlap-safe work is distinguished from invalidating work, how
-  stale prompts/reviews/fix prompts are detected, and how the loop must refuse
-  or recover when overlap invalidates the active task context
+- implement bounded detection and refusal behavior for unsafe overlap using
+  the controlled-concurrency contract defined in Phase 10AB
+- distinguish overlap-safe work from invalidating work for the shipped roles
+  and canonical artifacts, and surface explicit refusal or recovery behavior
+  when the active context is stale or invalidated
 - preserve approval gating, evidence review, external-workspace boundaries,
-  existing run-profile semantics, and the canonical-artifact-first model
-  instead of introducing hidden automation, silent mutation, or active
-  background overlap
-- add focused validation proving the controlled-concurrency contract is
+  existing run-profile semantics, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of introducing hidden automation,
+  silent mutation, or active background overlap
+- add focused validation proving the overlap-detection and refusal path is
   explicit, bounded, auditable, and fail-closed
-- `README.md` reflects that Phase 10AB is active and that controlled
-  concurrent-operation contract work is now the implementation focus
+- `README.md` reflects that Phase 10AC is active and that overlap-safe
+  detection work is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -49,11 +49,13 @@ system must obey before any overlapping Codex/Claude work is ever allowed.
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
 - no actual overlapping Codex/Claude runtime, silent background orchestration,
   or hidden parallel worker model
+- no Codex-owned concurrent work beyond bounded detection and refusal; that is
+  deferred to Phase 10AD
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no packaging work, hidden orchestration, or live concurrency added under the
-  banner of this contract slice
+  banner of this detection slice
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
