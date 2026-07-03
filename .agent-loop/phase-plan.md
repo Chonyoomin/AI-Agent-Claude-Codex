@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10Z - Model, Policy Pack, And Template Selection UX)
+Phase 10 - Future Product Features (sub-phase: Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5518,6 +5518,11 @@ control plane.
 
 ## Phase 10Z - Model, Policy Pack, And Template Selection UX
 
+Complete and approved by human to advance to Phase 10AA. Phase 10Z closed with
+the bounded selection-UX contract/runtime slice for shipped model, policy-pack,
+and project-template presets, including the desktop copy-only template
+affordance, explicit deferred-runtime state, and focused validation.
+
 ### Objective
 
 Define and implement the first bounded desktop-managed selection flow for model
@@ -5551,6 +5556,53 @@ without letting those settings become a hidden second source of truth.
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no concurrent Codex/Claude overlap execution, packaging work, or hidden
   orchestration added under the banner of selection UX
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice
+
+### Objective
+
+Define and implement the first bounded human-facing memory-vault export surface
+so operators can browse readable durable-memory views such as decision
+summaries and architecture snapshots without replacing canonical repo artifacts
+as the source of truth.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AA as active
+- the repository adds the first bounded human-facing memory-vault export
+  surface for durable memory entries, decision summaries, and architecture /
+  project snapshots
+- the implementation defines how vault exports are derived from shipped
+  `.agent-loop/memory/` entries and canonical project artifacts, how advisory
+  vs canonical-mirror labeling is surfaced, and how stale or missing source
+  data fails closed without inventing new source-of-truth state
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, durable-memory
+  ownership rules, and the canonical-artifact-first model instead of
+  introducing hidden automation, silent mutation, or a parallel control plane
+- focused validation proves the memory-vault export surface is bounded,
+  auditable, and scoped to operator-visible summaries/exports
+- `README.md` reflects that Phase 10AA is active and that human-facing
+  memory-vault export work is now the implementation focus
+
+### Exclusions
+
+- no hidden replacement memory store, silent durable-memory mutation, or
+  background control plane that bypasses the shipped Python runtime
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no concurrent Codex/Claude overlap execution, packaging work, or hidden
+  orchestration added under the banner of memory-vault exports
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
