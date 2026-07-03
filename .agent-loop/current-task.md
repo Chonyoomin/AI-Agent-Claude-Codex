@@ -4,16 +4,27 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10Y - Capacity Recovery And Resume Console
+Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice
 
 ## Status
-Phase 10X is complete and approved to advance. Phase 10Y is now active as the next mainline slice focused on surfacing capacity-halt visibility, checkpoint presence, bounded resume policy, and operator recovery controls in the desktop app.
+Phase 10Z is complete and approved to advance. Phase 10AA is now active as the
+next mainline slice focused on defining and shipping the first bounded
+human-facing memory-vault export surface without replacing repo artifacts as
+the primary source of truth.
 
 ## Task
-Implement Phase 10Y for the agent loop. This slice should add the first desktop capacity recovery and resume console so token or rate-limit halts, checkpoint presence, bounded automatic-resume policy, retry or backoff state, and operator override or resume actions are understandable without introducing a hidden second control plane.
+Implement Phase 10AA for the agent loop. This slice should define and implement
+the first bounded human-facing memory vault export surface, including optional
+human-readable memory views such as decision summaries and architecture
+snapshots, without replacing repo artifacts as the primary source of truth.
 
 ## Notes
 
-- keep this slice bounded to a desktop-facing capacity-recovery and resume-console surface; do not jump into model/policy selection, concurrency, packaging, or hidden orchestration work
-- preserve the shipped ownership boundaries, evidence-review model, approval semantics, checkpoint/continuation boundaries, and canonical-artifact-first model while surfacing halt-recovery state in the UI
-- do not widen into silent loop mutation, background daemons/watchers, packaging, or auto-update work
+- keep this slice bounded to human-facing memory-vault exports and readable
+  summaries; do not jump into packaging, controlled concurrency, hidden
+  orchestration, or a replacement persistence model
+- preserve the shipped ownership boundaries, evidence-review model, approval
+  semantics, existing run-profile semantics, and canonical-artifact-first model
+  while surfacing durable memory in operator-facing exports
+- do not widen into silent memory mutation, background sync/watchers, external
+  cloud sync, packaging, or auto-update work
