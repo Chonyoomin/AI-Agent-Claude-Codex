@@ -1,40 +1,40 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice
+Phase 10AB - Controlled Concurrent Operation Contract
 
 ## Objective
-Implement Phase 10AA for the agent loop. This slice should define and implement
-the first bounded human-facing memory vault export surface, including optional
-human-readable memory views such as decision summaries and architecture
-snapshots, without replacing repo artifacts as the primary source of truth.
+Implement Phase 10AB for the agent loop. This slice should define the overlap
+rules, ownership boundaries, stale-artifact detection, review/fix invalidation
+rules, and recovery behavior required before any concurrent Codex/Claude work
+is allowed.
 
 ## Context
-Implement the Human-Facing Memory Vault Export slice for the agent loop. This
-is the next mainline step after the shipped Phase 10Z selection UX slice. The
-goal is to make durable memory and selected canonical mirrors legible and
-auditable from an operator-facing surface without letting the export become a
-competing source of truth.
+Implement the Controlled Concurrent Operation Contract slice for the agent
+loop. This is the next mainline step after the shipped Phase 10AA memory-vault
+export slice. The goal is to define the rules and refusal/recovery behavior the
+system must obey before any overlapping Codex/Claude work is ever allowed.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AA as active
-- `.agent-loop/phase-plan.md` records Phase 10Z as closed history and contains
-  a `## Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice`
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AB as active
+- `.agent-loop/phase-plan.md` records Phase 10AA as closed history and contains
+  a `## Phase 10AB - Controlled Concurrent Operation Contract`
   section with concrete objective, done criteria, and exclusions
-- add the first bounded human-facing memory-vault export surface for durable
-  memory entries, decision summaries, and architecture/project snapshots
-- define how those exports are represented, labeled, and derived from shipped
-  durable-memory and canonical artifacts without creating a competing
-  source-of-truth state plane
+- define the overlap rules, ownership boundaries, stale-artifact detection,
+  review/fix invalidation rules, and recovery behavior required before any
+  concurrent Codex/Claude work is allowed
+- define how overlap-safe work is distinguished from invalidating work, how
+  stale prompts/reviews/fix prompts are detected, and how the loop must refuse
+  or recover when overlap invalidates the active task context
 - preserve approval gating, evidence review, external-workspace boundaries,
-  desktop/UI boundaries, durable-memory ownership semantics, and the existing
-  canonical-artifact-first model instead of introducing hidden automation,
-  silent mutation, or a parallel state store
-- add focused validation proving the memory-vault export path is bounded,
-  auditable, and scoped to operator-visible summaries/exports
-- `README.md` reflects that Phase 10AA is active and that human-facing
-  memory-vault export work is now the implementation focus
+  existing run-profile semantics, and the canonical-artifact-first model
+  instead of introducing hidden automation, silent mutation, or active
+  background overlap
+- add focused validation proving the controlled-concurrency contract is
+  explicit, bounded, auditable, and fail-closed
+- `README.md` reflects that Phase 10AB is active and that controlled
+  concurrent-operation contract work is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,13 +47,13 @@ competing source of truth.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no hidden replacement memory store, silent durable-memory mutation, or
-  background control plane that bypasses the shipped Python runtime
+- no actual overlapping Codex/Claude runtime, silent background orchestration,
+  or hidden parallel worker model
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
-- no concurrent Codex/Claude overlap execution, packaging work, or hidden
-  orchestration added under the banner of memory-vault exports
+- no packaging work, hidden orchestration, or live concurrency added under the
+  banner of this contract slice
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`

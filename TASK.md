@@ -24,73 +24,69 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice
+Phase 10AB - Controlled Concurrent Operation Contract
 
 ## Phase Status
 
-Phase 10Z is complete and approved to advance. Phase 10AA is now active as the
-next mainline slice focused on defining and shipping the first bounded
-human-facing memory vault export surface without replacing repo artifacts as
-the primary source of truth.
+Phase 10AA is complete and approved to advance. Phase 10AB is now active as
+the next mainline slice focused on defining the controlled-concurrency
+contract required before any overlapping Codex/Claude work is allowed.
 
 ## Active Task
 
-Implement Phase 10AA for the agent loop. This slice should define and implement
-the first bounded human-facing memory vault export surface, including optional
-human-readable memory views such as decision summaries and architecture
-snapshots, without replacing repo artifacts as the primary source of truth.
+Implement Phase 10AB for the agent loop. This slice should define the overlap
+rules, ownership boundaries, stale-artifact detection, review/fix invalidation
+rules, and recovery behavior required before any concurrent Codex/Claude work
+is allowed.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AA as active
-- `.agent-loop/phase-plan.md` records Phase 10Z as closed history and contains
-  a `## Phase 10AA - Human-Facing Memory Vault Export Contract And Initial Slice`
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AB as active
+- `.agent-loop/phase-plan.md` records Phase 10AA as closed history and
+  contains a `## Phase 10AB - Controlled Concurrent Operation Contract`
   section with concrete objective, done criteria, and exclusions
-- the repository adds the first bounded human-facing memory-vault export
-  surface for durable memory entries, decision summaries, and architecture /
-  project snapshots
-- the implementation defines how those exports are derived from existing
-  canonical and durable-memory artifacts, labeled as advisory or canonical
-  mirrors, and kept distinct from the source-of-truth repo files
+- the repository defines the overlap rules, ownership boundaries,
+  stale-artifact detection rules, review/fix invalidation rules, and recovery
+  behavior required before any concurrent Codex/Claude work is allowed
+- the implementation documents how overlap-safe work is distinguished from
+  invalidating work, how stale prompts/reviews/fix prompts are detected, and
+  how the loop must refuse or recover when overlap invalidates the active task
+  context
 - the implementation preserves approval gating, evidence review,
-  external-workspace boundaries, desktop/UI boundaries, existing run-profile
-  semantics, durable-memory ownership boundaries, and the existing
+  external-workspace boundaries, existing run-profile semantics, and the
   canonical-artifact-first model instead of introducing hidden automation,
-  silent mutation, or a parallel control plane
-- focused validation proves the memory-vault export surface is bounded,
-  auditable, and scoped to operator-visible summaries/exports without widening
-  into packaging, controlled concurrency, or hidden orchestration
-- `README.md` reflects that Phase 10AA is active and that human-facing
-  memory-vault export work is now the implementation focus
+  silent mutation, or active background overlap
+- focused validation proves the controlled-concurrency contract is explicit,
+  bounded, auditable, and fail-closed
+- `README.md` reflects that Phase 10AB is active and that controlled
+  concurrent-operation contract work is now the implementation focus
 
 ## Next-Phase Gate
 
-Do not widen human-facing memory-vault exports beyond a bounded initial slice
-until:
+Do not widen into actual concurrent Codex/Claude execution until:
 
-- Phase 10AA receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the first bounded memory-vault export slice
-- any richer vault tooling, external sync, packaging, or controlled-concurrency
-  work is activated through its own later phase instead of being folded into
-  this slice
+- Phase 10AB receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the controlled concurrent-operation contract
+- any actual overlap-safe detection or Codex-owned concurrent work is activated
+  through its own later phase instead of being folded into this contract slice
 
 ## Out Of Scope For Current Phase
 
-- any hidden replacement memory store, silent durable-memory mutation, or
-  background control plane that bypasses the shipped Python runtime
+- any actual overlapping Codex/Claude runtime, silent background orchestration,
+  or hidden parallel worker model
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - any claim that fully autonomous PRD-to-product execution is already solved
-- any concurrent Codex/Claude overlap execution, packaging work, or hidden
-  orchestration added under the banner of memory-vault exports
+- any packaging work, hidden orchestration, or live concurrency added under the
+  banner of this contract slice
 - any rewrite of current shipped behavior just to make future autonomy work
   easier
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
 - inventing unreviewable autonomous behavior that the repo does not currently
   ship just to simplify the implementation
-- collapsing later packaging, external sync, or concurrency work into this
-  slice
+- collapsing later overlap-safe detection, concurrent Codex work, packaging, or
+  external sync work into this slice
 - implementation of end-to-end fully autonomous PRD-to-product execution
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - any change to the Phase 2A Evidence Collection Contract
@@ -98,5 +94,5 @@ until:
 - any change to the Phase 4A Planning Contract body
 - any change to `scripts/run_checks.sh`
 - adding any project-wide CI suite beyond focused validation for the
-  memory-vault export surfaces
+  contract surface
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
