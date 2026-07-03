@@ -111,7 +111,14 @@ class ConstantsTests(unittest.TestCase):
             "NEVER writes an export file",
             "NEVER persists an export cache",
             "NEVER opens a network socket",
-            "NEVER reads durable-memory content",
+            # Phase 10AA fix cycle: the surface DOES surface a
+            # bounded readable excerpt / name-only index. The
+            # precedence note must pin the bounded-read
+            # boundary explicitly.
+            "MEMORY_VAULT_EXCERPT_BYTE_LIMIT",
+            "MEMORY_VAULT_ENTRY_INDEX_LIMIT",
+            "NEVER reads durable-memory JSON BODY content",
+            "NEVER reads MORE than",
         ):
             self.assertIn(needle, note, needle)
 
@@ -192,6 +199,23 @@ class ConstantsTests(unittest.TestCase):
         self.assertEqual(
             agent_loop.MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS,
             30 * 24 * 3600,
+        )
+
+    def test_excerpt_byte_limit(self) -> None:
+        # Phase 10AA fix cycle: canonical-artifact mirror sources
+        # surface a head-bounded excerpt truncated at this many
+        # bytes so the shipped desktop app / CLI actually renders
+        # a readable human-facing memory-vault export body.
+        self.assertEqual(
+            agent_loop.MEMORY_VAULT_EXCERPT_BYTE_LIMIT, 2000,
+        )
+
+    def test_entry_index_limit(self) -> None:
+        # Phase 10AA fix cycle: shipped memory JSON directory
+        # sources surface a name-only index bounded at this many
+        # most-recent shipped `.json` filenames.
+        self.assertEqual(
+            agent_loop.MEMORY_VAULT_ENTRY_INDEX_LIMIT, 10,
         )
 
 
@@ -452,9 +476,11 @@ class FreshnessProbeTests(unittest.TestCase):
         self.assertEqual(probe["entry_count"], 2)
 
     def test_probe_never_reads_source_content(self) -> None:
-        # Write a unique sentinel into every registered source
-        # path and assert it does NOT appear on the probe dict.
-        # This locks the "never reads content" invariant.
+        # The freshness probe is still a pure stat / iterdir
+        # helper; it MUST NOT read source CONTENT. The Phase 10AA
+        # fix cycle introduces a SEPARATE `_desktop_memory_vault_
+        # read_excerpt(...)` helper for the bounded readable
+        # excerpt; the probe stays a metadata-only primitive.
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
             sentinels = {}
@@ -494,6 +520,192 @@ class FreshnessProbeTests(unittest.TestCase):
                 self.assertNotIn(
                     sentinels[spec["id"]], serialized, spec["id"],
                 )
+
+
+# ---------------------------------------------------------------------------
+# Bounded excerpt reader (Phase 10AA fix cycle)
+# ---------------------------------------------------------------------------
+class ExcerptReaderTests(unittest.TestCase):
+
+    def _canonical_spec(self):
+        return next(
+            dict(s) for s in (
+                agent_loop._DESKTOP_MEMORY_VAULT_REGISTRY
+            )
+            if s["id"] == "decision_summary_from_claude_summary"
+        )
+
+    def _memory_spec(self):
+        return next(
+            dict(s) for s in (
+                agent_loop._DESKTOP_MEMORY_VAULT_REGISTRY
+            )
+            if s["id"] == "durable_memory_decision_index"
+        )
+
+    def test_missing_source_returns_empty_envelope(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._canonical_spec(),
+                )
+            )
+        self.assertIsNone(envelope["excerpt_text"])
+        self.assertIsNone(envelope["entry_index"])
+
+    def test_canonical_mirror_short_file_reads_full_body(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            body = "# summary\n\nHuman-readable body.\n"
+            # Write bytes directly so Windows universal newline
+            # translation does not turn `\n` into `\r\n` and
+            # mismatch the excerpt byte count / content.
+            (controller / ".agent-loop"
+             / "claude-summary.md").write_bytes(
+                body.encode("utf-8"),
+            )
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._canonical_spec(),
+                )
+            )
+        self.assertEqual(envelope["excerpt_text"], body)
+        self.assertFalse(envelope["excerpt_truncated"])
+        self.assertEqual(
+            envelope["excerpt_bytes_read"],
+            len(body.encode("utf-8")),
+        )
+
+    def test_canonical_mirror_long_file_is_truncated_at_cap(
+        self,
+    ) -> None:
+        # Write a canonical mirror source LARGER than the cap
+        # and assert the excerpt is truncated at the byte limit.
+        # This locks the "never reads more than the cap" invariant.
+        cap = agent_loop.MEMORY_VAULT_EXCERPT_BYTE_LIMIT
+        large_body = "A" * (cap * 3)
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (controller / ".agent-loop"
+             / "claude-summary.md").write_text(
+                large_body, encoding="utf-8",
+            )
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._canonical_spec(),
+                )
+            )
+        self.assertTrue(envelope["excerpt_truncated"])
+        self.assertEqual(envelope["excerpt_bytes_read"], cap)
+        self.assertEqual(len(envelope["excerpt_text"]), cap)
+
+    def test_canonical_mirror_never_reads_tail(self) -> None:
+        # Sentinel written PAST the byte cap MUST NOT appear in
+        # the returned excerpt. The head-of-file bound must be
+        # exact.
+        cap = agent_loop.MEMORY_VAULT_EXCERPT_BYTE_LIMIT
+        sentinel = "PHASE_10AA_TAIL_SENTINEL_DO_NOT_LEAK"
+        head = "A" * cap
+        body = head + sentinel
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (controller / ".agent-loop"
+             / "claude-summary.md").write_text(
+                body, encoding="utf-8",
+            )
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._canonical_spec(),
+                )
+            )
+        self.assertNotIn(sentinel, envelope["excerpt_text"])
+        self.assertTrue(envelope["excerpt_truncated"])
+
+    def test_directory_source_returns_json_filenames_only(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            decision_dir = (
+                controller / ".agent-loop" / "memory" / "decision"
+            )
+            decision_dir.mkdir(parents=True)
+            (decision_dir / "20260701T000000Z-aaaa.json").write_text(
+                "{}", encoding="utf-8",
+            )
+            (decision_dir / "20260702T000000Z-bbbb.json").write_text(
+                "{}", encoding="utf-8",
+            )
+            (decision_dir / "ignore.txt").write_text(
+                "x", encoding="utf-8",
+            )
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._memory_spec(),
+                )
+            )
+        self.assertIsNone(envelope["excerpt_text"])
+        # Newest-first: filenames are reverse-sorted so the
+        # newest shipped entry is at index 0.
+        self.assertEqual(
+            envelope["entry_index"],
+            [
+                "20260702T000000Z-bbbb.json",
+                "20260701T000000Z-aaaa.json",
+            ],
+        )
+        self.assertFalse(envelope["entry_index_truncated"])
+
+    def test_directory_source_index_bounded_by_limit(self) -> None:
+        cap = agent_loop.MEMORY_VAULT_ENTRY_INDEX_LIMIT
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            decision_dir = (
+                controller / ".agent-loop" / "memory" / "decision"
+            )
+            decision_dir.mkdir(parents=True)
+            for i in range(cap * 2):
+                (
+                    decision_dir
+                    / f"2026070{i:02d}T000000Z-hash.json"
+                ).write_text("{}", encoding="utf-8")
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._memory_spec(),
+                )
+            )
+        self.assertEqual(len(envelope["entry_index"]), cap)
+        self.assertTrue(envelope["entry_index_truncated"])
+
+    def test_directory_source_never_reads_json_body(self) -> None:
+        # Write a sentinel INSIDE a shipped memory JSON file
+        # (as body content) and assert the sentinel does NOT
+        # appear in the returned envelope. The surface may
+        # surface the filename but MUST NOT surface the body.
+        sentinel = "PHASE_10AA_MEMORY_BODY_SENTINEL_DO_NOT_LEAK"
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            decision_dir = (
+                controller / ".agent-loop" / "memory" / "decision"
+            )
+            decision_dir.mkdir(parents=True)
+            (
+                decision_dir
+                / "20260702T000000Z-bbbb.json"
+            ).write_text(
+                json.dumps({"body_sentinel": sentinel}),
+                encoding="utf-8",
+            )
+            envelope = (
+                agent_loop._desktop_memory_vault_read_excerpt(
+                    controller, self._memory_spec(),
+                )
+            )
+        serialized = json.dumps(envelope, default=str)
+        self.assertNotIn(sentinel, serialized)
 
 
 # ---------------------------------------------------------------------------
@@ -1143,38 +1355,28 @@ class NonMutationInvariantsTests(unittest.TestCase):
         self.assertEqual(before_root, after_root)
         self.assertEqual(before_dot, after_dot)
 
-    def test_view_does_not_read_memory_content(self) -> None:
-        # Write a unique sentinel into every registered source
-        # path and assert it does NOT appear in the assembled
-        # view dict OR the rendered text. This anchors the
-        # "never reads content" invariant end-to-end.
+    def test_view_never_reads_durable_memory_json_body(self) -> None:
+        # Phase 10AA fix cycle: the surface surfaces canonical-
+        # artifact excerpts AND durable-memory JSON filenames,
+        # but MUST NEVER surface the JSON BODY of any shipped
+        # durable-memory entry. The shipped `read_memory_entry(...)`
+        # primitive remains the sole reader for the JSON body.
+        sentinel = "PHASE_10AA_MEMORY_BODY_SENTINEL_DO_NOT_LEAK"
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
-            sentinels = []
-            for i, spec in enumerate(
+            for spec in (
                 agent_loop._DESKTOP_MEMORY_VAULT_REGISTRY
             ):
-                sentinel = (
-                    f"PHASE_10AA_VIEW_SENTINEL_"
-                    f"{i}_DO_NOT_LEAK"
-                )
-                path = controller / spec["path_canonical_rel"]
-                if spec["source_kind"] == (
+                if spec["source_kind"] != (
                     "shipped_memory_json"
                 ):
-                    path.mkdir(parents=True, exist_ok=True)
-                    (path / "sentinel.json").write_text(
-                        json.dumps({"sentinel": sentinel}),
-                        encoding="utf-8",
-                    )
-                else:
-                    path.parent.mkdir(
-                        parents=True, exist_ok=True,
-                    )
-                    path.write_text(
-                        sentinel, encoding="utf-8",
-                    )
-                sentinels.append(sentinel)
+                    continue
+                path = controller / spec["path_canonical_rel"]
+                path.mkdir(parents=True, exist_ok=True)
+                (path / "sentinel.json").write_text(
+                    json.dumps({"body_sentinel": sentinel}),
+                    encoding="utf-8",
+                )
             view = agent_loop.build_desktop_memory_vault_view(
                 controller,
             )
@@ -1182,11 +1384,117 @@ class NonMutationInvariantsTests(unittest.TestCase):
                 agent_loop.render_desktop_memory_vault_text(view),
             )
         serialized_view = json.dumps(view, default=str)
-        for sentinel in sentinels:
-            self.assertNotIn(
-                sentinel, serialized_view, sentinel,
+        self.assertNotIn(sentinel, serialized_view)
+        self.assertNotIn(sentinel, rendered)
+
+    def test_view_never_reads_canonical_artifact_tail_past_cap(
+        self,
+    ) -> None:
+        # A canonical-artifact mirror source LARGER than the
+        # excerpt cap surfaces the head only; a sentinel written
+        # past the cap MUST NOT appear in the assembled view or
+        # rendered text.
+        cap = agent_loop.MEMORY_VAULT_EXCERPT_BYTE_LIMIT
+        sentinel = "PHASE_10AA_TAIL_SENTINEL_DO_NOT_LEAK"
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (controller / ".agent-loop"
+             / "claude-summary.md").write_text(
+                ("A" * cap) + sentinel, encoding="utf-8",
             )
-            self.assertNotIn(sentinel, rendered, sentinel)
+            view = agent_loop.build_desktop_memory_vault_view(
+                controller,
+            )
+            rendered = "\n".join(
+                agent_loop.render_desktop_memory_vault_text(view),
+            )
+        self.assertNotIn(sentinel, json.dumps(view, default=str))
+        self.assertNotIn(sentinel, rendered)
+
+    def test_view_surfaces_readable_canonical_mirror_excerpt(
+        self,
+    ) -> None:
+        # Phase 10AA fix cycle contract: when a canonical-
+        # artifact mirror source exists, its head-bounded excerpt
+        # MUST appear in the assembled view and the rendered
+        # text. Without this, the shipped Phase 10AA surface
+        # would only report metadata and the phase contract
+        # ("bounded human-facing memory-vault export surface with
+        # optional human-readable memory views") would drift out
+        # of scope again.
+        marker = "PHASE_10AA_EXCERPT_BODY_MARKER"
+        body = f"# summary\n{marker}\nbody line two\n"
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            # Bypass Windows universal newline translation so
+            # `body` matches the file byte-for-byte.
+            (controller / ".agent-loop"
+             / "claude-summary.md").write_bytes(
+                body.encode("utf-8"),
+            )
+            view = agent_loop.build_desktop_memory_vault_view(
+                controller,
+            )
+            rendered = "\n".join(
+                agent_loop.render_desktop_memory_vault_text(view),
+            )
+        target_export = next(
+            e for e in view["exports"]
+            if e["id"] == "decision_summary_from_claude_summary"
+        )
+        self.assertEqual(target_export["excerpt_text"], body)
+        self.assertFalse(target_export["excerpt_truncated"])
+        self.assertIn(marker, rendered)
+        # The excerpt line prefix is present in the rendered
+        # text so a downstream tool can identify the excerpt
+        # rows unambiguously.
+        self.assertIn("[vault-excerpt]", rendered)
+
+    def test_view_surfaces_durable_memory_filename_index(
+        self,
+    ) -> None:
+        # Phase 10AA fix cycle: when a durable-memory JSON
+        # directory source exists, the shipped view MUST surface
+        # a name-only index of its most-recent shipped `.json`
+        # filenames so the operator sees WHICH shipped decision /
+        # summary entries exist without letting the surface read
+        # the JSON body.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            decision_dir = (
+                controller / ".agent-loop" / "memory" / "decision"
+            )
+            decision_dir.mkdir(parents=True)
+            for name in (
+                "20260701T000000Z-first.json",
+                "20260702T000000Z-second.json",
+            ):
+                (decision_dir / name).write_text(
+                    json.dumps({"stub": True}),
+                    encoding="utf-8",
+                )
+            view = agent_loop.build_desktop_memory_vault_view(
+                controller,
+            )
+            rendered = "\n".join(
+                agent_loop.render_desktop_memory_vault_text(view),
+            )
+        target = next(
+            e for e in view["exports"]
+            if e["id"] == "durable_memory_decision_index"
+        )
+        self.assertIsNone(target["excerpt_text"])
+        self.assertEqual(
+            target["entry_index"],
+            [
+                "20260702T000000Z-second.json",
+                "20260701T000000Z-first.json",
+            ],
+        )
+        self.assertIn("[vault-entry-index]", rendered)
+        self.assertIn(
+            "20260702T000000Z-second.json", rendered,
+        )
 
     def test_phase_10i_library_callable_cap_not_widened(
         self,

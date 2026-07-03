@@ -26497,17 +26497,26 @@ def cmd_view_desktop_selection(
 # runtime state is surfaced separately via a distinct `runtime_enabled`
 # field and the appended `[<enablement_state>]` label tag.
 #
+# The surface renders bounded readable export bodies (Phase 10AA fix
+# cycle): each canonical-artifact mirror source surfaces a head-of-file
+# excerpt truncated at MEMORY_VAULT_EXCERPT_BYTE_LIMIT bytes, and each
+# durable-memory JSON directory source surfaces a name-only index bounded
+# at MEMORY_VAULT_ENTRY_INDEX_LIMIT entries. The shipped canonical file
+# remains the sole source of truth for full canonical-artifact bodies and
+# the shipped `read_memory_entry(...)` primitive remains the sole reader
+# for durable-memory JSON body content.
+#
 # The surface NEVER writes, NEVER mutates canonical artifacts, NEVER
 # appends to `.agent-loop/orchestrator.log`, NEVER advances loop-state,
 # NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER opens a
-# network socket, NEVER reads durable-memory content (only stat / mtime /
-# size / entry count via `Path.iterdir()`), NEVER reads canonical
-# artifact content (only stat / mtime / size), NEVER writes an export
-# file, NEVER persists an export cache, NEVER subscribes to a background
-# watcher, NEVER auto-fills any operator-identity field, NEVER widens the
-# Phase 10I library-callable cap, NEVER introduces a memory-vault side
-# database / preference store / recents list / identity token / session
-# token, and NEVER actually renders any export content in this slice.
+# network socket, NEVER reads durable-memory JSON BODY content (only
+# stat / mtime / size / directory entry names via `Path.iterdir()`),
+# NEVER reads MORE than MEMORY_VAULT_EXCERPT_BYTE_LIMIT bytes of any
+# canonical artifact, NEVER writes an export file, NEVER persists an
+# export cache, NEVER subscribes to a background watcher, NEVER auto-
+# fills any operator-identity field, NEVER widens the Phase 10I library-
+# callable cap, NEVER introduces a memory-vault side database /
+# preference store / recents list / identity token / session token.
 # ---------------------------------------------------------------------------
 
 DESKTOP_MEMORY_VAULT_SIGNAL_VERSION = "phase-10aa-v1"
@@ -26530,25 +26539,38 @@ DESKTOP_MEMORY_VAULT_PRECEDENCE_NOTE = (
     "`advisory_label_rule`, unknown `approval_requirements` member, or "
     "non-POSIX / absolute / drive-prefixed / parent-traversal "
     "`path_canonical_rel`. `phase_10aa_runtime_available` is hard-coded "
-    "`False` in this slice so EVERY export surfaces as "
-    "`refused_until_policy_update` regardless of operator input. The "
-    "surface NEVER spawns a subprocess, NEVER opens a network socket, "
-    "NEVER reads durable-memory content (only stat / mtime / size / "
-    "entry count via `Path.iterdir()`), NEVER reads canonical artifact "
-    "content (only stat / mtime / size), NEVER writes an export file, "
-    "NEVER persists an export cache, NEVER subscribes to a background "
-    "watcher, NEVER mutates any canonical artifact (loop-state.json / "
-    "orchestrator.log / external-target.json / runtime-config.json / "
-    "TASK.md / proposed-phase.md / claude-prompt.md / claude-summary.md "
-    "/ codex-review.md / fix-prompt.md / current-task.md / current-"
-    "phase.md / phase-plan.md / prd-intake.json / final-acceptance.json "
-    "/ any Phase 2A evidence file / any Phase 6 memory entry), NEVER "
-    "appends to `.agent-loop/orchestrator.log`, NEVER advances loop-"
-    "state, NEVER invokes `_halt(...)`, NEVER auto-fills any "
-    "--*-by operator-identity argument or approval-mode value, NEVER "
-    "introduces a memory-vault side database / preference store / "
-    "recents list / identity token / session token, and NEVER widens "
-    "the Phase 10I cap"
+    "`False` in this slice so EVERY export's per-source ENABLEMENT "
+    "state surfaces as `refused_until_policy_update` regardless of "
+    "operator input; the bounded human-readable excerpt itself is "
+    "surfaced whenever the source file / directory exists so the "
+    "shipped UI / CLI actually renders a readable memory-vault export "
+    "body (per the Phase 10AA fix cycle). Canonical-artifact mirror "
+    "sources surface a HEAD-BOUNDED excerpt truncated at "
+    "`MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes; the shipped canonical "
+    "file remains the sole source of truth for the full body and is "
+    "NEVER modified. Shipped durable-memory JSON directory sources "
+    "surface a NAME-ONLY index bounded at "
+    "`MEMORY_VAULT_ENTRY_INDEX_LIMIT` most-recent shipped `.json` "
+    "filenames; the surface NEVER reads durable-memory JSON body "
+    "content (the shipped `read_memory_entry(...)` primitive remains "
+    "the sole reader for the JSON body). The surface NEVER spawns a "
+    "subprocess, NEVER opens a network socket, NEVER reads durable-"
+    "memory JSON BODY content (only stat / mtime / size / directory "
+    "entry names via `Path.iterdir()`), NEVER reads MORE than "
+    "`MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes of any canonical artifact, "
+    "NEVER writes an export file, NEVER persists an export cache, "
+    "NEVER subscribes to a background watcher, NEVER mutates any "
+    "canonical artifact (loop-state.json / orchestrator.log / "
+    "external-target.json / runtime-config.json / TASK.md / proposed-"
+    "phase.md / claude-prompt.md / claude-summary.md / codex-review.md "
+    "/ fix-prompt.md / current-task.md / current-phase.md / phase-"
+    "plan.md / prd-intake.json / final-acceptance.json / any Phase 2A "
+    "evidence file / any Phase 6 memory entry), NEVER appends to "
+    "`.agent-loop/orchestrator.log`, NEVER advances loop-state, NEVER "
+    "invokes `_halt(...)`, NEVER auto-fills any --*-by operator-"
+    "identity argument or approval-mode value, NEVER introduces a "
+    "memory-vault side database / preference store / recents list / "
+    "identity token / session token, and NEVER widens the Phase 10I cap"
 )
 
 MEMORY_VAULT_EXPORT_CATEGORIES = (
@@ -26608,6 +26630,28 @@ MEMORY_VAULT_PERMITTED_APPROVAL_MODES = frozenset({
 })
 
 MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS = 30 * 24 * 3600
+
+# Phase 10AA fix cycle: bounded per-source excerpt cap. Canonical
+# artifact mirror sources (`AGENTS.md`, `.agent-loop/claude-summary.md`,
+# `.agent-loop/phase-plan.md`) surface a head-of-file excerpt truncated
+# at this many bytes so the shipped desktop app / CLI actually renders
+# a readable human-facing memory-vault export body rather than metadata
+# only. Set to 2000 bytes (roughly 40 lines) so a reviewer sees the
+# opening context without the surface silently mirroring a full canonical
+# artifact into a competing source of truth. The shipped canonical file
+# itself is unmodified and remains the sole source of truth for the full
+# body.
+MEMORY_VAULT_EXCERPT_BYTE_LIMIT = 2000
+
+# Phase 10AA fix cycle: bounded per-directory-source entry-index cap.
+# Durable-memory directory sources (`.agent-loop/memory/decision`,
+# `.agent-loop/memory/summary`) surface a name-only index of up to this
+# many most-recent shipped JSON entries. The surface NEVER reads the
+# JSON body content (that stays owned by `read_memory_entry(...)`); the
+# name-only index lets the operator see WHICH shipped decision / summary
+# entries exist without letting the memory-vault surface become a
+# competing durable-memory reader.
+MEMORY_VAULT_ENTRY_INDEX_LIMIT = 10
 
 _MEMORY_VAULT_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
     "id",
@@ -27142,6 +27186,89 @@ def _desktop_memory_vault_probe_freshness(
     }
 
 
+def _desktop_memory_vault_read_excerpt(
+    controller_root: Path, spec: dict,
+) -> dict:
+    """Phase 10AA fix cycle: return a bounded human-readable
+    excerpt for one memory-vault export descriptor.
+
+    For `canonical_artifact_mirror` file sources, reads the head
+    of the file (up to `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes)
+    and returns it as a UTF-8 string with a `truncated` bool
+    indicating whether the file was longer than the cap. This
+    is the readable body the Phase 10AA export contract
+    promises; the shipped canonical file remains unmodified and
+    the sole source of truth for the full body.
+
+    For `shipped_memory_json` directory sources, reads the
+    sorted (reverse-alphabetic == newest-first, since the Phase
+    6A writer name format is `<UTC-timestamp>-<hash>.json`) list
+    of shipped `.json` filenames bounded to
+    `MEMORY_VAULT_ENTRY_INDEX_LIMIT` entries and returns them
+    as `entry_index`. The surface NEVER reads any JSON body
+    content; the name-only index lets the operator see WHICH
+    shipped decision / summary entries exist without letting the
+    memory-vault surface become a competing durable-memory
+    reader.
+
+    Missing / unreadable sources return an empty envelope
+    (`excerpt_text=None`, `entry_index=None`). Pure read-only
+    IO; never raises, never mutates.
+    """
+    path = (
+        controller_root / spec["path_canonical_rel"]
+    ).resolve()
+    envelope = {
+        "excerpt_text": None,
+        "excerpt_bytes_read": None,
+        "excerpt_truncated": None,
+        "entry_index": None,
+        "entry_index_truncated": None,
+    }
+    source_kind = spec["source_kind"]
+    try:
+        if source_kind == "canonical_artifact_mirror":
+            if not path.is_file():
+                return envelope
+            cap = MEMORY_VAULT_EXCERPT_BYTE_LIMIT
+            with path.open("rb") as handle:
+                head_bytes = handle.read(cap + 1)
+            truncated = len(head_bytes) > cap
+            if truncated:
+                head_bytes = head_bytes[:cap]
+            try:
+                excerpt_text = head_bytes.decode(
+                    "utf-8", errors="replace",
+                )
+            except UnicodeDecodeError:
+                excerpt_text = head_bytes.decode(
+                    "latin-1", errors="replace",
+                )
+            envelope["excerpt_text"] = excerpt_text
+            envelope["excerpt_bytes_read"] = len(head_bytes)
+            envelope["excerpt_truncated"] = truncated
+            return envelope
+        if source_kind == "shipped_memory_json":
+            if not path.is_dir():
+                return envelope
+            names = sorted(
+                (
+                    child.name for child in path.iterdir()
+                    if child.is_file()
+                    and child.suffix == ".json"
+                ),
+                reverse=True,
+            )
+            cap = MEMORY_VAULT_ENTRY_INDEX_LIMIT
+            truncated = len(names) > cap
+            envelope["entry_index"] = names[:cap]
+            envelope["entry_index_truncated"] = truncated
+            return envelope
+    except OSError:
+        return envelope
+    return envelope
+
+
 def _desktop_memory_vault_compute_approval_state(
     spec: dict,
     *,
@@ -27326,6 +27453,7 @@ def _desktop_memory_vault_export_descriptor(
     spec: dict,
     *,
     freshness_probe: dict,
+    excerpt_envelope: dict,
     approval_mode: Optional[str],
     phase_10aa_runtime_available: bool,
     operator_acknowledged_advisory_labeling: bool,
@@ -27373,6 +27501,17 @@ def _desktop_memory_vault_export_descriptor(
         "freshness_state": freshness_probe["freshness_state"],
         "description": spec["description"],
         "safety_copy": spec["safety_copy"],
+        "excerpt_text": excerpt_envelope["excerpt_text"],
+        "excerpt_bytes_read": (
+            excerpt_envelope["excerpt_bytes_read"]
+        ),
+        "excerpt_truncated": (
+            excerpt_envelope["excerpt_truncated"]
+        ),
+        "entry_index": excerpt_envelope["entry_index"],
+        "entry_index_truncated": (
+            excerpt_envelope["entry_index_truncated"]
+        ),
         "approval_requirements": list(
             spec["approval_requirements"]
         ),
@@ -27407,11 +27546,22 @@ def build_desktop_memory_vault_view(
     acknowledgement / identity state held in-memory only; NEVER
     persisted to disk, NEVER carried across sessions.
 
-    Never writes, never mutates, never spawns a subprocess,
-    never invokes `_halt(...)`, never reads durable-memory
-    content (only stat / mtime / size / entry count via
-    `Path.iterdir()`), never reads canonical artifact content
-    (only stat / mtime / size), never widens the Phase 10I
+    Per the Phase 10AA fix cycle, canonical-artifact mirror
+    sources surface a head-bounded excerpt truncated at
+    `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes and durable-memory
+    JSON directory sources surface a name-only index bounded at
+    `MEMORY_VAULT_ENTRY_INDEX_LIMIT` most-recent shipped `.json`
+    filenames. The shipped canonical file / shipped memory JSON
+    entry remains the sole source of truth for the FULL body;
+    the memory-vault surface never mirrors the full body and
+    never reads durable-memory JSON body content.
+
+    Never writes, never mutates canonical artifacts, never
+    spawns a subprocess, never invokes `_halt(...)`, never
+    reads MORE than `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes of
+    any canonical artifact, never reads durable-memory JSON
+    body content (only stat / mtime / size / directory entry
+    names via `Path.iterdir()`), never widens the Phase 10I
     library-callable cap, never opens a network socket. The
     shipped `load_loop_state(...)` validator HaltError soft-fails
     so the surface stays operable when the controller's
@@ -27447,10 +27597,14 @@ def build_desktop_memory_vault_view(
         freshness_probe = _desktop_memory_vault_probe_freshness(
             controller_root, spec, now_ts=now_ts,
         )
+        excerpt_envelope = _desktop_memory_vault_read_excerpt(
+            controller_root, spec,
+        )
         exports.append(
             _desktop_memory_vault_export_descriptor(
                 spec,
                 freshness_probe=freshness_probe,
+                excerpt_envelope=excerpt_envelope,
                 approval_mode=approval_mode,
                 phase_10aa_runtime_available=False,
                 operator_acknowledged_advisory_labeling=(
@@ -27472,6 +27626,8 @@ def build_desktop_memory_vault_view(
         "freshness_stale_threshold_seconds": (
             MEMORY_VAULT_FRESHNESS_STALE_THRESHOLD_SECONDS
         ),
+        "excerpt_byte_limit": MEMORY_VAULT_EXCERPT_BYTE_LIMIT,
+        "entry_index_limit": MEMORY_VAULT_ENTRY_INDEX_LIMIT,
         "operator_inputs": {
             "identity": inputs["identity"],
             "acknowledged_export_ids": sorted(ack_set),
@@ -27534,6 +27690,19 @@ def render_desktop_memory_vault_text(view: dict) -> list:
     lines.append(
         f"  [advisory] freshness_stale_threshold_seconds: "
         f"{view['freshness_stale_threshold_seconds']!r}"
+    )
+    lines.append(
+        f"  [advisory] excerpt_byte_limit (per-source head-"
+        f"bounded excerpt cap for canonical-artifact mirror "
+        f"sources; the shipped canonical file remains the sole "
+        f"source of truth for the full body): "
+        f"{view['excerpt_byte_limit']!r}"
+    )
+    lines.append(
+        f"  [advisory] entry_index_limit (per-source name-only "
+        f"index cap for shipped durable-memory JSON directory "
+        f"sources; the surface NEVER reads JSON body content): "
+        f"{view['entry_index_limit']!r}"
     )
     lines.append(
         f"  [advisory] export_categories (closed Phase 10AA "
@@ -27621,6 +27790,44 @@ def render_desktop_memory_vault_text(view: dict) -> list:
             f"size_bytes={export['size_bytes']!r} "
             f"entry_count={export['entry_count']!r}"
         )
+        excerpt_text = export.get("excerpt_text")
+        if excerpt_text is not None:
+            lines.append(
+                f"    [vault-excerpt] excerpt_bytes_read="
+                f"{export['excerpt_bytes_read']!r} "
+                f"excerpt_truncated="
+                f"{export['excerpt_truncated']!r} (head-of-"
+                f"file bounded by view['excerpt_byte_limit']; "
+                f"the shipped canonical file remains the sole "
+                f"source of truth for the full body):"
+            )
+            for excerpt_line in excerpt_text.splitlines():
+                lines.append(f"      | {excerpt_line}")
+            if not excerpt_text.endswith("\n"):
+                lines.append("      | (no trailing newline)")
+            if export["excerpt_truncated"]:
+                lines.append(
+                    "      | ... [truncated at excerpt_byte_"
+                    "limit; read the shipped canonical file "
+                    "directly for the full body]"
+                )
+        entry_index = export.get("entry_index")
+        if entry_index is not None:
+            lines.append(
+                f"    [vault-entry-index] entry_index_truncated="
+                f"{export['entry_index_truncated']!r} (name-"
+                f"only index bounded by "
+                f"view['entry_index_limit']; the surface NEVER "
+                f"reads JSON body content):"
+            )
+            for entry_name in entry_index:
+                lines.append(f"      * {entry_name}")
+            if export["entry_index_truncated"]:
+                lines.append(
+                    "      ... [truncated at entry_index_"
+                    "limit; read `read_memory_entry(...)` "
+                    "directly for the full JSON body]"
+                )
         for req in export["approval_requirements"]:
             entry = export["approval_state"].get(req, {})
             satisfied = entry.get("satisfied", False)
@@ -27734,11 +27941,15 @@ def cmd_view_desktop_memory_vault(
     any canonical artifact, NEVER appends to
     `.agent-loop/orchestrator.log`, NEVER advances loop-state,
     NEVER invokes `_halt(...)`, NEVER spawns a subprocess, NEVER
-    opens a network socket, NEVER reads durable-memory content
-    (only stat / mtime / size / entry count via `Path.iterdir()`),
-    NEVER reads canonical artifact content (only stat / mtime /
-    size), NEVER writes an export file, NEVER persists an export
-    cache, NEVER widens the Phase 10I library-callable cap.
+    opens a network socket, NEVER reads durable-memory JSON
+    BODY content (only stat / mtime / size / directory entry
+    names via `Path.iterdir()`), NEVER reads MORE than
+    `MEMORY_VAULT_EXCERPT_BYTE_LIMIT` bytes of any canonical
+    artifact (the surface surfaces a bounded head-of-file
+    excerpt so the shipped export body is human-readable, per
+    the Phase 10AA fix cycle), NEVER writes an export file,
+    NEVER persists an export cache, NEVER widens the Phase 10I
+    library-callable cap.
     """
     root_arg = getattr(args, "controller_root", None)
     if not root_arg:
@@ -34676,13 +34887,15 @@ def build_parser() -> argparse.ArgumentParser:
             "`.agent-loop/orchestrator.log`; never advances "
             "loop-state; never invokes `_halt(...)`; never "
             "spawns a subprocess; never opens a network "
-            "socket; never reads durable-memory content (only "
-            "stat / mtime / size / entry count via "
-            "`Path.iterdir()`); never reads canonical artifact "
-            "content (only stat / mtime / size); never writes "
-            "an export file; never persists an export cache; "
-            "never widens the Phase 10I library-callable "
-            "control cap."
+            "socket; never reads durable-memory JSON body "
+            "content (only stat / mtime / size / directory "
+            "entry names via `Path.iterdir()`); never reads "
+            "more than MEMORY_VAULT_EXCERPT_BYTE_LIMIT bytes "
+            "of any canonical artifact (the surface surfaces "
+            "a bounded head-of-file excerpt per the Phase "
+            "10AA fix cycle); never writes an export file; "
+            "never persists an export cache; never widens the "
+            "Phase 10I library-callable control cap."
         ),
     )
     memory_vault.add_argument(
