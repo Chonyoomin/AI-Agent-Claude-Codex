@@ -129,6 +129,32 @@ class ConstantsTests(unittest.TestCase):
         ):
             self.assertIn(needle, note, needle)
 
+    def test_precedence_note_advertises_shipped_runtime_gate(
+        self,
+    ) -> None:
+        # Phase 10AC fix cycle: the precedence note MUST describe
+        # the shipped bounded runtime refusal gate consistently and
+        # MUST NOT claim the surface is DETECTION-only or that the
+        # downstream refusal enforcement is deferred.
+        note = (
+            agent_loop.DESKTOP_OVERLAP_DETECTION_PRECEDENCE_NOTE
+        )
+        for needle in (
+            "hard-coded `True`",
+            "enforce_overlap_safe_runtime_gate",
+            "_run_normal_cycle_from_increment",
+            "HALTED_OVERLAP_UNSAFE_CONTEXT",
+            "refused_pending_recovery",
+            "refusal-only",
+        ):
+            self.assertIn(needle, note, needle)
+        for anti_needle in (
+            "DETECTION only",
+            "DETECTION signals only",
+            "ships the DETECTION only",
+        ):
+            self.assertNotIn(anti_needle, note, anti_needle)
+
     def test_signal_states_closed_enum(self) -> None:
         self.assertEqual(
             agent_loop.OVERLAP_DETECTION_SIGNAL_STATES,
@@ -189,6 +215,28 @@ class RegistryTests(unittest.TestCase):
         ):
             agent_loop._desktop_overlap_detection_validate_signal_descriptor(
                 spec,
+            )
+
+    def test_every_signal_deferred_marker_names_shipped_gate(
+        self,
+    ) -> None:
+        # Phase 10AC fix cycle: every registered signal's
+        # `deferred_runtime_marker` MUST describe the shipped
+        # bounded runtime refusal gate and MUST NOT tell the
+        # operator the shipped surface is DETECTION-only or that
+        # runtime enforcement is deferred wholesale. The narrower
+        # deferral (background watching + actual concurrent
+        # Codex/Claude worker runtime) is fine to mention.
+        for spec in (
+            agent_loop._DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY
+        ):
+            marker = spec["deferred_runtime_marker"]
+            self.assertIn(
+                "bounded shipped runtime refusal", marker,
+                spec["id"],
+            )
+            self.assertNotIn(
+                "ships the DETECTION only", marker, spec["id"],
             )
 
 
@@ -788,7 +836,15 @@ class BuildOverlapDetectionViewTests(unittest.TestCase):
         self.assertEqual(
             view["view_signal_version"], "phase-10ac-v1",
         )
-        self.assertFalse(view["phase_10ac_runtime_available"])
+        # Phase 10AC fix cycle: the shipped bounded runtime refusal
+        # gate now exists (`enforce_overlap_safe_runtime_gate(...)`
+        # wired into `_run_normal_cycle_from_increment(...)`), so the
+        # surface metadata MUST advertise
+        # `phase_10ac_runtime_available=True`. The narrower deferral
+        # (actual concurrent Codex/Claude worker runtime) is described
+        # in the per-signal `deferred_runtime_marker`, not in this
+        # top-level flag.
+        self.assertTrue(view["phase_10ac_runtime_available"])
 
     def test_no_targets_baseline_is_unknown(self) -> None:
         # A fresh controller with no target artifacts surfaces
@@ -943,6 +999,34 @@ class RendererTests(unittest.TestCase):
             "[refused]",
         ):
             self.assertIn(tag, output, tag)
+
+    def test_render_advertises_shipped_runtime_gate(self) -> None:
+        # Phase 10AC fix cycle: the rendered text MUST describe the
+        # shipped bounded runtime refusal gate consistently and MUST
+        # NOT tell the operator that runtime enforcement is deferred.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_overlap_detection_view(
+                    controller,
+                )
+            )
+        output = "\n".join(
+            agent_loop.render_desktop_overlap_detection_text(view),
+        )
+        for needle in (
+            "phase_10ac_runtime_available",
+            "enforce_overlap_safe_runtime_gate",
+            "_run_normal_cycle_from_increment",
+            "HALTED_OVERLAP_UNSAFE_CONTEXT",
+            "refused_pending_recovery",
+        ):
+            self.assertIn(needle, output, needle)
+        for anti_needle in (
+            "ships the DETECTION only",
+            "DETECTION only",
+        ):
+            self.assertNotIn(anti_needle, output, anti_needle)
 
 
 # ---------------------------------------------------------------------------
