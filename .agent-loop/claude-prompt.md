@@ -1,44 +1,41 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AD - Codex-Owned Concurrent Work Initial Slice
+Phase 10AE - Framework Evaluation Beyond The Native Loop
 
 ## Objective
-Implement Phase 10AD for the agent loop. This slice should allow bounded
-Codex-owned concurrent work during Claude implementation only for explicitly
-safe Codex-owned artifacts and actions that cannot invalidate the active Claude
-task context under the shipped Phase 10AB/10AC rules.
+Implement Phase 10AE for the agent loop. This slice should evaluate framework
+options beyond the native loop and define a bounded comparison surface for
+CrewAI, LangGraph, LangChain, or similar delegated-role runtimes without
+rewriting the shipped Codex/Claude ownership model.
 
 ## Context
-Implement the Codex-Owned Concurrent Work Initial Slice for the agent loop.
-This is the next mainline step after the shipped Phase 10AC overlap-safe
-detection/refusal slice. The goal is to introduce the first bounded runtime
-path where Codex can continue limited Codex-owned work while Claude is
-implementing, but only when the shipped ownership boundaries and overlap-safe
-detection/refusal rules prove that the work cannot invalidate Claude's active
-implementation context.
+Implement the Framework Evaluation Beyond The Native Loop slice for the agent
+loop. This is the next mainline step after the shipped Phase 10AD bounded
+concurrent-work slice. The goal is to evaluate whether framework layers such as
+CrewAI, LangGraph, and LangChain add value beyond the shipped native
+Codex/Claude loop now that the desktop surface, MCP/RAG controls, durable
+memory, and controlled-concurrency model are stable enough to compare against.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AD as active
-- `.agent-loop/phase-plan.md` records Phase 10AC as closed history and
-  contains a `## Phase 10AD - Codex-Owned Concurrent Work Initial Slice`
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AE as active
+- `.agent-loop/phase-plan.md` records Phase 10AD as closed history and
+  contains a `## Phase 10AE - Framework Evaluation Beyond The Native Loop`
   section with concrete objective, done criteria, and exclusions
-- implement a bounded runtime path for limited Codex-owned concurrent work
-  while Claude is implementing, but only for explicitly safe Codex-owned
-  artifacts/actions whose execution is proven not to invalidate the active
-  Claude context
-- reuse the shipped Phase 10AB ownership boundaries and the Phase 10AC
-  overlap-safe detection/refusal behavior instead of bypassing them
-- ensure any attempted concurrent action outside the approved safe set is
-  refused, deferred, or surfaced as ineligible rather than silently executed
+- implement a bounded framework-evaluation surface that compares the shipped
+  native loop against CrewAI, LangGraph, LangChain, or similar delegated-role
+  frameworks using explicit criteria rather than vague preference
+- make clear where a framework could help, where it would conflict with shipped
+  ownership, approval, review, desktop, and canonical-artifact boundaries, and
+  what remains native-loop-only
 - preserve approval gating, evidence review, external-workspace boundaries,
-  desktop/UI boundaries, loop-state source-of-truth rules, and the Phase 10I
-  library-callable cap
-- add focused validation proving the bounded concurrent-work path is explicit,
-  auditable, ownership-safe, and fail-closed where safety cannot be proven
-- `README.md` reflects that Phase 10AD is active and that limited safe
-  Codex-owned concurrent work is now the implementation focus
+  run-profile semantics, desktop/UI boundaries, loop-state source-of-truth
+  rules, and the canonical-artifact-first model
+- add focused validation proving the framework-evaluation surface is explicit,
+  auditable, bounded, and does not silently change shipped runtime behavior
+- `README.md` reflects that Phase 10AE is active and that framework evaluation
+  beyond the native loop is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -51,18 +48,16 @@ implementation context.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no broad or general-purpose overlapping Codex/Claude runtime
-- no hidden background orchestration, watcher farm, or parallel worker model
-- no Codex-owned concurrent work that mutates Claude-owned implementation
-  artifacts, prompt/summarization artifacts, or any artifact whose mutation
-  would invalidate Claude's active task context
-- no bypass of the shipped Phase 10AC refusal gate or the Phase 10AB ownership
-  contract
+- no full framework migration, silent runtime swap, hidden background
+  orchestration, or delegated-worker runtime added under the banner of
+  evaluation
+- no framework-backed path that bypasses the shipped ownership, approval,
+  review, overlap-safety, or canonical-artifact boundaries
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
-- no packaging work, hidden orchestration, or live concurrency added under the
-  banner of this bounded concurrent-work slice
+- no packaging work, hidden orchestration, or live delegated execution added
+  under the banner of this evaluation slice
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body

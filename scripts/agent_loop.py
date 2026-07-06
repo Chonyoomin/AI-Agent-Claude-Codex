@@ -14187,6 +14187,12 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     overlap_detection_view = _desktop_safe_call_view(
         build_desktop_overlap_detection_view, controller_root,
     )
+    codex_concurrent_work_view = _desktop_safe_call_view(
+        build_desktop_codex_concurrent_work_view, controller_root,
+    )
+    framework_evaluation_view = _desktop_safe_call_view(
+        build_desktop_framework_evaluation_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14210,6 +14216,8 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "memory_vault_view": memory_vault_view,
         "concurrency_view": concurrency_view,
         "overlap_detection_view": overlap_detection_view,
+        "codex_concurrent_work_view": codex_concurrent_work_view,
+        "framework_evaluation_view": framework_evaluation_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14379,6 +14387,30 @@ def _desktop_render_sub_view_lines(
             render_desktop_overlap_detection_text(sub_view),
         )
         return lines
+    if key == "codex_concurrent_work_view":
+        # Re-use the shipped Phase 10AD renderer verbatim so the
+        # codex-concurrent-work attribution tags ([codex-
+        # concurrent] / [codex-owner] / [codex-effect] / [codex-
+        # eligibility] / [codex-overlap] / [deferred-runtime] /
+        # [canonical mirror] / [advisory] / [refused]) stay
+        # consistent with the standalone
+        # `view-desktop-codex-concurrent-work` output.
+        lines.extend(
+            render_desktop_codex_concurrent_work_text(sub_view),
+        )
+        return lines
+    if key == "framework_evaluation_view":
+        # Re-use the shipped Phase 10AE renderer verbatim so the
+        # framework-evaluation attribution tags ([framework-
+        # evaluation] / [framework-criterion] / [framework-
+        # verdict] / [framework-summary] / [deferred-runtime] /
+        # [canonical mirror] / [advisory] / [refused]) stay
+        # consistent with the standalone
+        # `view-desktop-framework-evaluation` output.
+        lines.extend(
+            render_desktop_framework_evaluation_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14479,6 +14511,14 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "overlap_detection_view",
             "Overlap-Safe Detection (Phase 10AC)",
+        ),
+        (
+            "codex_concurrent_work_view",
+            "Codex-Owned Concurrent Work (Phase 10AD)",
+        ),
+        (
+            "framework_evaluation_view",
+            "Framework Evaluation (Phase 10AE)",
         ),
     ):
         sub = view.get(key, {})
@@ -15136,6 +15176,20 @@ def _launch_desktop_app_window(
         text="Overlap-Safe Detection (Phase 10AC)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    codex_concurrent_work_frame = tk.Frame(control_frame)
+    codex_concurrent_work_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        codex_concurrent_work_frame,
+        text="Codex-Owned Concurrent Work (Phase 10AD)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    framework_evaluation_frame = tk.Frame(control_frame)
+    framework_evaluation_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        framework_evaluation_frame,
+        text="Framework Evaluation (Phase 10AE)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15167,6 +15221,8 @@ def _launch_desktop_app_window(
     memory_vault_button_widgets: list = []
     concurrency_button_widgets: list = []
     overlap_detection_button_widgets: list = []
+    codex_concurrent_work_button_widgets: list = []
+    framework_evaluation_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15898,6 +15954,63 @@ def _launch_desktop_app_window(
             overlap_detection_frame,
             overlap_detection_controls,
             overlap_detection_button_widgets,
+        )
+        # Phase 10AD: rebuild the Codex-owned concurrent work
+        # button row from the cached sub-view. Copy-paste ONLY;
+        # every button copies an operator-visible eligibility
+        # acknowledgement TEMPLATE to clipboard. ZERO new
+        # library-callable controls are introduced. Every button
+        # stays clickable per the Phase 10Z / 10AA / 10AB / 10AC
+        # affordance pattern.
+        codex_concurrent_work_sub_view = view.get(
+            "codex_concurrent_work_view", {},
+        )
+        if (
+            isinstance(codex_concurrent_work_sub_view, dict)
+            and codex_concurrent_work_sub_view.get("view") is None
+            and "error" in codex_concurrent_work_sub_view
+        ):
+            codex_concurrent_work_controls = []
+        elif isinstance(codex_concurrent_work_sub_view, dict):
+            codex_concurrent_work_controls = (
+                build_desktop_codex_concurrent_work_controls(
+                    codex_concurrent_work_sub_view,
+                )
+            )
+        else:
+            codex_concurrent_work_controls = []
+        _rebuild_button_row(
+            codex_concurrent_work_frame,
+            codex_concurrent_work_controls,
+            codex_concurrent_work_button_widgets,
+        )
+        # Phase 10AE: rebuild the framework-evaluation button row
+        # from the cached sub-view. Copy-paste ONLY; every button
+        # copies an operator-visible criterion acknowledgement
+        # TEMPLATE to clipboard. ZERO new library-callable controls
+        # are introduced. Every button stays clickable per the
+        # Phase 10Z / 10AA / 10AB / 10AC / 10AD affordance pattern.
+        framework_evaluation_sub_view = view.get(
+            "framework_evaluation_view", {},
+        )
+        if (
+            isinstance(framework_evaluation_sub_view, dict)
+            and framework_evaluation_sub_view.get("view") is None
+            and "error" in framework_evaluation_sub_view
+        ):
+            framework_evaluation_controls = []
+        elif isinstance(framework_evaluation_sub_view, dict):
+            framework_evaluation_controls = (
+                build_desktop_framework_evaluation_controls(
+                    framework_evaluation_sub_view,
+                )
+            )
+        else:
+            framework_evaluation_controls = []
+        _rebuild_button_row(
+            framework_evaluation_frame,
+            framework_evaluation_controls,
+            framework_evaluation_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -30899,6 +31012,3029 @@ def enforce_overlap_safe_runtime_gate(repo_root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 10AD - Codex-Owned Concurrent Work Initial Slice.
+#
+# Bounded contract slice that shows which Codex-owned actions may run
+# concurrently with an in-flight Claude implementation cycle WITHOUT
+# invalidating Claude's active task context, and which Codex-owned
+# actions are always refused fail-closed. Every eligibility outcome is
+# a closed enumeration; every registry entry is validated fail-closed
+# against a closed descriptor shape; every eligibility evaluation reuses
+# the shipped Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` verbatim
+# and the shipped Phase 10AC overlap-safe detection aggregate verbatim
+# (a `refused_pending_recovery` / `unknown` aggregate, a `None`
+# structural HaltError soft-fail, or any unrecognized overlap state
+# refuses every entry regardless of the entry's own safety class).
+#
+# The shipped surface OBSERVES the closed registry and produces per-
+# poll eligibility outcomes for a bounded set of Codex-owned actions.
+# The shipped runtime path (`perform_bounded_codex_concurrent_read(
+# repo_root, action_id, log_path=...)`) invoked from
+# `_run_normal_cycle_from_increment` at status=`claude_implementing`
+# additionally executes ONE real bounded Codex-owned read
+# (`codex_prd_intake_read`, a read-only advisory read of the shipped
+# Codex-owned canonical `TASK.md`) concurrently with the in-flight
+# Claude implementation cycle. That shipped read is routed through
+# `evaluate_codex_concurrent_work_eligibility(...)` FIRST so any
+# refusal (unknown action_id / refused eligibility outcome) skips the
+# read fail-closed with a best-effort audit line to the orchestrator
+# log. The shipped surface NEVER launches any actual concurrent
+# Codex/Claude worker, NEVER spawns a subprocess, NEVER opens a
+# network socket, NEVER schedules a background watcher, NEVER mutates
+# any canonical artifact, NEVER advances loop-state, NEVER invokes
+# `_halt(...)` for a routine read refusal, NEVER widens the Phase
+# 10I library-callable cap, and NEVER lets a Codex-owned entry
+# mutate a Claude-owned / orchestrator-owned artifact through the
+# bounded evaluator or the bounded read runtime.
+# ---------------------------------------------------------------------------
+
+DESKTOP_CODEX_CONCURRENT_WORK_SIGNAL_VERSION = "phase-10ad-v1"
+
+DESKTOP_CODEX_CONCURRENT_WORK_PRECEDENCE_NOTE = (
+    "Phase 10AD Codex-owned concurrent work initial slice. Reuses the "
+    "shipped Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` verbatim "
+    "for the owner-role source of truth and the shipped Phase 10AC "
+    "overlap-safe detection aggregate verbatim for the overlap-safety "
+    "gate; a `refused_pending_recovery` / `unknown` Phase 10AC "
+    "aggregate, a `None` structural HaltError soft-fail, or any "
+    "unrecognized overlap state refuses EVERY Phase 10AD entry "
+    "regardless of the entry's own eligibility class. Every action "
+    "descriptor is validated against the closed Phase 10AD descriptor "
+    "shape and refused fail-closed on any missing required field, "
+    "wrong-typed value, unknown `action_type`, unknown "
+    "`effect_class`, unknown `expected_target_owner_role`, non-POSIX "
+    "/ absolute / drive-prefixed / parent-traversal "
+    "`target_artifact_canonical_rel`, or a target artifact that is "
+    "not present in the shipped Phase 10AB ownership map. "
+    "`phase_10ad_runtime_available` is hard-coded `True` in this "
+    "slice because the shipped Phase 10AD slice wires a real bounded "
+    "eligibility runtime path "
+    "(`evaluate_codex_concurrent_work_eligibility(repo_root, "
+    "action_id)`) AND a real bounded read runtime path "
+    "(`perform_bounded_codex_concurrent_read(repo_root, action_id, "
+    "log_path=...)` invoked from `_run_normal_cycle_from_increment` "
+    "at status=`claude_implementing` for the shipped "
+    "`codex_prd_intake_read` read-only advisory action) that "
+    "actually performs a bounded Codex-owned read of the shipped "
+    "Codex-owned canonical `TASK.md` concurrently with an in-flight "
+    "Claude implementation cycle. The shipped surface still NEVER "
+    "launches any actual concurrent Codex/Claude worker, NEVER opens "
+    "a network socket, NEVER spawns a subprocess, NEVER schedules a "
+    "background watcher, NEVER mutates any canonical artifact, and "
+    "NEVER performs any `codex_owned_write` / "
+    "`codex_owned_write_invalidates_claude` effect through the "
+    "shipped bounded read runtime path (widening guard). Any "
+    "attempted concurrent action outside the closed registry is "
+    "REFUSED at the runtime helper via `HaltError(HALTED_CODEX_"
+    "CONCURRENT_WORK_UNSAFE, ...)`. The shipped Phase 10L desktop-"
+    "app contract, Phase 3A orchestrator contract, Phase 4 planner / "
+    "activator separation, and Phase 10Z / 10AA / 10AB / 10AC copy-"
+    "only affordance contract govern this surface's ownership rule "
+    "verbatim. The Phase 10I three-control library-callable cap is "
+    "preserved exactly; ZERO new library-callable controls are "
+    "introduced. This slice NEVER advances loop-state, NEVER auto-"
+    "fills any --*-by operator-identity argument, and NEVER "
+    "introduces a concurrent-work-side database / preference store "
+    "/ recents list / identity token / session token. The shipped "
+    "bounded read runtime path DOES append a best-effort audit line "
+    "to `.agent-loop/orchestrator.log` per invocation (executed / "
+    "refused / skipped) so the reviewer can verify the shipped "
+    "concurrent read was actually invoked."
+)
+
+# Phase 10AD runtime refusal status: the shipped
+# `evaluate_codex_concurrent_work_eligibility(...)` runtime helper
+# raises `HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)` when a
+# caller requests an eligibility outcome for an action_id that is not
+# in the shipped `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` OR when the
+# shipped Phase 10AC overlap-safe aggregate refuses the request. The
+# runtime helper is DETECTION-DRIVEN only: it consults the same
+# registry the desktop reporter exposes; never spawns a subprocess,
+# never opens a network socket, never launches or coordinates any
+# actual concurrent Codex/Claude worker, and never advances loop-
+# state past the caller-owned refusal write.
+HALTED_CODEX_CONCURRENT_WORK_UNSAFE = "halted_codex_concurrent_work_unsafe"
+
+# Closed action-type vocabulary. `prd_intake_read` = Codex reads a
+# repo-local PRD source for intake analysis. `plan_proposal_write` =
+# Codex writes a Codex-owned planning proposal artifact.
+# `artifact_dashboard_read` = Codex reads shipped canonical evidence
+# / review / status artifacts for review preparation.
+# `memory_vault_read` = Codex reads the shipped durable memory vault
+# for phase-boundary distillation preparation. `active_context_write`
+# = Codex writes a Codex-owned canonical artifact that IS read by
+# Claude during the active implementation cycle (would-invalidate).
+CODEX_CONCURRENT_ACTION_TYPES = (
+    "prd_intake_read",
+    "plan_proposal_write",
+    "artifact_dashboard_read",
+    "memory_vault_read",
+    "active_context_write",
+)
+
+# Closed effect-class vocabulary. `read_only_advisory` = the action
+# reads canonical artifacts only and never writes. `codex_owned_write`
+# = the action writes a Codex-owned canonical artifact whose write
+# does NOT invalidate the active Claude implementation cycle.
+# `codex_owned_write_invalidates_claude` = the action writes a Codex-
+# owned canonical artifact whose write WOULD invalidate the active
+# Claude implementation cycle (must be refused fail-closed).
+CODEX_CONCURRENT_EFFECT_CLASSES = (
+    "read_only_advisory",
+    "codex_owned_write",
+    "codex_owned_write_invalidates_claude",
+)
+
+# Closed eligibility-state vocabulary. `eligible_bounded_execution` =
+# every closed check passes; the shipped bounded eligibility runtime
+# would allow this action to run concurrently with Claude
+# implementation. `refused_overlap_unsafe` = the shipped Phase 10AC
+# aggregate is `refused_pending_recovery` or `unknown`; every entry
+# refuses fail-closed until the overlap gate clears.
+# `refused_owner_role_violation` = the target artifact is not in the
+# Phase 10AB ownership map OR its owner_role does not match the
+# descriptor's `expected_target_owner_role`.
+# `refused_would_invalidate_claude_context` = the descriptor's
+# `would_invalidate_claude_context` is True (the action would
+# invalidate the active Claude implementation cycle).
+# `refused_until_policy_update` = a shipped policy explicitly refuses
+# this entry regardless of any other check (reserved).
+CODEX_CONCURRENT_ELIGIBILITY_STATES = (
+    "eligible_bounded_execution",
+    "refused_overlap_unsafe",
+    "refused_owner_role_violation",
+    "refused_would_invalidate_claude_context",
+    "refused_until_policy_update",
+)
+
+_CODEX_CONCURRENT_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "action_type",
+    "effect_class",
+    "target_artifact_canonical_rel",
+    "expected_target_owner_role",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+
+def _codex_concurrent_validate_path_rel(path_rel: str) -> None:
+    """Phase 10AD path-shape guard: refuse fail-closed on any non-
+    POSIX / absolute / drive-prefixed / parent-traversal
+    `target_artifact_canonical_rel`, matching the Phase 10V / 10AA /
+    10AB / 10AC verbatim path-shape guard.
+    """
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} contains a backslash"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} is absolute"
+            ),
+        )
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} carries a Windows-style "
+                f"drive prefix"
+            ),
+        )
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} contains a parent-directory "
+                f"traversal segment"
+            ),
+        )
+
+
+_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY: tuple = (
+    {
+        "id": "codex_prd_intake_read",
+        "display_name": (
+            "Codex PRD intake read of TASK.md"
+        ),
+        "action_type": "prd_intake_read",
+        "effect_class": "read_only_advisory",
+        "target_artifact_canonical_rel": "TASK.md",
+        "expected_target_owner_role": "codex_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex reads the shipped canonical PRD (`TASK.md`) "
+            "for intake / decomposition analysis. Read-only "
+            "advisory access; the read never mutates the shipped "
+            "canonical artifact and therefore cannot invalidate "
+            "the active Claude implementation cycle. Bounded to "
+            "the shipped Codex-owned canonical artifact per the "
+            "Phase 10AB ownership map."
+        ),
+        "safety_copy": (
+            "A Codex-side read of TASK.md never invalidates "
+            "Claude's active implementation context; the read is "
+            "bounded to the shipped canonical artifact and never "
+            "widens into a background watcher or a subprocess."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`) "
+            "and a bounded shipped read runtime "
+            "(`perform_bounded_codex_concurrent_read(repo_root, "
+            "action_id, log_path=...)`) that is invoked from "
+            "`_run_normal_cycle_from_increment` at "
+            "status=`claude_implementing` to actually perform a "
+            "bounded Codex-owned read of the shipped canonical "
+            "`TASK.md` concurrently with the in-flight Claude "
+            "implementation cycle. The shipped read is bounded "
+            "to a read-only-advisory observation and is audited "
+            "to `.agent-loop/orchestrator.log` best-effort. "
+            "Actual concurrent Codex SUBPROCESS launch remains "
+            "deferred to a future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_prd_intake_read` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_plan_proposal_write",
+        "display_name": (
+            "Codex plan-proposal write of phase-plan.md"
+        ),
+        "action_type": "plan_proposal_write",
+        "effect_class": "codex_owned_write",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/phase-plan.md"
+        ),
+        "expected_target_owner_role": "codex_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex appends a bounded planner-proposal section "
+            "for the NEXT phase to the shipped canonical "
+            "phase-plan.md chronological history. The target "
+            "is a Codex-owned canonical artifact per the Phase "
+            "10AB ownership map. Append-only writes to the "
+            "chronological history do NOT invalidate the "
+            "active Claude implementation cycle (Claude keys "
+            "off the shipped current-phase.md / current-task."
+            "md / claude-prompt.md for the active phase, not "
+            "off the closed history in phase-plan.md). The "
+            "Phase 10AC overlap-safe detection surface still "
+            "refuses the request if the aggregate is "
+            "`refused_pending_recovery` or `unknown`."
+        ),
+        "safety_copy": (
+            "Append-only planner-proposal writes to phase-"
+            "plan.md while Claude is implementing are bounded "
+            "and safe because Claude keys off current-phase."
+            "md / current-task.md / claude-prompt.md for the "
+            "active phase, not the chronological history."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            "; actual concurrent planner-proposal write "
+            "execution is deferred to a future Phase 10 runtime "
+            "slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_plan_proposal_write` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_artifact_dashboard_read",
+        "display_name": (
+            "Codex artifact-dashboard read of shipped evidence"
+        ),
+        "action_type": "artifact_dashboard_read",
+        "effect_class": "read_only_advisory",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/git-diff.patch"
+        ),
+        "expected_target_owner_role": "orchestrator_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex reads a shipped orchestrator-owned evidence "
+            "artifact (`.agent-loop/git-diff.patch`) as part of "
+            "the shipped Phase 10J/10K artifact dashboard "
+            "review flow. Read-only advisory access; the read "
+            "never mutates the shipped canonical artifact. "
+            "Bounded to the shipped orchestrator-owned "
+            "canonical artifact per the Phase 10AB ownership "
+            "map."
+        ),
+        "safety_copy": (
+            "A Codex-side read of shipped evidence artifacts "
+            "never invalidates Claude's active implementation "
+            "context; the read is bounded to the shipped "
+            "canonical evidence and never widens into a "
+            "background watcher."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            "; actual concurrent dashboard-read execution is "
+            "deferred to a future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_artifact_dashboard_read` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_memory_vault_read",
+        "display_name": (
+            "Codex durable-memory read for distillation prep"
+        ),
+        "action_type": "memory_vault_read",
+        "effect_class": "read_only_advisory",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "expected_target_owner_role": "claude_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex reads the shipped canonical claude-summary."
+            "md as part of the Phase 6I phase-boundary memory "
+            "distillation preparation flow. Read-only advisory "
+            "access; the read never mutates the shipped "
+            "canonical artifact and therefore cannot invalidate "
+            "the active Claude implementation cycle. The Phase "
+            "10AC overlap-safe detection surface still refuses "
+            "the request if the aggregate is "
+            "`refused_pending_recovery` or `unknown`."
+        ),
+        "safety_copy": (
+            "A Codex-side read of claude-summary.md never "
+            "invalidates Claude's active implementation "
+            "context; the read is bounded to the shipped "
+            "canonical summary and never widens into a "
+            "background watcher."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            "; actual concurrent memory-vault-read execution is "
+            "deferred to a future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_memory_vault_read` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_current_task_write",
+        "display_name": (
+            "Codex active-context write of current-task.md"
+        ),
+        "action_type": "active_context_write",
+        "effect_class": "codex_owned_write_invalidates_claude",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/current-task.md"
+        ),
+        "expected_target_owner_role": "codex_owned",
+        "would_invalidate_claude_context": True,
+        "description": (
+            "Codex writes the shipped canonical current-task."
+            "md, which IS read by Claude at the start of every "
+            "implementation cycle. Writing this artifact while "
+            "Claude is implementing WOULD invalidate the active "
+            "Claude implementation context (Claude's in-flight "
+            "cycle would silently observe a mutated task "
+            "description). The shipped Phase 10AD surface "
+            "REFUSES this action fail-closed regardless of "
+            "operator input; this entry anchors the "
+            "`refused_would_invalidate_claude_context` branch."
+        ),
+        "safety_copy": (
+            "Silent concurrent writes to the active current-"
+            "task.md are a concurrency bug per Phase 10AB / "
+            "10AC / 10AD; the shipped surface refuses fail-"
+            "closed."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            " that REFUSES this action fail-closed regardless "
+            "of operator input; actual concurrent execution is "
+            "explicitly out of scope for Phase 10AD (and every "
+            "future runtime slice preserving the shipped "
+            "would-invalidate-Claude boundary)."
+        ),
+        "refusal_reason_template": (
+            "`codex_current_task_write` refused: writing the "
+            "shipped current-task.md while Claude is "
+            "implementing would invalidate the active Claude "
+            "context; the shipped Phase 10AD surface refuses "
+            "fail-closed."
+        ),
+    },
+)
+
+
+def _desktop_codex_concurrent_work_validate_descriptor(spec) -> None:
+    """Phase 10AD closed descriptor shape guard. Raises fail-closed
+    `HaltError("halted_input_missing", ...)` on any missing required
+    field, wrong-typed value, unknown `action_type`, unknown
+    `effect_class`, unknown `expected_target_owner_role` (must be
+    a member of the Phase 10AB `CONCURRENCY_OWNERSHIP_ROLES` closed
+    enumeration), or non-POSIX / absolute / drive-prefixed / parent-
+    traversal `target_artifact_canonical_rel`. Pure, no IO.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"descriptor is not a dict: {spec!r}"
+            ),
+        )
+    for field in _CODEX_CONCURRENT_DESCRIPTOR_REQUIRED_STRING_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop codex-concurrent-work refused: "
+                    f"descriptor field {field!r} missing or "
+                    f"non-string: {value!r}"
+                ),
+            )
+    if "would_invalidate_claude_context" not in spec:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop codex-concurrent-work refused: "
+                "descriptor missing `would_invalidate_claude_"
+                "context`"
+            ),
+        )
+    if not isinstance(
+        spec["would_invalidate_claude_context"], bool,
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"`would_invalidate_claude_context` must be "
+                f"bool, got "
+                f"{spec['would_invalidate_claude_context']!r}"
+            ),
+        )
+    if spec["action_type"] not in CODEX_CONCURRENT_ACTION_TYPES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"unknown action_type {spec['action_type']!r}"
+            ),
+        )
+    if spec["effect_class"] not in CODEX_CONCURRENT_EFFECT_CLASSES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"unknown effect_class {spec['effect_class']!r}"
+            ),
+        )
+    if (
+        spec["expected_target_owner_role"]
+        not in CONCURRENCY_OWNERSHIP_ROLES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"unknown expected_target_owner_role "
+                f"{spec['expected_target_owner_role']!r}"
+            ),
+        )
+    _codex_concurrent_validate_path_rel(
+        spec["target_artifact_canonical_rel"],
+    )
+
+
+def _desktop_codex_concurrent_work_ownership_lookup() -> dict:
+    """Build a `{path_rel: owner_role}` lookup from the shipped
+    Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP`. Order-preserving
+    to keep the Phase 10AB ownership rule as the single source of
+    truth.
+    """
+    return {
+        path_rel: owner_role
+        for path_rel, owner_role in (
+            _DESKTOP_CONCURRENCY_OWNERSHIP_MAP
+        )
+    }
+
+
+def _desktop_codex_concurrent_work_evaluate_eligibility(
+    spec: dict,
+    ownership_lookup: dict,
+    overlap_overall_state: Optional[str],
+) -> dict:
+    """Phase 10AD closed eligibility evaluator. Pure, no IO.
+
+    Returns `{eligibility_state, eligibility_reason,
+    actual_target_owner_role, overlap_overall_state,
+    would_invalidate_claude_context}`. The closed evaluation order is:
+      1. If the shipped Phase 10AC aggregate is
+         `refused_pending_recovery` -> `refused_overlap_unsafe`
+      2. Else if the target artifact is not in the shipped Phase
+         10AB ownership map OR its owner_role does not match the
+         descriptor's `expected_target_owner_role` ->
+         `refused_owner_role_violation`
+      3. Else if the descriptor's
+         `would_invalidate_claude_context` is True ->
+         `refused_would_invalidate_claude_context`
+      4. Else if the shipped Phase 10AC aggregate is anything
+         other than one of the two known-clean states
+         (`no_signal` / `signal_detected`) -> `refused_overlap_
+         unsafe` (fail-closed default: `unknown`, `None` for a
+         structural HaltError soft-fail, or any unrecognized
+         string all refuse fail-closed here so the shipped
+         concurrent-work surface never advances into
+         `eligible_bounded_execution` on non-safe overlap
+         evidence)
+      5. Otherwise -> `eligible_bounded_execution`
+    """
+    target = spec["target_artifact_canonical_rel"]
+    actual_owner = ownership_lookup.get(target)
+    if overlap_overall_state == "refused_pending_recovery":
+        return {
+            "eligibility_state": "refused_overlap_unsafe",
+            "eligibility_reason": (
+                "Phase 10AC overlap-safe detection aggregate "
+                "is `refused_pending_recovery`; the shipped "
+                "Phase 10AD bounded concurrent-work path "
+                "refuses fail-closed until the overlap gate "
+                "clears."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+        }
+    if actual_owner is None:
+        return {
+            "eligibility_state": "refused_owner_role_violation",
+            "eligibility_reason": (
+                f"target artifact {target!r} is not present in "
+                f"the shipped Phase 10AB _DESKTOP_CONCURRENCY_"
+                f"OWNERSHIP_MAP; the shipped Phase 10AD surface "
+                f"refuses fail-closed."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+        }
+    if actual_owner != spec["expected_target_owner_role"]:
+        return {
+            "eligibility_state": "refused_owner_role_violation",
+            "eligibility_reason": (
+                f"target artifact {target!r} has actual "
+                f"owner_role {actual_owner!r} but the "
+                f"descriptor's expected_target_owner_role is "
+                f"{spec['expected_target_owner_role']!r}; the "
+                f"shipped Phase 10AD surface refuses fail-"
+                f"closed."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+        }
+    if spec["would_invalidate_claude_context"]:
+        return {
+            "eligibility_state": (
+                "refused_would_invalidate_claude_context"
+            ),
+            "eligibility_reason": (
+                "descriptor's would_invalidate_claude_context "
+                "is True; writing the shipped canonical target "
+                "while Claude is implementing WOULD invalidate "
+                "the active Claude context; the shipped Phase "
+                "10AD surface refuses fail-closed."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": True,
+        }
+    if overlap_overall_state not in ("no_signal", "signal_detected"):
+        return {
+            "eligibility_state": "refused_overlap_unsafe",
+            "eligibility_reason": (
+                f"Phase 10AC overlap-safe detection aggregate "
+                f"is not one of the known-clean states "
+                f"(`no_signal` / `signal_detected`); observed "
+                f"overlap_overall_state={overlap_overall_state!r} "
+                f"(`unknown` = one or more required overlap "
+                f"evidence signals are missing; `None` = the "
+                f"shipped Phase 10AC view builder soft-failed "
+                f"on a structural HaltError; any other value = "
+                f"unrecognized state). The shipped Phase 10AD "
+                f"bounded concurrent-work path refuses fail-"
+                f"closed until the overlap gate can be "
+                f"evaluated with clean evidence."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": False,
+        }
+    return {
+        "eligibility_state": "eligible_bounded_execution",
+        "eligibility_reason": (
+            "closed Phase 10AD checks pass: Phase 10AC "
+            "aggregate is not refused / unknown; target "
+            "artifact is present in the shipped Phase 10AB "
+            "ownership map with the expected owner_role; the "
+            "descriptor's would_invalidate_claude_context is "
+            "False. The shipped bounded eligibility runtime "
+            "may execute this action concurrently with the "
+            "active Claude implementation cycle."
+        ),
+        "actual_target_owner_role": actual_owner,
+        "overlap_overall_state": overlap_overall_state,
+        "would_invalidate_claude_context": False,
+    }
+
+
+def _desktop_codex_concurrent_work_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Phase 10AD operator-input normalizer. Accepts a `{identity,
+    acknowledged_action_ids}` dict (both optional) and normalizes to
+    an ordered pair. Refuses fail-closed via HaltError on a non-dict
+    / wrong-typed value.
+    """
+    if operator_inputs is None:
+        return {"identity": "", "acknowledged_action_ids": frozenset()}
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"operator_inputs must be a dict, got "
+                f"{operator_inputs!r}"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"operator_inputs.identity must be a str, got "
+                f"{identity!r}"
+            ),
+        )
+    acknowledged_raw = operator_inputs.get(
+        "acknowledged_action_ids", (),
+    )
+    if acknowledged_raw is None:
+        acknowledged_raw = ()
+    try:
+        acknowledged = frozenset(acknowledged_raw)
+    except TypeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"operator_inputs.acknowledged_action_ids must "
+                f"be iterable of str: {acknowledged_raw!r} "
+                f"({exc})"
+            ),
+        )
+    for value in acknowledged:
+        if not isinstance(value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop codex-concurrent-work refused: "
+                    f"operator_inputs.acknowledged_action_ids "
+                    f"member is not a str: {value!r}"
+                ),
+            )
+    return {"identity": identity, "acknowledged_action_ids": acknowledged}
+
+
+def build_desktop_codex_concurrent_work_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AD: assemble the bounded desktop Codex-owned concurrent
+    work view. Surfaces the closed
+    `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` with per-action
+    eligibility outcomes derived from the shipped Phase 10AB ownership
+    map and the shipped Phase 10AC overlap-safe detection aggregate.
+
+    `phase_10ad_runtime_available` is hard-coded `True` in this slice
+    because `evaluate_codex_concurrent_work_eligibility(...)` is
+    shipped. The shipped surface still NEVER launches any actual
+    concurrent Codex/Claude worker.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never reads canonical artifact BODY content
+    (only ownership-map inclusion + Phase 10AC aggregate), never
+    widens the Phase 10I library-callable cap, never opens a network
+    socket. The shipped `load_loop_state(...)` validator HaltError
+    soft-fails so the surface stays operable when the controller's
+    loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_sub_phase: Optional[str] = None
+    active_cycle_count: Optional[int] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        phase_candidate = loop_state.get("phase")
+        if isinstance(phase_candidate, str):
+            active_phase = phase_candidate
+        sub_phase_candidate = loop_state.get("sub_phase")
+        if isinstance(sub_phase_candidate, str):
+            active_sub_phase = sub_phase_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            active_cycle_count = cycle_candidate
+    inputs = (
+        _desktop_codex_concurrent_work_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    ack_set = inputs["acknowledged_action_ids"]
+
+    # Consult the shipped Phase 10AC aggregate. A structural
+    # HaltError from the Phase 10AC view builder soft-fails to
+    # `overlap_state = None`. A missing / non-dict view keeps
+    # `overlap_state = None`. Any state that is not one of the two
+    # known-clean states (`no_signal` / `signal_detected`) is
+    # refused fail-closed by
+    # `_desktop_codex_concurrent_work_evaluate_eligibility(...)`,
+    # so `None` (structural HaltError / missing view) refuses every
+    # entry via the `refused_overlap_unsafe` branch and cannot
+    # advance into `eligible_bounded_execution`.
+    overlap_state: Optional[str] = None
+    try:
+        overlap_view = build_desktop_overlap_detection_view(
+            controller_root,
+        )
+    except HaltError:
+        overlap_view = None
+    if isinstance(overlap_view, dict):
+        overall = overlap_view.get("overall") or {}
+        candidate = overall.get("overall_signal_state")
+        if isinstance(candidate, str):
+            overlap_state = candidate
+
+    ownership_lookup = (
+        _desktop_codex_concurrent_work_ownership_lookup()
+    )
+    actions: list = []
+    for spec in _DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY:
+        _desktop_codex_concurrent_work_validate_descriptor(spec)
+        eligibility = (
+            _desktop_codex_concurrent_work_evaluate_eligibility(
+                spec,
+                ownership_lookup,
+                overlap_state,
+            )
+        )
+        envelope = {
+            "id": spec["id"],
+            "display_name": spec["display_name"],
+            "action_type": spec["action_type"],
+            "effect_class": spec["effect_class"],
+            "target_artifact_canonical_rel": (
+                spec["target_artifact_canonical_rel"]
+            ),
+            "expected_target_owner_role": (
+                spec["expected_target_owner_role"]
+            ),
+            "actual_target_owner_role": (
+                eligibility["actual_target_owner_role"]
+            ),
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+            "eligibility_state": (
+                eligibility["eligibility_state"]
+            ),
+            "eligibility_reason": (
+                eligibility["eligibility_reason"]
+            ),
+            "overlap_overall_state": (
+                eligibility["overlap_overall_state"]
+            ),
+            "description": spec["description"],
+            "safety_copy": spec["safety_copy"],
+            "deferred_runtime_marker": (
+                spec["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                spec["refusal_reason_template"]
+            ),
+            "operator_acknowledged": spec["id"] in ack_set,
+        }
+        actions.append(envelope)
+    eligible_ids = [
+        a["id"] for a in actions
+        if a["eligibility_state"] == "eligible_bounded_execution"
+    ]
+    refused_ids = [
+        a["id"] for a in actions
+        if a["eligibility_state"] != "eligible_bounded_execution"
+    ]
+    return {
+        "view_signal_version": (
+            DESKTOP_CODEX_CONCURRENT_WORK_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "current_loop_state_phase": active_phase,
+        "current_loop_state_sub_phase": active_sub_phase,
+        "current_loop_state_cycle_count": active_cycle_count,
+        "phase_10ad_runtime_available": True,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_action_ids": sorted(ack_set),
+        },
+        "action_types": list(CODEX_CONCURRENT_ACTION_TYPES),
+        "effect_classes": list(CODEX_CONCURRENT_EFFECT_CLASSES),
+        "eligibility_states": list(
+            CODEX_CONCURRENT_ELIGIBILITY_STATES
+        ),
+        "ownership_roles": list(CONCURRENCY_OWNERSHIP_ROLES),
+        "overlap_overall_state": overlap_state,
+        "actions": actions,
+        "eligible_action_ids": eligible_ids,
+        "refused_action_ids": refused_ids,
+        "precedence_note": (
+            DESKTOP_CODEX_CONCURRENT_WORK_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_codex_concurrent_work_text(view: dict) -> list:
+    """Phase 10AD: format the assembled Codex-owned concurrent work
+    view as text lines. Per-line attribution tags
+    (`[canonical mirror]`, `[advisory]`, `[codex-concurrent]`,
+    `[codex-owner]`, `[codex-effect]`, `[codex-eligibility]`,
+    `[codex-overlap]`, `[deferred-runtime]`, `[refused]`) keep
+    attribution consistent with the Phase 10AB / 10AC tag vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-codex-concurrent-work] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_phase: "
+        f"{view['current_loop_state_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_sub_phase: "
+        f"{view['current_loop_state_sub_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_cycle_count: "
+        f"{view['current_loop_state_cycle_count']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10ad_runtime_available (Phase "
+        f"10AD ships the ELIGIBILITY evaluation via "
+        f"`evaluate_codex_concurrent_work_eligibility(...)` "
+        f"AND a real bounded read runtime "
+        f"`perform_bounded_codex_concurrent_read(...)` that is "
+        f"invoked from `_run_normal_cycle_from_increment` for "
+        f"the shipped `codex_prd_intake_read` read-only-"
+        f"advisory action; actual concurrent Codex/Claude "
+        f"WORKER / SUBPROCESS launch is still deferred to a "
+        f"later Phase 10 slice): "
+        f"{view['phase_10ad_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [codex-overlap] overlap_overall_state (mirrored "
+        f"from the shipped Phase 10AC aggregate; drives fail-"
+        f"closed refusal across every Phase 10AD entry): "
+        f"{view['overlap_overall_state']!r}"
+    )
+    for enum_key, enum_label in (
+        (
+            "action_types",
+            "Phase 10AD action-type closed enumeration",
+        ),
+        (
+            "effect_classes",
+            "Phase 10AD effect-class closed enumeration",
+        ),
+        (
+            "eligibility_states",
+            "Phase 10AD eligibility-state closed enumeration",
+        ),
+        (
+            "ownership_roles",
+            "Phase 10AB ownership-role closed enumeration "
+            "(re-used verbatim)",
+        ),
+    ):
+        lines.append(
+            f"  [advisory] {enum_key} ({enum_label}): "
+            f"{view[enum_key]!r}"
+        )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [codex-concurrent] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / "
+        f"concurrent-work-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [codex-concurrent] operator_inputs."
+        f"acknowledged_action_ids (per-session operator-"
+        f"clicked action acknowledgement; NEVER persisted "
+        f"across sessions): "
+        f"{op_inputs.get('acknowledged_action_ids', [])!r}"
+    )
+    for action in view.get("actions", []):
+        eligibility_state = action["eligibility_state"]
+        tag = (
+            "[refused]"
+            if eligibility_state != "eligible_bounded_execution"
+            else "[codex-eligibility]"
+        )
+        lines.append(
+            f"  {tag} id={action['id']!r} "
+            f"display_name={action['display_name']!r} "
+            f"eligibility_state={eligibility_state!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{action['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{action['safety_copy']}"
+        )
+        lines.append(
+            f"    [codex-owner] target_artifact_canonical_rel="
+            f"{action['target_artifact_canonical_rel']!r} "
+            f"expected_target_owner_role="
+            f"{action['expected_target_owner_role']!r} "
+            f"actual_target_owner_role="
+            f"{action['actual_target_owner_role']!r}"
+        )
+        lines.append(
+            f"    [codex-effect] action_type="
+            f"{action['action_type']!r} effect_class="
+            f"{action['effect_class']!r} "
+            f"would_invalidate_claude_context="
+            f"{action['would_invalidate_claude_context']!r}"
+        )
+        lines.append(
+            f"    [codex-eligibility] eligibility_reason: "
+            f"{action['eligibility_reason']}"
+        )
+        lines.append(
+            f"    [codex-overlap] overlap_overall_state="
+            f"{action['overlap_overall_state']!r} "
+            f"operator_acknowledged="
+            f"{action.get('operator_acknowledged', False)!r}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{action['deferred_runtime_marker']}"
+        )
+        if eligibility_state != "eligible_bounded_execution":
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{action['refusal_reason_template']}"
+            )
+    lines.append(
+        f"[codex-concurrent] eligible_action_ids="
+        f"{view.get('eligible_action_ids', [])!r}"
+    )
+    lines.append(
+        f"[codex-concurrent] refused_action_ids="
+        f"{view.get('refused_action_ids', [])!r}"
+    )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_codex_concurrent_work_controls(view: dict) -> list:
+    """Phase 10AD: return a closed list of desktop widget descriptors.
+    COPY-PASTE ONLY (never a library-callable control) so the Phase
+    10I three-control cap is preserved exactly. Matches the Phase 10Z
+    / 10AA / 10AB / 10AC fix-cycle affordance pattern: every button
+    surfaces `enabled=True` (the click ONLY copies an operator-visible
+    eligibility acknowledgement TEMPLATE into the OS clipboard, which
+    is non-mutating) while `runtime_enabled` reflects whether the
+    shipped eligibility runtime would allow the action (True for
+    `eligible_bounded_execution`; False otherwise).
+    """
+    controls: list = []
+    for action in view.get("actions", []):
+        state = action["eligibility_state"]
+        runtime_enabled = (
+            state == "eligible_bounded_execution"
+        )
+        clipboard_payload = (
+            "# Phase 10AD Codex-owned concurrent work "
+            "eligibility acknowledgement template. Copy the "
+            "block below into a review issue / operator note "
+            "instead of dispatching the shipped runtime "
+            "eligibility helper directly.\n"
+            f"action_id: {action['id']}\n"
+            f"action_type: {action['action_type']}\n"
+            f"effect_class: {action['effect_class']}\n"
+            f"target_artifact: {action['target_artifact_canonical_rel']}\n"
+            f"expected_owner_role: {action['expected_target_owner_role']}\n"
+            f"actual_owner_role: {action['actual_target_owner_role']}\n"
+            f"would_invalidate_claude_context: {action['would_invalidate_claude_context']}\n"
+            f"eligibility_state: {state}\n"
+            f"overlap_overall_state: {action['overlap_overall_state']}\n"
+            "requested_action: acknowledge_and_review\n"
+            "operator_identity: <NAME>\n"
+        )
+        controls.append({
+            "id": action["id"],
+            "label": (
+                f"Copy Codex-concurrent-work eligibility "
+                f"template: {action['display_name']} "
+                f"[{state}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
+            "action_type": action["action_type"],
+            "effect_class": action["effect_class"],
+            "eligibility_state": state,
+            "would_invalidate_claude_context": (
+                action["would_invalidate_claude_context"]
+            ),
+            "eligibility_reason": action["eligibility_reason"],
+            "deferred_runtime_marker": (
+                action["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                action["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "codex_concurrent_work_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_codex_concurrent_work(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AD operator entry: render the desktop Codex-owned
+    concurrent work view.
+
+    Phase 7C reporter pattern: always exits 0 on report content once
+    the controller-root selection succeeds. NEVER mutates any
+    canonical artifact, NEVER appends to `.agent-loop/orchestrator.
+    log`, NEVER advances loop-state, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket, NEVER
+    reads canonical artifact BODY content, NEVER launches or
+    coordinates any actual concurrent Codex/Claude worker, NEVER
+    widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-codex-concurrent-work] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop Codex-concurrent-work "
+            "surface MUST NOT silently pick a default root "
+            "from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-codex-concurrent-work] REFUSED: "
+            f"controller root {validation['root_path']!r} is "
+            f"missing required markers {missing!r}; per the "
+            f"Phase 10L Desktop App Shell Contract the desktop "
+            f"shell requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_action_ids": frozenset(
+            getattr(args, "acknowledge_action", None) or []
+        ),
+    }
+    view = build_desktop_codex_concurrent_work_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_codex_concurrent_work_text(view):
+        print(line)
+    return 0
+
+
+def evaluate_codex_concurrent_work_eligibility(
+    repo_root: Path, action_id: str,
+) -> dict:
+    """Phase 10AD shipped bounded eligibility runtime helper.
+
+    Consults `build_desktop_codex_concurrent_work_view(...)` for
+    `repo_root`, finds the shipped registry entry whose `id` matches
+    `action_id`, and returns its eligibility envelope. Raises
+    `HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)` when
+    `action_id` is not in the shipped
+    `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` (so callers cannot
+    silently execute an unrecognized concurrent action) OR when the
+    eligibility outcome is anything other than
+    `eligible_bounded_execution` (so callers cannot silently execute
+    a refused action).
+
+    The helper is bounded per the Phase 10AD contract: it consults
+    the same registry the desktop reporter exposes; it does NOT
+    spawn a subprocess, open a network socket, launch or coordinate
+    any actual concurrent Codex/Claude worker, schedule a background
+    watcher, mutate any canonical artifact, advance loop-state past
+    the caller-owned write, or widen the Phase 10I library-callable
+    cap. If `build_desktop_codex_concurrent_work_view(...)` itself
+    raises `HaltError` for a structural descriptor failure, the raise
+    propagates so the calling runtime frame routes it through
+    `_halt(...)` per its own error-handling pattern.
+    """
+    view = build_desktop_codex_concurrent_work_view(repo_root)
+    actions = view.get("actions") or []
+    match = None
+    for action in actions:
+        if action.get("id") == action_id:
+            match = action
+            break
+    if match is None:
+        known_ids = [a.get("id") for a in actions]
+        raise HaltError(
+            HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+            (
+                f"Phase 10AD Codex-concurrent-work eligibility "
+                f"refused: action_id={action_id!r} is not a "
+                f"shipped Phase 10AD entry; the shipped closed "
+                f"registry ships exactly {known_ids!r}. "
+                f"Consult `view-desktop-codex-concurrent-work "
+                f"--controller-root <PATH>` for the per-action "
+                f"eligibility detail."
+            ),
+        )
+    state = match.get("eligibility_state")
+    if state != "eligible_bounded_execution":
+        raise HaltError(
+            HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+            (
+                f"Phase 10AD Codex-concurrent-work eligibility "
+                f"refused: action_id={action_id!r} eligibility_"
+                f"state={state!r}; {match.get('eligibility_reason')}. "
+                f"Consult `view-desktop-codex-concurrent-work "
+                f"--controller-root <PATH>` for the per-action "
+                f"eligibility detail."
+            ),
+        )
+    return match
+
+
+# Phase 10AD shipped bounded Codex-owned concurrent-read action.
+# Chosen as the first (and, in this slice, only) real bounded
+# Codex-owned action that runs concurrently with an in-flight Claude
+# implementation cycle. The action reads the shipped Codex-owned
+# canonical PRD (`TASK.md`) as a read-only advisory observation for
+# intake preparation. Read-only advisory reads are the safest class
+# of concurrent Codex work per the Phase 10AD contract: they cannot
+# mutate a Claude-owned artifact, cannot invalidate the active Claude
+# task context, and are fully bounded by the shipped Phase 10AB
+# ownership map + Phase 10AC overlap-safe detection aggregate through
+# `evaluate_codex_concurrent_work_eligibility(...)`.
+PHASE_10AD_SHIPPED_CONCURRENT_READ_ACTION_ID = "codex_prd_intake_read"
+
+
+def perform_bounded_codex_concurrent_read(
+    repo_root: Path,
+    action_id: str,
+    log_path: Optional[Path] = None,
+) -> Optional[dict]:
+    """Phase 10AD shipped bounded runtime path for a real Codex-owned
+    concurrent read while Claude is implementing.
+
+    Consults `evaluate_codex_concurrent_work_eligibility(repo_root,
+    action_id)` FIRST. If the helper raises
+    `HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)` (unknown
+    action_id OR refused eligibility outcome), the caller-observable
+    result is a best-effort refusal log line + return `None`. The
+    calling frame's Claude implementation cycle is NEVER halted by a
+    refused advisory read: refusal skips the concurrent read but
+    leaves the caller free to continue its own work.
+
+    The helper is bounded per the Phase 10AD contract:
+      - `effect_class` MUST be `read_only_advisory`; any other
+        effect_class refuses fail-closed via `HaltError(HALTED_CODEX_
+        CONCURRENT_WORK_UNSAFE, ...)` (widening guard: the shipped
+        Phase 10AD slice never actually performs a
+        `codex_owned_write` or `codex_owned_write_invalidates_claude`
+        effect through this path).
+      - The read is bounded to the shipped canonical target
+        artifact resolved from the descriptor's
+        `target_artifact_canonical_rel`; the helper NEVER writes,
+        NEVER mutates, NEVER spawns a subprocess, NEVER opens a
+        network socket, NEVER schedules a background watcher,
+        NEVER launches or coordinates any actual concurrent
+        Codex/Claude worker, NEVER advances loop-state past the
+        caller-owned write, and NEVER widens the Phase 10I library-
+        callable cap.
+      - The audit log line is a best-effort append to the
+        orchestrator log via `_log_note(...)`; a write failure is
+        swallowed (per the shipped contract that the orchestrator
+        log is optional and never authoritative).
+
+    Returns a bounded observation envelope on success:
+      `{action_id, target_artifact_canonical_rel, bytes_read,
+        modified_utc, eligibility_state, eligibility_reason}`
+    or `None` when eligibility refused.
+    """
+    try:
+        eligibility_envelope = (
+            evaluate_codex_concurrent_work_eligibility(
+                repo_root, action_id,
+            )
+        )
+    except HaltError as halt:
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"refused: action_id={action_id!r} status="
+                f"{halt.status!r} reason={halt.reason!r}"
+            ),
+        )
+        return None
+
+    effect_class = eligibility_envelope.get("effect_class")
+    if effect_class != "read_only_advisory":
+        raise HaltError(
+            HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+            (
+                f"Phase 10AD bounded Codex-owned concurrent read "
+                f"refused: action_id={action_id!r} has effect_class="
+                f"{effect_class!r}; the shipped bounded concurrent-"
+                f"read runtime path only executes effect_class="
+                f"'read_only_advisory' actions. Any other effect "
+                f"class is refused fail-closed to preserve the "
+                f"widening guard."
+            ),
+        )
+
+    target_rel = eligibility_envelope.get(
+        "target_artifact_canonical_rel",
+    )
+    target_path = repo_root / target_rel
+    if not target_path.is_file():
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"skipped: action_id={action_id!r} target={target_rel!r} "
+                f"is not present on disk"
+            ),
+        )
+        return None
+    try:
+        body_bytes = target_path.read_bytes()
+    except OSError as exc:
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"skipped: action_id={action_id!r} target={target_rel!r} "
+                f"OSError={exc!r}"
+            ),
+        )
+        return None
+    try:
+        mtime_ts = target_path.stat().st_mtime
+        modified_utc = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime_ts),
+        )
+    except OSError:
+        modified_utc = None
+
+    observation = {
+        "action_id": action_id,
+        "target_artifact_canonical_rel": target_rel,
+        "bytes_read": len(body_bytes),
+        "modified_utc": modified_utc,
+        "eligibility_state": (
+            eligibility_envelope.get("eligibility_state")
+        ),
+        "eligibility_reason": (
+            eligibility_envelope.get("eligibility_reason")
+        ),
+    }
+    _log_note(
+        log_path,
+        (
+            f"[phase-10ad] bounded Codex-owned concurrent read "
+            f"executed: action_id={action_id!r} target={target_rel!r} "
+            f"bytes_read={observation['bytes_read']} "
+            f"modified_utc={modified_utc!r}"
+        ),
+    )
+    return observation
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AE - Framework Evaluation Beyond The Native Loop.
+#
+# Bounded evaluation-only slice that compares the shipped native
+# Codex/Claude loop against three named delegated-role frameworks
+# (`crewai`, `langgraph`, `langchain`) across a closed set of
+# evaluation criteria. Every framework verdict is a closed enumeration;
+# every criterion is validated fail-closed against a closed descriptor
+# shape; every criterion carries per-framework verdicts + reasons plus
+# an explicit `native_loop_status` classification (shipped-boundary /
+# native-loop-strength / framework-leverage-opportunity).
+#
+# The shipped surface is EVALUATION-ONLY. It NEVER swaps any framework
+# into the shipped runtime, NEVER imports crewai / langgraph /
+# langchain at surface build time, NEVER spawns a subprocess, NEVER
+# opens a network socket, NEVER schedules a background watcher, NEVER
+# mutates any canonical artifact, NEVER advances loop-state, NEVER
+# invokes `_halt(...)`, NEVER widens the Phase 10I library-callable
+# cap. `phase_10ae_runtime_available` is hard-coded `False` in this
+# slice because no framework runtime is shipped; the surface produces
+# the evaluation view + reporter + copy-paste controls only.
+# ---------------------------------------------------------------------------
+
+DESKTOP_FRAMEWORK_EVALUATION_SIGNAL_VERSION = "phase-10ae-v1"
+
+DESKTOP_FRAMEWORK_EVALUATION_PRECEDENCE_NOTE = (
+    "Phase 10AE Framework Evaluation Beyond The Native Loop initial "
+    "slice. Compares the shipped native Codex/Claude loop against "
+    "three named delegated-role frameworks (`crewai`, `langgraph`, "
+    "`langchain`) across a closed set of criteria. Every framework "
+    "verdict is drawn from the closed "
+    "`FRAMEWORK_EVALUATION_VERDICTS` enumeration and every criterion "
+    "is classified against the closed `FRAMEWORK_EVALUATION_NATIVE_"
+    "LOOP_STATUSES` enumeration so the reviewer can see at a glance "
+    "which shipped boundaries are preserved, where a framework could "
+    "help within bounded scope, and what remains native-loop-only. "
+    "`phase_10ae_runtime_available` is hard-coded `False` in this "
+    "slice because no framework runtime is shipped; the shipped "
+    "surface is EVALUATION-ONLY (view + reporter + copy-paste "
+    "controls). Any attempted framework-runtime dispatch through this "
+    "surface is REFUSED at the runtime helper via `HaltError(HALTED_"
+    "FRAMEWORK_EVALUATION_UNSAFE, ...)`. The shipped Phase 10L "
+    "desktop-app contract, Phase 3A orchestrator contract, Phase 4 "
+    "planner / activator separation, Phase 5A/5C/5D approval-mode "
+    "contract, Phase 2A/2B evidence-review pipeline, Phase 6M runtime-"
+    "adapter contract, and Phase 10Z / 10AA / 10AB / 10AC / 10AD "
+    "copy-only affordance pattern govern this surface's ownership "
+    "rule verbatim. The Phase 10I three-control library-callable cap "
+    "is preserved exactly; ZERO new library-callable controls are "
+    "introduced. This slice NEVER swaps the shipped runtime for a "
+    "framework runtime, NEVER imports crewai / langgraph / langchain "
+    "at surface build time, NEVER mutates any canonical artifact, "
+    "NEVER appends to `.agent-loop/orchestrator.log`, NEVER advances "
+    "loop-state, NEVER launches or coordinates any delegated-worker "
+    "runtime, NEVER opens a network socket, NEVER spawns a "
+    "subprocess, NEVER schedules a background watcher, NEVER auto-"
+    "fills any --*-by operator-identity argument, and NEVER "
+    "introduces a framework-side database / preference store / "
+    "recents list / identity token / session token"
+)
+
+# Phase 10AE runtime refusal status: an evaluation-only surface must
+# never dispatch a framework runtime through a caller that mistakenly
+# assumes eligibility. The shipped
+# `evaluate_framework_runtime_availability(...)` helper raises
+# `HaltError(HALTED_FRAMEWORK_EVALUATION_UNSAFE, ...)` on any framework
+# id that is not the shipped native loop OR on any request that
+# expects a shipped framework runtime (there isn't one in this
+# slice).
+HALTED_FRAMEWORK_EVALUATION_UNSAFE = (
+    "halted_framework_evaluation_unsafe"
+)
+
+# Closed framework-id vocabulary. `native_loop` = the shipped
+# Codex/Claude native loop (`scripts/agent_loop.py`). `crewai` =
+# CrewAI multi-role delegation framework. `langgraph` = LangGraph
+# structured state-graph execution framework. `langchain` =
+# LangChain prompt / tool orchestration framework.
+FRAMEWORK_EVALUATION_FRAMEWORK_IDS = (
+    "native_loop",
+    "crewai",
+    "langgraph",
+    "langchain",
+)
+
+# Closed criterion-category vocabulary. `shipped_boundary_
+# preservation` = criterion evaluates whether each framework
+# preserves a shipped boundary contract (ownership / approval /
+# evidence / overlap-safety / canonical-artifact-first). `native_
+# loop_strength` = criterion where the shipped native loop is the
+# preferred implementation and the framework alternatives are
+# evaluated against that baseline. `framework_leverage_opportunity`
+# = criterion where a framework MAY offer bounded leverage the
+# shipped native loop does not already ship.
+FRAMEWORK_EVALUATION_CRITERION_CATEGORIES = (
+    "shipped_boundary_preservation",
+    "native_loop_strength",
+    "framework_leverage_opportunity",
+)
+
+# Closed verdict vocabulary. `preserves_shipped_boundary` = the
+# framework preserves the shipped boundary the criterion evaluates.
+# `could_help_bounded` = the framework could add bounded leverage
+# within the shipped boundaries (only ever valid when the criterion
+# category is `framework_leverage_opportunity` OR the shipped
+# boundary is preserved). `would_conflict_with_shipped_boundary` =
+# adopting the framework here would conflict with the shipped
+# boundary. `native_loop_only` = the shipped native loop is the
+# preferred implementation for this criterion. `not_applicable` =
+# the criterion does not apply to this framework.
+FRAMEWORK_EVALUATION_VERDICTS = (
+    "preserves_shipped_boundary",
+    "could_help_bounded",
+    "would_conflict_with_shipped_boundary",
+    "native_loop_only",
+    "not_applicable",
+)
+
+# Closed native-loop-status vocabulary applied to every criterion so
+# a reviewer can see at a glance which shipped boundaries are
+# preserved, where a framework could help within bounded scope, and
+# what remains native-loop-only.
+FRAMEWORK_EVALUATION_NATIVE_LOOP_STATUSES = (
+    "shipped_boundary_preserved",
+    "native_loop_only",
+    "framework_leverage_opportunity_bounded",
+)
+
+_FRAMEWORK_EVALUATION_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "criterion_category",
+    "native_loop_status",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+
+def _desktop_framework_evaluation_validate_descriptor(
+    spec: dict,
+) -> None:
+    """Phase 10AE closed descriptor validator. Refuses fail-closed
+    via HaltError on any missing required field, wrong-typed value,
+    unknown `criterion_category`, unknown `native_loop_status`,
+    non-tuple `framework_verdicts`, `framework_verdicts` that omits
+    or duplicates a shipped `FRAMEWORK_EVALUATION_FRAMEWORK_IDS`
+    member, a framework_verdict whose `framework_id` is not in the
+    closed enum, or a framework_verdict whose `verdict` is not in
+    `FRAMEWORK_EVALUATION_VERDICTS`.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: descriptor "
+                f"must be a dict, got {spec!r}"
+            ),
+        )
+    for field in _FRAMEWORK_EVALUATION_REQUIRED_STRING_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"descriptor field {field!r} must be a non-"
+                    f"empty str, got {value!r}"
+                ),
+            )
+    if (
+        spec["criterion_category"]
+        not in FRAMEWORK_EVALUATION_CRITERION_CATEGORIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"unknown criterion_category "
+                f"{spec['criterion_category']!r}"
+            ),
+        )
+    if (
+        spec["native_loop_status"]
+        not in FRAMEWORK_EVALUATION_NATIVE_LOOP_STATUSES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"unknown native_loop_status "
+                f"{spec['native_loop_status']!r}"
+            ),
+        )
+    verdicts = spec.get("framework_verdicts")
+    if not isinstance(verdicts, tuple):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"framework_verdicts must be a tuple, got "
+                f"{verdicts!r}"
+            ),
+        )
+    seen_ids: list = []
+    for entry in verdicts:
+        if not isinstance(entry, dict):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdicts member must be a dict, "
+                    f"got {entry!r}"
+                ),
+            )
+        fid = entry.get("framework_id")
+        if fid not in FRAMEWORK_EVALUATION_FRAMEWORK_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdict.framework_id "
+                    f"{fid!r} is not in the shipped closed "
+                    f"enumeration "
+                    f"{FRAMEWORK_EVALUATION_FRAMEWORK_IDS!r}"
+                ),
+            )
+        if fid in seen_ids:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdicts contains duplicate "
+                    f"framework_id {fid!r}"
+                ),
+            )
+        seen_ids.append(fid)
+        verdict = entry.get("verdict")
+        if verdict not in FRAMEWORK_EVALUATION_VERDICTS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdict.verdict {verdict!r} "
+                    f"for framework_id {fid!r} is not in the "
+                    f"shipped closed enumeration "
+                    f"{FRAMEWORK_EVALUATION_VERDICTS!r}"
+                ),
+            )
+        reason = entry.get("reason")
+        if not isinstance(reason, str) or not reason:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdict.reason for framework_id "
+                    f"{fid!r} must be a non-empty str, got "
+                    f"{reason!r}"
+                ),
+            )
+    if set(seen_ids) != set(FRAMEWORK_EVALUATION_FRAMEWORK_IDS):
+        missing = (
+            set(FRAMEWORK_EVALUATION_FRAMEWORK_IDS) - set(seen_ids)
+        )
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"framework_verdicts omits shipped framework_ids "
+                f"{sorted(missing)!r}"
+            ),
+        )
+
+
+_DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
+    {
+        "id": "codex_claude_ownership_boundary_preservation",
+        "display_name": (
+            "Codex/Claude ownership boundary preservation"
+        ),
+        "criterion_category": "shipped_boundary_preservation",
+        "native_loop_status": "shipped_boundary_preserved",
+        "description": (
+            "The shipped Phase 10AB / 10AC / 10AD contract "
+            "assigns every canonical artifact to exactly one "
+            "closed owner_role and refuses fail-closed on any "
+            "attempted role violation. Any framework layer "
+            "adopted here MUST preserve that ownership boundary "
+            "instead of routing writes through a delegated-role "
+            "worker."
+        ),
+        "safety_copy": (
+            "Ownership boundary preservation is a hard "
+            "invariant; a framework that lets a delegated "
+            "worker silently mutate a Claude-owned or "
+            "orchestrator-owned artifact would violate the "
+            "shipped Phase 10AB rule."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop already enforces "
+                    "the Phase 10AB ownership map verbatim in "
+                    "`_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` and "
+                    "refuses fail-closed via "
+                    "`_desktop_codex_concurrent_work_evaluate_"
+                    "eligibility(...)` step 2."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "CrewAI's default multi-role delegation "
+                    "assigns tasks across a crew whose per-role "
+                    "write access is not natively expressed as "
+                    "a closed owner_role map; adopting it here "
+                    "without an explicit boundary shim would "
+                    "let a delegated role silently mutate "
+                    "Claude-owned implementation artifacts."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "LangGraph's structured state-graph model "
+                    "can encode a per-node write allowlist that "
+                    "mirrors the shipped ownership map, but the "
+                    "shim is a NEW abstraction on top of the "
+                    "shipped Phase 10AB contract and must ship "
+                    "with the same fail-closed default."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangChain is a prompt / tool orchestration "
+                    "toolchain rather than a role-delegation "
+                    "runtime; it does not directly propose an "
+                    "alternate ownership boundary."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; no "
+            "framework runtime is imported / dispatched. The "
+            "shipped Phase 10AB ownership map remains the sole "
+            "source of truth for owner_role enforcement."
+        ),
+        "refusal_reason_template": (
+            "`codex_claude_ownership_boundary_preservation` "
+            "refused: consult `view-desktop-framework-"
+            "evaluation --controller-root <PATH>` for the per-"
+            "framework verdict detail."
+        ),
+    },
+    {
+        "id": "approval_mode_gating_preservation",
+        "display_name": (
+            "Approval-mode gating preservation (Phase 5A/5C/5D)"
+        ),
+        "criterion_category": "shipped_boundary_preservation",
+        "native_loop_status": "shipped_boundary_preserved",
+        "description": (
+            "The shipped `review` / `strict` / `autonomous` "
+            "approval modes gate every cycle at explicit "
+            "shipped points. A framework layer here MUST "
+            "preserve those gates rather than silently bypass "
+            "them with a delegated auto-approve worker."
+        ),
+        "safety_copy": (
+            "Approval-mode gating is human-facing; a framework "
+            "that dispatches work without honouring the "
+            "shipped strict-mode gate would silently regress "
+            "Phase 5C."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop already routes "
+                    "every gate through "
+                    "`_fire_strict_gate(...)` / "
+                    "`_log_autonomous_bypass(...)` and refuses "
+                    "advance without explicit resume."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "CrewAI's default sequential-task runner "
+                    "assumes each task advances the moment its "
+                    "worker returns; wiring it in without an "
+                    "explicit approval-gate shim would bypass "
+                    "the shipped strict-mode pause."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "LangGraph's node-level conditional edges "
+                    "can encode the shipped approval-mode "
+                    "gates as explicit pause nodes, but only "
+                    "as an evaluation shim; adopting it "
+                    "wholesale would still require the "
+                    "shipped strict-mode contract to remain "
+                    "the source of truth."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangChain does not natively model an "
+                    "approval-mode gate; the shipped gate "
+                    "layer must remain outside of the "
+                    "framework."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; no "
+            "framework runtime is imported / dispatched. The "
+            "shipped Phase 5A approval-mode contract remains "
+            "the sole source of truth for gate enforcement."
+        ),
+        "refusal_reason_template": (
+            "`approval_mode_gating_preservation` refused: "
+            "consult `view-desktop-framework-evaluation "
+            "--controller-root <PATH>` for the per-framework "
+            "verdict detail."
+        ),
+    },
+    {
+        "id": "evidence_review_pipeline_preservation",
+        "display_name": (
+            "Evidence review pipeline preservation "
+            "(Phase 2A/2B)"
+        ),
+        "criterion_category": "shipped_boundary_preservation",
+        "native_loop_status": "shipped_boundary_preserved",
+        "description": (
+            "The shipped Phase 2A evidence collection contract "
+            "and Phase 2B `scripts/run_checks.sh` runner "
+            "define the evidence bundle that every cycle must "
+            "produce before Codex review. A framework layer "
+            "here MUST NOT hide or synthesize evidence."
+        ),
+        "safety_copy": (
+            "Evidence artifacts are the source of truth for "
+            "review; a framework layer that lets a delegated "
+            "worker synthesize a passing evidence file would "
+            "silently break the shipped review contract."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop calls "
+                    "`invoke_run_checks(...)` and "
+                    "`validate_evidence_files(...)` verbatim "
+                    "before the Codex review step; the "
+                    "evidence bundle is written by "
+                    "`scripts/run_checks.sh` which is "
+                    "explicitly Phase 2B-frozen."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": "native_loop_only",
+                "reason": (
+                    "The shipped evidence contract is "
+                    "orchestrator-owned and script-driven; "
+                    "there is no CrewAI abstraction that "
+                    "improves on the shipped evidence "
+                    "pipeline. It remains native-loop-only."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "native_loop_only",
+                "reason": (
+                    "LangGraph state graphs would add "
+                    "orchestration overhead without "
+                    "improving the shipped evidence bundle; "
+                    "the Phase 2A contract stays "
+                    "native-loop-only."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "native_loop_only",
+                "reason": (
+                    "LangChain does not natively express a "
+                    "structured evidence bundle; the shipped "
+                    "Phase 2A contract remains "
+                    "native-loop-only."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; the "
+            "shipped Phase 2A evidence contract and Phase 2B "
+            "`scripts/run_checks.sh` runner remain the sole "
+            "source of truth for the evidence bundle."
+        ),
+        "refusal_reason_template": (
+            "`evidence_review_pipeline_preservation` refused: "
+            "consult `view-desktop-framework-evaluation "
+            "--controller-root <PATH>` for the per-framework "
+            "verdict detail."
+        ),
+    },
+    {
+        "id": "canonical_artifact_first_source_of_truth",
+        "display_name": (
+            "Canonical-artifact-first source-of-truth model"
+        ),
+        "criterion_category": "shipped_boundary_preservation",
+        "native_loop_status": "shipped_boundary_preserved",
+        "description": (
+            "The shipped model treats `.agent-loop/loop-state."
+            "json` plus the shipped canonical artifacts "
+            "(claude-summary.md / codex-review.md / current-"
+            "phase.md / current-task.md / claude-prompt.md / "
+            "fix-prompt.md) as the sole source of truth. A "
+            "framework layer here MUST NOT introduce a "
+            "competing memory / state store."
+        ),
+        "safety_copy": (
+            "A framework-side in-memory store that shadows "
+            "loop-state.json would produce a hidden competing "
+            "source of truth; the shipped source-of-truth rule "
+            "is non-negotiable."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop reads and writes "
+                    "loop-state.json through `load_loop_state("
+                    "...)` and `save_loop_state(...)`; the "
+                    "canonical artifacts are the sole source "
+                    "of truth."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "CrewAI's per-crew short-term memory + "
+                    "shared context would silently duplicate "
+                    "loop-state semantics unless every access "
+                    "is proxied through the shipped canonical "
+                    "artifacts."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "LangGraph's `State` object could be "
+                    "configured to read / write ONLY through "
+                    "the shipped canonical artifacts, but the "
+                    "shipped source-of-truth rule remains the "
+                    "authority."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "LangChain memory objects "
+                    "(ConversationBufferMemory, VectorStore-"
+                    "backed memory) explicitly persist state "
+                    "outside the shipped canonical artifacts; "
+                    "adopting them wholesale would introduce a "
+                    "competing memory source."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; the "
+            "shipped canonical artifacts remain the sole "
+            "source of truth."
+        ),
+        "refusal_reason_template": (
+            "`canonical_artifact_first_source_of_truth` "
+            "refused: consult `view-desktop-framework-"
+            "evaluation --controller-root <PATH>` for the per-"
+            "framework verdict detail."
+        ),
+    },
+    {
+        "id": "overlap_safe_detection_gate_preservation",
+        "display_name": (
+            "Overlap-safe detection gate preservation "
+            "(Phase 10AC)"
+        ),
+        "criterion_category": "shipped_boundary_preservation",
+        "native_loop_status": "shipped_boundary_preserved",
+        "description": (
+            "The shipped Phase 10AC "
+            "`enforce_overlap_safe_runtime_gate(...)` refuses "
+            "fail-closed on a `refused_pending_recovery` "
+            "aggregate. A framework layer here MUST NOT "
+            "silently bypass this gate."
+        ),
+        "safety_copy": (
+            "The overlap-safe detection gate is the shipped "
+            "concurrency safety net; a framework layer that "
+            "sidesteps it would silently regress Phase 10AC."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop calls "
+                    "`enforce_overlap_safe_runtime_gate(...)` "
+                    "at the pre-Codex-review step 8b."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "CrewAI's parallel-task runner would need "
+                    "an explicit shim to consult the shipped "
+                    "gate before every worker dispatch."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "A LangGraph conditional edge could gate "
+                    "every transition on the shipped Phase "
+                    "10AC aggregate, but only as an "
+                    "evaluation shim; the shipped gate "
+                    "remains the authority."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangChain does not model a concurrent "
+                    "worker runtime, so the overlap-safe "
+                    "detection gate does not apply to it "
+                    "directly."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; the "
+            "shipped Phase 10AC gate "
+            "(`enforce_overlap_safe_runtime_gate(...)`) "
+            "remains the sole overlap-safety runtime path."
+        ),
+        "refusal_reason_template": (
+            "`overlap_safe_detection_gate_preservation` "
+            "refused: consult `view-desktop-framework-"
+            "evaluation --controller-root <PATH>` for the "
+            "per-framework verdict detail."
+        ),
+    },
+    {
+        "id": "desktop_ui_read_only_reporter_preservation",
+        "display_name": (
+            "Desktop UI read-only reporter preservation "
+            "(Phase 10L/10M)"
+        ),
+        "criterion_category": "shipped_boundary_preservation",
+        "native_loop_status": "shipped_boundary_preserved",
+        "description": (
+            "The shipped Phase 10L / 10M contract makes the "
+            "desktop app a read-only reporter that never "
+            "mutates a canonical artifact and never dispatches "
+            "a library-callable control beyond the Phase 10I "
+            "three-control cap."
+        ),
+        "safety_copy": (
+            "A framework layer that dispatches library-callable "
+            "controls beyond the shipped cap would silently "
+            "regress Phase 10I."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped desktop app already ships the "
+                    "Phase 10I cap and every Phase 10Q+ button "
+                    "is copy-paste only."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": "not_applicable",
+                "reason": (
+                    "CrewAI does not ship a desktop UI; it "
+                    "does not affect the shipped Phase 10L "
+                    "contract directly."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangGraph does not ship a desktop UI; it "
+                    "does not affect the shipped Phase 10L "
+                    "contract directly."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangChain does not ship a desktop UI; it "
+                    "does not affect the shipped Phase 10L "
+                    "contract directly."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; the "
+            "shipped Phase 10L/10M contract remains the sole "
+            "source of truth for desktop UI behavior."
+        ),
+        "refusal_reason_template": (
+            "`desktop_ui_read_only_reporter_preservation` "
+            "refused: consult `view-desktop-framework-"
+            "evaluation --controller-root <PATH>` for the "
+            "per-framework verdict detail."
+        ),
+    },
+    {
+        "id": "diff_and_evidence_first_review",
+        "display_name": (
+            "Diff-first + evidence-first Codex review flow"
+        ),
+        "criterion_category": "native_loop_strength",
+        "native_loop_status": "native_loop_only",
+        "description": (
+            "The shipped Codex review reads the actual git "
+            "diff + shipped evidence bundle rather than "
+            "trusting a summary. This is a native-loop "
+            "strength worth preserving."
+        ),
+        "safety_copy": (
+            "Framework abstractions that hide the raw diff / "
+            "evidence bundle would regress the shipped review "
+            "quality."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped `.agent-loop/git-diff.patch` "
+                    "+ `.agent-loop/*.log` bundle is the "
+                    "review substrate."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": "native_loop_only",
+                "reason": (
+                    "CrewAI would add a delegated-role wrapper "
+                    "without improving the raw diff / evidence "
+                    "review; the shipped flow stays native-"
+                    "loop-only."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "native_loop_only",
+                "reason": (
+                    "LangGraph would add graph orchestration "
+                    "overhead without improving the diff / "
+                    "evidence review; the shipped flow stays "
+                    "native-loop-only."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "native_loop_only",
+                "reason": (
+                    "LangChain prompt chaining would add a "
+                    "layer without improving the diff / "
+                    "evidence review; the shipped flow stays "
+                    "native-loop-only."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; the "
+            "shipped diff-first review flow remains the sole "
+            "review substrate."
+        ),
+        "refusal_reason_template": (
+            "`diff_and_evidence_first_review` refused: consult "
+            "`view-desktop-framework-evaluation --controller-"
+            "root <PATH>` for the per-framework verdict "
+            "detail."
+        ),
+    },
+    {
+        "id": "structured_state_graph_orchestration",
+        "display_name": (
+            "Structured state-graph orchestration leverage"
+        ),
+        "criterion_category": "framework_leverage_opportunity",
+        "native_loop_status": (
+            "framework_leverage_opportunity_bounded"
+        ),
+        "description": (
+            "A structured state-graph model (LangGraph-style "
+            "nodes + conditional edges) can make the shipped "
+            "cycle's transition points explicit and testable "
+            "as data. This is a bounded framework-leverage "
+            "opportunity: it does NOT replace the shipped "
+            "runtime but could formalize the transition "
+            "topology for future review tooling."
+        ),
+        "safety_copy": (
+            "Framework leverage here is bounded to visualising "
+            "the shipped transition topology; it MUST NOT "
+            "become a competing runtime."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop already ships "
+                    "the transition topology as executable "
+                    "Python; a state-graph representation is "
+                    "a documentation / testing aid, not a "
+                    "replacement."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": "not_applicable",
+                "reason": (
+                    "CrewAI's crew-role model does not map "
+                    "cleanly onto the shipped single-loop "
+                    "transition topology."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "LangGraph's state-graph primitives could "
+                    "encode the shipped cycle transitions "
+                    "explicitly for review / test tooling "
+                    "while the shipped Python runtime remains "
+                    "authoritative."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangChain's chain primitives do not "
+                    "model a cycle transition graph "
+                    "directly."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; any "
+            "future state-graph representation would be a "
+            "bounded documentation / testing aid, never a "
+            "replacement runtime."
+        ),
+        "refusal_reason_template": (
+            "`structured_state_graph_orchestration` refused: "
+            "consult `view-desktop-framework-evaluation "
+            "--controller-root <PATH>` for the per-framework "
+            "verdict detail."
+        ),
+    },
+    {
+        "id": "delegated_role_worker_coordination",
+        "display_name": (
+            "Delegated-role worker coordination leverage"
+        ),
+        "criterion_category": "framework_leverage_opportunity",
+        "native_loop_status": (
+            "framework_leverage_opportunity_bounded"
+        ),
+        "description": (
+            "A multi-role delegation model (CrewAI-style crew "
+            "with per-role specialization) is a natural "
+            "abstraction for coordinating multiple LLM roles. "
+            "In the shipped model, however, the Codex / Claude "
+            "role boundary is already explicit and the "
+            "delegated-role runtime would compete with the "
+            "shipped Phase 3A orchestrator contract."
+        ),
+        "safety_copy": (
+            "Delegated-role runtimes are attractive but "
+            "conflict with the shipped Codex/Claude role "
+            "boundary; framework leverage here is BOUNDED to "
+            "evaluation / documentation."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped Phase 3A orchestrator "
+                    "contract already assigns the Codex vs "
+                    "Claude roles explicitly."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "CrewAI could formalize the shipped role "
+                    "boundary as a two-role crew for "
+                    "documentation / diagram purposes, but "
+                    "adopting its runtime would compete with "
+                    "the shipped orchestrator contract."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "LangGraph's per-node agent invocation "
+                    "would push role assignment into graph "
+                    "structure rather than the shipped "
+                    "explicit Phase 3A role contract."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": (
+                    "would_conflict_with_shipped_boundary"
+                ),
+                "reason": (
+                    "LangChain's Agent / AgentExecutor model "
+                    "assumes a single agent with tools rather "
+                    "than an explicit Codex/Claude role "
+                    "split."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; any "
+            "future delegated-role diagram would be a bounded "
+            "documentation aid."
+        ),
+        "refusal_reason_template": (
+            "`delegated_role_worker_coordination` refused: "
+            "consult `view-desktop-framework-evaluation "
+            "--controller-root <PATH>` for the per-framework "
+            "verdict detail."
+        ),
+    },
+    {
+        "id": "prompt_and_tool_orchestration_leverage",
+        "display_name": (
+            "Prompt and tool orchestration leverage"
+        ),
+        "criterion_category": "framework_leverage_opportunity",
+        "native_loop_status": (
+            "framework_leverage_opportunity_bounded"
+        ),
+        "description": (
+            "Prompt / tool orchestration primitives "
+            "(LangChain-style chains + tool binding) are a "
+            "mature abstraction for LLM tool use. In the "
+            "shipped model prompts are canonical artifacts and "
+            "tool use is scoped to the shipped MCP / Phase "
+            "10O-10U contracts; framework leverage here is "
+            "BOUNDED to evaluation."
+        ),
+        "safety_copy": (
+            "Prompt-orchestration frameworks are useful in "
+            "isolation but bounded by the shipped canonical-"
+            "artifact + MCP contracts."
+        ),
+        "framework_verdicts": (
+            {
+                "framework_id": "native_loop",
+                "verdict": "preserves_shipped_boundary",
+                "reason": (
+                    "The shipped native loop already treats "
+                    "`.agent-loop/claude-prompt.md` and "
+                    "`.agent-loop/fix-prompt.md` as canonical "
+                    "artifacts and gates tool use through the "
+                    "shipped MCP contracts."
+                ),
+            },
+            {
+                "framework_id": "crewai",
+                "verdict": "not_applicable",
+                "reason": (
+                    "CrewAI focuses on role delegation rather "
+                    "than prompt / tool orchestration."
+                ),
+            },
+            {
+                "framework_id": "langgraph",
+                "verdict": "not_applicable",
+                "reason": (
+                    "LangGraph focuses on state-graph "
+                    "orchestration rather than prompt / tool "
+                    "orchestration."
+                ),
+            },
+            {
+                "framework_id": "langchain",
+                "verdict": "could_help_bounded",
+                "reason": (
+                    "LangChain's Chain + Tool primitives "
+                    "could model a Codex / Claude adapter "
+                    "chain for future evaluation, but the "
+                    "shipped canonical-artifact prompt model "
+                    "remains the source of truth."
+                ),
+            },
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AE ships the EVALUATION view only; the "
+            "shipped MCP contracts + canonical-artifact "
+            "prompts remain the sole source of truth for "
+            "prompt / tool orchestration."
+        ),
+        "refusal_reason_template": (
+            "`prompt_and_tool_orchestration_leverage` "
+            "refused: consult `view-desktop-framework-"
+            "evaluation --controller-root <PATH>` for the "
+            "per-framework verdict detail."
+        ),
+    },
+)
+
+
+def _desktop_framework_evaluation_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Phase 10AE operator-input normalizer. Accepts a `{identity,
+    acknowledged_criterion_ids}` dict (both optional) and normalizes
+    to an ordered pair. Refuses fail-closed via HaltError on a non-
+    dict / wrong-typed value.
+    """
+    if operator_inputs is None:
+        return {
+            "identity": "",
+            "acknowledged_criterion_ids": frozenset(),
+        }
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"operator_inputs must be a dict, got "
+                f"{operator_inputs!r}"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"operator_inputs.identity must be a str, got "
+                f"{identity!r}"
+            ),
+        )
+    acknowledged_raw = operator_inputs.get(
+        "acknowledged_criterion_ids", (),
+    )
+    if acknowledged_raw is None:
+        acknowledged_raw = ()
+    try:
+        acknowledged = frozenset(acknowledged_raw)
+    except TypeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: "
+                f"operator_inputs.acknowledged_criterion_ids "
+                f"must be iterable of str: "
+                f"{acknowledged_raw!r} ({exc})"
+            ),
+        )
+    for value in acknowledged:
+        if not isinstance(value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"operator_inputs.acknowledged_criterion_"
+                    f"ids member is not a str: {value!r}"
+                ),
+            )
+    return {
+        "identity": identity,
+        "acknowledged_criterion_ids": acknowledged,
+    }
+
+
+def build_desktop_framework_evaluation_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AE: assemble the bounded framework-evaluation view.
+
+    Surfaces the closed `_DESKTOP_FRAMEWORK_EVALUATION_REGISTRY`
+    with per-criterion per-framework verdicts. Every registry entry
+    is validated against the closed descriptor shape and refused
+    fail-closed on any structural drift.
+
+    `phase_10ae_runtime_available` is hard-coded `False` in this
+    slice because no framework runtime is shipped; the surface is
+    EVALUATION-ONLY (view + reporter + copy-paste controls). Any
+    attempted framework-runtime dispatch through this surface is
+    refused fail-closed via the shipped
+    `evaluate_framework_runtime_availability(...)` helper.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never imports crewai / langgraph /
+    langchain at surface build time, never opens a network socket.
+    The shipped `load_loop_state(...)` validator HaltError soft-
+    fails so the surface stays operable when the controller's loop-
+    state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_sub_phase: Optional[str] = None
+    active_cycle_count: Optional[int] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        phase_candidate = loop_state.get("phase")
+        if isinstance(phase_candidate, str):
+            active_phase = phase_candidate
+        sub_phase_candidate = loop_state.get("sub_phase")
+        if isinstance(sub_phase_candidate, str):
+            active_sub_phase = sub_phase_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            active_cycle_count = cycle_candidate
+    inputs = (
+        _desktop_framework_evaluation_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    ack_set = inputs["acknowledged_criterion_ids"]
+    criteria: list = []
+    verdict_summary_counts: dict = {
+        fid: {v: 0 for v in FRAMEWORK_EVALUATION_VERDICTS}
+        for fid in FRAMEWORK_EVALUATION_FRAMEWORK_IDS
+    }
+    for spec in _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY:
+        _desktop_framework_evaluation_validate_descriptor(spec)
+        per_framework: list = []
+        for entry in spec["framework_verdicts"]:
+            per_framework.append({
+                "framework_id": entry["framework_id"],
+                "verdict": entry["verdict"],
+                "reason": entry["reason"],
+            })
+            verdict_summary_counts[entry["framework_id"]][
+                entry["verdict"]
+            ] += 1
+        criteria.append({
+            "id": spec["id"],
+            "display_name": spec["display_name"],
+            "criterion_category": spec["criterion_category"],
+            "native_loop_status": spec["native_loop_status"],
+            "description": spec["description"],
+            "safety_copy": spec["safety_copy"],
+            "framework_verdicts": per_framework,
+            "deferred_runtime_marker": (
+                spec["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                spec["refusal_reason_template"]
+            ),
+            "operator_acknowledged": spec["id"] in ack_set,
+        })
+    verdict_summary = {
+        fid: dict(counts)
+        for fid, counts in verdict_summary_counts.items()
+    }
+    return {
+        "view_signal_version": (
+            DESKTOP_FRAMEWORK_EVALUATION_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "current_loop_state_phase": active_phase,
+        "current_loop_state_sub_phase": active_sub_phase,
+        "current_loop_state_cycle_count": active_cycle_count,
+        "phase_10ae_runtime_available": False,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_criterion_ids": sorted(ack_set),
+        },
+        "framework_ids": list(
+            FRAMEWORK_EVALUATION_FRAMEWORK_IDS,
+        ),
+        "criterion_categories": list(
+            FRAMEWORK_EVALUATION_CRITERION_CATEGORIES,
+        ),
+        "verdicts": list(FRAMEWORK_EVALUATION_VERDICTS),
+        "native_loop_statuses": list(
+            FRAMEWORK_EVALUATION_NATIVE_LOOP_STATUSES,
+        ),
+        "criteria": criteria,
+        "verdict_summary_counts": verdict_summary,
+        "precedence_note": (
+            DESKTOP_FRAMEWORK_EVALUATION_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_framework_evaluation_text(view: dict) -> list:
+    """Phase 10AE: format the assembled framework-evaluation view as
+    text lines. Per-line attribution tags (`[canonical mirror]`,
+    `[advisory]`, `[framework-evaluation]`, `[framework-criterion]`,
+    `[framework-verdict]`, `[framework-summary]`, `[deferred-
+    runtime]`, `[refused]`) keep attribution consistent with the
+    Phase 10AB / 10AC / 10AD tag vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-framework-evaluation] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_phase: "
+        f"{view['current_loop_state_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_sub_phase: "
+        f"{view['current_loop_state_sub_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_cycle_count: "
+        f"{view['current_loop_state_cycle_count']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10ae_runtime_available (Phase "
+        f"10AE ships the EVALUATION view only; no framework "
+        f"runtime is imported or dispatched. Any attempted "
+        f"framework-runtime dispatch through this surface is "
+        f"refused fail-closed via `evaluate_framework_runtime_"
+        f"availability(...)`): "
+        f"{view['phase_10ae_runtime_available']!r}"
+    )
+    for enum_key, enum_label in (
+        (
+            "framework_ids",
+            "Phase 10AE framework-id closed enumeration",
+        ),
+        (
+            "criterion_categories",
+            "Phase 10AE criterion-category closed enumeration",
+        ),
+        (
+            "verdicts",
+            "Phase 10AE verdict closed enumeration",
+        ),
+        (
+            "native_loop_statuses",
+            "Phase 10AE native-loop-status closed enumeration",
+        ),
+    ):
+        lines.append(
+            f"  [advisory] {enum_key} ({enum_label}): "
+            f"{view[enum_key]!r}"
+        )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [framework-evaluation] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / "
+        f"framework-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [framework-evaluation] operator_inputs."
+        f"acknowledged_criterion_ids (per-session operator-"
+        f"clicked criterion acknowledgement; NEVER persisted "
+        f"across sessions): "
+        f"{op_inputs.get('acknowledged_criterion_ids', [])!r}"
+    )
+    lines.append(
+        f"  [framework-summary] verdict_summary_counts "
+        f"(per-framework verdict tally across the shipped "
+        f"criterion registry): "
+        f"{view['verdict_summary_counts']!r}"
+    )
+    for criterion in view.get("criteria", []):
+        lines.append(
+            f"  [framework-criterion] id={criterion['id']!r} "
+            f"display_name={criterion['display_name']!r} "
+            f"criterion_category="
+            f"{criterion['criterion_category']!r} "
+            f"native_loop_status="
+            f"{criterion['native_loop_status']!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{criterion['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{criterion['safety_copy']}"
+        )
+        for entry in criterion.get("framework_verdicts", []):
+            tag = (
+                "[refused]"
+                if entry["verdict"]
+                == "would_conflict_with_shipped_boundary"
+                else "[framework-verdict]"
+            )
+            lines.append(
+                f"    {tag} framework_id="
+                f"{entry['framework_id']!r} verdict="
+                f"{entry['verdict']!r}"
+            )
+            lines.append(
+                f"      [advisory] reason: {entry['reason']}"
+            )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{criterion['deferred_runtime_marker']}"
+        )
+        lines.append(
+            f"    [advisory] operator_acknowledged="
+            f"{criterion.get('operator_acknowledged', False)!r}"
+        )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_framework_evaluation_controls(view: dict) -> list:
+    """Phase 10AE: return a closed list of desktop widget descriptors.
+    COPY-PASTE ONLY (never a library-callable control) so the Phase
+    10I three-control cap is preserved exactly. Matches the Phase 10Z
+    / 10AA / 10AB / 10AC / 10AD fix-cycle affordance pattern: every
+    button surfaces `enabled=True` (the click ONLY copies an operator-
+    visible criterion acknowledgement TEMPLATE into the OS clipboard,
+    which is non-mutating) while `runtime_enabled` reflects whether a
+    shipped framework runtime would allow the criterion's evaluation
+    to dispatch (always False in this slice because no framework
+    runtime is shipped).
+    """
+    controls: list = []
+    for criterion in view.get("criteria", []):
+        clipboard_lines = [
+            "# Phase 10AE framework-evaluation criterion "
+            "acknowledgement template. Copy the block below "
+            "into a review issue / operator note instead of "
+            "dispatching any framework runtime directly.",
+            f"criterion_id: {criterion['id']}",
+            f"display_name: {criterion['display_name']}",
+            f"criterion_category: {criterion['criterion_category']}",
+            f"native_loop_status: {criterion['native_loop_status']}",
+        ]
+        for entry in criterion.get("framework_verdicts", []):
+            clipboard_lines.append(
+                f"framework_verdict.{entry['framework_id']}: "
+                f"{entry['verdict']}"
+            )
+        clipboard_lines.append(
+            "requested_action: acknowledge_and_review"
+        )
+        clipboard_lines.append("operator_identity: <NAME>\n")
+        clipboard_payload = "\n".join(clipboard_lines)
+        controls.append({
+            "id": criterion["id"],
+            "label": (
+                f"Copy framework-evaluation acknowledgement: "
+                f"{criterion['display_name']} "
+                f"[{criterion['native_loop_status']}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": False,
+            "criterion_category": (
+                criterion["criterion_category"]
+            ),
+            "native_loop_status": (
+                criterion["native_loop_status"]
+            ),
+            "deferred_runtime_marker": (
+                criterion["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                criterion["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "framework_evaluation_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_framework_evaluation(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AE operator entry: render the desktop framework-
+    evaluation view.
+
+    Phase 7C reporter pattern: always exits 0 on report content
+    once the controller-root selection succeeds. NEVER mutates any
+    canonical artifact, NEVER appends to `.agent-loop/orchestrator.
+    log`, NEVER advances loop-state, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket, NEVER
+    imports crewai / langgraph / langchain at surface build time,
+    NEVER widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-framework-evaluation] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop framework-evaluation "
+            "surface MUST NOT silently pick a default root "
+            "from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-framework-evaluation] REFUSED: "
+            f"controller root {validation['root_path']!r} is "
+            f"missing required markers {missing!r}; per the "
+            f"Phase 10L Desktop App Shell Contract the desktop "
+            f"shell requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_criterion_ids": frozenset(
+            getattr(args, "acknowledge_criterion", None) or []
+        ),
+    }
+    view = build_desktop_framework_evaluation_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_framework_evaluation_text(view):
+        print(line)
+    return 0
+
+
+def evaluate_framework_runtime_availability(
+    repo_root: Path, framework_id: str,
+) -> dict:
+    """Phase 10AE shipped bounded runtime-availability helper.
+
+    Consults `build_desktop_framework_evaluation_view(...)` for
+    `repo_root` and returns the per-framework verdict summary for
+    `framework_id`. Raises `HaltError(HALTED_FRAMEWORK_EVALUATION_
+    UNSAFE, ...)` when `framework_id` is not in the shipped
+    `FRAMEWORK_EVALUATION_FRAMEWORK_IDS` enumeration OR when the
+    caller requests a shipped framework runtime for a non-native
+    framework (there is no shipped framework runtime in this slice;
+    only `native_loop` returns availability=True). Callers cannot
+    silently import / dispatch an unshipped framework runtime.
+
+    Bounded per the Phase 10AE contract: never spawns a subprocess,
+    never opens a network socket, never imports crewai / langgraph /
+    langchain, never launches or coordinates any delegated-worker
+    runtime, never mutates any canonical artifact, never advances
+    loop-state, never widens the Phase 10I library-callable cap.
+    """
+    if framework_id not in FRAMEWORK_EVALUATION_FRAMEWORK_IDS:
+        raise HaltError(
+            HALTED_FRAMEWORK_EVALUATION_UNSAFE,
+            (
+                f"Phase 10AE framework-evaluation runtime "
+                f"refused: framework_id={framework_id!r} is "
+                f"not in the shipped closed enumeration "
+                f"{FRAMEWORK_EVALUATION_FRAMEWORK_IDS!r}. "
+                f"Consult `view-desktop-framework-evaluation "
+                f"--controller-root <PATH>` for the per-"
+                f"framework verdict detail."
+            ),
+        )
+    view = build_desktop_framework_evaluation_view(repo_root)
+    counts = view["verdict_summary_counts"].get(
+        framework_id, {},
+    )
+    if framework_id != "native_loop":
+        raise HaltError(
+            HALTED_FRAMEWORK_EVALUATION_UNSAFE,
+            (
+                f"Phase 10AE framework-evaluation runtime "
+                f"refused: framework_id={framework_id!r} has "
+                f"no shipped runtime; the shipped Phase 10AE "
+                f"slice is EVALUATION-ONLY. Per-framework "
+                f"verdict counts: {counts!r}. Consult `view-"
+                f"desktop-framework-evaluation --controller-"
+                f"root <PATH>` for the per-framework verdict "
+                f"detail."
+            ),
+        )
+    return {
+        "framework_id": framework_id,
+        "runtime_available": True,
+        "verdict_summary_counts": counts,
+        "notes": (
+            "The shipped native Codex/Claude loop is the sole "
+            "shipped runtime. Phase 10AE evaluates but does "
+            "NOT swap in any framework runtime."
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -31588,6 +34724,40 @@ def _run_normal_cycle_from_increment(
         "cycle_count": data["cycle_count"] + 1,
         "status": "claude_implementing",
     })
+
+    # 5a. Phase 10AD shipped bounded Codex-owned concurrent-read
+    #     runtime path. With `status=claude_implementing` written and
+    #     BEFORE the Claude adapter boundary fires, exercise the
+    #     first shipped bounded Codex-owned concurrent action
+    #     (`codex_prd_intake_read`) that reads the shipped Codex-
+    #     owned canonical PRD (`TASK.md`) as a read-only advisory
+    #     intake observation. The read is routed through the shipped
+    #     `evaluate_codex_concurrent_work_eligibility(...)` helper
+    #     first: on refusal (unknown action_id / refused eligibility
+    #     outcome), the observation is skipped best-effort (never
+    #     halts the Claude implementation cycle) and the refusal is
+    #     audited to the orchestrator log. Bounded per the Phase 10AD
+    #     contract: read-only advisory, never mutates any canonical
+    #     artifact, never spawns a subprocess / opens a network
+    #     socket / schedules a background watcher / launches an
+    #     actual concurrent Codex/Claude worker / advances loop-state
+    #     past the caller-owned write / widens the Phase 10I library-
+    #     callable cap.
+    try:
+        perform_bounded_codex_concurrent_read(
+            repo_root,
+            PHASE_10AD_SHIPPED_CONCURRENT_READ_ACTION_ID,
+            log_path=log_path,
+        )
+    except HaltError as halt:
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"widening-guard refused: status={halt.status!r} "
+                f"reason={halt.reason!r}"
+            ),
+        )
 
     # 6. Invoke Claude adapter boundary (subprocess when configured,
     #    manual-handoff fallback otherwise).
@@ -37965,6 +41135,115 @@ def build_parser() -> argparse.ArgumentParser:
             "per overlap-detection signal id."
         ),
     )
+    codex_concurrent_work = sub.add_parser(
+        "view-desktop-codex-concurrent-work",
+        help=(
+            "Phase 10AD Codex-owned concurrent work initial "
+            "slice: render a bounded READ-ONLY view over the "
+            "closed `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` "
+            "with per-action eligibility outcomes derived from "
+            "the shipped Phase 10AB ownership map and the "
+            "shipped Phase 10AC overlap-safe detection "
+            "aggregate. Phase 7C reporter pattern: always exits "
+            "0 on report content once the controller-root "
+            "selection succeeds; never mutates any canonical "
+            "artifact; never appends to `.agent-loop/"
+            "orchestrator.log`; never advances loop-state; "
+            "never invokes `_halt(...)`; never spawns a "
+            "subprocess; never opens a network socket; never "
+            "reads canonical artifact BODY content; never "
+            "launches or coordinates any actual concurrent "
+            "Codex/Claude worker; never widens the Phase 10I "
+            "library-callable control cap."
+        ),
+    )
+    codex_concurrent_work.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop Codex-concurrent-work view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT "
+            "silently pick a default root. Omitting this flag "
+            "returns exit 2 with a "
+            "`[desktop-codex-concurrent-work] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    codex_concurrent_work.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    codex_concurrent_work.add_argument(
+        "--acknowledge-action",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-action "
+            "eligibility acknowledgement. Repeat the flag once "
+            "per Codex-owned concurrent-work action id."
+        ),
+    )
+    framework_evaluation = sub.add_parser(
+        "view-desktop-framework-evaluation",
+        help=(
+            "Phase 10AE framework-evaluation initial slice: "
+            "render a bounded READ-ONLY view over the closed "
+            "`_DESKTOP_FRAMEWORK_EVALUATION_REGISTRY` with "
+            "per-criterion per-framework verdicts comparing "
+            "the shipped native Codex/Claude loop against "
+            "CrewAI, LangGraph, and LangChain across a closed "
+            "set of criteria. Phase 7C reporter pattern: "
+            "always exits 0 on report content once the "
+            "controller-root selection succeeds; never mutates "
+            "any canonical artifact; never appends to `.agent-"
+            "loop/orchestrator.log`; never advances loop-"
+            "state; never invokes `_halt(...)`; never spawns "
+            "a subprocess; never opens a network socket; "
+            "never imports crewai / langgraph / langchain at "
+            "surface build time; never widens the Phase 10I "
+            "library-callable control cap."
+        ),
+    )
+    framework_evaluation.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop framework-evaluation view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT "
+            "silently pick a default root. Omitting this flag "
+            "returns exit 2 with a "
+            "`[desktop-framework-evaluation] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    framework_evaluation.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    framework_evaluation.add_argument(
+        "--acknowledge-criterion",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-criterion "
+            "acknowledgement. Repeat the flag once per "
+            "framework-evaluation criterion id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -38257,6 +41536,12 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-concurrency": cmd_view_desktop_concurrency,
     "view-desktop-overlap-detection": (
         cmd_view_desktop_overlap_detection
+    ),
+    "view-desktop-codex-concurrent-work": (
+        cmd_view_desktop_codex_concurrent_work
+    ),
+    "view-desktop-framework-evaluation": (
+        cmd_view_desktop_framework_evaluation
     ),
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,

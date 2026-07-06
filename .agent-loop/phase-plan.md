@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AD - Codex-Owned Concurrent Work Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10AE - Framework Evaluation Beyond The Native Loop)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5683,12 +5683,13 @@ concurrent Codex/Claude work is allowed.
 
 ### Status
 
-Active. Phase 10AC is the current implementation focus after Phase 10AB
-closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
-approved the advance. Phase 10AC scope is the first bounded unsafe-overlap
-detection slice: implementing detection and refusal behavior so the system can
-tell when concurrent work would invalidate the active task context, WITHOUT
-yet allowing Codex-owned concurrent work or any actual overlapping runtime.
+Complete. Phase 10AC closed with terminal verdict
+`APPROVED_FOR_HUMAN_REVIEW` and the human approved the advance to Phase
+10AD. Phase 10AC scope was the first bounded unsafe-overlap detection
+slice: implementing detection and refusal behavior so the system can
+tell when concurrent work would invalidate the active task context,
+WITHOUT yet allowing Codex-owned concurrent work or any actual
+overlapping runtime.
 
 ### Objective
 
@@ -5737,9 +5738,9 @@ tell when concurrent work would invalidate the active task context.
 
 ### Status
 
-Active. Phase 10AD is the current implementation focus after Phase 10AC closed
-with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
-advance. Phase 10AD scope is the first bounded concurrent-work slice:
+Complete. Phase 10AD closed with terminal verdict
+`APPROVED_FOR_HUMAN_REVIEW` and the human approved the advance to Phase 10AE.
+Phase 10AD delivered the first bounded Codex-owned concurrent-work slice:
 allowing limited Codex-owned concurrent work only where the shipped Phase 10AB
 ownership contract and Phase 10AC overlap-safe detection/refusal behavior
 prove the work cannot invalidate Claude's active implementation context.
@@ -5784,6 +5785,65 @@ active Claude task context under the shipped Phase 10AB/10AC rules.
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no packaging work, hidden orchestration, or live concurrency added under the
   banner of this bounded concurrent-work slice
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AE - Framework Evaluation Beyond The Native Loop
+
+### Status
+
+Active. Phase 10AE is the current implementation focus after Phase 10AD closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
+advance. Phase 10AE scope is a bounded framework-evaluation slice: compare the
+shipped native Codex/Claude loop against CrewAI, LangGraph, LangChain, or
+similar delegated-role frameworks only where the desktop surface, MCP/RAG
+controls, durable memory, and controlled-concurrency model are stable enough to
+evaluate without rewriting the shipped runtime.
+
+### Objective
+
+Evaluate framework options beyond the native loop and define a bounded
+comparison surface for CrewAI, LangGraph, LangChain, or similar delegated-role
+runtimes without rewriting the shipped Codex/Claude ownership model.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AE as active
+- the repository adds a bounded framework-evaluation surface that compares the
+  shipped native loop against CrewAI, LangGraph, LangChain, or similar
+  delegated-role frameworks using explicit criteria rather than vague
+  preference
+- the implementation defines where a framework could help, where it would
+  conflict with shipped ownership, approval, review, desktop, and
+  canonical-artifact boundaries, and what remains native-loop-only
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, run-profile semantics, desktop/UI boundaries,
+  and the canonical-artifact-first model instead of introducing hidden
+  automation, silent mutation, or a parallel hidden orchestrator
+- focused validation proves the framework-evaluation surface is explicit,
+  auditable, bounded, and does not silently change shipped runtime behavior
+- `README.md` reflects that Phase 10AE is active and that framework evaluation
+  beyond the native loop is now the implementation focus
+
+### Exclusions
+
+- no full framework migration, silent runtime swap, hidden background
+  orchestration, or delegated-worker runtime added under the banner of
+  "evaluation"
+- no framework-backed path that bypasses the shipped ownership, approval,
+  review, overlap-safety, or canonical-artifact boundaries
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no packaging work, hidden orchestration, or live delegated execution added
+  under the banner of this evaluation slice
+- no rewrite of current shipped behavior just to make future autonomy work
+  easier
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
