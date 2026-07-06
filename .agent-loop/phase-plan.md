@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AC - Overlap-Safe Detection Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10AD - Codex-Owned Concurrent Work Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5726,6 +5726,64 @@ tell when concurrent work would invalidate the active task context.
   banner of this detection slice
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AD - Codex-Owned Concurrent Work Initial Slice
+
+### Status
+
+Active. Phase 10AD is the current implementation focus after Phase 10AC closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
+advance. Phase 10AD scope is the first bounded concurrent-work slice:
+allowing limited Codex-owned concurrent work only where the shipped Phase 10AB
+ownership contract and Phase 10AC overlap-safe detection/refusal behavior
+prove the work cannot invalidate Claude's active implementation context.
+
+### Objective
+
+Allow bounded Codex-owned concurrent work during Claude implementation only for
+explicitly safe Codex-owned artifacts and actions that cannot invalidate the
+active Claude task context under the shipped Phase 10AB/10AC rules.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AD as active
+- the repository introduces a bounded runtime path for limited Codex-owned
+  concurrent work while Claude is implementing, but only for explicitly safe
+  Codex-owned artifacts/actions whose execution is proven not to invalidate the
+  active Claude context
+- the implementation reuses the shipped Phase 10AB ownership boundaries and the
+  Phase 10AC overlap-safe detection/refusal behavior instead of bypassing them
+- any attempted concurrent action outside the approved safe set is refused,
+  deferred, or surfaced as ineligible rather than silently executed
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, loop-state
+  source-of-truth rules, and the Phase 10I library-callable cap
+- focused validation proves the bounded concurrent-work path is explicit,
+  auditable, ownership-safe, and fail-closed where safety cannot be proven
+- `README.md` reflects that Phase 10AD is active and that limited safe
+  Codex-owned concurrent work is now the implementation focus
+
+### Exclusions
+
+- no broad or general-purpose overlapping Codex/Claude runtime
+- no hidden background orchestration, watcher farm, or parallel worker model
+- no Codex-owned concurrent work that mutates Claude-owned implementation
+  artifacts, prompt/summarization artifacts, or any artifact whose mutation
+  would invalidate Claude's active task context
+- no bypass of the shipped Phase 10AC refusal gate or the Phase 10AB ownership
+  contract
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no packaging work, hidden orchestration, or live concurrency added under the
+  banner of this bounded concurrent-work slice
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
