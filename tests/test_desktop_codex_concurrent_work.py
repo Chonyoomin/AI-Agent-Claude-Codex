@@ -622,6 +622,80 @@ class EligibilityEvaluatorTests(unittest.TestCase):
             got["eligibility_state"], "refused_overlap_unsafe",
         )
 
+    def test_none_overlap_state_refuses_fail_closed(self) -> None:
+        # Issue 2 regression: a `None` overlap_overall_state
+        # (produced by the Phase 10AC view builder soft-failing on a
+        # structural HaltError) MUST refuse fail-closed via
+        # `refused_overlap_unsafe`. The `None` value MUST NOT fall
+        # through to `eligible_bounded_execution`.
+        got = (
+            agent_loop._desktop_codex_concurrent_work_evaluate_eligibility(
+                self._spec(),
+                self._lookup(),
+                None,
+            )
+        )
+        self.assertEqual(
+            got["eligibility_state"], "refused_overlap_unsafe",
+        )
+        self.assertIsNone(got["overlap_overall_state"])
+        self.assertIn(
+            "None", got["eligibility_reason"],
+        )
+
+    def test_unrecognized_overlap_state_refuses_fail_closed(
+        self,
+    ) -> None:
+        # Any unrecognized overlap_overall_state string MUST refuse
+        # fail-closed via `refused_overlap_unsafe` (defense-in-
+        # depth: the shipped Phase 10AC surface should only ever
+        # return the closed enum, but if a future refactor drifts
+        # the vocabulary, the Phase 10AD gate must NOT silently
+        # advance into eligibility).
+        got = (
+            agent_loop._desktop_codex_concurrent_work_evaluate_eligibility(
+                self._spec(),
+                self._lookup(),
+                "unexpected_state_from_future_refactor",
+            )
+        )
+        self.assertEqual(
+            got["eligibility_state"], "refused_overlap_unsafe",
+        )
+
+    def test_view_soft_fails_halt_error_refuses_fail_closed(
+        self,
+    ) -> None:
+        # End-to-end regression for Issue 2: when
+        # `build_desktop_overlap_detection_view(...)` raises a
+        # HaltError (a structural refusal), the Phase 10AD view
+        # MUST swallow the raise, mirror `overlap_overall_state=
+        # None`, and refuse EVERY entry fail-closed (no entry
+        # falls through to `eligible_bounded_execution`).
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                side_effect=agent_loop.HaltError(
+                    "halted_overlap_detection_structural_refusal",
+                    "structural refusal for regression test",
+                ),
+            ):
+                view = (
+                    agent_loop.build_desktop_codex_concurrent_work_view(
+                        controller,
+                    )
+                )
+        self.assertIsNone(view["overlap_overall_state"])
+        self.assertEqual(view["eligible_action_ids"], [])
+        for action in view["actions"]:
+            self.assertNotEqual(
+                action["eligibility_state"],
+                "eligible_bounded_execution",
+                action["id"],
+            )
+
 
 # ---------------------------------------------------------------------------
 # build_desktop_codex_concurrent_work_view
@@ -1081,6 +1155,268 @@ class EvaluateEligibilityRuntimeTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# perform_bounded_codex_concurrent_read (shipped runtime path)
+# ---------------------------------------------------------------------------
+class PerformBoundedCodexConcurrentReadTests(unittest.TestCase):
+
+    def test_shipped_action_id_constant(self) -> None:
+        # The shipped constant MUST name a read_only_advisory
+        # action so the widening guard cannot fire in a clean
+        # cycle.
+        self.assertEqual(
+            agent_loop.PHASE_10AD_SHIPPED_CONCURRENT_READ_ACTION_ID,
+            "codex_prd_intake_read",
+        )
+        spec = [
+            s
+            for s in (
+                agent_loop._DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY
+            )
+            if s["id"] == "codex_prd_intake_read"
+        ][0]
+        self.assertEqual(
+            spec["effect_class"], "read_only_advisory",
+        )
+
+    def test_returns_observation_when_eligible(self) -> None:
+        # With the Phase 10AC aggregate mocked clean, the shipped
+        # bounded read MUST route through the eligibility helper,
+        # read TASK.md, and return the observation envelope.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (controller / "TASK.md").write_text(
+                "# TASK.md payload\n", encoding="utf-8",
+            )
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
+            )
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=_mock_overlap_aggregate("no_signal"),
+            ):
+                got = (
+                    agent_loop.perform_bounded_codex_concurrent_read(
+                        controller,
+                        "codex_prd_intake_read",
+                        log_path=log_path,
+                    )
+                )
+            self.assertIsNotNone(got)
+            self.assertEqual(
+                got["action_id"], "codex_prd_intake_read",
+            )
+            self.assertEqual(
+                got["target_artifact_canonical_rel"], "TASK.md",
+            )
+            self.assertGreater(got["bytes_read"], 0)
+            self.assertEqual(
+                got["eligibility_state"],
+                "eligible_bounded_execution",
+            )
+            # A best-effort audit line MUST land in the orchestrator
+            # log so the reviewer can verify the shipped read was
+            # actually invoked.
+            self.assertTrue(log_path.exists())
+            log_body = log_path.read_text(encoding="utf-8")
+            self.assertIn("[phase-10ad]", log_body)
+            self.assertIn("executed", log_body)
+            self.assertIn("codex_prd_intake_read", log_body)
+
+    def test_returns_none_and_logs_when_eligibility_refused(
+        self,
+    ) -> None:
+        # A fresh controller has an `unknown` Phase 10AC
+        # aggregate; the eligibility helper refuses; the shipped
+        # read MUST return None (skipped best-effort) rather than
+        # halt the calling cycle, and MUST audit the refusal.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
+            )
+            got = agent_loop.perform_bounded_codex_concurrent_read(
+                controller,
+                "codex_prd_intake_read",
+                log_path=log_path,
+            )
+            self.assertIsNone(got)
+            self.assertTrue(log_path.exists())
+            log_body = log_path.read_text(encoding="utf-8")
+            self.assertIn("[phase-10ad]", log_body)
+            self.assertIn("refused", log_body)
+
+    def test_returns_none_when_unknown_action_id(self) -> None:
+        # An unrecognized action_id makes
+        # `evaluate_codex_concurrent_work_eligibility` raise; the
+        # shipped read MUST return None best-effort.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
+            )
+            got = agent_loop.perform_bounded_codex_concurrent_read(
+                controller,
+                "not_a_real_action_id",
+                log_path=log_path,
+            )
+            self.assertIsNone(got)
+            log_body = log_path.read_text(encoding="utf-8")
+            self.assertIn("[phase-10ad]", log_body)
+            self.assertIn("refused", log_body)
+
+    def test_widening_guard_refuses_non_advisory_effect_class(
+        self,
+    ) -> None:
+        # If a caller passes an eligible action whose
+        # `effect_class` is not `read_only_advisory`, the shipped
+        # read MUST refuse fail-closed via HaltError to preserve
+        # the widening guard. We simulate this by faking an
+        # eligible envelope with a write effect_class.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            fake_envelope = {
+                "id": "codex_plan_proposal_write",
+                "action_type": "plan_proposal_write",
+                "effect_class": "codex_owned_write",
+                "target_artifact_canonical_rel": (
+                    ".agent-loop/phase-plan.md"
+                ),
+                "eligibility_state": (
+                    "eligible_bounded_execution"
+                ),
+                "eligibility_reason": "synthetic",
+            }
+            with mock.patch.object(
+                agent_loop,
+                "evaluate_codex_concurrent_work_eligibility",
+                return_value=fake_envelope,
+            ), self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop.perform_bounded_codex_concurrent_read(
+                    controller,
+                    "codex_plan_proposal_write",
+                )
+        self.assertEqual(
+            cm.exception.status,
+            agent_loop.HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+        )
+        self.assertIn(
+            "codex_owned_write", cm.exception.reason,
+        )
+        self.assertIn(
+            "read_only_advisory", cm.exception.reason,
+        )
+
+    def test_missing_target_returns_none_best_effort(self) -> None:
+        # If the shipped canonical target is missing on disk, the
+        # bounded read MUST skip best-effort (return None + audit).
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (controller / "TASK.md").unlink()
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
+            )
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=_mock_overlap_aggregate("no_signal"),
+            ):
+                got = (
+                    agent_loop.perform_bounded_codex_concurrent_read(
+                        controller,
+                        "codex_prd_intake_read",
+                        log_path=log_path,
+                    )
+                )
+            self.assertIsNone(got)
+            log_body = log_path.read_text(encoding="utf-8")
+            self.assertIn("skipped", log_body)
+
+    def test_read_does_not_mutate_target(self) -> None:
+        # The bounded read MUST NOT mutate the target artifact.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            payload = b"# original TASK.md payload\n"
+            (controller / "TASK.md").write_bytes(payload)
+            before = (controller / "TASK.md").read_bytes()
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=_mock_overlap_aggregate("no_signal"),
+            ):
+                agent_loop.perform_bounded_codex_concurrent_read(
+                    controller,
+                    "codex_prd_intake_read",
+                )
+            after = (controller / "TASK.md").read_bytes()
+        self.assertEqual(before, after)
+        self.assertEqual(after, payload)
+
+    def test_read_does_not_spawn_subprocess_or_open_socket(
+        self,
+    ) -> None:
+        import subprocess as subp
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            patches = [
+                mock.patch.object(subp, "run"),
+                mock.patch.object(subp, "Popen"),
+                mock.patch.object(subp, "call"),
+                mock.patch.object(subp, "check_call"),
+                mock.patch.object(subp, "check_output"),
+                mock.patch("os.system"),
+                mock.patch.object(socket, "socket"),
+            ]
+            mocks = [p.start() for p in patches]
+            try:
+                with mock.patch.object(
+                    agent_loop,
+                    "build_desktop_overlap_detection_view",
+                    return_value=_mock_overlap_aggregate(
+                        "no_signal",
+                    ),
+                ):
+                    agent_loop.perform_bounded_codex_concurrent_read(
+                        controller,
+                        "codex_prd_intake_read",
+                    )
+            finally:
+                for p in patches:
+                    p.stop()
+        for m in mocks:
+            m.assert_not_called()
+
+    def test_read_does_not_launch_concurrent_worker(self) -> None:
+        import threading
+        import multiprocessing
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            patches = [
+                mock.patch.object(threading, "Thread"),
+                mock.patch.object(multiprocessing, "Process"),
+                mock.patch.object(multiprocessing, "Pool"),
+            ]
+            mocks = [p.start() for p in patches]
+            try:
+                with mock.patch.object(
+                    agent_loop,
+                    "build_desktop_overlap_detection_view",
+                    return_value=_mock_overlap_aggregate(
+                        "no_signal",
+                    ),
+                ):
+                    agent_loop.perform_bounded_codex_concurrent_read(
+                        controller,
+                        "codex_prd_intake_read",
+                    )
+            finally:
+                for p in patches:
+                    p.stop()
+        for m in mocks:
+            m.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
 # Desktop app integration
 # ---------------------------------------------------------------------------
 class DesktopAppIntegrationTests(unittest.TestCase):
@@ -1280,6 +1616,222 @@ class NonMutationInvariantsTests(unittest.TestCase):
                 "view-external-controls",
                 "inspect-external-target",
             },
+        )
+
+
+# ---------------------------------------------------------------------------
+# `_run_normal_cycle_from_increment` wires the shipped Phase 10AD read
+# ---------------------------------------------------------------------------
+class RunNormalCycleCodexConcurrentReadWiringTests(unittest.TestCase):
+    """Issue 1 regression: prove `_run_normal_cycle_from_increment`
+    actually calls `perform_bounded_codex_concurrent_read(...)` during a
+    normal cycle, so the shipped bounded runtime path is exercised in
+    real production code (not just a helper reachable from the CLI).
+    """
+
+    def _write_controller(
+        self, root: Path, approval_mode: str = "autonomous",
+    ) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
+        (root / "CLAUDE.md").write_text("claude\n", encoding="utf-8")
+        (root / "TASK.md").write_text(
+            "# TASK.md payload\n", encoding="utf-8",
+        )
+        (root / "README.md").write_text("readme\n", encoding="utf-8")
+        (root / "ROADMAP.md").write_text("roadmap\n", encoding="utf-8")
+        (root / ".agent-loop").mkdir()
+        (root / ".agent-loop" / "loop-state.json").write_text(
+            json.dumps({
+                "phase": (
+                    "Phase 10 - Future Product Features"
+                ),
+                "sub_phase": (
+                    "Phase 10AD - Codex-Owned Concurrent Work "
+                    "Initial Slice"
+                ),
+                "task": "phase-10ad-runtime-wiring-test",
+                "status": "awaiting_claude_implementation",
+                "cycle_count": 0,
+                "max_cycles": 3,
+                "last_verdict": None,
+                "last_verdict_phase": None,
+                "contract_version": CONTRACT_VERSION,
+                "claude_version": "claude-opus-4-7",
+                "codex_version": None,
+                "orchestrator_version": "phase-3d-v0",
+                "approval_mode": approval_mode,
+                "awaiting_human_for": None,
+            }),
+            encoding="utf-8",
+        )
+        (root / ".agent-loop" / "claude-prompt.md").write_text(
+            "# Claude Code Task\n\n## Phase\nP\n\n## Objective\no\n\n"
+            "## Context\nc\n\n## Required work\n- x\n\n"
+            "## Constraints\n- y\n\n## Required output\n- z\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def _claude_factory(self, phase, sub_phase):
+        def _factory():
+            class _A:
+                default_model_id = "stub-claude"
+
+                def invoke(self, prompt_path, summary_path):
+                    summary_text = (
+                        "# Claude Implementation Summary\n\n"
+                        f"## Phase\n{phase} "
+                        f"(sub-phase: {sub_phase})\n\n"
+                        "## Task\nt\n\n"
+                        "## Files changed\n- f: change\n\n"
+                        "## What was implemented\n- x\n\n"
+                        "## What was not implemented\n- y\n\n"
+                        "## Tests added or changed\n- None\n\n"
+                        "## Validation run\n- Not run\n\n"
+                        "## Assumptions\n- None\n\n"
+                        "## Risk areas\n- None identified\n"
+                    )
+                    summary_path.write_text(
+                        summary_text, encoding="utf-8",
+                    )
+                    return agent_loop.ExecutionResult(
+                        exit_code=0,
+                        model_id="stub-claude",
+                        duration_seconds=0.0,
+                    )
+            return _A()
+        return _factory
+
+    def _codex_factory(self):
+        def _factory():
+            class _C:
+                default_model_id = "stub-codex"
+
+                def wait_for_review(self, review_path):
+                    return agent_loop.ExecutionResult(
+                        exit_code=2,
+                        model_id=None,
+                        duration_seconds=0.0,
+                    )
+            return _C()
+        return _factory
+
+    def test_shipped_read_invoked_during_normal_cycle(self) -> None:
+        # `_run_normal_cycle_from_increment` MUST call
+        # `perform_bounded_codex_concurrent_read(...)` with the shipped
+        # Phase 10AD action id at status=`claude_implementing`. We
+        # patch that helper and verify it was called exactly once with
+        # the shipped constant and the orchestrator log path.
+        with TemporaryDirectory() as td:
+            controller = self._write_controller(
+                Path(td) / "c", approval_mode="autonomous",
+            )
+            claude_factory = self._claude_factory(
+                "Phase 10 - Future Product Features",
+                (
+                    "Phase 10AD - Codex-Owned Concurrent Work "
+                    "Initial Slice"
+                ),
+            )
+            with mock.patch.object(
+                agent_loop,
+                "perform_bounded_codex_concurrent_read",
+                return_value={"probe": "ok"},
+            ) as probe, mock.patch.object(
+                agent_loop,
+                "invoke_run_checks", return_value=None,
+            ), mock.patch.object(
+                agent_loop,
+                "validate_evidence_files", return_value=None,
+            ), mock.patch.object(
+                agent_loop,
+                "make_claude_adapter",
+                claude_factory,
+            ), mock.patch.object(
+                agent_loop,
+                "make_codex_adapter",
+                self._codex_factory(),
+            ), mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=_mock_overlap_aggregate("no_signal"),
+            ):
+                agent_loop.run_normal_cycle(controller)
+        self.assertTrue(probe.called)
+        args, kwargs = probe.call_args
+        self.assertEqual(args[0], controller)
+        self.assertEqual(
+            args[1],
+            agent_loop.PHASE_10AD_SHIPPED_CONCURRENT_READ_ACTION_ID,
+        )
+        self.assertEqual(
+            kwargs.get("log_path"),
+            controller / ".agent-loop" / "orchestrator.log",
+        )
+
+    def test_shipped_read_refusal_does_not_halt_cycle(self) -> None:
+        # If the shipped read raises HaltError (widening-guard
+        # refusal), the calling cycle MUST audit the refusal and
+        # continue; it MUST NOT halt Claude implementation on a
+        # refused advisory read.
+        with TemporaryDirectory() as td:
+            controller = self._write_controller(
+                Path(td) / "c", approval_mode="autonomous",
+            )
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            claude_factory = self._claude_factory(
+                "Phase 10 - Future Product Features",
+                (
+                    "Phase 10AD - Codex-Owned Concurrent Work "
+                    "Initial Slice"
+                ),
+            )
+            with mock.patch.object(
+                agent_loop,
+                "perform_bounded_codex_concurrent_read",
+                side_effect=agent_loop.HaltError(
+                    agent_loop.HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+                    "synthetic widening-guard refusal",
+                ),
+            ), mock.patch.object(
+                agent_loop,
+                "invoke_run_checks", return_value=None,
+            ), mock.patch.object(
+                agent_loop,
+                "validate_evidence_files", return_value=None,
+            ), mock.patch.object(
+                agent_loop,
+                "make_claude_adapter",
+                claude_factory,
+            ), mock.patch.object(
+                agent_loop,
+                "make_codex_adapter",
+                self._codex_factory(),
+            ), mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=_mock_overlap_aggregate("no_signal"),
+            ):
+                agent_loop.run_normal_cycle(controller)
+            after = json.loads(
+                state_path.read_text(encoding="utf-8"),
+            )
+            log_path = (
+                controller / ".agent-loop" / "orchestrator.log"
+            )
+            log_body = (
+                log_path.read_text(encoding="utf-8")
+                if log_path.exists() else ""
+            )
+        self.assertNotEqual(
+            after["status"],
+            agent_loop.HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+        )
+        self.assertIn(
+            "widening-guard refused", log_body,
         )
 
 

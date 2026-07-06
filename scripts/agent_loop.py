@@ -30966,18 +30966,30 @@ def enforce_overlap_safe_runtime_gate(repo_root: Path) -> None:
 # against a closed descriptor shape; every eligibility evaluation reuses
 # the shipped Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` verbatim
 # and the shipped Phase 10AC overlap-safe detection aggregate verbatim
-# (a `refused_pending_recovery` or `unknown` aggregate refuses every
-# entry regardless of the entry's own safety class).
+# (a `refused_pending_recovery` / `unknown` aggregate, a `None`
+# structural HaltError soft-fail, or any unrecognized overlap state
+# refuses every entry regardless of the entry's own safety class).
 #
 # The shipped surface OBSERVES the closed registry and produces per-
 # poll eligibility outcomes for a bounded set of Codex-owned actions.
-# It NEVER launches any actual concurrent Codex/Claude worker, NEVER
-# spawns a subprocess, NEVER opens a network socket, NEVER schedules a
-# background watcher, NEVER mutates any canonical artifact, NEVER
-# advances loop-state, NEVER invokes `_halt(...)`, NEVER widens the
-# Phase 10I library-callable cap, and NEVER lets a Codex-owned entry
+# The shipped runtime path (`perform_bounded_codex_concurrent_read(
+# repo_root, action_id, log_path=...)`) invoked from
+# `_run_normal_cycle_from_increment` at status=`claude_implementing`
+# additionally executes ONE real bounded Codex-owned read
+# (`codex_prd_intake_read`, a read-only advisory read of the shipped
+# Codex-owned canonical `TASK.md`) concurrently with the in-flight
+# Claude implementation cycle. That shipped read is routed through
+# `evaluate_codex_concurrent_work_eligibility(...)` FIRST so any
+# refusal (unknown action_id / refused eligibility outcome) skips the
+# read fail-closed with a best-effort audit line to the orchestrator
+# log. The shipped surface NEVER launches any actual concurrent
+# Codex/Claude worker, NEVER spawns a subprocess, NEVER opens a
+# network socket, NEVER schedules a background watcher, NEVER mutates
+# any canonical artifact, NEVER advances loop-state, NEVER invokes
+# `_halt(...)` for a routine read refusal, NEVER widens the Phase
+# 10I library-callable cap, and NEVER lets a Codex-owned entry
 # mutate a Claude-owned / orchestrator-owned artifact through the
-# bounded evaluator.
+# bounded evaluator or the bounded read runtime.
 # ---------------------------------------------------------------------------
 
 DESKTOP_CODEX_CONCURRENT_WORK_SIGNAL_VERSION = "phase-10ad-v1"
@@ -30987,37 +30999,51 @@ DESKTOP_CODEX_CONCURRENT_WORK_PRECEDENCE_NOTE = (
     "shipped Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` verbatim "
     "for the owner-role source of truth and the shipped Phase 10AC "
     "overlap-safe detection aggregate verbatim for the overlap-safety "
-    "gate; a `refused_pending_recovery` or `unknown` Phase 10AC "
-    "aggregate refuses EVERY Phase 10AD entry regardless of the "
-    "entry's own eligibility class. Every action descriptor is "
-    "validated against the closed Phase 10AD descriptor shape and "
-    "refused fail-closed on any missing required field, wrong-typed "
-    "value, unknown `action_type`, unknown `effect_class`, unknown "
-    "`expected_target_owner_role`, non-POSIX / absolute / drive-"
-    "prefixed / parent-traversal `target_artifact_canonical_rel`, or "
-    "a target artifact that is not present in the shipped Phase 10AB "
-    "ownership map. `phase_10ad_runtime_available` is hard-coded "
-    "`True` in this slice because the shipped Phase 10AD slice wires "
-    "a real bounded eligibility runtime path "
+    "gate; a `refused_pending_recovery` / `unknown` Phase 10AC "
+    "aggregate, a `None` structural HaltError soft-fail, or any "
+    "unrecognized overlap state refuses EVERY Phase 10AD entry "
+    "regardless of the entry's own eligibility class. Every action "
+    "descriptor is validated against the closed Phase 10AD descriptor "
+    "shape and refused fail-closed on any missing required field, "
+    "wrong-typed value, unknown `action_type`, unknown "
+    "`effect_class`, unknown `expected_target_owner_role`, non-POSIX "
+    "/ absolute / drive-prefixed / parent-traversal "
+    "`target_artifact_canonical_rel`, or a target artifact that is "
+    "not present in the shipped Phase 10AB ownership map. "
+    "`phase_10ad_runtime_available` is hard-coded `True` in this "
+    "slice because the shipped Phase 10AD slice wires a real bounded "
+    "eligibility runtime path "
     "(`evaluate_codex_concurrent_work_eligibility(repo_root, "
-    "action_id)`) that returns the closed eligibility outcome for a "
-    "shipped Codex-owned action; the shipped surface still NEVER "
+    "action_id)`) AND a real bounded read runtime path "
+    "(`perform_bounded_codex_concurrent_read(repo_root, action_id, "
+    "log_path=...)` invoked from `_run_normal_cycle_from_increment` "
+    "at status=`claude_implementing` for the shipped "
+    "`codex_prd_intake_read` read-only advisory action) that "
+    "actually performs a bounded Codex-owned read of the shipped "
+    "Codex-owned canonical `TASK.md` concurrently with an in-flight "
+    "Claude implementation cycle. The shipped surface still NEVER "
     "launches any actual concurrent Codex/Claude worker, NEVER opens "
-    "a network socket, NEVER spawns a subprocess, and NEVER schedules "
-    "a background watcher. Any attempted concurrent action outside "
-    "the closed registry is REFUSED at the runtime helper via "
-    "`HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)`. The "
-    "shipped Phase 10L desktop-app contract, Phase 3A orchestrator "
-    "contract, Phase 4 planner / activator separation, and Phase 10Z "
-    "/ 10AA / 10AB / 10AC copy-only affordance contract govern this "
-    "surface's ownership rule verbatim. The Phase 10I three-control "
-    "library-callable cap is preserved exactly; ZERO new library-"
-    "callable controls are introduced. This slice NEVER mutates any "
-    "canonical artifact, NEVER appends to `.agent-loop/"
-    "orchestrator.log`, NEVER advances loop-state, NEVER auto-fills "
-    "any --*-by operator-identity argument, and NEVER introduces a "
-    "concurrent-work-side database / preference store / recents list "
-    "/ identity token / session token"
+    "a network socket, NEVER spawns a subprocess, NEVER schedules a "
+    "background watcher, NEVER mutates any canonical artifact, and "
+    "NEVER performs any `codex_owned_write` / "
+    "`codex_owned_write_invalidates_claude` effect through the "
+    "shipped bounded read runtime path (widening guard). Any "
+    "attempted concurrent action outside the closed registry is "
+    "REFUSED at the runtime helper via `HaltError(HALTED_CODEX_"
+    "CONCURRENT_WORK_UNSAFE, ...)`. The shipped Phase 10L desktop-"
+    "app contract, Phase 3A orchestrator contract, Phase 4 planner / "
+    "activator separation, and Phase 10Z / 10AA / 10AB / 10AC copy-"
+    "only affordance contract govern this surface's ownership rule "
+    "verbatim. The Phase 10I three-control library-callable cap is "
+    "preserved exactly; ZERO new library-callable controls are "
+    "introduced. This slice NEVER advances loop-state, NEVER auto-"
+    "fills any --*-by operator-identity argument, and NEVER "
+    "introduces a concurrent-work-side database / preference store "
+    "/ recents list / identity token / session token. The shipped "
+    "bounded read runtime path DOES append a best-effort audit line "
+    "to `.agent-loop/orchestrator.log` per invocation (executed / "
+    "refused / skipped) so the reviewer can verify the shipped "
+    "concurrent read was actually invoked."
 )
 
 # Phase 10AD runtime refusal status: the shipped
@@ -31176,10 +31202,18 @@ _DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY: tuple = (
             "Phase 10AD ships the ELIGIBILITY evaluation for "
             "this action plus a bounded shipped runtime helper "
             "(`evaluate_codex_concurrent_work_eligibility(...)`) "
-            "that returns the closed eligibility outcome; "
-            "actual concurrent PRD-intake execution (Codex "
-            "subprocess launch) is deferred to a future Phase "
-            "10 runtime slice tracked in `ROADMAP.md`."
+            "and a bounded shipped read runtime "
+            "(`perform_bounded_codex_concurrent_read(repo_root, "
+            "action_id, log_path=...)`) that is invoked from "
+            "`_run_normal_cycle_from_increment` at "
+            "status=`claude_implementing` to actually perform a "
+            "bounded Codex-owned read of the shipped canonical "
+            "`TASK.md` concurrently with the in-flight Claude "
+            "implementation cycle. The shipped read is bounded "
+            "to a read-only-advisory observation and is audited "
+            "to `.agent-loop/orchestrator.log` best-effort. "
+            "Actual concurrent Codex SUBPROCESS launch remains "
+            "deferred to a future Phase 10 runtime slice."
         ),
         "refusal_reason_template": (
             "`codex_prd_intake_read` refused: consult "
@@ -31490,8 +31524,14 @@ def _desktop_codex_concurrent_work_evaluate_eligibility(
       3. Else if the descriptor's
          `would_invalidate_claude_context` is True ->
          `refused_would_invalidate_claude_context`
-      4. Else if the shipped Phase 10AC aggregate is `unknown` ->
-         `refused_overlap_unsafe` (fail-closed on unknown overlap
+      4. Else if the shipped Phase 10AC aggregate is anything
+         other than one of the two known-clean states
+         (`no_signal` / `signal_detected`) -> `refused_overlap_
+         unsafe` (fail-closed default: `unknown`, `None` for a
+         structural HaltError soft-fail, or any unrecognized
+         string all refuse fail-closed here so the shipped
+         concurrent-work surface never advances into
+         `eligible_bounded_execution` on non-safe overlap
          evidence)
       5. Otherwise -> `eligible_bounded_execution`
     """
@@ -31561,16 +31601,22 @@ def _desktop_codex_concurrent_work_evaluate_eligibility(
             "overlap_overall_state": overlap_overall_state,
             "would_invalidate_claude_context": True,
         }
-    if overlap_overall_state == "unknown":
+    if overlap_overall_state not in ("no_signal", "signal_detected"):
         return {
             "eligibility_state": "refused_overlap_unsafe",
             "eligibility_reason": (
-                "Phase 10AC overlap-safe detection aggregate "
-                "is `unknown` (one or more required overlap "
-                "evidence signals are missing); the shipped "
-                "Phase 10AD bounded concurrent-work path "
-                "refuses fail-closed until the overlap gate "
-                "can be evaluated."
+                f"Phase 10AC overlap-safe detection aggregate "
+                f"is not one of the known-clean states "
+                f"(`no_signal` / `signal_detected`); observed "
+                f"overlap_overall_state={overlap_overall_state!r} "
+                f"(`unknown` = one or more required overlap "
+                f"evidence signals are missing; `None` = the "
+                f"shipped Phase 10AC view builder soft-failed "
+                f"on a structural HaltError; any other value = "
+                f"unrecognized state). The shipped Phase 10AD "
+                f"bounded concurrent-work path refuses fail-"
+                f"closed until the overlap gate can be "
+                f"evaluated with clean evidence."
             ),
             "actual_target_owner_role": actual_owner,
             "overlap_overall_state": overlap_overall_state,
@@ -31715,8 +31761,16 @@ def build_desktop_codex_concurrent_work_view(
     )
     ack_set = inputs["acknowledged_action_ids"]
 
-    # Consult the shipped Phase 10AC aggregate; a missing / non-dict
-    # view falls to `unknown` so the shipped surface fails closed.
+    # Consult the shipped Phase 10AC aggregate. A structural
+    # HaltError from the Phase 10AC view builder soft-fails to
+    # `overlap_state = None`. A missing / non-dict view keeps
+    # `overlap_state = None`. Any state that is not one of the two
+    # known-clean states (`no_signal` / `signal_detected`) is
+    # refused fail-closed by
+    # `_desktop_codex_concurrent_work_evaluate_eligibility(...)`,
+    # so `None` (structural HaltError / missing view) refuses every
+    # entry via the `refused_overlap_unsafe` branch and cannot
+    # advance into `eligible_bounded_execution`.
     overlap_state: Optional[str] = None
     try:
         overlap_view = build_desktop_overlap_detection_view(
@@ -31862,11 +31916,15 @@ def render_desktop_codex_concurrent_work_text(view: dict) -> list:
     )
     lines.append(
         f"  [advisory] phase_10ad_runtime_available (Phase "
-        f"10AD ships the ELIGIBILITY evaluation plus the "
-        f"bounded shipped runtime helper "
-        f"`evaluate_codex_concurrent_work_eligibility(...)`; "
-        f"actual concurrent Codex/Claude worker execution is "
-        f"still deferred to a later Phase 10 slice): "
+        f"10AD ships the ELIGIBILITY evaluation via "
+        f"`evaluate_codex_concurrent_work_eligibility(...)` "
+        f"AND a real bounded read runtime "
+        f"`perform_bounded_codex_concurrent_read(...)` that is "
+        f"invoked from `_run_normal_cycle_from_increment` for "
+        f"the shipped `codex_prd_intake_read` read-only-"
+        f"advisory action; actual concurrent Codex/Claude "
+        f"WORKER / SUBPROCESS launch is still deferred to a "
+        f"later Phase 10 slice): "
         f"{view['phase_10ad_runtime_available']!r}"
     )
     lines.append(
@@ -32174,6 +32232,153 @@ def evaluate_codex_concurrent_work_eligibility(
             ),
         )
     return match
+
+
+# Phase 10AD shipped bounded Codex-owned concurrent-read action.
+# Chosen as the first (and, in this slice, only) real bounded
+# Codex-owned action that runs concurrently with an in-flight Claude
+# implementation cycle. The action reads the shipped Codex-owned
+# canonical PRD (`TASK.md`) as a read-only advisory observation for
+# intake preparation. Read-only advisory reads are the safest class
+# of concurrent Codex work per the Phase 10AD contract: they cannot
+# mutate a Claude-owned artifact, cannot invalidate the active Claude
+# task context, and are fully bounded by the shipped Phase 10AB
+# ownership map + Phase 10AC overlap-safe detection aggregate through
+# `evaluate_codex_concurrent_work_eligibility(...)`.
+PHASE_10AD_SHIPPED_CONCURRENT_READ_ACTION_ID = "codex_prd_intake_read"
+
+
+def perform_bounded_codex_concurrent_read(
+    repo_root: Path,
+    action_id: str,
+    log_path: Optional[Path] = None,
+) -> Optional[dict]:
+    """Phase 10AD shipped bounded runtime path for a real Codex-owned
+    concurrent read while Claude is implementing.
+
+    Consults `evaluate_codex_concurrent_work_eligibility(repo_root,
+    action_id)` FIRST. If the helper raises
+    `HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)` (unknown
+    action_id OR refused eligibility outcome), the caller-observable
+    result is a best-effort refusal log line + return `None`. The
+    calling frame's Claude implementation cycle is NEVER halted by a
+    refused advisory read: refusal skips the concurrent read but
+    leaves the caller free to continue its own work.
+
+    The helper is bounded per the Phase 10AD contract:
+      - `effect_class` MUST be `read_only_advisory`; any other
+        effect_class refuses fail-closed via `HaltError(HALTED_CODEX_
+        CONCURRENT_WORK_UNSAFE, ...)` (widening guard: the shipped
+        Phase 10AD slice never actually performs a
+        `codex_owned_write` or `codex_owned_write_invalidates_claude`
+        effect through this path).
+      - The read is bounded to the shipped canonical target
+        artifact resolved from the descriptor's
+        `target_artifact_canonical_rel`; the helper NEVER writes,
+        NEVER mutates, NEVER spawns a subprocess, NEVER opens a
+        network socket, NEVER schedules a background watcher,
+        NEVER launches or coordinates any actual concurrent
+        Codex/Claude worker, NEVER advances loop-state past the
+        caller-owned write, and NEVER widens the Phase 10I library-
+        callable cap.
+      - The audit log line is a best-effort append to the
+        orchestrator log via `_log_note(...)`; a write failure is
+        swallowed (per the shipped contract that the orchestrator
+        log is optional and never authoritative).
+
+    Returns a bounded observation envelope on success:
+      `{action_id, target_artifact_canonical_rel, bytes_read,
+        modified_utc, eligibility_state, eligibility_reason}`
+    or `None` when eligibility refused.
+    """
+    try:
+        eligibility_envelope = (
+            evaluate_codex_concurrent_work_eligibility(
+                repo_root, action_id,
+            )
+        )
+    except HaltError as halt:
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"refused: action_id={action_id!r} status="
+                f"{halt.status!r} reason={halt.reason!r}"
+            ),
+        )
+        return None
+
+    effect_class = eligibility_envelope.get("effect_class")
+    if effect_class != "read_only_advisory":
+        raise HaltError(
+            HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+            (
+                f"Phase 10AD bounded Codex-owned concurrent read "
+                f"refused: action_id={action_id!r} has effect_class="
+                f"{effect_class!r}; the shipped bounded concurrent-"
+                f"read runtime path only executes effect_class="
+                f"'read_only_advisory' actions. Any other effect "
+                f"class is refused fail-closed to preserve the "
+                f"widening guard."
+            ),
+        )
+
+    target_rel = eligibility_envelope.get(
+        "target_artifact_canonical_rel",
+    )
+    target_path = repo_root / target_rel
+    if not target_path.is_file():
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"skipped: action_id={action_id!r} target={target_rel!r} "
+                f"is not present on disk"
+            ),
+        )
+        return None
+    try:
+        body_bytes = target_path.read_bytes()
+    except OSError as exc:
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"skipped: action_id={action_id!r} target={target_rel!r} "
+                f"OSError={exc!r}"
+            ),
+        )
+        return None
+    try:
+        mtime_ts = target_path.stat().st_mtime
+        modified_utc = time.strftime(
+            "%Y-%m-%dT%H:%M:%SZ", time.gmtime(mtime_ts),
+        )
+    except OSError:
+        modified_utc = None
+
+    observation = {
+        "action_id": action_id,
+        "target_artifact_canonical_rel": target_rel,
+        "bytes_read": len(body_bytes),
+        "modified_utc": modified_utc,
+        "eligibility_state": (
+            eligibility_envelope.get("eligibility_state")
+        ),
+        "eligibility_reason": (
+            eligibility_envelope.get("eligibility_reason")
+        ),
+    }
+    _log_note(
+        log_path,
+        (
+            f"[phase-10ad] bounded Codex-owned concurrent read "
+            f"executed: action_id={action_id!r} target={target_rel!r} "
+            f"bytes_read={observation['bytes_read']} "
+            f"modified_utc={modified_utc!r}"
+        ),
+    )
+    return observation
 
 
 # ---------------------------------------------------------------------------
@@ -32866,6 +33071,40 @@ def _run_normal_cycle_from_increment(
         "cycle_count": data["cycle_count"] + 1,
         "status": "claude_implementing",
     })
+
+    # 5a. Phase 10AD shipped bounded Codex-owned concurrent-read
+    #     runtime path. With `status=claude_implementing` written and
+    #     BEFORE the Claude adapter boundary fires, exercise the
+    #     first shipped bounded Codex-owned concurrent action
+    #     (`codex_prd_intake_read`) that reads the shipped Codex-
+    #     owned canonical PRD (`TASK.md`) as a read-only advisory
+    #     intake observation. The read is routed through the shipped
+    #     `evaluate_codex_concurrent_work_eligibility(...)` helper
+    #     first: on refusal (unknown action_id / refused eligibility
+    #     outcome), the observation is skipped best-effort (never
+    #     halts the Claude implementation cycle) and the refusal is
+    #     audited to the orchestrator log. Bounded per the Phase 10AD
+    #     contract: read-only advisory, never mutates any canonical
+    #     artifact, never spawns a subprocess / opens a network
+    #     socket / schedules a background watcher / launches an
+    #     actual concurrent Codex/Claude worker / advances loop-state
+    #     past the caller-owned write / widens the Phase 10I library-
+    #     callable cap.
+    try:
+        perform_bounded_codex_concurrent_read(
+            repo_root,
+            PHASE_10AD_SHIPPED_CONCURRENT_READ_ACTION_ID,
+            log_path=log_path,
+        )
+    except HaltError as halt:
+        _log_note(
+            log_path,
+            (
+                f"[phase-10ad] bounded Codex-owned concurrent read "
+                f"widening-guard refused: status={halt.status!r} "
+                f"reason={halt.reason!r}"
+            ),
+        )
 
     # 6. Invoke Claude adapter boundary (subprocess when configured,
     #    manual-handoff fallback otherwise).
