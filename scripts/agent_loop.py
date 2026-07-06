@@ -14187,6 +14187,9 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
     overlap_detection_view = _desktop_safe_call_view(
         build_desktop_overlap_detection_view, controller_root,
     )
+    codex_concurrent_work_view = _desktop_safe_call_view(
+        build_desktop_codex_concurrent_work_view, controller_root,
+    )
     return {
         "view_signal_version": DESKTOP_APP_VIEW_SIGNAL_VERSION,
         "controller_path_canonical": (
@@ -14210,6 +14213,7 @@ def assemble_desktop_app_view(controller_root: Path) -> dict:
         "memory_vault_view": memory_vault_view,
         "concurrency_view": concurrency_view,
         "overlap_detection_view": overlap_detection_view,
+        "codex_concurrent_work_view": codex_concurrent_work_view,
         "precedence_note": DESKTOP_APP_PRECEDENCE_NOTE,
     }
 
@@ -14379,6 +14383,18 @@ def _desktop_render_sub_view_lines(
             render_desktop_overlap_detection_text(sub_view),
         )
         return lines
+    if key == "codex_concurrent_work_view":
+        # Re-use the shipped Phase 10AD renderer verbatim so the
+        # codex-concurrent-work attribution tags ([codex-
+        # concurrent] / [codex-owner] / [codex-effect] / [codex-
+        # eligibility] / [codex-overlap] / [deferred-runtime] /
+        # [canonical mirror] / [advisory] / [refused]) stay
+        # consistent with the standalone
+        # `view-desktop-codex-concurrent-work` output.
+        lines.extend(
+            render_desktop_codex_concurrent_work_text(sub_view),
+        )
+        return lines
     signal = sub_view.get("view_signal_version")
     lines.append(
         f"  [canonical mirror] view_signal_version: {signal!r}"
@@ -14479,6 +14495,10 @@ def render_desktop_app_text(view: dict) -> list:
         (
             "overlap_detection_view",
             "Overlap-Safe Detection (Phase 10AC)",
+        ),
+        (
+            "codex_concurrent_work_view",
+            "Codex-Owned Concurrent Work (Phase 10AD)",
         ),
     ):
         sub = view.get(key, {})
@@ -15136,6 +15156,13 @@ def _launch_desktop_app_window(
         text="Overlap-Safe Detection (Phase 10AC)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    codex_concurrent_work_frame = tk.Frame(control_frame)
+    codex_concurrent_work_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        codex_concurrent_work_frame,
+        text="Codex-Owned Concurrent Work (Phase 10AD)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15167,6 +15194,7 @@ def _launch_desktop_app_window(
     memory_vault_button_widgets: list = []
     concurrency_button_widgets: list = []
     overlap_detection_button_widgets: list = []
+    codex_concurrent_work_button_widgets: list = []
     run_profile_controls_signature: Optional[tuple] = None
     project_start_controls_signature: Optional[tuple] = None
     mcp_assistance_controls_signature: Optional[tuple] = None
@@ -15898,6 +15926,35 @@ def _launch_desktop_app_window(
             overlap_detection_frame,
             overlap_detection_controls,
             overlap_detection_button_widgets,
+        )
+        # Phase 10AD: rebuild the Codex-owned concurrent work
+        # button row from the cached sub-view. Copy-paste ONLY;
+        # every button copies an operator-visible eligibility
+        # acknowledgement TEMPLATE to clipboard. ZERO new
+        # library-callable controls are introduced. Every button
+        # stays clickable per the Phase 10Z / 10AA / 10AB / 10AC
+        # affordance pattern.
+        codex_concurrent_work_sub_view = view.get(
+            "codex_concurrent_work_view", {},
+        )
+        if (
+            isinstance(codex_concurrent_work_sub_view, dict)
+            and codex_concurrent_work_sub_view.get("view") is None
+            and "error" in codex_concurrent_work_sub_view
+        ):
+            codex_concurrent_work_controls = []
+        elif isinstance(codex_concurrent_work_sub_view, dict):
+            codex_concurrent_work_controls = (
+                build_desktop_codex_concurrent_work_controls(
+                    codex_concurrent_work_sub_view,
+                )
+            )
+        else:
+            codex_concurrent_work_controls = []
+        _rebuild_button_row(
+            codex_concurrent_work_frame,
+            codex_concurrent_work_controls,
+            codex_concurrent_work_button_widgets,
         )
         _sync_control_scroll_region()
         root.after(int(cadence_seconds * 1000), _refresh)
@@ -30899,6 +30956,1227 @@ def enforce_overlap_safe_runtime_gate(repo_root: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Phase 10AD - Codex-Owned Concurrent Work Initial Slice.
+#
+# Bounded contract slice that shows which Codex-owned actions may run
+# concurrently with an in-flight Claude implementation cycle WITHOUT
+# invalidating Claude's active task context, and which Codex-owned
+# actions are always refused fail-closed. Every eligibility outcome is
+# a closed enumeration; every registry entry is validated fail-closed
+# against a closed descriptor shape; every eligibility evaluation reuses
+# the shipped Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` verbatim
+# and the shipped Phase 10AC overlap-safe detection aggregate verbatim
+# (a `refused_pending_recovery` or `unknown` aggregate refuses every
+# entry regardless of the entry's own safety class).
+#
+# The shipped surface OBSERVES the closed registry and produces per-
+# poll eligibility outcomes for a bounded set of Codex-owned actions.
+# It NEVER launches any actual concurrent Codex/Claude worker, NEVER
+# spawns a subprocess, NEVER opens a network socket, NEVER schedules a
+# background watcher, NEVER mutates any canonical artifact, NEVER
+# advances loop-state, NEVER invokes `_halt(...)`, NEVER widens the
+# Phase 10I library-callable cap, and NEVER lets a Codex-owned entry
+# mutate a Claude-owned / orchestrator-owned artifact through the
+# bounded evaluator.
+# ---------------------------------------------------------------------------
+
+DESKTOP_CODEX_CONCURRENT_WORK_SIGNAL_VERSION = "phase-10ad-v1"
+
+DESKTOP_CODEX_CONCURRENT_WORK_PRECEDENCE_NOTE = (
+    "Phase 10AD Codex-owned concurrent work initial slice. Reuses the "
+    "shipped Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` verbatim "
+    "for the owner-role source of truth and the shipped Phase 10AC "
+    "overlap-safe detection aggregate verbatim for the overlap-safety "
+    "gate; a `refused_pending_recovery` or `unknown` Phase 10AC "
+    "aggregate refuses EVERY Phase 10AD entry regardless of the "
+    "entry's own eligibility class. Every action descriptor is "
+    "validated against the closed Phase 10AD descriptor shape and "
+    "refused fail-closed on any missing required field, wrong-typed "
+    "value, unknown `action_type`, unknown `effect_class`, unknown "
+    "`expected_target_owner_role`, non-POSIX / absolute / drive-"
+    "prefixed / parent-traversal `target_artifact_canonical_rel`, or "
+    "a target artifact that is not present in the shipped Phase 10AB "
+    "ownership map. `phase_10ad_runtime_available` is hard-coded "
+    "`True` in this slice because the shipped Phase 10AD slice wires "
+    "a real bounded eligibility runtime path "
+    "(`evaluate_codex_concurrent_work_eligibility(repo_root, "
+    "action_id)`) that returns the closed eligibility outcome for a "
+    "shipped Codex-owned action; the shipped surface still NEVER "
+    "launches any actual concurrent Codex/Claude worker, NEVER opens "
+    "a network socket, NEVER spawns a subprocess, and NEVER schedules "
+    "a background watcher. Any attempted concurrent action outside "
+    "the closed registry is REFUSED at the runtime helper via "
+    "`HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)`. The "
+    "shipped Phase 10L desktop-app contract, Phase 3A orchestrator "
+    "contract, Phase 4 planner / activator separation, and Phase 10Z "
+    "/ 10AA / 10AB / 10AC copy-only affordance contract govern this "
+    "surface's ownership rule verbatim. The Phase 10I three-control "
+    "library-callable cap is preserved exactly; ZERO new library-"
+    "callable controls are introduced. This slice NEVER mutates any "
+    "canonical artifact, NEVER appends to `.agent-loop/"
+    "orchestrator.log`, NEVER advances loop-state, NEVER auto-fills "
+    "any --*-by operator-identity argument, and NEVER introduces a "
+    "concurrent-work-side database / preference store / recents list "
+    "/ identity token / session token"
+)
+
+# Phase 10AD runtime refusal status: the shipped
+# `evaluate_codex_concurrent_work_eligibility(...)` runtime helper
+# raises `HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)` when a
+# caller requests an eligibility outcome for an action_id that is not
+# in the shipped `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` OR when the
+# shipped Phase 10AC overlap-safe aggregate refuses the request. The
+# runtime helper is DETECTION-DRIVEN only: it consults the same
+# registry the desktop reporter exposes; never spawns a subprocess,
+# never opens a network socket, never launches or coordinates any
+# actual concurrent Codex/Claude worker, and never advances loop-
+# state past the caller-owned refusal write.
+HALTED_CODEX_CONCURRENT_WORK_UNSAFE = "halted_codex_concurrent_work_unsafe"
+
+# Closed action-type vocabulary. `prd_intake_read` = Codex reads a
+# repo-local PRD source for intake analysis. `plan_proposal_write` =
+# Codex writes a Codex-owned planning proposal artifact.
+# `artifact_dashboard_read` = Codex reads shipped canonical evidence
+# / review / status artifacts for review preparation.
+# `memory_vault_read` = Codex reads the shipped durable memory vault
+# for phase-boundary distillation preparation. `active_context_write`
+# = Codex writes a Codex-owned canonical artifact that IS read by
+# Claude during the active implementation cycle (would-invalidate).
+CODEX_CONCURRENT_ACTION_TYPES = (
+    "prd_intake_read",
+    "plan_proposal_write",
+    "artifact_dashboard_read",
+    "memory_vault_read",
+    "active_context_write",
+)
+
+# Closed effect-class vocabulary. `read_only_advisory` = the action
+# reads canonical artifacts only and never writes. `codex_owned_write`
+# = the action writes a Codex-owned canonical artifact whose write
+# does NOT invalidate the active Claude implementation cycle.
+# `codex_owned_write_invalidates_claude` = the action writes a Codex-
+# owned canonical artifact whose write WOULD invalidate the active
+# Claude implementation cycle (must be refused fail-closed).
+CODEX_CONCURRENT_EFFECT_CLASSES = (
+    "read_only_advisory",
+    "codex_owned_write",
+    "codex_owned_write_invalidates_claude",
+)
+
+# Closed eligibility-state vocabulary. `eligible_bounded_execution` =
+# every closed check passes; the shipped bounded eligibility runtime
+# would allow this action to run concurrently with Claude
+# implementation. `refused_overlap_unsafe` = the shipped Phase 10AC
+# aggregate is `refused_pending_recovery` or `unknown`; every entry
+# refuses fail-closed until the overlap gate clears.
+# `refused_owner_role_violation` = the target artifact is not in the
+# Phase 10AB ownership map OR its owner_role does not match the
+# descriptor's `expected_target_owner_role`.
+# `refused_would_invalidate_claude_context` = the descriptor's
+# `would_invalidate_claude_context` is True (the action would
+# invalidate the active Claude implementation cycle).
+# `refused_until_policy_update` = a shipped policy explicitly refuses
+# this entry regardless of any other check (reserved).
+CODEX_CONCURRENT_ELIGIBILITY_STATES = (
+    "eligible_bounded_execution",
+    "refused_overlap_unsafe",
+    "refused_owner_role_violation",
+    "refused_would_invalidate_claude_context",
+    "refused_until_policy_update",
+)
+
+_CODEX_CONCURRENT_DESCRIPTOR_REQUIRED_STRING_FIELDS = (
+    "id",
+    "display_name",
+    "action_type",
+    "effect_class",
+    "target_artifact_canonical_rel",
+    "expected_target_owner_role",
+    "description",
+    "safety_copy",
+    "deferred_runtime_marker",
+    "refusal_reason_template",
+)
+
+
+def _codex_concurrent_validate_path_rel(path_rel: str) -> None:
+    """Phase 10AD path-shape guard: refuse fail-closed on any non-
+    POSIX / absolute / drive-prefixed / parent-traversal
+    `target_artifact_canonical_rel`, matching the Phase 10V / 10AA /
+    10AB / 10AC verbatim path-shape guard.
+    """
+    if "\\" in path_rel:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} contains a backslash"
+            ),
+        )
+    if path_rel.startswith("/"):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} is absolute"
+            ),
+        )
+    if (
+        len(path_rel) >= 2
+        and path_rel[1] == ":"
+        and path_rel[0].isalpha()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} carries a Windows-style "
+                f"drive prefix"
+            ),
+        )
+    segments = path_rel.split("/")
+    if any(seg == ".." for seg in segments):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"path={path_rel!r} contains a parent-directory "
+                f"traversal segment"
+            ),
+        )
+
+
+_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY: tuple = (
+    {
+        "id": "codex_prd_intake_read",
+        "display_name": (
+            "Codex PRD intake read of TASK.md"
+        ),
+        "action_type": "prd_intake_read",
+        "effect_class": "read_only_advisory",
+        "target_artifact_canonical_rel": "TASK.md",
+        "expected_target_owner_role": "codex_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex reads the shipped canonical PRD (`TASK.md`) "
+            "for intake / decomposition analysis. Read-only "
+            "advisory access; the read never mutates the shipped "
+            "canonical artifact and therefore cannot invalidate "
+            "the active Claude implementation cycle. Bounded to "
+            "the shipped Codex-owned canonical artifact per the "
+            "Phase 10AB ownership map."
+        ),
+        "safety_copy": (
+            "A Codex-side read of TASK.md never invalidates "
+            "Claude's active implementation context; the read is "
+            "bounded to the shipped canonical artifact and never "
+            "widens into a background watcher or a subprocess."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`) "
+            "that returns the closed eligibility outcome; "
+            "actual concurrent PRD-intake execution (Codex "
+            "subprocess launch) is deferred to a future Phase "
+            "10 runtime slice tracked in `ROADMAP.md`."
+        ),
+        "refusal_reason_template": (
+            "`codex_prd_intake_read` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_plan_proposal_write",
+        "display_name": (
+            "Codex plan-proposal write of phase-plan.md"
+        ),
+        "action_type": "plan_proposal_write",
+        "effect_class": "codex_owned_write",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/phase-plan.md"
+        ),
+        "expected_target_owner_role": "codex_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex appends a bounded planner-proposal section "
+            "for the NEXT phase to the shipped canonical "
+            "phase-plan.md chronological history. The target "
+            "is a Codex-owned canonical artifact per the Phase "
+            "10AB ownership map. Append-only writes to the "
+            "chronological history do NOT invalidate the "
+            "active Claude implementation cycle (Claude keys "
+            "off the shipped current-phase.md / current-task."
+            "md / claude-prompt.md for the active phase, not "
+            "off the closed history in phase-plan.md). The "
+            "Phase 10AC overlap-safe detection surface still "
+            "refuses the request if the aggregate is "
+            "`refused_pending_recovery` or `unknown`."
+        ),
+        "safety_copy": (
+            "Append-only planner-proposal writes to phase-"
+            "plan.md while Claude is implementing are bounded "
+            "and safe because Claude keys off current-phase."
+            "md / current-task.md / claude-prompt.md for the "
+            "active phase, not the chronological history."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            "; actual concurrent planner-proposal write "
+            "execution is deferred to a future Phase 10 runtime "
+            "slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_plan_proposal_write` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_artifact_dashboard_read",
+        "display_name": (
+            "Codex artifact-dashboard read of shipped evidence"
+        ),
+        "action_type": "artifact_dashboard_read",
+        "effect_class": "read_only_advisory",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/git-diff.patch"
+        ),
+        "expected_target_owner_role": "orchestrator_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex reads a shipped orchestrator-owned evidence "
+            "artifact (`.agent-loop/git-diff.patch`) as part of "
+            "the shipped Phase 10J/10K artifact dashboard "
+            "review flow. Read-only advisory access; the read "
+            "never mutates the shipped canonical artifact. "
+            "Bounded to the shipped orchestrator-owned "
+            "canonical artifact per the Phase 10AB ownership "
+            "map."
+        ),
+        "safety_copy": (
+            "A Codex-side read of shipped evidence artifacts "
+            "never invalidates Claude's active implementation "
+            "context; the read is bounded to the shipped "
+            "canonical evidence and never widens into a "
+            "background watcher."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            "; actual concurrent dashboard-read execution is "
+            "deferred to a future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_artifact_dashboard_read` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_memory_vault_read",
+        "display_name": (
+            "Codex durable-memory read for distillation prep"
+        ),
+        "action_type": "memory_vault_read",
+        "effect_class": "read_only_advisory",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/claude-summary.md"
+        ),
+        "expected_target_owner_role": "claude_owned",
+        "would_invalidate_claude_context": False,
+        "description": (
+            "Codex reads the shipped canonical claude-summary."
+            "md as part of the Phase 6I phase-boundary memory "
+            "distillation preparation flow. Read-only advisory "
+            "access; the read never mutates the shipped "
+            "canonical artifact and therefore cannot invalidate "
+            "the active Claude implementation cycle. The Phase "
+            "10AC overlap-safe detection surface still refuses "
+            "the request if the aggregate is "
+            "`refused_pending_recovery` or `unknown`."
+        ),
+        "safety_copy": (
+            "A Codex-side read of claude-summary.md never "
+            "invalidates Claude's active implementation "
+            "context; the read is bounded to the shipped "
+            "canonical summary and never widens into a "
+            "background watcher."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            "; actual concurrent memory-vault-read execution is "
+            "deferred to a future Phase 10 runtime slice."
+        ),
+        "refusal_reason_template": (
+            "`codex_memory_vault_read` refused: consult "
+            "`view-desktop-codex-concurrent-work --controller-"
+            "root <PATH>` for the per-action eligibility "
+            "detail."
+        ),
+    },
+    {
+        "id": "codex_current_task_write",
+        "display_name": (
+            "Codex active-context write of current-task.md"
+        ),
+        "action_type": "active_context_write",
+        "effect_class": "codex_owned_write_invalidates_claude",
+        "target_artifact_canonical_rel": (
+            ".agent-loop/current-task.md"
+        ),
+        "expected_target_owner_role": "codex_owned",
+        "would_invalidate_claude_context": True,
+        "description": (
+            "Codex writes the shipped canonical current-task."
+            "md, which IS read by Claude at the start of every "
+            "implementation cycle. Writing this artifact while "
+            "Claude is implementing WOULD invalidate the active "
+            "Claude implementation context (Claude's in-flight "
+            "cycle would silently observe a mutated task "
+            "description). The shipped Phase 10AD surface "
+            "REFUSES this action fail-closed regardless of "
+            "operator input; this entry anchors the "
+            "`refused_would_invalidate_claude_context` branch."
+        ),
+        "safety_copy": (
+            "Silent concurrent writes to the active current-"
+            "task.md are a concurrency bug per Phase 10AB / "
+            "10AC / 10AD; the shipped surface refuses fail-"
+            "closed."
+        ),
+        "deferred_runtime_marker": (
+            "Phase 10AD ships the ELIGIBILITY evaluation for "
+            "this action plus a bounded shipped runtime helper "
+            "(`evaluate_codex_concurrent_work_eligibility(...)`)"
+            " that REFUSES this action fail-closed regardless "
+            "of operator input; actual concurrent execution is "
+            "explicitly out of scope for Phase 10AD (and every "
+            "future runtime slice preserving the shipped "
+            "would-invalidate-Claude boundary)."
+        ),
+        "refusal_reason_template": (
+            "`codex_current_task_write` refused: writing the "
+            "shipped current-task.md while Claude is "
+            "implementing would invalidate the active Claude "
+            "context; the shipped Phase 10AD surface refuses "
+            "fail-closed."
+        ),
+    },
+)
+
+
+def _desktop_codex_concurrent_work_validate_descriptor(spec) -> None:
+    """Phase 10AD closed descriptor shape guard. Raises fail-closed
+    `HaltError("halted_input_missing", ...)` on any missing required
+    field, wrong-typed value, unknown `action_type`, unknown
+    `effect_class`, unknown `expected_target_owner_role` (must be
+    a member of the Phase 10AB `CONCURRENCY_OWNERSHIP_ROLES` closed
+    enumeration), or non-POSIX / absolute / drive-prefixed / parent-
+    traversal `target_artifact_canonical_rel`. Pure, no IO.
+    """
+    if not isinstance(spec, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"descriptor is not a dict: {spec!r}"
+            ),
+        )
+    for field in _CODEX_CONCURRENT_DESCRIPTOR_REQUIRED_STRING_FIELDS:
+        value = spec.get(field)
+        if not isinstance(value, str) or not value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop codex-concurrent-work refused: "
+                    f"descriptor field {field!r} missing or "
+                    f"non-string: {value!r}"
+                ),
+            )
+    if "would_invalidate_claude_context" not in spec:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop codex-concurrent-work refused: "
+                "descriptor missing `would_invalidate_claude_"
+                "context`"
+            ),
+        )
+    if not isinstance(
+        spec["would_invalidate_claude_context"], bool,
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"`would_invalidate_claude_context` must be "
+                f"bool, got "
+                f"{spec['would_invalidate_claude_context']!r}"
+            ),
+        )
+    if spec["action_type"] not in CODEX_CONCURRENT_ACTION_TYPES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"unknown action_type {spec['action_type']!r}"
+            ),
+        )
+    if spec["effect_class"] not in CODEX_CONCURRENT_EFFECT_CLASSES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"unknown effect_class {spec['effect_class']!r}"
+            ),
+        )
+    if (
+        spec["expected_target_owner_role"]
+        not in CONCURRENCY_OWNERSHIP_ROLES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"unknown expected_target_owner_role "
+                f"{spec['expected_target_owner_role']!r}"
+            ),
+        )
+    _codex_concurrent_validate_path_rel(
+        spec["target_artifact_canonical_rel"],
+    )
+
+
+def _desktop_codex_concurrent_work_ownership_lookup() -> dict:
+    """Build a `{path_rel: owner_role}` lookup from the shipped
+    Phase 10AB `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP`. Order-preserving
+    to keep the Phase 10AB ownership rule as the single source of
+    truth.
+    """
+    return {
+        path_rel: owner_role
+        for path_rel, owner_role in (
+            _DESKTOP_CONCURRENCY_OWNERSHIP_MAP
+        )
+    }
+
+
+def _desktop_codex_concurrent_work_evaluate_eligibility(
+    spec: dict,
+    ownership_lookup: dict,
+    overlap_overall_state: Optional[str],
+) -> dict:
+    """Phase 10AD closed eligibility evaluator. Pure, no IO.
+
+    Returns `{eligibility_state, eligibility_reason,
+    actual_target_owner_role, overlap_overall_state,
+    would_invalidate_claude_context}`. The closed evaluation order is:
+      1. If the shipped Phase 10AC aggregate is
+         `refused_pending_recovery` -> `refused_overlap_unsafe`
+      2. Else if the target artifact is not in the shipped Phase
+         10AB ownership map OR its owner_role does not match the
+         descriptor's `expected_target_owner_role` ->
+         `refused_owner_role_violation`
+      3. Else if the descriptor's
+         `would_invalidate_claude_context` is True ->
+         `refused_would_invalidate_claude_context`
+      4. Else if the shipped Phase 10AC aggregate is `unknown` ->
+         `refused_overlap_unsafe` (fail-closed on unknown overlap
+         evidence)
+      5. Otherwise -> `eligible_bounded_execution`
+    """
+    target = spec["target_artifact_canonical_rel"]
+    actual_owner = ownership_lookup.get(target)
+    if overlap_overall_state == "refused_pending_recovery":
+        return {
+            "eligibility_state": "refused_overlap_unsafe",
+            "eligibility_reason": (
+                "Phase 10AC overlap-safe detection aggregate "
+                "is `refused_pending_recovery`; the shipped "
+                "Phase 10AD bounded concurrent-work path "
+                "refuses fail-closed until the overlap gate "
+                "clears."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+        }
+    if actual_owner is None:
+        return {
+            "eligibility_state": "refused_owner_role_violation",
+            "eligibility_reason": (
+                f"target artifact {target!r} is not present in "
+                f"the shipped Phase 10AB _DESKTOP_CONCURRENCY_"
+                f"OWNERSHIP_MAP; the shipped Phase 10AD surface "
+                f"refuses fail-closed."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+        }
+    if actual_owner != spec["expected_target_owner_role"]:
+        return {
+            "eligibility_state": "refused_owner_role_violation",
+            "eligibility_reason": (
+                f"target artifact {target!r} has actual "
+                f"owner_role {actual_owner!r} but the "
+                f"descriptor's expected_target_owner_role is "
+                f"{spec['expected_target_owner_role']!r}; the "
+                f"shipped Phase 10AD surface refuses fail-"
+                f"closed."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+        }
+    if spec["would_invalidate_claude_context"]:
+        return {
+            "eligibility_state": (
+                "refused_would_invalidate_claude_context"
+            ),
+            "eligibility_reason": (
+                "descriptor's would_invalidate_claude_context "
+                "is True; writing the shipped canonical target "
+                "while Claude is implementing WOULD invalidate "
+                "the active Claude context; the shipped Phase "
+                "10AD surface refuses fail-closed."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": True,
+        }
+    if overlap_overall_state == "unknown":
+        return {
+            "eligibility_state": "refused_overlap_unsafe",
+            "eligibility_reason": (
+                "Phase 10AC overlap-safe detection aggregate "
+                "is `unknown` (one or more required overlap "
+                "evidence signals are missing); the shipped "
+                "Phase 10AD bounded concurrent-work path "
+                "refuses fail-closed until the overlap gate "
+                "can be evaluated."
+            ),
+            "actual_target_owner_role": actual_owner,
+            "overlap_overall_state": overlap_overall_state,
+            "would_invalidate_claude_context": False,
+        }
+    return {
+        "eligibility_state": "eligible_bounded_execution",
+        "eligibility_reason": (
+            "closed Phase 10AD checks pass: Phase 10AC "
+            "aggregate is not refused / unknown; target "
+            "artifact is present in the shipped Phase 10AB "
+            "ownership map with the expected owner_role; the "
+            "descriptor's would_invalidate_claude_context is "
+            "False. The shipped bounded eligibility runtime "
+            "may execute this action concurrently with the "
+            "active Claude implementation cycle."
+        ),
+        "actual_target_owner_role": actual_owner,
+        "overlap_overall_state": overlap_overall_state,
+        "would_invalidate_claude_context": False,
+    }
+
+
+def _desktop_codex_concurrent_work_normalize_operator_inputs(
+    operator_inputs: Optional[dict],
+) -> dict:
+    """Phase 10AD operator-input normalizer. Accepts a `{identity,
+    acknowledged_action_ids}` dict (both optional) and normalizes to
+    an ordered pair. Refuses fail-closed via HaltError on a non-dict
+    / wrong-typed value.
+    """
+    if operator_inputs is None:
+        return {"identity": "", "acknowledged_action_ids": frozenset()}
+    if not isinstance(operator_inputs, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"operator_inputs must be a dict, got "
+                f"{operator_inputs!r}"
+            ),
+        )
+    identity = operator_inputs.get("identity", "")
+    if identity is None:
+        identity = ""
+    if not isinstance(identity, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"operator_inputs.identity must be a str, got "
+                f"{identity!r}"
+            ),
+        )
+    acknowledged_raw = operator_inputs.get(
+        "acknowledged_action_ids", (),
+    )
+    if acknowledged_raw is None:
+        acknowledged_raw = ()
+    try:
+        acknowledged = frozenset(acknowledged_raw)
+    except TypeError as exc:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex-concurrent-work refused: "
+                f"operator_inputs.acknowledged_action_ids must "
+                f"be iterable of str: {acknowledged_raw!r} "
+                f"({exc})"
+            ),
+        )
+    for value in acknowledged:
+        if not isinstance(value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop codex-concurrent-work refused: "
+                    f"operator_inputs.acknowledged_action_ids "
+                    f"member is not a str: {value!r}"
+                ),
+            )
+    return {"identity": identity, "acknowledged_action_ids": acknowledged}
+
+
+def build_desktop_codex_concurrent_work_view(
+    controller_root: Path,
+    *,
+    operator_inputs: Optional[dict] = None,
+) -> dict:
+    """Phase 10AD: assemble the bounded desktop Codex-owned concurrent
+    work view. Surfaces the closed
+    `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` with per-action
+    eligibility outcomes derived from the shipped Phase 10AB ownership
+    map and the shipped Phase 10AC overlap-safe detection aggregate.
+
+    `phase_10ad_runtime_available` is hard-coded `True` in this slice
+    because `evaluate_codex_concurrent_work_eligibility(...)` is
+    shipped. The shipped surface still NEVER launches any actual
+    concurrent Codex/Claude worker.
+
+    Never writes, never mutates, never spawns a subprocess, never
+    invokes `_halt(...)`, never reads canonical artifact BODY content
+    (only ownership-map inclusion + Phase 10AC aggregate), never
+    widens the Phase 10I library-callable cap, never opens a network
+    socket. The shipped `load_loop_state(...)` validator HaltError
+    soft-fails so the surface stays operable when the controller's
+    loop-state is missing or malformed.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    status_value: Optional[str] = None
+    approval_mode: Optional[str] = None
+    active_phase: Optional[str] = None
+    active_sub_phase: Optional[str] = None
+    active_cycle_count: Optional[int] = None
+    if isinstance(loop_state, dict):
+        candidate = loop_state.get("status")
+        if isinstance(candidate, str):
+            status_value = candidate
+        mode_candidate = loop_state.get("approval_mode")
+        if isinstance(mode_candidate, str):
+            approval_mode = mode_candidate
+        phase_candidate = loop_state.get("phase")
+        if isinstance(phase_candidate, str):
+            active_phase = phase_candidate
+        sub_phase_candidate = loop_state.get("sub_phase")
+        if isinstance(sub_phase_candidate, str):
+            active_sub_phase = sub_phase_candidate
+        cycle_candidate = loop_state.get("cycle_count")
+        if isinstance(cycle_candidate, int):
+            active_cycle_count = cycle_candidate
+    inputs = (
+        _desktop_codex_concurrent_work_normalize_operator_inputs(
+            operator_inputs,
+        )
+    )
+    ack_set = inputs["acknowledged_action_ids"]
+
+    # Consult the shipped Phase 10AC aggregate; a missing / non-dict
+    # view falls to `unknown` so the shipped surface fails closed.
+    overlap_state: Optional[str] = None
+    try:
+        overlap_view = build_desktop_overlap_detection_view(
+            controller_root,
+        )
+    except HaltError:
+        overlap_view = None
+    if isinstance(overlap_view, dict):
+        overall = overlap_view.get("overall") or {}
+        candidate = overall.get("overall_signal_state")
+        if isinstance(candidate, str):
+            overlap_state = candidate
+
+    ownership_lookup = (
+        _desktop_codex_concurrent_work_ownership_lookup()
+    )
+    actions: list = []
+    for spec in _DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY:
+        _desktop_codex_concurrent_work_validate_descriptor(spec)
+        eligibility = (
+            _desktop_codex_concurrent_work_evaluate_eligibility(
+                spec,
+                ownership_lookup,
+                overlap_state,
+            )
+        )
+        envelope = {
+            "id": spec["id"],
+            "display_name": spec["display_name"],
+            "action_type": spec["action_type"],
+            "effect_class": spec["effect_class"],
+            "target_artifact_canonical_rel": (
+                spec["target_artifact_canonical_rel"]
+            ),
+            "expected_target_owner_role": (
+                spec["expected_target_owner_role"]
+            ),
+            "actual_target_owner_role": (
+                eligibility["actual_target_owner_role"]
+            ),
+            "would_invalidate_claude_context": (
+                spec["would_invalidate_claude_context"]
+            ),
+            "eligibility_state": (
+                eligibility["eligibility_state"]
+            ),
+            "eligibility_reason": (
+                eligibility["eligibility_reason"]
+            ),
+            "overlap_overall_state": (
+                eligibility["overlap_overall_state"]
+            ),
+            "description": spec["description"],
+            "safety_copy": spec["safety_copy"],
+            "deferred_runtime_marker": (
+                spec["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                spec["refusal_reason_template"]
+            ),
+            "operator_acknowledged": spec["id"] in ack_set,
+        }
+        actions.append(envelope)
+    eligible_ids = [
+        a["id"] for a in actions
+        if a["eligibility_state"] == "eligible_bounded_execution"
+    ]
+    refused_ids = [
+        a["id"] for a in actions
+        if a["eligibility_state"] != "eligible_bounded_execution"
+    ]
+    return {
+        "view_signal_version": (
+            DESKTOP_CODEX_CONCURRENT_WORK_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_root.resolve().as_posix()
+        ),
+        "current_loop_state_status": status_value,
+        "controller_loop_state_approval_mode": approval_mode,
+        "current_loop_state_phase": active_phase,
+        "current_loop_state_sub_phase": active_sub_phase,
+        "current_loop_state_cycle_count": active_cycle_count,
+        "phase_10ad_runtime_available": True,
+        "operator_inputs": {
+            "identity": inputs["identity"],
+            "acknowledged_action_ids": sorted(ack_set),
+        },
+        "action_types": list(CODEX_CONCURRENT_ACTION_TYPES),
+        "effect_classes": list(CODEX_CONCURRENT_EFFECT_CLASSES),
+        "eligibility_states": list(
+            CODEX_CONCURRENT_ELIGIBILITY_STATES
+        ),
+        "ownership_roles": list(CONCURRENCY_OWNERSHIP_ROLES),
+        "overlap_overall_state": overlap_state,
+        "actions": actions,
+        "eligible_action_ids": eligible_ids,
+        "refused_action_ids": refused_ids,
+        "precedence_note": (
+            DESKTOP_CODEX_CONCURRENT_WORK_PRECEDENCE_NOTE
+        ),
+    }
+
+
+def render_desktop_codex_concurrent_work_text(view: dict) -> list:
+    """Phase 10AD: format the assembled Codex-owned concurrent work
+    view as text lines. Per-line attribution tags
+    (`[canonical mirror]`, `[advisory]`, `[codex-concurrent]`,
+    `[codex-owner]`, `[codex-effect]`, `[codex-eligibility]`,
+    `[codex-overlap]`, `[deferred-runtime]`, `[refused]`) keep
+    attribution consistent with the Phase 10AB / 10AC tag vocabulary.
+    """
+    lines = []
+    lines.append(
+        f"[desktop-codex-concurrent-work] view (signal_version="
+        f"{view['view_signal_version']!r})"
+    )
+    lines.append(
+        f"controller_path_canonical (canonical mirror, source="
+        f"operator-selected controller root): "
+        f"{view['controller_path_canonical']}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_status: "
+        f"{view['current_loop_state_status']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] controller_loop_state_approval"
+        f"_mode: "
+        f"{view['controller_loop_state_approval_mode']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_phase: "
+        f"{view['current_loop_state_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_sub_phase: "
+        f"{view['current_loop_state_sub_phase']!r}"
+    )
+    lines.append(
+        f"  [canonical mirror] current_loop_state_cycle_count: "
+        f"{view['current_loop_state_cycle_count']!r}"
+    )
+    lines.append(
+        f"  [advisory] phase_10ad_runtime_available (Phase "
+        f"10AD ships the ELIGIBILITY evaluation plus the "
+        f"bounded shipped runtime helper "
+        f"`evaluate_codex_concurrent_work_eligibility(...)`; "
+        f"actual concurrent Codex/Claude worker execution is "
+        f"still deferred to a later Phase 10 slice): "
+        f"{view['phase_10ad_runtime_available']!r}"
+    )
+    lines.append(
+        f"  [codex-overlap] overlap_overall_state (mirrored "
+        f"from the shipped Phase 10AC aggregate; drives fail-"
+        f"closed refusal across every Phase 10AD entry): "
+        f"{view['overlap_overall_state']!r}"
+    )
+    for enum_key, enum_label in (
+        (
+            "action_types",
+            "Phase 10AD action-type closed enumeration",
+        ),
+        (
+            "effect_classes",
+            "Phase 10AD effect-class closed enumeration",
+        ),
+        (
+            "eligibility_states",
+            "Phase 10AD eligibility-state closed enumeration",
+        ),
+        (
+            "ownership_roles",
+            "Phase 10AB ownership-role closed enumeration "
+            "(re-used verbatim)",
+        ),
+    ):
+        lines.append(
+            f"  [advisory] {enum_key} ({enum_label}): "
+            f"{view[enum_key]!r}"
+        )
+    op_inputs = view.get("operator_inputs") or {}
+    identity = op_inputs.get("identity", "")
+    identity_present = bool(identity)
+    lines.append(
+        f"  [codex-concurrent] operator_inputs.identity "
+        f"(per-session operator-supplied; NEVER auto-filled "
+        f"from $USER / whoami / packaging-time identity / "
+        f"concurrent-work-side identity store): "
+        f"supplied={identity_present!r} value="
+        f"{identity if identity_present else ''!r}"
+    )
+    lines.append(
+        f"  [codex-concurrent] operator_inputs."
+        f"acknowledged_action_ids (per-session operator-"
+        f"clicked action acknowledgement; NEVER persisted "
+        f"across sessions): "
+        f"{op_inputs.get('acknowledged_action_ids', [])!r}"
+    )
+    for action in view.get("actions", []):
+        eligibility_state = action["eligibility_state"]
+        tag = (
+            "[refused]"
+            if eligibility_state != "eligible_bounded_execution"
+            else "[codex-eligibility]"
+        )
+        lines.append(
+            f"  {tag} id={action['id']!r} "
+            f"display_name={action['display_name']!r} "
+            f"eligibility_state={eligibility_state!r}"
+        )
+        lines.append(
+            f"    [advisory] description: "
+            f"{action['description']}"
+        )
+        lines.append(
+            f"    [advisory] safety_copy: "
+            f"{action['safety_copy']}"
+        )
+        lines.append(
+            f"    [codex-owner] target_artifact_canonical_rel="
+            f"{action['target_artifact_canonical_rel']!r} "
+            f"expected_target_owner_role="
+            f"{action['expected_target_owner_role']!r} "
+            f"actual_target_owner_role="
+            f"{action['actual_target_owner_role']!r}"
+        )
+        lines.append(
+            f"    [codex-effect] action_type="
+            f"{action['action_type']!r} effect_class="
+            f"{action['effect_class']!r} "
+            f"would_invalidate_claude_context="
+            f"{action['would_invalidate_claude_context']!r}"
+        )
+        lines.append(
+            f"    [codex-eligibility] eligibility_reason: "
+            f"{action['eligibility_reason']}"
+        )
+        lines.append(
+            f"    [codex-overlap] overlap_overall_state="
+            f"{action['overlap_overall_state']!r} "
+            f"operator_acknowledged="
+            f"{action.get('operator_acknowledged', False)!r}"
+        )
+        lines.append(
+            f"    [deferred-runtime] deferred_runtime_marker: "
+            f"{action['deferred_runtime_marker']}"
+        )
+        if eligibility_state != "eligible_bounded_execution":
+            lines.append(
+                f"    [refused] refusal_reason_template: "
+                f"{action['refusal_reason_template']}"
+            )
+    lines.append(
+        f"[codex-concurrent] eligible_action_ids="
+        f"{view.get('eligible_action_ids', [])!r}"
+    )
+    lines.append(
+        f"[codex-concurrent] refused_action_ids="
+        f"{view.get('refused_action_ids', [])!r}"
+    )
+    lines.append(
+        f"precedence_note: {view['precedence_note']}"
+    )
+    return lines
+
+
+def build_desktop_codex_concurrent_work_controls(view: dict) -> list:
+    """Phase 10AD: return a closed list of desktop widget descriptors.
+    COPY-PASTE ONLY (never a library-callable control) so the Phase
+    10I three-control cap is preserved exactly. Matches the Phase 10Z
+    / 10AA / 10AB / 10AC fix-cycle affordance pattern: every button
+    surfaces `enabled=True` (the click ONLY copies an operator-visible
+    eligibility acknowledgement TEMPLATE into the OS clipboard, which
+    is non-mutating) while `runtime_enabled` reflects whether the
+    shipped eligibility runtime would allow the action (True for
+    `eligible_bounded_execution`; False otherwise).
+    """
+    controls: list = []
+    for action in view.get("actions", []):
+        state = action["eligibility_state"]
+        runtime_enabled = (
+            state == "eligible_bounded_execution"
+        )
+        clipboard_payload = (
+            "# Phase 10AD Codex-owned concurrent work "
+            "eligibility acknowledgement template. Copy the "
+            "block below into a review issue / operator note "
+            "instead of dispatching the shipped runtime "
+            "eligibility helper directly.\n"
+            f"action_id: {action['id']}\n"
+            f"action_type: {action['action_type']}\n"
+            f"effect_class: {action['effect_class']}\n"
+            f"target_artifact: {action['target_artifact_canonical_rel']}\n"
+            f"expected_owner_role: {action['expected_target_owner_role']}\n"
+            f"actual_owner_role: {action['actual_target_owner_role']}\n"
+            f"would_invalidate_claude_context: {action['would_invalidate_claude_context']}\n"
+            f"eligibility_state: {state}\n"
+            f"overlap_overall_state: {action['overlap_overall_state']}\n"
+            "requested_action: acknowledge_and_review\n"
+            "operator_identity: <NAME>\n"
+        )
+        controls.append({
+            "id": action["id"],
+            "label": (
+                f"Copy Codex-concurrent-work eligibility "
+                f"template: {action['display_name']} "
+                f"[{state}]"
+            ),
+            "enabled": True,
+            "runtime_enabled": runtime_enabled,
+            "action_type": action["action_type"],
+            "effect_class": action["effect_class"],
+            "eligibility_state": state,
+            "would_invalidate_claude_context": (
+                action["would_invalidate_claude_context"]
+            ),
+            "eligibility_reason": action["eligibility_reason"],
+            "deferred_runtime_marker": (
+                action["deferred_runtime_marker"]
+            ),
+            "refusal_reason_template": (
+                action["refusal_reason_template"]
+            ),
+            "clipboard_payload": clipboard_payload,
+            "dispatch_mode": "copy_paste",
+            "category": "codex_concurrent_work_ux",
+        })
+    return controls
+
+
+def cmd_view_desktop_codex_concurrent_work(
+    args: argparse.Namespace,
+) -> int:
+    """Phase 10AD operator entry: render the desktop Codex-owned
+    concurrent work view.
+
+    Phase 7C reporter pattern: always exits 0 on report content once
+    the controller-root selection succeeds. NEVER mutates any
+    canonical artifact, NEVER appends to `.agent-loop/orchestrator.
+    log`, NEVER advances loop-state, NEVER invokes `_halt(...)`,
+    NEVER spawns a subprocess, NEVER opens a network socket, NEVER
+    reads canonical artifact BODY content, NEVER launches or
+    coordinates any actual concurrent Codex/Claude worker, NEVER
+    widens the Phase 10I library-callable cap.
+    """
+    root_arg = getattr(args, "controller_root", None)
+    if not root_arg:
+        print(
+            "[desktop-codex-concurrent-work] REFUSED: "
+            "--controller-root is required per the Phase 10L "
+            "Desktop App Shell Contract's Controller-Root "
+            "Selection Flow; the desktop Codex-concurrent-work "
+            "surface MUST NOT silently pick a default root "
+            "from an auto-discovered repo root, the OS-level "
+            "current working directory, an environment "
+            "variable, or a packaging-time configured path. "
+            "Supply the controller root explicitly via "
+            "`--controller-root <PATH>`.",
+            file=sys.stderr,
+        )
+        return 2
+    controller_root = Path(root_arg).resolve()
+    validation = validate_desktop_controller_root(
+        controller_root,
+    )
+    if not validation["valid"]:
+        missing = list(validation["missing_markers"])
+        print(
+            f"[desktop-codex-concurrent-work] REFUSED: "
+            f"controller root {validation['root_path']!r} is "
+            f"missing required markers {missing!r}; per the "
+            f"Phase 10L Desktop App Shell Contract the desktop "
+            f"shell requires AGENTS.md / CLAUDE.md / TASK.md / "
+            f".agent-loop/ to be present before any canonical "
+            f"artifact is rendered.",
+            file=sys.stderr,
+        )
+        return 2
+    operator_inputs = {
+        "identity": (
+            getattr(args, "operator_identity", None) or ""
+        ),
+        "acknowledged_action_ids": frozenset(
+            getattr(args, "acknowledge_action", None) or []
+        ),
+    }
+    view = build_desktop_codex_concurrent_work_view(
+        controller_root, operator_inputs=operator_inputs,
+    )
+    for line in render_desktop_codex_concurrent_work_text(view):
+        print(line)
+    return 0
+
+
+def evaluate_codex_concurrent_work_eligibility(
+    repo_root: Path, action_id: str,
+) -> dict:
+    """Phase 10AD shipped bounded eligibility runtime helper.
+
+    Consults `build_desktop_codex_concurrent_work_view(...)` for
+    `repo_root`, finds the shipped registry entry whose `id` matches
+    `action_id`, and returns its eligibility envelope. Raises
+    `HaltError(HALTED_CODEX_CONCURRENT_WORK_UNSAFE, ...)` when
+    `action_id` is not in the shipped
+    `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` (so callers cannot
+    silently execute an unrecognized concurrent action) OR when the
+    eligibility outcome is anything other than
+    `eligible_bounded_execution` (so callers cannot silently execute
+    a refused action).
+
+    The helper is bounded per the Phase 10AD contract: it consults
+    the same registry the desktop reporter exposes; it does NOT
+    spawn a subprocess, open a network socket, launch or coordinate
+    any actual concurrent Codex/Claude worker, schedule a background
+    watcher, mutate any canonical artifact, advance loop-state past
+    the caller-owned write, or widen the Phase 10I library-callable
+    cap. If `build_desktop_codex_concurrent_work_view(...)` itself
+    raises `HaltError` for a structural descriptor failure, the raise
+    propagates so the calling runtime frame routes it through
+    `_halt(...)` per its own error-handling pattern.
+    """
+    view = build_desktop_codex_concurrent_work_view(repo_root)
+    actions = view.get("actions") or []
+    match = None
+    for action in actions:
+        if action.get("id") == action_id:
+            match = action
+            break
+    if match is None:
+        known_ids = [a.get("id") for a in actions]
+        raise HaltError(
+            HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+            (
+                f"Phase 10AD Codex-concurrent-work eligibility "
+                f"refused: action_id={action_id!r} is not a "
+                f"shipped Phase 10AD entry; the shipped closed "
+                f"registry ships exactly {known_ids!r}. "
+                f"Consult `view-desktop-codex-concurrent-work "
+                f"--controller-root <PATH>` for the per-action "
+                f"eligibility detail."
+            ),
+        )
+    state = match.get("eligibility_state")
+    if state != "eligible_bounded_execution":
+        raise HaltError(
+            HALTED_CODEX_CONCURRENT_WORK_UNSAFE,
+            (
+                f"Phase 10AD Codex-concurrent-work eligibility "
+                f"refused: action_id={action_id!r} eligibility_"
+                f"state={state!r}; {match.get('eligibility_reason')}. "
+                f"Consult `view-desktop-codex-concurrent-work "
+                f"--controller-root <PATH>` for the per-action "
+                f"eligibility detail."
+            ),
+        )
+    return match
+
+
+# ---------------------------------------------------------------------------
 # Phase 7B: Artifact Inspection And Review Workflow
 #
 # Thin operator-convenience inspector that reports the on-disk
@@ -37965,6 +39243,61 @@ def build_parser() -> argparse.ArgumentParser:
             "per overlap-detection signal id."
         ),
     )
+    codex_concurrent_work = sub.add_parser(
+        "view-desktop-codex-concurrent-work",
+        help=(
+            "Phase 10AD Codex-owned concurrent work initial "
+            "slice: render a bounded READ-ONLY view over the "
+            "closed `_DESKTOP_CODEX_CONCURRENT_WORK_REGISTRY` "
+            "with per-action eligibility outcomes derived from "
+            "the shipped Phase 10AB ownership map and the "
+            "shipped Phase 10AC overlap-safe detection "
+            "aggregate. Phase 7C reporter pattern: always exits "
+            "0 on report content once the controller-root "
+            "selection succeeds; never mutates any canonical "
+            "artifact; never appends to `.agent-loop/"
+            "orchestrator.log`; never advances loop-state; "
+            "never invokes `_halt(...)`; never spawns a "
+            "subprocess; never opens a network socket; never "
+            "reads canonical artifact BODY content; never "
+            "launches or coordinates any actual concurrent "
+            "Codex/Claude worker; never widens the Phase 10I "
+            "library-callable control cap."
+        ),
+    )
+    codex_concurrent_work.add_argument(
+        "--controller-root",
+        type=str,
+        default=None,
+        help=(
+            "REQUIRED path to the controller repository the "
+            "desktop Codex-concurrent-work view renders "
+            "against. Per the Phase 10L Controller-Root "
+            "Selection Flow the desktop shell MUST NOT "
+            "silently pick a default root. Omitting this flag "
+            "returns exit 2 with a "
+            "`[desktop-codex-concurrent-work] REFUSED: ...` "
+            "stderr message."
+        ),
+    )
+    codex_concurrent_work.add_argument(
+        "--operator-identity",
+        type=str,
+        default=None,
+        help=(
+            "OPTIONAL per-session operator-supplied identity."
+        ),
+    )
+    codex_concurrent_work.add_argument(
+        "--acknowledge-action",
+        action="append",
+        default=None,
+        help=(
+            "OPTIONAL repeatable per-session per-action "
+            "eligibility acknowledgement. Repeat the flag once "
+            "per Codex-owned concurrent-work action id."
+        ),
+    )
     distill = sub.add_parser(
         "distill-phase-boundary-memory",
         help=(
@@ -38257,6 +39590,9 @@ HANDLERS: dict[str, Callable[[argparse.Namespace], int]] = {
     "view-desktop-concurrency": cmd_view_desktop_concurrency,
     "view-desktop-overlap-detection": (
         cmd_view_desktop_overlap_detection
+    ),
+    "view-desktop-codex-concurrent-work": (
+        cmd_view_desktop_codex_concurrent_work
     ),
     "runtime-adapter-eval": cmd_runtime_adapter_eval,
     "set-runtime-config": cmd_set_runtime_config,

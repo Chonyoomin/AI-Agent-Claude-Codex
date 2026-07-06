@@ -5683,12 +5683,13 @@ concurrent Codex/Claude work is allowed.
 
 ### Status
 
-Active. Phase 10AC is the current implementation focus after Phase 10AB
-closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
-approved the advance. Phase 10AC scope is the first bounded unsafe-overlap
-detection slice: implementing detection and refusal behavior so the system can
-tell when concurrent work would invalidate the active task context, WITHOUT
-yet allowing Codex-owned concurrent work or any actual overlapping runtime.
+Complete. Phase 10AC closed with terminal verdict
+`APPROVED_FOR_HUMAN_REVIEW` and the human approved the advance to Phase
+10AD. Phase 10AC scope was the first bounded unsafe-overlap detection
+slice: implementing detection and refusal behavior so the system can
+tell when concurrent work would invalidate the active task context,
+WITHOUT yet allowing Codex-owned concurrent work or any actual
+overlapping runtime.
 
 ### Objective
 

@@ -704,6 +704,10 @@ class RenderDesktopAppTextTests(unittest.TestCase):
                 "error": "test overlap detection error",
                 "view": None,
             },
+            "codex_concurrent_work_view": {
+                "error": "test codex concurrent work error",
+                "view": None,
+            },
             "precedence_note": "x",
         }
         lines = agent_loop.render_desktop_app_text(view)
@@ -746,6 +750,9 @@ class RenderDesktopAppTextTests(unittest.TestCase):
         )
         self.assertIn(
             "[error] 'test overlap detection error'", output,
+        )
+        self.assertIn(
+            "[error] 'test codex concurrent work error'", output,
         )
 
 
