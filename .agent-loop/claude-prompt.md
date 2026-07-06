@@ -1,40 +1,44 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AC - Overlap-Safe Detection Initial Slice
+Phase 10AD - Codex-Owned Concurrent Work Initial Slice
 
 ## Objective
-Implement Phase 10AC for the agent loop. This slice should implement detection
-and refusal paths for unsafe overlap so the system can tell when concurrent
-work would invalidate the active task context.
+Implement Phase 10AD for the agent loop. This slice should allow bounded
+Codex-owned concurrent work during Claude implementation only for explicitly
+safe Codex-owned artifacts and actions that cannot invalidate the active Claude
+task context under the shipped Phase 10AB/10AC rules.
 
 ## Context
-Implement the Overlap-Safe Detection Initial Slice for the agent loop. This is
-the next mainline step after the shipped Phase 10AB controlled-concurrency
-contract slice. The goal is to turn the Phase 10AB contract vocabulary into a
-bounded detection and refusal layer so the system can tell when concurrent work
-would invalidate the active task context, while still refusing to launch any
-actual overlapping runtime.
+Implement the Codex-Owned Concurrent Work Initial Slice for the agent loop.
+This is the next mainline step after the shipped Phase 10AC overlap-safe
+detection/refusal slice. The goal is to introduce the first bounded runtime
+path where Codex can continue limited Codex-owned work while Claude is
+implementing, but only when the shipped ownership boundaries and overlap-safe
+detection/refusal rules prove that the work cannot invalidate Claude's active
+implementation context.
 
 ## Required work
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AC as active
-- `.agent-loop/phase-plan.md` records Phase 10AB as closed history and
-  contains a `## Phase 10AC - Overlap-Safe Detection Initial Slice`
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AD as active
+- `.agent-loop/phase-plan.md` records Phase 10AC as closed history and
+  contains a `## Phase 10AD - Codex-Owned Concurrent Work Initial Slice`
   section with concrete objective, done criteria, and exclusions
-- implement bounded detection and refusal behavior for unsafe overlap using
-  the controlled-concurrency contract defined in Phase 10AB
-- distinguish overlap-safe work from invalidating work for the shipped roles
-  and canonical artifacts, and surface explicit refusal or recovery behavior
-  when the active context is stale or invalidated
+- implement a bounded runtime path for limited Codex-owned concurrent work
+  while Claude is implementing, but only for explicitly safe Codex-owned
+  artifacts/actions whose execution is proven not to invalidate the active
+  Claude context
+- reuse the shipped Phase 10AB ownership boundaries and the Phase 10AC
+  overlap-safe detection/refusal behavior instead of bypassing them
+- ensure any attempted concurrent action outside the approved safe set is
+  refused, deferred, or surfaced as ineligible rather than silently executed
 - preserve approval gating, evidence review, external-workspace boundaries,
-  existing run-profile semantics, desktop/UI boundaries, and the
-  canonical-artifact-first model instead of introducing hidden automation,
-  silent mutation, or active background overlap
-- add focused validation proving the overlap-detection and refusal path is
-  explicit, bounded, auditable, and fail-closed
-- `README.md` reflects that Phase 10AC is active and that overlap-safe
-  detection work is now the implementation focus
+  desktop/UI boundaries, loop-state source-of-truth rules, and the Phase 10I
+  library-callable cap
+- add focused validation proving the bounded concurrent-work path is explicit,
+  auditable, ownership-safe, and fail-closed where safety cannot be proven
+- `README.md` reflects that Phase 10AD is active and that limited safe
+  Codex-owned concurrent work is now the implementation focus
 
 ## Constraints
 - Follow `CLAUDE.md`.
@@ -47,17 +51,18 @@ actual overlapping runtime.
 - Add or update tests when behavior changes.
 
 Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no actual overlapping Codex/Claude runtime, silent background orchestration,
-  or hidden parallel worker model
-- no Codex-owned concurrent work beyond bounded detection and refusal; that is
-  deferred to Phase 10AD
+- no broad or general-purpose overlapping Codex/Claude runtime
+- no hidden background orchestration, watcher farm, or parallel worker model
+- no Codex-owned concurrent work that mutates Claude-owned implementation
+  artifacts, prompt/summarization artifacts, or any artifact whose mutation
+  would invalidate Claude's active task context
+- no bypass of the shipped Phase 10AC refusal gate or the Phase 10AB ownership
+  contract
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
 - no packaging work, hidden orchestration, or live concurrency added under the
-  banner of this detection slice
-- no rewrite of current shipped behavior just to make future autonomy work
-  easier
+  banner of this bounded concurrent-work slice
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body
