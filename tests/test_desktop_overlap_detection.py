@@ -129,6 +129,32 @@ class ConstantsTests(unittest.TestCase):
         ):
             self.assertIn(needle, note, needle)
 
+    def test_precedence_note_advertises_shipped_runtime_gate(
+        self,
+    ) -> None:
+        # Phase 10AC fix cycle: the precedence note MUST describe
+        # the shipped bounded runtime refusal gate consistently and
+        # MUST NOT claim the surface is DETECTION-only or that the
+        # downstream refusal enforcement is deferred.
+        note = (
+            agent_loop.DESKTOP_OVERLAP_DETECTION_PRECEDENCE_NOTE
+        )
+        for needle in (
+            "hard-coded `True`",
+            "enforce_overlap_safe_runtime_gate",
+            "_run_normal_cycle_from_increment",
+            "HALTED_OVERLAP_UNSAFE_CONTEXT",
+            "refused_pending_recovery",
+            "refusal-only",
+        ):
+            self.assertIn(needle, note, needle)
+        for anti_needle in (
+            "DETECTION only",
+            "DETECTION signals only",
+            "ships the DETECTION only",
+        ):
+            self.assertNotIn(anti_needle, note, anti_needle)
+
     def test_signal_states_closed_enum(self) -> None:
         self.assertEqual(
             agent_loop.OVERLAP_DETECTION_SIGNAL_STATES,
@@ -189,6 +215,28 @@ class RegistryTests(unittest.TestCase):
         ):
             agent_loop._desktop_overlap_detection_validate_signal_descriptor(
                 spec,
+            )
+
+    def test_every_signal_deferred_marker_names_shipped_gate(
+        self,
+    ) -> None:
+        # Phase 10AC fix cycle: every registered signal's
+        # `deferred_runtime_marker` MUST describe the shipped
+        # bounded runtime refusal gate and MUST NOT tell the
+        # operator the shipped surface is DETECTION-only or that
+        # runtime enforcement is deferred wholesale. The narrower
+        # deferral (background watching + actual concurrent
+        # Codex/Claude worker runtime) is fine to mention.
+        for spec in (
+            agent_loop._DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY
+        ):
+            marker = spec["deferred_runtime_marker"]
+            self.assertIn(
+                "bounded shipped runtime refusal", marker,
+                spec["id"],
+            )
+            self.assertNotIn(
+                "ships the DETECTION only", marker, spec["id"],
             )
 
 
@@ -638,6 +686,119 @@ class OverallStateTests(unittest.TestCase):
             got["overall_signal_state"], "unknown",
         )
         self.assertEqual(got["overall_severity"], "unknown")
+        self.assertIn("every Phase 10AC signal is `unknown`", got["reason"])
+
+    # -----------------------------------------------------------------
+    # Phase 10AC fix cycle: mixed-known / mixed-unknown regression.
+    # Previously `_desktop_overlap_detection_derive_overall_state` only
+    # returned `unknown` when every signal was `unknown`; otherwise it
+    # fell through to `no_signal` even when some overlap evidence was
+    # unknowable. The fixed helper MUST fail closed to `unknown` when
+    # any required overlap evidence is unknown (i.e. any signal reports
+    # `unknown`) and no refusal / warning signal supersedes it.
+    # -----------------------------------------------------------------
+
+    def test_mixed_no_signal_and_unknown_returns_unknown(self) -> None:
+        got = (
+            agent_loop._desktop_overlap_detection_derive_overall_state(
+                [
+                    self._sig("no_signal", "info", "a"),
+                    self._sig("unknown", "unknown", "b"),
+                ],
+            )
+        )
+        self.assertEqual(
+            got["overall_signal_state"], "unknown",
+        )
+        self.assertEqual(got["overall_severity"], "unknown")
+        self.assertEqual(got["unknown_signal_ids"], ["b"])
+        self.assertEqual(got["refusal_signal_ids"], [])
+        self.assertEqual(got["warning_signal_ids"], [])
+        # The fixed reason must explicitly call out the partial-unknown
+        # (i.e. mixed-known) case rather than pretending every signal
+        # is unknown.
+        self.assertIn("one or more required Phase 10AC signals", got["reason"])
+        self.assertNotIn("every Phase 10AC signal is `unknown`", got["reason"])
+
+    def test_mixed_all_no_signal_but_first_unknown_returns_unknown(
+        self,
+    ) -> None:
+        got = (
+            agent_loop._desktop_overlap_detection_derive_overall_state(
+                [
+                    self._sig("unknown", "unknown", "u1"),
+                    self._sig("no_signal", "info", "n1"),
+                    self._sig("no_signal", "info", "n2"),
+                ],
+            )
+        )
+        self.assertEqual(
+            got["overall_signal_state"], "unknown",
+        )
+        self.assertEqual(got["overall_severity"], "unknown")
+        self.assertEqual(got["unknown_signal_ids"], ["u1"])
+
+    def test_refusal_still_short_circuits_over_partial_unknown(
+        self,
+    ) -> None:
+        # A refused signal in a mixed-known set MUST still short-
+        # circuit the aggregate to `refused_pending_recovery`; the
+        # partial-unknown fix does not weaken the refusal short-
+        # circuit.
+        got = (
+            agent_loop._desktop_overlap_detection_derive_overall_state(
+                [
+                    self._sig("no_signal", "info", "n"),
+                    self._sig("unknown", "unknown", "u"),
+                    self._sig(
+                        "refused_pending_recovery", "refusal", "r",
+                    ),
+                ],
+            )
+        )
+        self.assertEqual(
+            got["overall_signal_state"],
+            "refused_pending_recovery",
+        )
+        self.assertEqual(got["overall_severity"], "refusal")
+        self.assertEqual(got["refusal_signal_ids"], ["r"])
+        self.assertEqual(got["unknown_signal_ids"], ["u"])
+
+    def test_warning_still_wins_over_partial_unknown(self) -> None:
+        # A warning signal in a mixed-known set still surfaces as
+        # `signal_detected` (the warning is a real observation that
+        # deserves surfacing); the partial-unknown fix only replaces
+        # the previous `no_signal` fall-through with `unknown`.
+        got = (
+            agent_loop._desktop_overlap_detection_derive_overall_state(
+                [
+                    self._sig("signal_detected", "warning", "w"),
+                    self._sig("unknown", "unknown", "u"),
+                ],
+            )
+        )
+        self.assertEqual(
+            got["overall_signal_state"], "signal_detected",
+        )
+        self.assertEqual(got["overall_severity"], "warning")
+        self.assertEqual(got["warning_signal_ids"], ["w"])
+        self.assertEqual(got["unknown_signal_ids"], ["u"])
+
+    def test_reason_partial_unknown_names_required_evidence(self) -> None:
+        # Anchor the reason vocabulary: the partial-unknown reason
+        # must talk about "required overlap evidence" being unknowable
+        # so the surface can never be mistaken for "no signal / overlap
+        # safe" when in fact some evidence is missing.
+        got = (
+            agent_loop._desktop_overlap_detection_derive_overall_state(
+                [
+                    self._sig("no_signal", "info", "n"),
+                    self._sig("unknown", "unknown", "u"),
+                ],
+            )
+        )
+        self.assertIn("required overlap evidence", got["reason"])
+        self.assertIn("unknowable", got["reason"])
 
 
 # ---------------------------------------------------------------------------
@@ -675,7 +836,15 @@ class BuildOverlapDetectionViewTests(unittest.TestCase):
         self.assertEqual(
             view["view_signal_version"], "phase-10ac-v1",
         )
-        self.assertFalse(view["phase_10ac_runtime_available"])
+        # Phase 10AC fix cycle: the shipped bounded runtime refusal
+        # gate now exists (`enforce_overlap_safe_runtime_gate(...)`
+        # wired into `_run_normal_cycle_from_increment(...)`), so the
+        # surface metadata MUST advertise
+        # `phase_10ac_runtime_available=True`. The narrower deferral
+        # (actual concurrent Codex/Claude worker runtime) is described
+        # in the per-signal `deferred_runtime_marker`, not in this
+        # top-level flag.
+        self.assertTrue(view["phase_10ac_runtime_available"])
 
     def test_no_targets_baseline_is_unknown(self) -> None:
         # A fresh controller with no target artifacts surfaces
@@ -830,6 +999,34 @@ class RendererTests(unittest.TestCase):
             "[refused]",
         ):
             self.assertIn(tag, output, tag)
+
+    def test_render_advertises_shipped_runtime_gate(self) -> None:
+        # Phase 10AC fix cycle: the rendered text MUST describe the
+        # shipped bounded runtime refusal gate consistently and MUST
+        # NOT tell the operator that runtime enforcement is deferred.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_overlap_detection_view(
+                    controller,
+                )
+            )
+        output = "\n".join(
+            agent_loop.render_desktop_overlap_detection_text(view),
+        )
+        for needle in (
+            "phase_10ac_runtime_available",
+            "enforce_overlap_safe_runtime_gate",
+            "_run_normal_cycle_from_increment",
+            "HALTED_OVERLAP_UNSAFE_CONTEXT",
+            "refused_pending_recovery",
+        ):
+            self.assertIn(needle, output, needle)
+        for anti_needle in (
+            "ships the DETECTION only",
+            "DETECTION only",
+        ):
+            self.assertNotIn(anti_needle, output, anti_needle)
 
 
 # ---------------------------------------------------------------------------
@@ -1252,6 +1449,477 @@ class NonMutationInvariantsTests(unittest.TestCase):
                 "view-external-controls",
                 "inspect-external-target",
             },
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AC fix cycle: shipped runtime refusal gate
+# `enforce_overlap_safe_runtime_gate(...)`.
+#
+# The gate MUST raise HaltError(HALTED_OVERLAP_UNSAFE_CONTEXT, ...) when
+# the aggregate `overall_signal_state` is `refused_pending_recovery`, and
+# MUST return None silently for `no_signal`, `signal_detected`, and
+# `unknown`. The gate MUST remain bounded per the Phase 10AC contract:
+# no subprocess spawn, no socket open, no concurrent-runtime launch, no
+# background watcher, no loop-state mutation.
+# ---------------------------------------------------------------------------
+class OverlapSafeRuntimeGateTests(unittest.TestCase):
+
+    def _fake_view(self, state, refusal_ids=(), reason="synthetic"):
+        return {
+            "overall": {
+                "overall_signal_state": state,
+                "overall_severity": {
+                    "refused_pending_recovery": "refusal",
+                    "signal_detected": "warning",
+                    "unknown": "unknown",
+                    "no_signal": "info",
+                }[state],
+                "refusal_signal_ids": list(refusal_ids),
+                "warning_signal_ids": [],
+                "unknown_signal_ids": [],
+                "reason": reason,
+                "triggered_count": len(refusal_ids),
+            },
+            "signals": [],
+        }
+
+    def test_halt_status_constant_exposed(self) -> None:
+        self.assertEqual(
+            agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
+            "halted_overlap_unsafe_context",
+        )
+
+    def test_refused_state_raises_halt_error(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=self._fake_view(
+                    "refused_pending_recovery",
+                    refusal_ids=["codex_review_supersedes_claude_summary"],
+                    reason="synthetic-refusal",
+                ),
+            ):
+                with self.assertRaises(agent_loop.HaltError) as cm:
+                    agent_loop.enforce_overlap_safe_runtime_gate(controller)
+        self.assertEqual(
+            cm.exception.status,
+            agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
+        )
+        self.assertIn(
+            "codex_review_supersedes_claude_summary",
+            cm.exception.reason,
+        )
+        self.assertIn("synthetic-refusal", cm.exception.reason)
+        self.assertIn(
+            "view-desktop-overlap-detection", cm.exception.reason,
+        )
+
+    def test_no_signal_returns_none_silently(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=self._fake_view("no_signal"),
+            ):
+                self.assertIsNone(
+                    agent_loop.enforce_overlap_safe_runtime_gate(
+                        controller,
+                    ),
+                )
+
+    def test_signal_detected_returns_none_silently(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=self._fake_view("signal_detected"),
+            ):
+                self.assertIsNone(
+                    agent_loop.enforce_overlap_safe_runtime_gate(
+                        controller,
+                    ),
+                )
+
+    def test_unknown_returns_none_silently(self) -> None:
+        # Per the Phase 10AC contract only `refused_pending_recovery`
+        # raises the gate. `unknown` is fail-closed at the reporting
+        # layer (the caller sees the aggregate as unknown) but does
+        # NOT itself refuse the shipped runtime gate; a future runtime
+        # slice may widen the gate to also refuse on `unknown`.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=self._fake_view("unknown"),
+            ):
+                self.assertIsNone(
+                    agent_loop.enforce_overlap_safe_runtime_gate(
+                        controller,
+                    ),
+                )
+
+    def test_gate_fires_from_real_view_on_stale_summary(self) -> None:
+        # End-to-end: write a controller where codex-review.md is
+        # newer than claude-summary.md (a real
+        # `codex_review_supersedes_claude_summary` refusal) and
+        # assert the gate raises the Phase 10AC halt status.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            base = time.time()
+            _write_bytes(
+                controller / ".agent-loop" / "claude-summary.md",
+                b"# Claude Implementation Summary\n",
+                mtime=base,
+            )
+            _write_bytes(
+                controller / ".agent-loop" / "codex-review.md",
+                b"# Codex Review\n",
+                mtime=base + 60,
+            )
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop.enforce_overlap_safe_runtime_gate(controller)
+        self.assertEqual(
+            cm.exception.status,
+            agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
+        )
+
+    def test_gate_does_not_spawn_subprocess(self) -> None:
+        import subprocess
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            patches = [
+                mock.patch.object(subprocess, "run"),
+                mock.patch.object(subprocess, "Popen"),
+                mock.patch.object(subprocess, "call"),
+                mock.patch.object(subprocess, "check_call"),
+                mock.patch.object(subprocess, "check_output"),
+                mock.patch("os.system"),
+            ]
+            mocks = [p.start() for p in patches]
+            try:
+                try:
+                    agent_loop.enforce_overlap_safe_runtime_gate(controller)
+                except agent_loop.HaltError:
+                    pass
+            finally:
+                for p in patches:
+                    p.stop()
+        for m in mocks:
+            m.assert_not_called()
+
+    def test_gate_does_not_open_socket(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(socket, "socket") as p:
+                try:
+                    agent_loop.enforce_overlap_safe_runtime_gate(controller)
+                except agent_loop.HaltError:
+                    pass
+        p.assert_not_called()
+
+    def test_gate_does_not_launch_concurrent_runtime(self) -> None:
+        import threading
+        import multiprocessing
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            patches = [
+                mock.patch.object(threading, "Thread"),
+                mock.patch.object(multiprocessing, "Process"),
+                mock.patch.object(multiprocessing, "Pool"),
+            ]
+            mocks = [p.start() for p in patches]
+            try:
+                try:
+                    agent_loop.enforce_overlap_safe_runtime_gate(controller)
+                except agent_loop.HaltError:
+                    pass
+            finally:
+                for p in patches:
+                    p.stop()
+        for m in mocks:
+            m.assert_not_called()
+
+    def test_gate_does_not_mutate_loop_state(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            ls = controller / ".agent-loop" / "loop-state.json"
+            before = ls.read_bytes()
+            try:
+                agent_loop.enforce_overlap_safe_runtime_gate(controller)
+            except agent_loop.HaltError:
+                pass
+            after = ls.read_bytes()
+        self.assertEqual(before, after)
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AC fix cycle: `_run_normal_cycle_from_increment` integration.
+#
+# The shipped runtime gate is wired at the pre-Codex-review point in
+# `_run_normal_cycle_from_increment`. It MUST persist
+# HALTED_OVERLAP_UNSAFE_CONTEXT to loop-state.json when the overlap-
+# detection aggregate reports `refused_pending_recovery`. It MUST NOT
+# fire on `no_signal`, `signal_detected`, or `unknown` aggregate
+# states. Placement rationale: at the post-Claude / post-evidence
+# point the freshly written `claude-summary.md` is the newest canonical
+# artifact, so any `reference-newer-than-summary` refusal signal is a
+# real observable overlap anomaly rather than a benign cycle-start
+# pre-condition.
+# ---------------------------------------------------------------------------
+class RunNormalCycleOverlapGateTests(unittest.TestCase):
+
+    def _write_controller(
+        self, root: Path, approval_mode: str = "autonomous",
+    ) -> Path:
+        root.mkdir(parents=True, exist_ok=True)
+        (root / "AGENTS.md").write_text("agents\n", encoding="utf-8")
+        (root / "CLAUDE.md").write_text("claude\n", encoding="utf-8")
+        (root / "TASK.md").write_text("# TASK.md\n", encoding="utf-8")
+        (root / "README.md").write_text("readme\n", encoding="utf-8")
+        (root / "ROADMAP.md").write_text("roadmap\n", encoding="utf-8")
+        (root / ".agent-loop").mkdir()
+        (root / ".agent-loop" / "loop-state.json").write_text(
+            json.dumps({
+                "phase": "Phase 10 - Future Product Features",
+                "sub_phase": (
+                    "Phase 10AC - Overlap-Safe Detection "
+                    "Initial Slice"
+                ),
+                "task": "phase-10ac-runtime-gate-test",
+                "status": "awaiting_claude_implementation",
+                "cycle_count": 0,
+                "max_cycles": 3,
+                "last_verdict": None,
+                "last_verdict_phase": None,
+                "contract_version": CONTRACT_VERSION,
+                "claude_version": "claude-opus-4-7",
+                "codex_version": None,
+                "orchestrator_version": "phase-3d-v0",
+                "approval_mode": approval_mode,
+                "awaiting_human_for": None,
+            }),
+            encoding="utf-8",
+        )
+        (root / ".agent-loop" / "claude-prompt.md").write_text(
+            "# Claude Code Task\n\n## Phase\nP\n\n## Objective\no\n\n"
+            "## Context\nc\n\n## Required work\n- x\n\n"
+            "## Constraints\n- y\n\n## Required output\n- z\n",
+            encoding="utf-8",
+        )
+        return root
+
+    def _fake_claude_adapter_factory(self, phase, sub_phase):
+        def _factory():
+            class _A:
+                default_model_id = "stub-claude"
+
+                def invoke(self, prompt_path, summary_path):
+                    summary_text = (
+                        "# Claude Implementation Summary\n\n"
+                        f"## Phase\n{phase} "
+                        f"(sub-phase: {sub_phase})\n\n"
+                        "## Task\nt\n\n"
+                        "## Files changed\n- f: change\n\n"
+                        "## What was implemented\n- x\n\n"
+                        "## What was not implemented\n- y\n\n"
+                        "## Tests added or changed\n- None\n\n"
+                        "## Validation run\n- Not run\n\n"
+                        "## Assumptions\n- None\n\n"
+                        "## Risk areas\n- None identified\n"
+                    )
+                    summary_path.write_text(
+                        summary_text, encoding="utf-8",
+                    )
+                    return agent_loop.ExecutionResult(
+                        exit_code=0,
+                        model_id="stub-claude",
+                        duration_seconds=0.0,
+                    )
+            return _A()
+        return _factory
+
+    def _stub_evidence(self):
+        return (
+            mock.patch.object(
+                agent_loop, "invoke_run_checks", return_value=None,
+            ),
+            mock.patch.object(
+                agent_loop,
+                "validate_evidence_files",
+                return_value=None,
+            ),
+        )
+
+    def test_run_normal_cycle_halts_on_refused_pending_recovery(self) -> None:
+        # Placement rationale: the shipped runtime gate fires at the
+        # post-Claude / post-evidence point in
+        # `_run_normal_cycle_from_increment` (BEFORE Codex review
+        # begins). At that point the freshly written claude-summary.md
+        # is the newest canonical artifact for a clean cycle, so any
+        # reference-newer-than-summary refusal signal is a real
+        # observable overlap anomaly.
+        with TemporaryDirectory() as td:
+            controller = self._write_controller(
+                Path(td) / "c", approval_mode="autonomous",
+            )
+            state_path = controller / ".agent-loop" / "loop-state.json"
+            fake_view = {
+                "overall": {
+                    "overall_signal_state": (
+                        "refused_pending_recovery"
+                    ),
+                    "overall_severity": "refusal",
+                    "refusal_signal_ids": [
+                        "codex_review_supersedes_claude_summary",
+                    ],
+                    "warning_signal_ids": [],
+                    "unknown_signal_ids": [],
+                    "reason": "synthetic-refusal-for-runtime-gate",
+                    "triggered_count": 1,
+                },
+                "signals": [],
+            }
+            claude_factory = self._fake_claude_adapter_factory(
+                "Phase 10 - Future Product Features",
+                "Phase 10AC - Overlap-Safe Detection Initial Slice",
+            )
+            checks_patch, evidence_patch = self._stub_evidence()
+            with mock.patch.object(
+                agent_loop,
+                "build_desktop_overlap_detection_view",
+                return_value=fake_view,
+            ), mock.patch.object(
+                agent_loop,
+                "make_claude_adapter",
+                claude_factory,
+            ), checks_patch, evidence_patch:
+                rc = agent_loop.run_normal_cycle(controller)
+            after = json.loads(state_path.read_text(encoding="utf-8"))
+        self.assertEqual(rc, 2)
+        self.assertEqual(
+            after["status"],
+            agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
+        )
+
+    def _run_with_aggregate(self, controller: Path, aggregate: dict) -> str:
+        """Drive `run_normal_cycle` with a synthetic overlap-detection
+        aggregate and return the post-run loop-state status. Claude is
+        stubbed to write a valid summary and evidence is stubbed as
+        already-captured so the cycle reaches the pre-Codex-review
+        gate. Codex is stubbed to return a null review so the cycle
+        deterministically halts AFTER the Phase 10AC gate at a
+        downstream `halted_input_missing` branch. The point of these
+        tests is to prove the overlap gate did NOT fire; the specific
+        downstream halt status is not the assertion.
+        """
+        state_path = controller / ".agent-loop" / "loop-state.json"
+        fake_view = {
+            "overall": aggregate,
+            "signals": [],
+        }
+        claude_factory = self._fake_claude_adapter_factory(
+            "Phase 10 - Future Product Features",
+            "Phase 10AC - Overlap-Safe Detection Initial Slice",
+        )
+
+        def _fake_codex_factory():
+            class _C:
+                default_model_id = "stub-codex"
+
+                def wait_for_review(self, review_path):
+                    return agent_loop.ExecutionResult(
+                        exit_code=2,
+                        model_id=None,
+                        duration_seconds=0.0,
+                    )
+            return _C()
+
+        checks_patch, evidence_patch = self._stub_evidence()
+        with mock.patch.object(
+            agent_loop,
+            "build_desktop_overlap_detection_view",
+            return_value=fake_view,
+        ), mock.patch.object(
+            agent_loop, "make_claude_adapter", claude_factory,
+        ), mock.patch.object(
+            agent_loop, "make_codex_adapter", _fake_codex_factory,
+        ), checks_patch, evidence_patch:
+            agent_loop.run_normal_cycle(controller)
+        return json.loads(
+            state_path.read_text(encoding="utf-8"),
+        )["status"]
+
+    def test_run_normal_cycle_advances_past_gate_on_no_signal(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = self._write_controller(
+                Path(td) / "c", approval_mode="autonomous",
+            )
+            status = self._run_with_aggregate(
+                controller,
+                {
+                    "overall_signal_state": "no_signal",
+                    "overall_severity": "info",
+                    "refusal_signal_ids": [],
+                    "warning_signal_ids": [],
+                    "unknown_signal_ids": [],
+                    "reason": "synthetic-no-signal",
+                    "triggered_count": 0,
+                },
+            )
+        self.assertNotEqual(
+            status, agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
+        )
+
+    def test_run_normal_cycle_advances_past_gate_on_signal_detected(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = self._write_controller(
+                Path(td) / "c", approval_mode="autonomous",
+            )
+            status = self._run_with_aggregate(
+                controller,
+                {
+                    "overall_signal_state": "signal_detected",
+                    "overall_severity": "warning",
+                    "refusal_signal_ids": [],
+                    "warning_signal_ids": [
+                        "loop_state_advanced_past_summary",
+                    ],
+                    "unknown_signal_ids": [],
+                    "reason": "synthetic-warning",
+                    "triggered_count": 1,
+                },
+            )
+        self.assertNotEqual(
+            status, agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
+        )
+
+    def test_run_normal_cycle_advances_past_gate_on_unknown(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = self._write_controller(
+                Path(td) / "c", approval_mode="autonomous",
+            )
+            status = self._run_with_aggregate(
+                controller,
+                {
+                    "overall_signal_state": "unknown",
+                    "overall_severity": "unknown",
+                    "refusal_signal_ids": [],
+                    "warning_signal_ids": [],
+                    "unknown_signal_ids": ["u1", "u2"],
+                    "reason": "synthetic-unknown",
+                    "triggered_count": 0,
+                },
+            )
+        self.assertNotEqual(
+            status, agent_loop.HALTED_OVERLAP_UNSAFE_CONTEXT,
         )
 
 

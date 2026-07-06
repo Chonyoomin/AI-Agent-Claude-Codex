@@ -238,6 +238,16 @@ HALTED_PRE_CLAUDE_PROMPT = "halted_awaiting_human_pre_claude_prompt"
 HALTED_PRE_FIX_PROMPT = "halted_awaiting_human_pre_fix_prompt"
 HALTED_PRE_CODEX_REVIEW_NORMAL = "halted_awaiting_human_pre_codex_review_normal"
 HALTED_PRE_CODEX_REVIEW_FIX = "halted_awaiting_human_pre_codex_review_fix"
+# Phase 10AC runtime refusal status: the shipped overlap-safe detection
+# gate wired into `_run_normal_cycle_from_increment` at the pre-Codex-
+# review point refuses fail-closed when the aggregate
+# `overall_signal_state` is `refused_pending_recovery`. The gate is
+# DETECTION-DRIVEN only: it consults the same view surfaced by
+# `build_desktop_overlap_detection_view(...)`, never spawns a
+# subprocess, never opens a network socket, never launches or
+# coordinates any actual concurrent Codex/Claude runtime, and never
+# advances loop-state past the refusal write.
+HALTED_OVERLAP_UNSAFE_CONTEXT = "halted_overlap_unsafe_context"
 STRICT_GATE_HALT_STATUSES = frozenset({
     HALTED_PRE_CLAUDE_PROMPT,
     HALTED_PRE_FIX_PROMPT,
@@ -29670,9 +29680,14 @@ DESKTOP_OVERLAP_DETECTION_PRECEDENCE_NOTE = (
     "`invalidation_trigger`, unknown `recovery_action`, unknown "
     "`severity_when_triggered`, or non-POSIX / absolute / drive-"
     "prefixed / parent-traversal artifact `path_canonical_rel`. "
-    "`phase_10ac_runtime_available` is hard-coded `False` in this "
-    "slice so the shipped surface reports DETECTION signals only and "
-    "never launches any actual concurrent Codex/Claude runtime. "
+    "`phase_10ac_runtime_available` is hard-coded `True` in this "
+    "slice because the shipped Phase 10AC fix cycle wired a real "
+    "bounded runtime refusal path (`enforce_overlap_safe_runtime_"
+    "gate(...)` inside `_run_normal_cycle_from_increment(...)`) that "
+    "raises `HaltError(HALTED_OVERLAP_UNSAFE_CONTEXT, ...)` when the "
+    "aggregate `overall_signal_state` is `refused_pending_recovery`; "
+    "the shipped surface still NEVER launches any actual concurrent "
+    "Codex/Claude runtime and the bounded runtime is refusal-only. "
     "Signals are derived purely from `Path.stat()` mtime comparisons "
     "between the shipped canonical artifacts; the surface NEVER reads "
     "any artifact BODY content, NEVER spawns a subprocess, NEVER "
@@ -29812,13 +29827,20 @@ _DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY: tuple = (
             "10AB."
         ),
         "deferred_runtime_marker": (
-            "Phase 10AC ships the DETECTION only; the actual "
-            "runtime that enforces refusal on downstream "
-            "orchestrator entry points is deferred to a "
-            "future Phase 10 runtime slice tracked in "
-            "`ROADMAP.md`. The Phase 10AC desktop surface "
-            "NEVER launches any actual concurrent Codex/"
-            "Claude worker, NEVER opens a network socket."
+            "Phase 10AC ships the DETECTION plus a bounded "
+            "shipped runtime refusal gate: "
+            "`enforce_overlap_safe_runtime_gate(...)` inside "
+            "`_run_normal_cycle_from_increment(...)` raises "
+            "`HaltError(HALTED_OVERLAP_UNSAFE_CONTEXT, ...)` "
+            "when the aggregate `overall_signal_state` is "
+            "`refused_pending_recovery` (this signal is one "
+            "of the refusal-severity contributors). Actual "
+            "concurrent Codex/Claude worker runtime, hidden "
+            "background watchers, and subprocess / network "
+            "widening are still deferred to a later Phase 10 "
+            "runtime slice tracked in `ROADMAP.md`; the Phase "
+            "10AC desktop surface NEVER launches a concurrent "
+            "worker and NEVER opens a network socket."
         ),
         "refusal_reason_template": (
             "`codex_review_supersedes_claude_summary` "
@@ -29855,9 +29877,14 @@ _DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY: tuple = (
             "replacement is a concurrency bug per Phase 10AB."
         ),
         "deferred_runtime_marker": (
-            "Phase 10AC ships the DETECTION only; the actual "
-            "prompt-mtime watch enforcement is deferred to a "
-            "future Phase 10 runtime slice."
+            "Phase 10AC ships the DETECTION plus a bounded "
+            "shipped runtime refusal gate: this signal is a "
+            "refusal-severity contributor to the aggregate "
+            "consulted by `enforce_overlap_safe_runtime_gate("
+            "...)` at the pre-Codex-review point in "
+            "`_run_normal_cycle_from_increment(...)`. Actual "
+            "background prompt-mtime watching is still "
+            "deferred to a later Phase 10 runtime slice."
         ),
         "refusal_reason_template": (
             "`claude_prompt_replaced_after_summary` detected: "
@@ -29893,9 +29920,14 @@ _DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY: tuple = (
             "unintentionally per Phase 10AB."
         ),
         "deferred_runtime_marker": (
-            "Phase 10AC ships the DETECTION only; the actual "
-            "fix-prompt watch enforcement is deferred to a "
-            "future Phase 10 runtime slice."
+            "Phase 10AC ships the DETECTION plus a bounded "
+            "shipped runtime refusal gate: this signal is a "
+            "refusal-severity contributor to the aggregate "
+            "consulted by `enforce_overlap_safe_runtime_gate("
+            "...)` at the pre-Codex-review point in "
+            "`_run_normal_cycle_from_increment(...)`. Actual "
+            "background fix-prompt-mtime watching is still "
+            "deferred to a later Phase 10 runtime slice."
         ),
         "refusal_reason_template": (
             "`fix_prompt_replaced_after_summary` detected: "
@@ -29935,9 +29967,16 @@ _DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY: tuple = (
             "current phase / cycle_count before continuing."
         ),
         "deferred_runtime_marker": (
-            "Phase 10AC ships the DETECTION only; the actual "
-            "loop-state watch enforcement is deferred to a "
-            "future Phase 10 runtime slice."
+            "Phase 10AC ships the DETECTION plus a bounded "
+            "shipped runtime refusal gate at the pre-Codex-"
+            "review point in "
+            "`_run_normal_cycle_from_increment(...)`; this "
+            "signal is `warning` severity so it contributes "
+            "to `overall_severity='warning'` / "
+            "`overall_signal_state='signal_detected'` and "
+            "does NOT force the shipped gate to refuse on its "
+            "own. Actual background loop-state watching is "
+            "still deferred to a later Phase 10 runtime slice."
         ),
         "refusal_reason_template": (
             "`loop_state_advanced_past_summary` detected at "
@@ -29976,9 +30015,14 @@ _DESKTOP_OVERLAP_DETECTION_SIGNAL_REGISTRY: tuple = (
             "continuing past it risks a wrong-phase claim."
         ),
         "deferred_runtime_marker": (
-            "Phase 10AC ships the DETECTION only; the actual "
-            "phase-activation watch enforcement is deferred "
-            "to a future Phase 10 runtime slice."
+            "Phase 10AC ships the DETECTION plus a bounded "
+            "shipped runtime refusal gate: this signal is a "
+            "refusal-severity contributor to the aggregate "
+            "consulted by `enforce_overlap_safe_runtime_gate("
+            "...)` at the pre-Codex-review point in "
+            "`_run_normal_cycle_from_increment(...)`. Actual "
+            "background phase-activation watching is still "
+            "deferred to a later Phase 10 runtime slice."
         ),
         "refusal_reason_template": (
             "`phase_activation_advanced_past_summary` "
@@ -30318,15 +30362,27 @@ def _desktop_overlap_detection_derive_overall_state(
             f"the operator SHOULD verify the shipped context "
             f"before continuing"
         )
-    elif unknown_ids and len(unknown_ids) == len(signals):
+    elif unknown_ids:
         overall_state = "unknown"
         overall_severity = "unknown"
-        reason = (
-            f"every Phase 10AC signal is `unknown` (reference "
-            f"or target artifacts missing): {unknown_ids!r}; "
-            f"the shipped surface fails closed as `unknown` "
-            f"until the shipped canonical artifacts exist"
-        )
+        if len(unknown_ids) == len(signals):
+            reason = (
+                f"every Phase 10AC signal is `unknown` "
+                f"(reference or target artifacts missing): "
+                f"{unknown_ids!r}; the shipped surface fails "
+                f"closed as `unknown` until the shipped "
+                f"canonical artifacts exist"
+            )
+        else:
+            reason = (
+                f"one or more required Phase 10AC signals are "
+                f"`unknown` (reference or target artifacts "
+                f"missing): {unknown_ids!r}; the shipped "
+                f"surface fails closed as `unknown` because "
+                f"required overlap evidence is unknowable "
+                f"even though the remaining signals report "
+                f"`no_signal`"
+            )
     else:
         overall_state = "no_signal"
         overall_severity = "info"
@@ -30358,10 +30414,16 @@ def build_desktop_overlap_detection_view(
     triggered / severity / state, and the aggregate overall
     detection state per the Phase 10AC contract.
 
-    `phase_10ac_runtime_available` is hard-coded `False` in this
-    slice so the shipped surface reports DETECTION signals only
-    and never launches any actual concurrent Codex/Claude
-    runtime.
+    `phase_10ac_runtime_available` is hard-coded `True` in this
+    slice because the shipped Phase 10AC fix cycle wired a real
+    bounded runtime refusal path
+    (`enforce_overlap_safe_runtime_gate(...)` inside
+    `_run_normal_cycle_from_increment(...)`) that raises
+    `HaltError(HALTED_OVERLAP_UNSAFE_CONTEXT, ...)` when the
+    aggregate `overall_signal_state` is
+    `refused_pending_recovery`. The shipped surface still NEVER
+    launches any actual concurrent Codex/Claude runtime; the
+    bounded runtime is refusal-only.
 
     Never writes, never mutates, never spawns a subprocess,
     never invokes `_halt(...)`, never reads canonical artifact
@@ -30435,7 +30497,7 @@ def build_desktop_overlap_detection_view(
         "current_loop_state_phase": active_phase,
         "current_loop_state_sub_phase": active_sub_phase,
         "current_loop_state_cycle_count": active_cycle_count,
-        "phase_10ac_runtime_available": False,
+        "phase_10ac_runtime_available": True,
         "operator_inputs": {
             "identity": inputs["identity"],
             "acknowledged_signal_ids": sorted(ack_set),
@@ -30502,10 +30564,14 @@ def render_desktop_overlap_detection_text(view: dict) -> list:
     )
     lines.append(
         f"  [advisory] phase_10ac_runtime_available (Phase "
-        f"10AC ships the DETECTION only; the actual runtime "
-        f"that enforces refusal on downstream orchestrator "
-        f"entry points is deferred to a future Phase 10 "
-        f"runtime slice): "
+        f"10AC ships the DETECTION plus a bounded shipped "
+        f"runtime refusal gate: `enforce_overlap_safe_runtime"
+        f"_gate(...)` inside `_run_normal_cycle_from_"
+        f"increment(...)` raises `HaltError("
+        f"HALTED_OVERLAP_UNSAFE_CONTEXT, ...)` on a "
+        f"`refused_pending_recovery` aggregate. Actual "
+        f"concurrent Codex/Claude worker runtime is still "
+        f"deferred to a later Phase 10 slice): "
         f"{view['phase_10ac_runtime_available']!r}"
     )
     for enum_key, enum_label in (
@@ -30654,7 +30720,12 @@ def build_desktop_overlap_detection_controls(view: dict) -> list:
     affordance pattern: every button surfaces `enabled=True`
     (the click ONLY copies an operator-visible recovery-
     acknowledgement TEMPLATE into the OS clipboard, which is
-    non-mutating).
+    non-mutating) while `runtime_enabled` stays `False` because
+    the button descriptor itself never dispatches the shipped
+    runtime gate. The shipped Phase 10AC runtime refusal path
+    (`enforce_overlap_safe_runtime_gate(...)` inside
+    `_run_normal_cycle_from_increment(...)`) is a separate,
+    orchestrator-owned surface that consults the same view.
     """
     controls: list = []
     for signal in view.get("signals", []):
@@ -30767,6 +30838,64 @@ def cmd_view_desktop_overlap_detection(
     for line in render_desktop_overlap_detection_text(view):
         print(line)
     return 0
+
+
+def enforce_overlap_safe_runtime_gate(repo_root: Path) -> None:
+    """Phase 10AC shipped runtime refusal gate.
+
+    Consults `build_desktop_overlap_detection_view(...)` for
+    `repo_root` and raises a `HaltError(HALTED_OVERLAP_UNSAFE_
+    CONTEXT, ...)` when the aggregate `overall_signal_state`
+    is `refused_pending_recovery`. Returns `None` silently when
+    the aggregate state is `no_signal`, `signal_detected`, or
+    `unknown`.
+
+    This is the shipped runtime side of the Phase 10AC detection
+    surface: the desktop / CLI reporter path is a read-only
+    reporter, and this helper is the operator/runtime entrypoint
+    gate that actually refuses continuation on a refused-
+    pending-recovery aggregate. It is wired into
+    `_run_normal_cycle_from_increment` at the pre-Codex-review
+    point (after Claude has written a fresh claude-summary.md
+    and evidence has been captured) - at that point the summary
+    is the newest canonical artifact for a clean cycle, so any
+    reference-newer-than-summary refusal signal is a real
+    observable overlap anomaly rather than a benign cycle-start
+    pre-condition. The gate is bounded per the Phase 10AC
+    contract - it consults the same registry the desktop
+    surface exposes; it does NOT spawn a subprocess, open a
+    network socket, launch or coordinate any actual concurrent
+    Codex/Claude runtime, schedule a background watcher, or
+    advance loop-state past the caller-owned refusal write. If
+    `build_desktop_overlap_detection_view(...)` itself raises
+    `HaltError` for a structural descriptor failure, the raise
+    is left to propagate so the calling runtime frame routes it
+    through `_halt(...)` per its own error-handling pattern.
+    """
+    view = build_desktop_overlap_detection_view(repo_root)
+    overall = view.get("overall") or {}
+    state = overall.get("overall_signal_state")
+    if state == "refused_pending_recovery":
+        ids = overall.get("refusal_signal_ids") or []
+        reason = overall.get("reason") or (
+            "Phase 10AC overlap-safe detection refused the "
+            "shipped runtime gate"
+        )
+        raise HaltError(
+            HALTED_OVERLAP_UNSAFE_CONTEXT,
+            (
+                f"Phase 10AC overlap-safe detection refused "
+                f"the shipped runtime gate: refusal_signal_ids="
+                f"{ids!r}; {reason}. Recover the shipped "
+                f"canonical artifact ordering (e.g. re-read the "
+                f"shipped Codex review and write a fresh "
+                f"claude-summary.md, or refresh the active "
+                f"claude-prompt.md / fix-prompt.md / current-"
+                f"phase.md) before re-running. Consult "
+                f"`view-desktop-overlap-detection --controller-"
+                f"root <PATH>` for the per-signal detail."
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -31516,7 +31645,28 @@ def _run_normal_cycle_from_increment(
         source_prompt_path=".agent-loop/claude-prompt.md",
     )
 
-    # 8b. Phase 5C strict-mode gate: under `strict`, the loop must pause
+    # 8b. Phase 10AC shipped runtime refusal gate: after Claude has
+    #     written a fresh claude-summary.md and evidence has been
+    #     captured, consult the closed overlap-safe detection registry
+    #     (via `build_desktop_overlap_detection_view`) and refuse
+    #     fail-closed when the aggregate `overall_signal_state` is
+    #     `refused_pending_recovery`. Placement rationale: at this
+    #     point the summary is the freshest canonical artifact for a
+    #     clean cycle, so any reference-newer-than-summary refusal
+    #     signal is a real observable anomaly (concurrent prompt /
+    #     review / phase-activation replacement during Claude's work)
+    #     rather than a benign cycle-start pre-condition. Bounded per
+    #     the Phase 10AC contract: never spawns a subprocess, never
+    #     opens a network socket, never launches or coordinates any
+    #     actual concurrent Codex/Claude runtime, never schedules a
+    #     background watcher, never advances loop-state past the
+    #     refusal write.
+    try:
+        enforce_overlap_safe_runtime_gate(repo_root)
+    except HaltError as halt:
+        return _halt(state_path, data, halt, log_path)
+
+    # 8c. Phase 5C strict-mode gate: under `strict`, the loop must pause
     #     for explicit human approval AFTER Claude completion + evidence
     #     validation but BEFORE Codex review begins. The previous gates
     #     and writes have already happened (cycle counted, summary

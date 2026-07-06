@@ -24,62 +24,68 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10AC - Overlap-Safe Detection Initial Slice
+Phase 10AD - Codex-Owned Concurrent Work Initial Slice
 
 ## Phase Status
 
-Phase 10AB is complete and approved to advance. Phase 10AC is now active as
-the next mainline slice focused on implementing overlap-safe detection and
-refusal behavior so the system can tell when concurrent work would invalidate
-the active task context.
+Phase 10AC is complete and approved to advance. Phase 10AD is now active as
+the next mainline slice focused on enabling limited Codex-owned concurrent work
+only where the shipped overlap-safe detection and ownership boundaries prove
+that the work cannot invalidate Claude's active implementation context.
 
 ## Active Task
 
-Implement Phase 10AC for the agent loop. This slice should implement detection
-and refusal paths for unsafe overlap so the system can tell when concurrent
-work would invalidate the active task context.
+Implement Phase 10AD for the agent loop. This slice should allow bounded
+Codex-owned concurrent work during Claude implementation only for explicitly
+safe Codex-owned artifacts and actions that cannot invalidate the active Claude
+task context under the shipped Phase 10AB/10AC rules.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AC as active
+  `.agent-loop/loop-state.json` identify Phase 10 / 10AD as active
 - `.agent-loop/phase-plan.md` records Phase 10AB as closed history and
-  contains a `## Phase 10AC - Overlap-Safe Detection Initial Slice`
+  records Phase 10AC as closed history and contains a
+  `## Phase 10AD - Codex-Owned Concurrent Work Initial Slice`
   section with concrete objective, done criteria, and exclusions
-- the repository adds bounded detection and refusal behavior for unsafe overlap
-  using the controlled-concurrency contract defined in Phase 10AB
-- the implementation distinguishes overlap-safe work from invalidating work for
-  the shipped roles and canonical artifacts, and surfaces explicit refusal or
-  recovery paths when the active context is stale or invalidated
+- the repository adds a bounded concurrent-work path for Codex-owned work that
+  is provably safe under the controlled-concurrency contract defined in
+  Phase 10AB and the refusal/detection behavior shipped in Phase 10AC
+- the implementation distinguishes overlap-safe Codex-owned work from
+  invalidating work for the shipped roles and canonical artifacts, and refuses
+  or suppresses concurrent actions that would stale or invalidate Claude's
+  active context
 - the implementation preserves approval gating, evidence review,
   external-workspace boundaries, existing run-profile semantics, desktop/UI
   boundaries, and the canonical-artifact-first model instead of introducing
   hidden automation, silent mutation, or active background overlap
-- focused validation proves the overlap-detection and refusal path is explicit,
-  bounded, auditable, and fail-closed
-- `README.md` reflects that Phase 10AC is active and that overlap-safe
-  detection work is now the implementation focus
+- focused validation proves the bounded Codex-owned concurrent-work path is
+  explicit, auditable, ownership-safe, and fail-closed where safety cannot be
+  proven
+- `README.md` reflects that Phase 10AD is active and that limited safe
+  Codex-owned concurrent work is now the implementation focus
 
 ## Next-Phase Gate
 
 Do not widen into Codex-owned concurrent execution until:
 
-- Phase 10AC receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the overlap-safe detection slice
-- any limited Codex-owned concurrent work is activated through Phase 10AD
-  instead of being folded into this detection slice
+- Phase 10AD receives `APPROVED_FOR_HUMAN_REVIEW`
+- the human approves the first bounded concurrent-work slice
+- any broader or more autonomous concurrent execution is activated through a
+  later dedicated phase instead of being folded into this initial safe slice
 
 ## Out Of Scope For Current Phase
 
-- any actual overlapping Codex/Claude runtime, silent background orchestration,
+- any broad concurrent Codex/Claude runtime, silent background orchestration,
   or hidden parallel worker model
-- any Codex-owned concurrent work beyond bounded detection and refusal; that is
-  deferred to Phase 10AD
+- any Codex-owned concurrent work that touches Claude-owned implementation
+  artifacts, changes Claude prompts/summaries, or bypasses the shipped
+  overlap-safety refusal boundaries
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - any claim that fully autonomous PRD-to-product execution is already solved
 - any packaging work, hidden orchestration, or live concurrency added under the
-  banner of this detection slice
+  banner of this bounded concurrent-work slice
 - any rewrite of current shipped behavior just to make future autonomy work
   easier
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
