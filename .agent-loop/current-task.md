@@ -4,26 +4,27 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10AD - Codex-Owned Concurrent Work Initial Slice
+Phase 10AE - Framework Evaluation Beyond The Native Loop
 
 ## Status
-Phase 10AC is complete and approved to advance. Phase 10AD is now active as
-the next mainline slice focused on enabling limited Codex-owned concurrent work
-only where the shipped overlap-safe detection and ownership boundaries prove
-that the work cannot invalidate Claude's active implementation context.
+Phase 10AD is complete and approved to advance. Phase 10AE is now active as
+the next mainline slice focused on evaluating whether framework layers such as
+CrewAI, LangGraph, and LangChain add real value beyond the shipped native
+Codex/Claude loop now that the desktop surface, MCP/RAG controls, durable
+memory, and controlled-concurrency model are in place.
 
 ## Task
-Implement Phase 10AD for the agent loop. This slice should allow bounded
-Codex-owned concurrent work during Claude implementation only for explicitly
-safe Codex-owned artifacts and actions that cannot invalidate the active Claude
-task context under the shipped Phase 10AB/10AC rules.
+Implement Phase 10AE for the agent loop. This slice should evaluate framework
+options beyond the native loop and define a bounded comparison surface for
+CrewAI, LangGraph, LangChain, or similar delegated-role runtimes without
+rewriting the shipped Codex/Claude ownership model.
 
 ## Notes
 
-- keep this slice bounded to explicitly safe Codex-owned concurrent work; do
-  not widen into general concurrent execution or hidden background automation
+- keep this slice evaluation-first and bounded; do not widen into a full
+  framework migration, hidden orchestrator, or parallel worker runtime
 - preserve the shipped ownership boundaries, evidence-review model, approval
-  semantics, artifact source-of-truth model, and Phase 10AC refusal behavior
-  while introducing the first bounded concurrent-work path
+  semantics, artifact source-of-truth model, and desktop/runtime contracts
+  while comparing framework affordances against the native loop
 - do not widen into packaging, auto-update work, live multi-worker scheduling,
-  or any path that lets Codex mutate Claude-owned implementation artifacts
+  or any path that replaces the current shipped Python runtime by stealth
