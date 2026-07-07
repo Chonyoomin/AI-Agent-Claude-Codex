@@ -11,6 +11,7 @@ human review.
 - None. No 10AE review findings remain in the current repo state.
 
 ## Constraints
+- Do not make additional Phase 10AE changes unless a new Codex review creates
   a fresh finding.
 
 ## Required output

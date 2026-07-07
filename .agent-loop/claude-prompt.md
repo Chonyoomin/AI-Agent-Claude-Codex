@@ -1,70 +1,74 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AE - Framework Evaluation Beyond The Native Loop
+Desktop App UI Simplification Task
 
 ## Objective
-Implement Phase 10AE for the agent loop. This slice should evaluate framework
-options beyond the native loop and define a bounded comparison surface for
-CrewAI, LangGraph, LangChain, or similar delegated-role runtimes without
-rewriting the shipped Codex/Claude ownership model.
+Simplify the desktop app UI so the operator only sees three primary controls:
+
+- a `Run` button that changes to `Stop` while the program is running
+- a `Code Review` button for triggering the Codex review path
+- an approval-mode selector dropdown for choosing which approval mode to run in
 
 ## Context
-Implement the Framework Evaluation Beyond The Native Loop slice for the agent
-loop. This is the next mainline step after the shipped Phase 10AD bounded
-concurrent-work slice. The goal is to evaluate whether framework layers such as
-CrewAI, LangGraph, and LangChain add value beyond the shipped native
-Codex/Claude loop now that the desktop surface, MCP/RAG controls, durable
-memory, and controlled-concurrency model are stable enough to compare against.
+The current desktop app in `scripts/agent_loop.py` has accumulated many
+control panels and copy-paste affordances. The goal of this task is to make
+the operator-facing UI substantially simpler and more direct for normal use.
+
+Work against the actual shipped desktop-app window implementation in
+`_launch_desktop_app_window(...)` and its related view/control builders. The
+intended outcome is a much smaller control surface that prioritizes:
+
+1. starting/stopping the agent loop
+2. triggering code review
+3. selecting approval mode
+
+Do not redesign the entire product. Keep this task focused on reducing the
+visible operator controls and making the main workflow obvious.
 
 ## Required work
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Phase 10 / 10AE as active
-- `.agent-loop/phase-plan.md` records Phase 10AD as closed history and
-  contains a `## Phase 10AE - Framework Evaluation Beyond The Native Loop`
-  section with concrete objective, done criteria, and exclusions
-- implement a bounded framework-evaluation surface that compares the shipped
-  native loop against CrewAI, LangGraph, LangChain, or similar delegated-role
-  frameworks using explicit criteria rather than vague preference
-- make clear where a framework could help, where it would conflict with shipped
-  ownership, approval, review, desktop, and canonical-artifact boundaries, and
-  what remains native-loop-only
-- preserve approval gating, evidence review, external-workspace boundaries,
-  run-profile semantics, desktop/UI boundaries, loop-state source-of-truth
-  rules, and the canonical-artifact-first model
-- add focused validation proving the framework-evaluation surface is explicit,
-  auditable, bounded, and does not silently change shipped runtime behavior
-- `README.md` reflects that Phase 10AE is active and that framework evaluation
-  beyond the native loop is now the implementation focus
+- update the native desktop app UI so the primary visible controls are reduced
+  to:
+  - `Run` / `Stop` toggle button
+  - `Code Review` button
+  - approval-mode dropdown selector
+- ensure the `Run` button visibly changes to `Stop` while a run is in progress
+  and flips back when the run is no longer active
+- wire the approval-mode dropdown to the existing shipped approval-mode
+  vocabulary (`review`, `strict`, `autonomous`) rather than inventing new mode
+  names
+- make the simplified control area usable at normal window sizes without the
+  current overwhelming stack of control buttons
+- preserve the existing desktop status/readout area unless a small adjustment is
+  needed to support the simplified controls cleanly
+- remove, hide, or collapse the large existing button stacks/panels that are no
+  longer meant to be primary operator controls
+- add or update focused tests covering the new simplified UI behavior
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay within the current task scope.
+- Stay focused on the desktop-app UI and the directly related control wiring.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not rewrite unrelated files.
-- Do not delete files unless explicitly instructed.
+- Do not rewrite unrelated phases, contracts, or desktop sub-views that are not
+  necessary for this UI simplification.
 - Prefer small, testable, reversible changes.
 - Add or update tests when behavior changes.
 
-Out of scope for this phase (from `TASK.md` and `phase-plan.md`):
-- no full framework migration, silent runtime swap, hidden background
-  orchestration, or delegated-worker runtime added under the banner of
-  evaluation
-- no framework-backed path that bypasses the shipped ownership, approval,
-  review, overlap-safety, or canonical-artifact boundaries
-- no automatic next-phase activation behavior that bypasses or rewrites the
-  shipped Phase 4 planner / activation separation
-- no claim that fully autonomous PRD-to-product execution is already solved
-- no packaging work, hidden orchestration, or live delegated execution added
-  under the banner of this evaluation slice
-- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
-- no change to the Phase 2A Evidence Collection Contract
-- no change to the Phase 3A Orchestrator Contract body
-- no change to the Phase 4A Planning Contract body
-- no change to `scripts/run_checks.sh`
-- no Git automation
+## Important guardrails
+- Reuse existing shipped approval-mode concepts and runtime/control wiring where
+  possible; do not invent a hidden second state plane for approval mode.
+- Do not silently widen the desktop app into a hidden autonomous orchestrator
+  beyond what the shipped runtime already supports.
+- Keep the UI simpler, not broader.
+- If a current control surface is only useful for secondary or advanced flows,
+  it should no longer dominate the main window.
+
+## Likely files
+- `scripts/agent_loop.py`
+- `tests/test_desktop_app.py`
+- any other focused desktop-app test file you need to adjust
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required
-Claude Implementation Summary format.
+Claude Implementation Summary format and include the validation you ran.
