@@ -14787,6 +14787,109 @@ def _desktop_ack_signature(items: list, *, kind: str) -> tuple:
     return tuple(signature)
 
 
+# ---------------------------------------------------------------------------
+# Desktop app UI simplification (human-directed).
+#
+# Reduces the operator-facing primary controls to three widgets: a Run/Stop
+# toggle button, a Code Review button, and an approval-mode dropdown. The
+# existing Phase 10Q-10AE sub-view button panels are hidden by default and
+# revealed via an Advanced toggle so the main window stops being dominated
+# by a stack of copy-paste affordances.
+#
+# Kept intentionally minimal: the module-level helpers below carry all the
+# non-Tk logic (mode read/write, subprocess command shape, button-label
+# derivation) so they are unit-testable without a Tk instance. The Tk
+# wiring inside `_launch_desktop_app_window(...)` reuses these helpers
+# verbatim.
+# ---------------------------------------------------------------------------
+
+PRIMARY_DESKTOP_APPROVAL_MODES = (
+    APPROVAL_MODE_REVIEW,
+    APPROVAL_MODE_STRICT,
+    APPROVAL_MODE_AUTONOMOUS,
+)
+
+
+def _primary_desktop_read_approval_mode(controller_root: Path) -> str:
+    """Read the current approval_mode from loop-state.json for the
+    simplified UI. Soft-fails to `APPROVAL_MODE_REVIEW` (the shipped
+    default) on any HaltError or unrecognized value so the dropdown
+    always has a valid initial selection.
+    """
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    try:
+        data = load_loop_state(state_path)
+    except HaltError:
+        return APPROVAL_MODE_REVIEW
+    mode = data.get("approval_mode")
+    if mode in PRIMARY_DESKTOP_APPROVAL_MODES:
+        return mode
+    return APPROVAL_MODE_REVIEW
+
+
+def _primary_desktop_write_approval_mode(
+    controller_root: Path, mode: str,
+) -> None:
+    """Persist a new approval_mode to loop-state.json for the
+    simplified UI dropdown. Refuses fail-closed via HaltError on any
+    mode outside the shipped `PRIMARY_DESKTOP_APPROVAL_MODES`
+    enumeration. Reuses the shipped orchestrator-owned
+    `save_loop_state(...)` primitive so the approval-mode field
+    stays inside the shipped orchestrator write boundary.
+    """
+    if mode not in PRIMARY_DESKTOP_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"primary desktop refused: approval_mode "
+                f"{mode!r} is not in the shipped closed enum "
+                f"{PRIMARY_DESKTOP_APPROVAL_MODES!r}"
+            ),
+        )
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    data = load_loop_state(state_path)
+    save_loop_state(state_path, data, {"approval_mode": mode})
+
+
+def _primary_desktop_build_run_command(
+    controller_root: Path,
+) -> list:
+    """Return the subprocess argv the simplified UI Run button
+    spawns. Uses the current Python interpreter and this script's
+    path so a bundled controller root does not need to have
+    `agent_loop.py` on PATH. Kept as a pure helper so tests can
+    assert the shape without spawning a real subprocess.
+
+    Note: `controller_root` is not included in the argv because the
+    shipped `cmd_run(...)` uses `find_repo_root()`. The caller
+    passes `cwd=controller_root` to Popen so `find_repo_root()`
+    resolves to the operator-selected controller.
+    """
+    return [sys.executable, str(Path(__file__).resolve()), "run"]
+
+
+def _primary_desktop_build_code_review_command(
+    controller_root: Path,
+) -> list:
+    """Return the subprocess argv the simplified UI Code Review
+    button spawns. Kept as a pure helper for the same reason as
+    `_primary_desktop_build_run_command(...)`.
+    """
+    return [sys.executable, str(Path(__file__).resolve()), "resume"]
+
+
+def _primary_desktop_run_button_label(is_running: bool) -> str:
+    """Derive the Run/Stop button label from the tracked
+    process-state boolean. Pure helper so a test can pin the
+    two-state contract without a Tk instance.
+    """
+    return "Stop" if is_running else "Run"
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -15000,8 +15103,169 @@ def _launch_desktop_app_window(
             f"{popup_width}x{popup_height}+{x}+{y}"
         )
 
+    # Simplified UI (human-directed): three primary controls at the
+    # top of the control column - approval-mode dropdown, Run/Stop
+    # toggle, Code Review. The existing Phase 10Q-10AE sub-view
+    # panels stay behind an Advanced toggle so the main window is no
+    # longer dominated by a stack of copy-paste affordances.
+    import subprocess
+    from tkinter import ttk as _ttk
+
+    primary_controls_frame = tk.Frame(control_frame)
+    primary_controls_frame.pack(side=tk.TOP, fill=tk.X)
+    tk.Label(
+        primary_controls_frame,
+        text="Primary Controls",
+        font=("TkDefaultFont", 11, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(4, 4))
+    tk.Label(
+        primary_controls_frame,
+        text="Approval mode:",
+        anchor=tk.W, justify=tk.LEFT,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    approval_mode_var = tk.StringVar(
+        value=_primary_desktop_read_approval_mode(controller_root),
+    )
+    approval_mode_combo = _ttk.Combobox(
+        primary_controls_frame,
+        textvariable=approval_mode_var,
+        values=list(PRIMARY_DESKTOP_APPROVAL_MODES),
+        state="readonly",
+    )
+    approval_mode_combo.pack(fill=tk.X, padx=4, pady=(0, 6))
+
+    run_popen_holder: list = [None]
+    run_stop_label_var = tk.StringVar(value="Run")
+
+    def _run_button_click() -> None:
+        current = run_popen_holder[0]
+        if current is not None and current.poll() is None:
+            try:
+                current.terminate()
+            except OSError:
+                pass
+            run_popen_holder[0] = None
+            run_stop_label_var.set(
+                _primary_desktop_run_button_label(False),
+            )
+            status_caption.config(
+                text="Run stopped: agent loop subprocess terminated.",
+            )
+            return
+        cmd = _primary_desktop_build_run_command(controller_root)
+        try:
+            proc = subprocess.Popen(cmd, cwd=str(controller_root))
+        except OSError as exc:
+            status_caption.config(
+                text=f"Run refused: could not spawn subprocess ({exc!r}).",
+            )
+            return
+        run_popen_holder[0] = proc
+        run_stop_label_var.set(
+            _primary_desktop_run_button_label(True),
+        )
+        status_caption.config(
+            text=(
+                f"Run started: PID {proc.pid}. The button flips back "
+                f"to `Run` when the subprocess exits."
+            ),
+        )
+
+    run_stop_button = tk.Button(
+        primary_controls_frame,
+        textvariable=run_stop_label_var,
+        command=_run_button_click,
+    )
+    run_stop_button.pack(fill=tk.X, padx=4, pady=(0, 4))
+
+    def _code_review_button_click() -> None:
+        cmd = _primary_desktop_build_code_review_command(
+            controller_root,
+        )
+        try:
+            subprocess.Popen(cmd, cwd=str(controller_root))
+        except OSError as exc:
+            status_caption.config(
+                text=(
+                    f"Code Review refused: could not spawn "
+                    f"subprocess ({exc!r})."
+                ),
+            )
+            return
+        status_caption.config(
+            text=(
+                "Code Review triggered: `agent_loop.py resume` "
+                "spawned; consult .agent-loop/orchestrator.log "
+                "for the review pass."
+            ),
+        )
+
+    code_review_button = tk.Button(
+        primary_controls_frame,
+        text="Code Review",
+        command=_code_review_button_click,
+    )
+    code_review_button.pack(fill=tk.X, padx=4, pady=(0, 8))
+
+    def _on_approval_mode_changed(_event=None) -> None:
+        chosen = approval_mode_var.get()
+        try:
+            _primary_desktop_write_approval_mode(
+                controller_root, chosen,
+            )
+        except HaltError as halt:
+            status_caption.config(
+                text=(
+                    f"Approval mode refused: {halt.reason}. "
+                    f"Reverting."
+                ),
+            )
+            approval_mode_var.set(
+                _primary_desktop_read_approval_mode(controller_root),
+            )
+            return
+        status_caption.config(
+            text=f"Approval mode set to {chosen!r}.",
+        )
+
+    approval_mode_combo.bind(
+        "<<ComboboxSelected>>", _on_approval_mode_changed,
+    )
+
+    # Advanced panels toggle. The Phase 10Q-10AE sub-view frames are
+    # tracked so the toggle can hide/show them as a group. The
+    # simplified UI hides them by default so the main window is no
+    # longer dominated by a scrolling stack of copy-paste buttons.
+    advanced_visible_holder: list = [False]
+    advanced_frames_holder: list = []
+
+    def _toggle_advanced_click() -> None:
+        show = not advanced_visible_holder[0]
+        for frame in advanced_frames_holder:
+            if show:
+                frame.pack(side=tk.TOP, fill=tk.X)
+            else:
+                frame.pack_forget()
+        advanced_visible_holder[0] = show
+        advanced_toggle_button.config(
+            text=(
+                "Hide advanced panels"
+                if show
+                else "Show advanced panels"
+            ),
+        )
+        _sync_control_scroll_region()
+
+    advanced_toggle_button = tk.Button(
+        primary_controls_frame,
+        text="Show advanced panels",
+        command=_toggle_advanced_click,
+    )
+    advanced_toggle_button.pack(fill=tk.X, padx=4, pady=(0, 8))
+
     run_profiles_frame = tk.Frame(control_frame)
     run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(run_profiles_frame)
     tk.Label(
         run_profiles_frame,
         text="Run Profiles (Phase 10Q)",
@@ -15009,6 +15273,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
     project_start_frame = tk.Frame(control_frame)
     project_start_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(project_start_frame)
     tk.Label(
         project_start_frame,
         text="Project Start (Phase 10R)",
@@ -15016,6 +15281,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     mcp_assistance_frame = tk.Frame(control_frame)
     mcp_assistance_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(mcp_assistance_frame)
     tk.Label(
         mcp_assistance_frame,
         text="MCP Assistance (Phase 10T)",
@@ -15023,6 +15289,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     mcp_action_guardrails_frame = tk.Frame(control_frame)
     mcp_action_guardrails_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(mcp_action_guardrails_frame)
     tk.Label(
         mcp_action_guardrails_frame,
         text="MCP Action Guardrails (Phase 10U)",
@@ -15030,6 +15297,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     rag_source_selection_frame = tk.Frame(control_frame)
     rag_source_selection_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(rag_source_selection_frame)
     tk.Label(
         rag_source_selection_frame,
         text="RAG Source Selection (Phase 10V)",
@@ -15037,6 +15305,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     rag_retrieval_frame = tk.Frame(control_frame)
     rag_retrieval_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(rag_retrieval_frame)
     tk.Label(
         rag_retrieval_frame,
         text="RAG Retrieval Controls (Phase 10W)",
@@ -15136,6 +15405,7 @@ def _launch_desktop_app_window(
     )
     run_console_frame = tk.Frame(control_frame)
     run_console_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(run_console_frame)
     tk.Label(
         run_console_frame,
         text="Run Console (Phase 10X)",
@@ -15143,6 +15413,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     resume_console_frame = tk.Frame(control_frame)
     resume_console_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(resume_console_frame)
     tk.Label(
         resume_console_frame,
         text="Capacity Recovery Console (Phase 10Y)",
@@ -15150,6 +15421,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     selection_frame = tk.Frame(control_frame)
     selection_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(selection_frame)
     tk.Label(
         selection_frame,
         text="Selection UX (Phase 10Z)",
@@ -15157,6 +15429,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     memory_vault_frame = tk.Frame(control_frame)
     memory_vault_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(memory_vault_frame)
     tk.Label(
         memory_vault_frame,
         text="Memory Vault Export (Phase 10AA)",
@@ -15164,6 +15437,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     concurrency_frame = tk.Frame(control_frame)
     concurrency_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(concurrency_frame)
     tk.Label(
         concurrency_frame,
         text="Controlled Concurrent Operation (Phase 10AB)",
@@ -15171,6 +15445,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     overlap_detection_frame = tk.Frame(control_frame)
     overlap_detection_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(overlap_detection_frame)
     tk.Label(
         overlap_detection_frame,
         text="Overlap-Safe Detection (Phase 10AC)",
@@ -15178,6 +15453,7 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     codex_concurrent_work_frame = tk.Frame(control_frame)
     codex_concurrent_work_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(codex_concurrent_work_frame)
     tk.Label(
         codex_concurrent_work_frame,
         text="Codex-Owned Concurrent Work (Phase 10AD)",
@@ -15185,11 +15461,18 @@ def _launch_desktop_app_window(
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
     framework_evaluation_frame = tk.Frame(control_frame)
     framework_evaluation_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(framework_evaluation_frame)
     tk.Label(
         framework_evaluation_frame,
         text="Framework Evaluation (Phase 10AE)",
         font=("TkDefaultFont", 10, "bold"),
     ).pack(anchor=tk.NW, padx=4, pady=(8, 2))
+    # Simplified UI: hide the advanced phase-panel stack by default
+    # so the main window is dominated only by the three primary
+    # controls above. The Advanced toggle re-shows every registered
+    # frame in a single click.
+    for _f in advanced_frames_holder:
+        _f.pack_forget()
     status_caption = tk.Label(
         control_frame, text="", wraplength=240, justify=tk.LEFT,
         anchor=tk.W,
@@ -15265,6 +15548,23 @@ def _launch_desktop_app_window(
         nonlocal mcp_ack_signature
         nonlocal mcp_action_ack_signature
         nonlocal rag_source_ack_signature
+        # Simplified UI Run/Stop watchdog: if the tracked subprocess
+        # has exited, flip the label back to `Run` so the operator
+        # sees the button rest state without having to click Stop.
+        current_run = run_popen_holder[0]
+        if current_run is not None and current_run.poll() is not None:
+            run_popen_holder[0] = None
+            run_stop_label_var.set(
+                _primary_desktop_run_button_label(False),
+            )
+        # Simplified UI: keep the approval-mode dropdown in sync with
+        # loop-state.json in case another tool wrote the field
+        # between polls.
+        canonical_mode = _primary_desktop_read_approval_mode(
+            controller_root,
+        )
+        if canonical_mode != approval_mode_var.get():
+            approval_mode_var.set(canonical_mode)
         view = assemble_desktop_app_view(controller_root)
         summary = _desktop_native_summary_payload(view)
         summary_header.config(text=summary["window_title"])

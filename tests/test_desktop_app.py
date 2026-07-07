@@ -1148,5 +1148,145 @@ class NonMutationInvariantsTests(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Simplified desktop UI (human-directed): three primary controls
+# ---------------------------------------------------------------------------
+class PrimaryDesktopControlsHelpersTests(unittest.TestCase):
+    """Cover the pure module-level helpers backing the simplified
+    Run/Stop + Code Review + approval-mode dropdown UI. Kept
+    Tk-free so the helpers can be exercised on a headless CI
+    without importing tkinter.
+    """
+
+    def test_approval_modes_closed_enum(self) -> None:
+        # The dropdown MUST use exactly the three shipped Phase 5A
+        # approval modes; no invented mode name.
+        self.assertEqual(
+            agent_loop.PRIMARY_DESKTOP_APPROVAL_MODES,
+            (
+                agent_loop.APPROVAL_MODE_REVIEW,
+                agent_loop.APPROVAL_MODE_STRICT,
+                agent_loop.APPROVAL_MODE_AUTONOMOUS,
+            ),
+        )
+
+    def test_run_button_label_toggles(self) -> None:
+        # The Run/Stop toggle is the whole point of the button; the
+        # False -> "Run", True -> "Stop" contract must stay pinned.
+        self.assertEqual(
+            agent_loop._primary_desktop_run_button_label(False),
+            "Run",
+        )
+        self.assertEqual(
+            agent_loop._primary_desktop_run_button_label(True),
+            "Stop",
+        )
+
+    def test_read_approval_mode_from_loop_state(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            # Default fixture sets approval_mode="review".
+            self.assertEqual(
+                agent_loop._primary_desktop_read_approval_mode(
+                    controller,
+                ),
+                "review",
+            )
+
+    def test_read_approval_mode_soft_fails_to_review(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            (controller / ".agent-loop" / "loop-state.json").unlink()
+            # Missing loop-state MUST soft-fail to the shipped
+            # default rather than raise.
+            self.assertEqual(
+                agent_loop._primary_desktop_read_approval_mode(
+                    controller,
+                ),
+                "review",
+            )
+
+    def test_write_approval_mode_persists(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            agent_loop._primary_desktop_write_approval_mode(
+                controller, "strict",
+            )
+            data = json.loads(
+                (controller / ".agent-loop" / "loop-state.json")
+                .read_text(encoding="utf-8"),
+            )
+            self.assertEqual(data["approval_mode"], "strict")
+
+    def test_write_approval_mode_refuses_unknown_value(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            before = state_path.read_bytes()
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop._primary_desktop_write_approval_mode(
+                    controller, "not-a-real-mode",
+                )
+            after = state_path.read_bytes()
+        self.assertIn(
+            "not-a-real-mode", cm.exception.reason,
+        )
+        # The refusal MUST NOT have written a garbage value.
+        self.assertEqual(before, after)
+
+    def test_write_approval_mode_covers_every_shipped_mode(
+        self,
+    ) -> None:
+        # Every closed-enum member must persist cleanly so the
+        # dropdown can flip to any shipped mode without a refusal
+        # on the happy path.
+        for mode in agent_loop.PRIMARY_DESKTOP_APPROVAL_MODES:
+            with TemporaryDirectory() as td:
+                controller = _make_controller(Path(td) / "c")
+                agent_loop._primary_desktop_write_approval_mode(
+                    controller, mode,
+                )
+                data = json.loads(
+                    (controller / ".agent-loop" / "loop-state.json")
+                    .read_text(encoding="utf-8"),
+                )
+                self.assertEqual(data["approval_mode"], mode, mode)
+
+    def test_build_run_command_shape(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            cmd = agent_loop._primary_desktop_build_run_command(
+                controller,
+            )
+        self.assertEqual(cmd[0], sys.executable)
+        # The `run` subcommand is the shipped Phase 5B primary
+        # entry that runs a normal cycle.
+        self.assertEqual(cmd[-1], "run")
+        # The script path MUST resolve to agent_loop.py (per
+        # inspection). Kept as a tolerant assertion so a future
+        # rename can be caught by grep rather than a brittle
+        # equality check.
+        self.assertTrue(
+            cmd[1].endswith("agent_loop.py")
+            or cmd[1].endswith("agent_loop.pyc"),
+            cmd[1],
+        )
+
+    def test_build_code_review_command_shape(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            cmd = (
+                agent_loop._primary_desktop_build_code_review_command(
+                    controller,
+                )
+            )
+        self.assertEqual(cmd[0], sys.executable)
+        # `resume` is the shipped subcommand that continues the
+        # cycle past the Codex review gate.
+        self.assertEqual(cmd[-1], "resume")
+
+
 if __name__ == "__main__":
     unittest.main()
