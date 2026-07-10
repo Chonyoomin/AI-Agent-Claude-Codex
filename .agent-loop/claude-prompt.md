@@ -1,69 +1,92 @@
 # Claude Code Task
 
 ## Phase
-Desktop App UI Improvement Task
+Fix Phase B1 - Desktop Bootstrap UX Contract
 
 ## Objective
-Add a native folder-browse flow to the desktop app so an operator can point the
-agent at a target project folder from the UI instead of manually typing or
-copy-pasting a path-oriented CLI command.
+Define and implement the bounded desktop UX contract for bootstrapping a new
+empty target project from the desktop app, so selecting a brand-new folder no
+longer stops at the raw `empty_target` refusal wall.
 
 ## Context
-The project already has external-target and project-start support in the
-runtime (`attach-external-target`, external-target inspection, project-start
-views), but the desktop UX still needs a more natural folder-selection flow.
+The shipped runtime already supports explicit empty-target bootstrap through the
+existing external-target path:
 
-The goal of this task is to add a proper project-folder selection UX to the
-desktop app and wire it into the existing shipped external-target attach flow.
-This should feel like a normal desktop app action: click a button, browse for a
-folder, and attach/select that project for the agent.
+- `attach-external-target --bootstrap`
+- `--bootstrapped-by`
+- `--human-objective`
+- `--project-intent`
 
-Work against the actual desktop window implementation in
-`scripts/agent_loop.py`, especially the Tk window and the existing
-external-target / project-start surfaces.
+The gap is desktop UX. Today the operator can point the app at a folder, but
+when that folder is an `empty_target`, the desktop flow only surfaces the
+Phase 10C/10E refusal instead of giving the operator a bounded bootstrap path.
+
+This task is the first slice only. Stay at the UX-contract layer: define how
+the desktop app should detect `empty_target`, when it should present bootstrap
+vs attach-existing-project choices, which fields are required, and how the UI
+must explain the next step. Do not widen into a broad architecture rewrite.
+
+Work against the actual desktop implementation in `scripts/agent_loop.py` and
+the current desktop project-start / attach surfaces. Reuse the shipped
+external-target bootstrap runtime boundaries rather than inventing a second
+desktop-only bootstrap state plane.
 
 ## Required work
-- add a native folder-browse UI flow to the desktop app for selecting a target
-  project folder
-- use a normal desktop folder-picker/dialog rather than requiring the operator
-  to type a raw path into the UI
-- wire the selected folder into the shipped external-target attach/project-start
-  flow rather than inventing a parallel hidden target-selection state plane
-- make the selected project visible in the UI after selection so the operator
-  can tell what folder the agent is pointed at
-- preserve the existing controller-root versus external-target distinction; do
-  not silently collapse them into one concept
-- preserve the existing safety boundaries around target attachment and
-  validation
-- update the desktop UI so this project-folder selection flow is a primary,
-  operator-friendly path
-- add or update focused tests for the new browse-and-attach behavior
+- define the desktop-side UX contract for handling target-folder selection when
+  the selected folder is:
+  - `empty_target`
+  - `full_target`
+  - `partial_target`
+  - `malformed_target`
+- implement the first bounded desktop UX behavior for the `empty_target` case
+  so the operator is routed toward bootstrap rather than only seeing a raw
+  refusal
+- make the contract explicit about when the UI is in:
+  - attach-existing-project mode
+  - bootstrap-new-project mode
+- make the required bootstrap fields explicit in the desktop flow:
+  - `attached_by`
+  - `approval_mode`
+  - `bootstrapped_by`
+  - `human_objective`
+  - `project_intent`
+- preserve the explicit-operator-input rule; do not auto-fill identity,
+  objective, or intent fields from OS state, environment variables, or hidden
+  defaults
+- ensure the desktop app explains that bootstrap is distinct from first phase
+  activation and that a bootstrapped target still lands in
+  `awaiting_first_activation`
+- add or update focused tests for the desktop bootstrap UX contract behavior
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay focused on the desktop app, external-target attach flow, and directly
-  related UI/runtime wiring.
+- Stay narrowly focused on the desktop bootstrap UX contract and directly
+  related desktop view or renderer changes.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not rewrite unrelated runtime phases or contracts unless needed to support
-  the bounded UI flow.
+- Do not silently transition the canonical phase/task artifacts to Fix Phase B;
+  that task-state work remains Codex-owned unless explicitly reassigned.
+- Do not introduce a second bootstrap runtime, hidden state store, or
+  background control plane.
 - Prefer small, testable, reversible changes.
 - Add or update tests when behavior changes.
 
 ## Important guardrails
-- Reuse the shipped external-target runtime instead of creating a second hidden
-  “selected project” state store.
-- Do not bypass the existing attach validation and refusal behavior.
-- Do not silently mutate unrelated loop-state fields just because a project
-  folder was selected.
-- Keep this as a desktop UX improvement, not a broad architecture rewrite.
+- Reuse the shipped Phase 10C/10E bootstrap runtime contract instead of
+  bypassing it for UI convenience.
+- Do not silently bootstrap merely because a folder was selected.
+- Do not weaken refusal behavior for `partial_target` or `malformed_target`.
+- Do not claim the UI can fully bootstrap and start a project unless the actual
+  bounded implementation in this slice really does so.
+- Keep this slice centered on UX contract and operator guidance, not on broad
+  runtime expansion.
 
 ## Likely files
 - `scripts/agent_loop.py`
 - `tests/test_desktop_app.py`
 - `tests/test_desktop_project_start.py`
 - `tests/test_desktop_action_bridge.py`
-- any other focused desktop/external-target tests you need to update
+- any other focused desktop/external-target/bootstrap tests you need to update
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required

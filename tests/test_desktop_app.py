@@ -1494,5 +1494,275 @@ class PrimaryDesktopFolderBrowseHelpersTests(unittest.TestCase):
                 )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase B1 - Desktop Bootstrap UX Contract
+# ---------------------------------------------------------------------------
+class PrimaryDesktopBootstrapUxContractTests(unittest.TestCase):
+    """Cover the module-level helpers that back the Fix Phase B1
+    desktop bootstrap UX contract: closed mode enum, closed
+    bootstrap-field enum, classification-to-mode mapping, form
+    validator, folder-classification wrapper, and the bootstrap
+    dispatch wrapper.
+    """
+
+    def test_folder_ux_modes_closed_enum(self) -> None:
+        self.assertEqual(
+            agent_loop.PRIMARY_DESKTOP_FOLDER_UX_MODES,
+            (
+                "attach_existing_project",
+                "bootstrap_new_project",
+                "refused_partial_target",
+                "refused_malformed_target",
+            ),
+        )
+
+    def test_bootstrap_field_names_closed_enum(self) -> None:
+        # The desktop UI MUST prompt for exactly these five fields
+        # in this order; no invented field, no auto-filled field.
+        self.assertEqual(
+            agent_loop.PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES,
+            (
+                "attached_by",
+                "approval_mode",
+                "bootstrapped_by",
+                "human_objective",
+                "project_intent",
+            ),
+        )
+
+    def test_next_step_copy_pins_activation_boundary(self) -> None:
+        copy = agent_loop.PRIMARY_DESKTOP_BOOTSTRAP_NEXT_STEP_COPY
+        # The copy MUST name the shipped boundary explicitly so the
+        # operator sees that bootstrap != activation.
+        self.assertIn("awaiting_first_activation", copy)
+        self.assertIn("Phase 4C activator", copy)
+        self.assertIn("APPROVED_FOR_ACTIVATION", copy)
+
+    def test_derive_folder_ux_mode_full_target(self) -> None:
+        self.assertEqual(
+            agent_loop._primary_desktop_derive_folder_ux_mode(
+                "full_target",
+            ),
+            "attach_existing_project",
+        )
+
+    def test_derive_folder_ux_mode_empty_target(self) -> None:
+        self.assertEqual(
+            agent_loop._primary_desktop_derive_folder_ux_mode(
+                "empty_target",
+            ),
+            "bootstrap_new_project",
+        )
+
+    def test_derive_folder_ux_mode_partial_target(self) -> None:
+        self.assertEqual(
+            agent_loop._primary_desktop_derive_folder_ux_mode(
+                "partial_target",
+            ),
+            "refused_partial_target",
+        )
+
+    def test_derive_folder_ux_mode_malformed_target(self) -> None:
+        self.assertEqual(
+            agent_loop._primary_desktop_derive_folder_ux_mode(
+                "malformed_target",
+            ),
+            "refused_malformed_target",
+        )
+
+    def test_derive_folder_ux_mode_unknown_refuses(self) -> None:
+        # A vocabulary-drift refusal MUST fire fail-closed so the
+        # desktop UI cannot silently pick a wrong mode.
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._primary_desktop_derive_folder_ux_mode(
+                "invented_state",
+            )
+
+    def test_classify_folder_for_ux_missing_path(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._primary_desktop_classify_folder_for_ux(
+                None,
+            )
+
+    def test_classify_folder_for_ux_empty_path(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._primary_desktop_classify_folder_for_ux(
+                "  ",
+            )
+
+    def test_classify_folder_for_ux_non_directory(self) -> None:
+        with TemporaryDirectory() as td:
+            file_path = Path(td) / "not-a-directory"
+            file_path.write_text("x", encoding="utf-8")
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._primary_desktop_classify_folder_for_ux(
+                    str(file_path),
+                )
+
+    def test_classify_folder_for_ux_empty_directory(self) -> None:
+        with TemporaryDirectory() as td:
+            empty = Path(td) / "empty-target"
+            empty.mkdir()
+            self.assertEqual(
+                agent_loop._primary_desktop_classify_folder_for_ux(
+                    str(empty),
+                ),
+                "empty_target",
+            )
+
+    def test_classify_folder_for_ux_full_directory(self) -> None:
+        with TemporaryDirectory() as td:
+            full = Path(td) / "full-target"
+            full.mkdir()
+            (full / "TASK.md").write_text(
+                "# t", encoding="utf-8",
+            )
+            (full / ".agent-loop").mkdir()
+            for name in (
+                "current-task.md",
+                "current-phase.md",
+                "phase-plan.md",
+            ):
+                (full / ".agent-loop" / name).write_text(
+                    "x", encoding="utf-8",
+                )
+            (full / ".agent-loop" / "loop-state.json").write_text(
+                json.dumps({
+                    "phase": "Phase 10 - Future Product Features",
+                    "sub_phase": "Phase 10AE",
+                    "task": "external-target-classification-test",
+                    "status": "awaiting_claude_implementation",
+                    "cycle_count": 0,
+                    "max_cycles": 3,
+                    "last_verdict": None,
+                    "last_verdict_phase": None,
+                    "contract_version": CONTRACT_VERSION,
+                    "claude_version": None,
+                    "codex_version": None,
+                    "orchestrator_version": "phase-3d-v0",
+                    "approval_mode": "review",
+                    "awaiting_human_for": None,
+                }),
+                encoding="utf-8",
+            )
+            self.assertEqual(
+                agent_loop._primary_desktop_classify_folder_for_ux(
+                    str(full),
+                ),
+                "full_target",
+            )
+
+    def test_classify_folder_for_ux_partial_directory(self) -> None:
+        with TemporaryDirectory() as td:
+            partial = Path(td) / "partial-target"
+            partial.mkdir()
+            (partial / "TASK.md").write_text(
+                "# t", encoding="utf-8",
+            )
+            # Missing every .agent-loop artifact -> partial_target.
+            self.assertEqual(
+                agent_loop._primary_desktop_classify_folder_for_ux(
+                    str(partial),
+                ),
+                "partial_target",
+            )
+
+    def test_validate_bootstrap_form_all_fields_present(
+        self,
+    ) -> None:
+        fields = {
+            "attached_by": "alice",
+            "approval_mode": "review",
+            "bootstrapped_by": "alice",
+            "human_objective": "Build a bounded thing.",
+            "project_intent": "Ship a bounded slice.",
+        }
+        # Happy path: no exception.
+        agent_loop._primary_desktop_validate_bootstrap_form(fields)
+
+    def test_validate_bootstrap_form_missing_field_refuses(
+        self,
+    ) -> None:
+        for missing in (
+            "attached_by",
+            "approval_mode",
+            "bootstrapped_by",
+            "human_objective",
+            "project_intent",
+        ):
+            fields = {
+                "attached_by": "alice",
+                "approval_mode": "review",
+                "bootstrapped_by": "alice",
+                "human_objective": "obj",
+                "project_intent": "intent",
+            }
+            del fields[missing]
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop._primary_desktop_validate_bootstrap_form(
+                    fields,
+                )
+            self.assertIn(missing, cm.exception.reason, missing)
+
+    def test_validate_bootstrap_form_empty_field_refuses(
+        self,
+    ) -> None:
+        fields = {
+            "attached_by": "alice",
+            "approval_mode": "review",
+            "bootstrapped_by": "alice",
+            "human_objective": "   ",
+            "project_intent": "intent",
+        }
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._primary_desktop_validate_bootstrap_form(
+                fields,
+            )
+
+    def test_validate_bootstrap_form_non_dict_refuses(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._primary_desktop_validate_bootstrap_form(
+                "not a dict",
+            )
+
+    def test_bootstrap_selected_folder_wraps_shipped_runtime(
+        self,
+    ) -> None:
+        # The wrapper MUST delegate verbatim to
+        # `attach_external_target(..., bootstrap=True, ...)` with
+        # every field forwarded so the shipped Phase 10C / 10E
+        # validation fires unchanged.
+        with mock.patch.object(
+            agent_loop,
+            "attach_external_target",
+        ) as p:
+            p.return_value = Path("/tmp/record.json")
+            got = (
+                agent_loop
+                ._primary_desktop_bootstrap_selected_folder(
+                    Path("/tmp/controller"),
+                    target_path="/tmp/target",
+                    attached_by="alice",
+                    approval_mode="review",
+                    bootstrapped_by="alice",
+                    human_objective="obj",
+                    project_intent="intent",
+                    log_path=Path("/tmp/orch.log"),
+                )
+            )
+        self.assertEqual(got, Path("/tmp/record.json"))
+        p.assert_called_once_with(
+            Path("/tmp/controller"),
+            target_path="/tmp/target",
+            attached_by="alice",
+            approval_mode="review",
+            log_path=Path("/tmp/orch.log"),
+            bootstrap=True,
+            bootstrapped_by="alice",
+            human_objective="obj",
+            project_intent="intent",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
