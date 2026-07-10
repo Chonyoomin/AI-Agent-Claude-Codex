@@ -1297,12 +1297,6 @@ class PrimaryDesktopFolderBrowseHelpersTests(unittest.TestCase):
     exercised on a headless CI without importing tkinter.
     """
 
-    def test_attached_by_constant(self) -> None:
-        self.assertEqual(
-            agent_loop.PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT,
-            "desktop-ui-operator",
-        )
-
     def test_normalize_selected_folder_none(self) -> None:
         self.assertIsNone(
             agent_loop._primary_desktop_normalize_selected_folder(
@@ -1427,9 +1421,7 @@ class PrimaryDesktopFolderBrowseHelpersTests(unittest.TestCase):
             agent_loop.attach_external_target(
                 controller,
                 target_path=str(target),
-                attached_by=(
-                    agent_loop.PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT
-                ),
+                attached_by="test-operator",
                 approval_mode="review",
             )
             got = (
@@ -1446,52 +1438,59 @@ class PrimaryDesktopFolderBrowseHelpersTests(unittest.TestCase):
             got,
         )
 
-    def test_attach_selected_folder_wraps_shipped_runtime(
+    def test_format_attach_cli_guidance_pins_shape(self) -> None:
+        # Fix Phase B1 fix cycle: the full-target attach path
+        # surfaces the shipped `attach-external-target` CLI as
+        # copy-paste-ready guidance. The `--attached-by` slot MUST
+        # remain a `<NAME>` placeholder so the desktop shell never
+        # auto-fills a synthetic operator identity into the
+        # controller-owned attach record.
+        got = agent_loop._primary_desktop_format_attach_cli_guidance(
+            target_path="/tmp/my-project",
+            approval_mode="review",
+        )
+        self.assertIn("attach-external-target", got)
+        self.assertIn("--target-path \"/tmp/my-project\"", got)
+        self.assertIn("--attached-by <NAME>", got)
+        self.assertIn("--approval-mode \"review\"", got)
+        self.assertNotIn("desktop-ui-operator", got)
+        self.assertNotIn("--bootstrap", got)
+
+    def test_format_attach_cli_guidance_refuses_missing_target(
         self,
     ) -> None:
-        # The wrapper MUST delegate verbatim to the shipped
-        # `attach_external_target(...)` with the operator-supplied
-        # attached_by / approval_mode / log_path so the desktop
-        # shell never re-implements attach validation.
+        for bad in (None, "", "   ", 42):
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._primary_desktop_format_attach_cli_guidance(
+                    target_path=bad,  # type: ignore[arg-type]
+                    approval_mode="review",
+                )
+
+    def test_format_attach_cli_guidance_refuses_missing_mode(
+        self,
+    ) -> None:
+        for bad in (None, "", "   ", 42):
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._primary_desktop_format_attach_cli_guidance(
+                    target_path="/tmp/my-project",
+                    approval_mode=bad,  # type: ignore[arg-type]
+                )
+
+    def test_attach_cli_guidance_does_not_dispatch(self) -> None:
+        # UX-only helper: building the CLI guidance MUST NOT call
+        # the shipped `attach_external_target(...)` runtime. This
+        # pins the Fix Phase B1 fix cycle boundary that the desktop
+        # shell surfaces guidance instead of triggering canonical
+        # mutation from the Tk callback.
         with mock.patch.object(
             agent_loop,
             "attach_external_target",
         ) as p:
-            p.return_value = Path("/tmp/record.json")
-            got = agent_loop._primary_desktop_attach_selected_folder(
-                Path("/tmp/controller"),
-                target_path="/tmp/target",
-                attached_by="tester",
+            agent_loop._primary_desktop_format_attach_cli_guidance(
+                target_path="/tmp/my-project",
                 approval_mode="review",
-                log_path=Path("/tmp/orch.log"),
             )
-        self.assertEqual(got, Path("/tmp/record.json"))
-        p.assert_called_once_with(
-            Path("/tmp/controller"),
-            target_path="/tmp/target",
-            attached_by="tester",
-            approval_mode="review",
-            log_path=Path("/tmp/orch.log"),
-        )
-
-    def test_attach_selected_folder_propagates_halt(self) -> None:
-        # Any HaltError from the shipped runtime MUST propagate so
-        # the Tk callback can surface the refusal in the status
-        # caption without silently swallowing it.
-        with mock.patch.object(
-            agent_loop,
-            "attach_external_target",
-            side_effect=agent_loop.HaltError(
-                "halted_input_missing", "synthetic refusal",
-            ),
-        ):
-            with self.assertRaises(agent_loop.HaltError):
-                agent_loop._primary_desktop_attach_selected_folder(
-                    Path("/tmp/controller"),
-                    target_path="/tmp/target",
-                    attached_by="tester",
-                    approval_mode="review",
-                )
+        p.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1725,42 +1724,110 @@ class PrimaryDesktopBootstrapUxContractTests(unittest.TestCase):
                 "not a dict",
             )
 
-    def test_bootstrap_selected_folder_wraps_shipped_runtime(
+    def test_format_bootstrap_cli_guidance_pins_shape(self) -> None:
+        # Fix Phase B1 fix cycle: the bootstrap dialog surfaces the
+        # shipped `attach-external-target --bootstrap ...` CLI as
+        # copy-paste-ready guidance. Every field the operator typed
+        # into the form MUST appear in the surfaced CLI so the
+        # operator can paste it verbatim into their terminal.
+        got = (
+            agent_loop._primary_desktop_format_bootstrap_cli_guidance(
+                target_path="/tmp/new-project",
+                approval_mode="review",
+                attached_by="alice",
+                bootstrapped_by="alice",
+                human_objective="Build a bounded thing.",
+                project_intent="Ship a bounded slice.",
+            )
+        )
+        self.assertIn("attach-external-target", got)
+        self.assertIn("--target-path \"/tmp/new-project\"", got)
+        self.assertIn("--attached-by \"alice\"", got)
+        self.assertIn("--approval-mode \"review\"", got)
+        self.assertIn("--bootstrap", got)
+        self.assertIn("--bootstrapped-by \"alice\"", got)
+        self.assertIn(
+            "--human-objective \"Build a bounded thing.\"", got,
+        )
+        self.assertIn(
+            "--project-intent \"Ship a bounded slice.\"", got,
+        )
+        self.assertNotIn("<NAME>", got)
+        self.assertNotIn("<TEXT>", got)
+
+    def test_format_bootstrap_cli_guidance_refuses_each_missing_field(
         self,
     ) -> None:
-        # The wrapper MUST delegate verbatim to
-        # `attach_external_target(..., bootstrap=True, ...)` with
-        # every field forwarded so the shipped Phase 10C / 10E
-        # validation fires unchanged.
+        # Each of the six required fields MUST refuse fail-closed
+        # when missing / empty / whitespace-only so the surfaced CLI
+        # is never rendered with an empty argument slot.
+        base = {
+            "target_path": "/tmp/new-project",
+            "approval_mode": "review",
+            "attached_by": "alice",
+            "bootstrapped_by": "alice",
+            "human_objective": "obj",
+            "project_intent": "intent",
+        }
+        for missing in base:
+            for bad in (None, "", "   "):
+                fields = dict(base)
+                fields[missing] = bad  # type: ignore[assignment]
+                with self.assertRaises(agent_loop.HaltError) as cm:
+                    (
+                        agent_loop
+                        ._primary_desktop_format_bootstrap_cli_guidance(
+                            **fields,
+                        )
+                    )
+                self.assertIn(
+                    missing, cm.exception.reason, (missing, bad),
+                )
+
+    def test_bootstrap_cli_guidance_does_not_dispatch(self) -> None:
+        # UX-only helper: building the bootstrap CLI guidance MUST
+        # NOT call the shipped `attach_external_target(...)`
+        # runtime. This pins the Fix Phase B1 fix cycle boundary
+        # that the bootstrap dialog surfaces guidance instead of
+        # triggering canonical mutation from the Tk callback.
         with mock.patch.object(
             agent_loop,
             "attach_external_target",
         ) as p:
-            p.return_value = Path("/tmp/record.json")
-            got = (
+            (
                 agent_loop
-                ._primary_desktop_bootstrap_selected_folder(
-                    Path("/tmp/controller"),
-                    target_path="/tmp/target",
-                    attached_by="alice",
+                ._primary_desktop_format_bootstrap_cli_guidance(
+                    target_path="/tmp/new-project",
                     approval_mode="review",
+                    attached_by="alice",
                     bootstrapped_by="alice",
                     human_objective="obj",
                     project_intent="intent",
-                    log_path=Path("/tmp/orch.log"),
                 )
             )
-        self.assertEqual(got, Path("/tmp/record.json"))
-        p.assert_called_once_with(
-            Path("/tmp/controller"),
-            target_path="/tmp/target",
-            attached_by="alice",
-            approval_mode="review",
-            log_path=Path("/tmp/orch.log"),
-            bootstrap=True,
-            bootstrapped_by="alice",
-            human_objective="obj",
-            project_intent="intent",
+        p.assert_not_called()
+
+    def test_removed_dispatch_helpers_are_gone(self) -> None:
+        # Fix Phase B1 fix cycle: the previous dispatch wrappers and
+        # the auto-fill identity constant are removed from the
+        # module surface so no code path can accidentally re-wire
+        # canonical mutation into the desktop Tk callback.
+        self.assertFalse(
+            hasattr(
+                agent_loop, "PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT",
+            ),
+        )
+        self.assertFalse(
+            hasattr(
+                agent_loop,
+                "_primary_desktop_attach_selected_folder",
+            ),
+        )
+        self.assertFalse(
+            hasattr(
+                agent_loop,
+                "_primary_desktop_bootstrap_selected_folder",
+            ),
         )
 
 
