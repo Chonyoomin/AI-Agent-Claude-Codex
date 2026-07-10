@@ -1288,5 +1288,211 @@ class PrimaryDesktopControlsHelpersTests(unittest.TestCase):
         self.assertEqual(cmd[-1], "resume")
 
 
+# ---------------------------------------------------------------------------
+# Native folder-browse UX (human-directed)
+# ---------------------------------------------------------------------------
+class PrimaryDesktopFolderBrowseHelpersTests(unittest.TestCase):
+    """Cover the module-level helpers backing the "Select Project
+    Folder" primary button. Kept Tk-free so the helpers can be
+    exercised on a headless CI without importing tkinter.
+    """
+
+    def test_attached_by_constant(self) -> None:
+        self.assertEqual(
+            agent_loop.PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT,
+            "desktop-ui-operator",
+        )
+
+    def test_normalize_selected_folder_none(self) -> None:
+        self.assertIsNone(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                None,
+            ),
+        )
+
+    def test_normalize_selected_folder_empty_string(self) -> None:
+        self.assertIsNone(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                "",
+            ),
+        )
+
+    def test_normalize_selected_folder_whitespace(self) -> None:
+        self.assertIsNone(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                "   ",
+            ),
+        )
+
+    def test_normalize_selected_folder_empty_tuple(self) -> None:
+        # macOS Tk's askdirectory returns an empty tuple on cancel;
+        # both empty-tuple and empty-list MUST normalize to None so
+        # the desktop shell never dispatches an attach on cancel.
+        self.assertIsNone(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                (),
+            ),
+        )
+        self.assertIsNone(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                [],
+            ),
+        )
+
+    def test_normalize_selected_folder_stripped_path(self) -> None:
+        self.assertEqual(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                "  /tmp/project  ",
+            ),
+            "/tmp/project",
+        )
+
+    def test_normalize_selected_folder_non_string(self) -> None:
+        # A wrong-typed dialog result MUST normalize to None rather
+        # than crash the callback with an AttributeError.
+        self.assertIsNone(
+            agent_loop._primary_desktop_normalize_selected_folder(
+                42,
+            ),
+        )
+
+    def test_format_attached_target_label_none(self) -> None:
+        self.assertEqual(
+            (
+                agent_loop
+                ._primary_desktop_format_attached_target_label(None)
+            ),
+            "Attached project: (none)",
+        )
+
+    def test_format_attached_target_label_present(self) -> None:
+        self.assertEqual(
+            (
+                agent_loop
+                ._primary_desktop_format_attached_target_label(
+                    "/tmp/project",
+                )
+            ),
+            "Attached project: /tmp/project",
+        )
+
+    def test_read_attached_target_path_returns_none_when_unattached(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            # Fresh controller has no attach record on disk.
+            self.assertIsNone(
+                agent_loop._primary_desktop_read_attached_target_path(
+                    controller,
+                ),
+            )
+
+    def test_read_attached_target_path_after_attach(self) -> None:
+        # An attach must surface the canonical target path in the
+        # helper's read so the desktop Label can display it.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "controller")
+            target = Path(td) / "target-project"
+            target.mkdir()
+            (target / "TASK.md").write_text("# t", encoding="utf-8")
+            (target / ".agent-loop").mkdir()
+            for name in (
+                "current-task.md",
+                "current-phase.md",
+                "phase-plan.md",
+            ):
+                (target / ".agent-loop" / name).write_text(
+                    "x", encoding="utf-8",
+                )
+            (target / ".agent-loop" / "loop-state.json").write_text(
+                json.dumps({
+                    "phase": "Phase 10 - Future Product Features",
+                    "sub_phase": "Phase 10AE",
+                    "task": "external-target-attach-test",
+                    "status": "awaiting_claude_implementation",
+                    "cycle_count": 0,
+                    "max_cycles": 3,
+                    "last_verdict": None,
+                    "last_verdict_phase": None,
+                    "contract_version": CONTRACT_VERSION,
+                    "claude_version": None,
+                    "codex_version": None,
+                    "orchestrator_version": "phase-3d-v0",
+                    "approval_mode": "review",
+                    "awaiting_human_for": None,
+                }),
+                encoding="utf-8",
+            )
+            agent_loop.attach_external_target(
+                controller,
+                target_path=str(target),
+                attached_by=(
+                    agent_loop.PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT
+                ),
+                approval_mode="review",
+            )
+            got = (
+                agent_loop
+                ._primary_desktop_read_attached_target_path(
+                    controller,
+                )
+            )
+        self.assertIsNotNone(got)
+        # The canonical resolved form MUST match the target we
+        # attached (allowing platform-native separators).
+        self.assertTrue(
+            got.replace("\\", "/").endswith("target-project"),
+            got,
+        )
+
+    def test_attach_selected_folder_wraps_shipped_runtime(
+        self,
+    ) -> None:
+        # The wrapper MUST delegate verbatim to the shipped
+        # `attach_external_target(...)` with the operator-supplied
+        # attached_by / approval_mode / log_path so the desktop
+        # shell never re-implements attach validation.
+        with mock.patch.object(
+            agent_loop,
+            "attach_external_target",
+        ) as p:
+            p.return_value = Path("/tmp/record.json")
+            got = agent_loop._primary_desktop_attach_selected_folder(
+                Path("/tmp/controller"),
+                target_path="/tmp/target",
+                attached_by="tester",
+                approval_mode="review",
+                log_path=Path("/tmp/orch.log"),
+            )
+        self.assertEqual(got, Path("/tmp/record.json"))
+        p.assert_called_once_with(
+            Path("/tmp/controller"),
+            target_path="/tmp/target",
+            attached_by="tester",
+            approval_mode="review",
+            log_path=Path("/tmp/orch.log"),
+        )
+
+    def test_attach_selected_folder_propagates_halt(self) -> None:
+        # Any HaltError from the shipped runtime MUST propagate so
+        # the Tk callback can surface the refusal in the status
+        # caption without silently swallowing it.
+        with mock.patch.object(
+            agent_loop,
+            "attach_external_target",
+            side_effect=agent_loop.HaltError(
+                "halted_input_missing", "synthetic refusal",
+            ),
+        ):
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._primary_desktop_attach_selected_folder(
+                    Path("/tmp/controller"),
+                    target_path="/tmp/target",
+                    attached_by="tester",
+                    approval_mode="review",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()

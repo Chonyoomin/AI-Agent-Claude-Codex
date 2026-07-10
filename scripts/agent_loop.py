@@ -14890,6 +14890,109 @@ def _primary_desktop_run_button_label(is_running: bool) -> str:
     return "Stop" if is_running else "Run"
 
 
+# ---------------------------------------------------------------------------
+# Native folder-browse UX (human-directed).
+#
+# Adds a primary "Select Project Folder" button that opens a native OS
+# folder-picker dialog and wires the chosen folder into the shipped
+# `attach_external_target(...)` runtime. The currently attached target
+# (if any) surfaces beneath the button as a plain Label so the operator
+# always sees which folder the agent is pointed at.
+#
+# Kept intentionally thin: all non-Tk logic (dialog-result normalization,
+# attach-record read, display-label formatting) is factored into module-
+# level helpers so it is unit-testable without a Tk instance.
+# ---------------------------------------------------------------------------
+
+PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT = "desktop-ui-operator"
+
+
+def _primary_desktop_normalize_selected_folder(
+    dialog_result,
+) -> Optional[str]:
+    """Normalize the return of `tkinter.filedialog.askdirectory(...)`
+    into either `None` (cancel / empty) or a stripped path string.
+    The Tk dialog returns `""` (or an empty tuple on some platforms)
+    when the operator cancels; the shipped attach runtime refuses on
+    empty strings, so the desktop shell MUST treat cancel as
+    silently-noop rather than dispatching an attach.
+    """
+    if dialog_result is None:
+        return None
+    if isinstance(dialog_result, (list, tuple)):
+        if not dialog_result:
+            return None
+        dialog_result = dialog_result[0]
+    if not isinstance(dialog_result, str):
+        return None
+    stripped = dialog_result.strip()
+    if not stripped:
+        return None
+    return stripped
+
+
+def _primary_desktop_read_attached_target_path(
+    controller_root: Path,
+) -> Optional[str]:
+    """Read the currently attached external-target path (if any)
+    via the shipped `inspect_external_target_attach(...)` inspector.
+    Soft-fails to `None` on HaltError so the desktop shell renders
+    an `unattached` label rather than crashing when the attach
+    record is missing or malformed.
+    """
+    try:
+        report = inspect_external_target_attach(controller_root)
+    except HaltError:
+        return None
+    if not report.get("attached"):
+        return None
+    freshness = report.get("freshness")
+    if isinstance(freshness, dict):
+        canonical = freshness.get("current_target_path_canonical")
+        if isinstance(canonical, str) and canonical:
+            return canonical
+    return None
+
+
+def _primary_desktop_format_attached_target_label(
+    attached_path: Optional[str],
+) -> str:
+    """Format the attached-target Label text. Empty / `None`
+    surfaces as `Attached project: (none)`; a present path surfaces
+    with the canonical form so the operator can copy it from the
+    label. Pure helper so the Tk-free tests can pin the label
+    contract.
+    """
+    if not attached_path:
+        return "Attached project: (none)"
+    return f"Attached project: {attached_path}"
+
+
+def _primary_desktop_attach_selected_folder(
+    controller_root: Path,
+    *,
+    target_path: str,
+    attached_by: str,
+    approval_mode: str,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Thin wrapper around the shipped `attach_external_target(...)`
+    runtime for the folder-browse UX. Delegates verbatim to the
+    shipped attach runtime so the desktop shell does NOT re-implement
+    any attach validation or refusal semantics; every Phase 10A /
+    10B / 10C / 10D refusal path fires unchanged. The wrapper exists
+    so the Tk callback can be unit-tested without having to
+    reconstruct every kwarg the shipped runtime expects.
+    """
+    return attach_external_target(
+        controller_root,
+        target_path=target_path,
+        attached_by=attached_by,
+        approval_mode=approval_mode,
+        log_path=log_path,
+    )
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -15206,6 +15309,86 @@ def _launch_desktop_app_window(
         command=_code_review_button_click,
     )
     code_review_button.pack(fill=tk.X, padx=4, pady=(0, 8))
+
+    # Native folder-browse UX (human-directed): open the OS
+    # folder picker, feed the chosen path through the shipped
+    # `attach_external_target(...)` runtime, and surface the
+    # currently attached target in a Label beneath the button.
+    # The Label is refreshed every poll so external attaches /
+    # detaches (via the CLI) also propagate to the desktop.
+    from tkinter import filedialog as _filedialog
+
+    attached_target_label = tk.Label(
+        primary_controls_frame,
+        text=_primary_desktop_format_attached_target_label(
+            _primary_desktop_read_attached_target_path(
+                controller_root,
+            ),
+        ),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=340,
+    )
+
+    def _select_project_folder_click() -> None:
+        chosen = _primary_desktop_normalize_selected_folder(
+            _filedialog.askdirectory(
+                title="Select project folder to attach",
+                mustexist=True,
+            ),
+        )
+        if chosen is None:
+            status_caption.config(
+                text="Select project folder: cancelled.",
+            )
+            return
+        log_path = (
+            controller_root / ".agent-loop" / "orchestrator.log"
+        )
+        try:
+            record_path = (
+                _primary_desktop_attach_selected_folder(
+                    controller_root,
+                    target_path=chosen,
+                    attached_by=(
+                        PRIMARY_DESKTOP_ATTACHED_BY_DEFAULT
+                    ),
+                    approval_mode=approval_mode_var.get(),
+                    log_path=log_path,
+                )
+            )
+        except HaltError as halt:
+            status_caption.config(
+                text=(
+                    f"Attach refused: {halt.reason}"
+                ),
+            )
+            return
+        status_caption.config(
+            text=(
+                f"Attached: {chosen}. Attach record: "
+                f"{record_path.name}."
+            ),
+        )
+        attached_target_label.config(
+            text=(
+                _primary_desktop_format_attached_target_label(
+                    _primary_desktop_read_attached_target_path(
+                        controller_root,
+                    ),
+                )
+            ),
+        )
+
+    select_project_button = tk.Button(
+        primary_controls_frame,
+        text="Select Project Folder",
+        command=_select_project_folder_click,
+    )
+    select_project_button.pack(fill=tk.X, padx=4, pady=(0, 4))
+    attached_target_label.pack(
+        fill=tk.X, padx=4, pady=(0, 8),
+    )
 
     def _on_approval_mode_changed(_event=None) -> None:
         chosen = approval_mode_var.get()
@@ -15565,6 +15748,19 @@ def _launch_desktop_app_window(
         )
         if canonical_mode != approval_mode_var.get():
             approval_mode_var.set(canonical_mode)
+        # Native folder-browse UX: keep the attached-target Label in
+        # sync with the canonical attach record in case an external
+        # `attach-external-target` / `detach-external-target` fired
+        # between polls.
+        attached_target_label.config(
+            text=(
+                _primary_desktop_format_attached_target_label(
+                    _primary_desktop_read_attached_target_path(
+                        controller_root,
+                    ),
+                )
+            ),
+        )
         view = assemble_desktop_app_view(controller_root)
         summary = _desktop_native_summary_payload(view)
         summary_header.config(text=summary["window_title"])
