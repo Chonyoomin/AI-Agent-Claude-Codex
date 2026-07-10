@@ -1,73 +1,92 @@
 # Claude Code Task
 
 ## Phase
-Desktop App UI Simplification Task
+Fix Phase B1 - Desktop Bootstrap UX Contract
 
 ## Objective
-Simplify the desktop app UI so the operator only sees three primary controls:
-
-- a `Run` button that changes to `Stop` while the program is running
-- a `Code Review` button for triggering the Codex review path
-- an approval-mode selector dropdown for choosing which approval mode to run in
+Define and implement the bounded desktop UX contract for bootstrapping a new
+empty target project from the desktop app, so selecting a brand-new folder no
+longer stops at the raw `empty_target` refusal wall.
 
 ## Context
-The current desktop app in `scripts/agent_loop.py` has accumulated many
-control panels and copy-paste affordances. The goal of this task is to make
-the operator-facing UI substantially simpler and more direct for normal use.
+The shipped runtime already supports explicit empty-target bootstrap through the
+existing external-target path:
 
-Work against the actual shipped desktop-app window implementation in
-`_launch_desktop_app_window(...)` and its related view/control builders. The
-intended outcome is a much smaller control surface that prioritizes:
+- `attach-external-target --bootstrap`
+- `--bootstrapped-by`
+- `--human-objective`
+- `--project-intent`
 
-1. starting/stopping the agent loop
-2. triggering code review
-3. selecting approval mode
+The gap is desktop UX. Today the operator can point the app at a folder, but
+when that folder is an `empty_target`, the desktop flow only surfaces the
+Phase 10C/10E refusal instead of giving the operator a bounded bootstrap path.
 
-Do not redesign the entire product. Keep this task focused on reducing the
-visible operator controls and making the main workflow obvious.
+This task is the first slice only. Stay at the UX-contract layer: define how
+the desktop app should detect `empty_target`, when it should present bootstrap
+vs attach-existing-project choices, which fields are required, and how the UI
+must explain the next step. Do not widen into a broad architecture rewrite.
+
+Work against the actual desktop implementation in `scripts/agent_loop.py` and
+the current desktop project-start / attach surfaces. Reuse the shipped
+external-target bootstrap runtime boundaries rather than inventing a second
+desktop-only bootstrap state plane.
 
 ## Required work
-- update the native desktop app UI so the primary visible controls are reduced
-  to:
-  - `Run` / `Stop` toggle button
-  - `Code Review` button
-  - approval-mode dropdown selector
-- ensure the `Run` button visibly changes to `Stop` while a run is in progress
-  and flips back when the run is no longer active
-- wire the approval-mode dropdown to the existing shipped approval-mode
-  vocabulary (`review`, `strict`, `autonomous`) rather than inventing new mode
-  names
-- make the simplified control area usable at normal window sizes without the
-  current overwhelming stack of control buttons
-- preserve the existing desktop status/readout area unless a small adjustment is
-  needed to support the simplified controls cleanly
-- remove, hide, or collapse the large existing button stacks/panels that are no
-  longer meant to be primary operator controls
-- add or update focused tests covering the new simplified UI behavior
+- define the desktop-side UX contract for handling target-folder selection when
+  the selected folder is:
+  - `empty_target`
+  - `full_target`
+  - `partial_target`
+  - `malformed_target`
+- implement the first bounded desktop UX behavior for the `empty_target` case
+  so the operator is routed toward bootstrap rather than only seeing a raw
+  refusal
+- make the contract explicit about when the UI is in:
+  - attach-existing-project mode
+  - bootstrap-new-project mode
+- make the required bootstrap fields explicit in the desktop flow:
+  - `attached_by`
+  - `approval_mode`
+  - `bootstrapped_by`
+  - `human_objective`
+  - `project_intent`
+- preserve the explicit-operator-input rule; do not auto-fill identity,
+  objective, or intent fields from OS state, environment variables, or hidden
+  defaults
+- ensure the desktop app explains that bootstrap is distinct from first phase
+  activation and that a bootstrapped target still lands in
+  `awaiting_first_activation`
+- add or update focused tests for the desktop bootstrap UX contract behavior
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay focused on the desktop-app UI and the directly related control wiring.
+- Stay narrowly focused on the desktop bootstrap UX contract and directly
+  related desktop view or renderer changes.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not rewrite unrelated phases, contracts, or desktop sub-views that are not
-  necessary for this UI simplification.
+- Do not silently transition the canonical phase/task artifacts to Fix Phase B;
+  that task-state work remains Codex-owned unless explicitly reassigned.
+- Do not introduce a second bootstrap runtime, hidden state store, or
+  background control plane.
 - Prefer small, testable, reversible changes.
 - Add or update tests when behavior changes.
 
 ## Important guardrails
-- Reuse existing shipped approval-mode concepts and runtime/control wiring where
-  possible; do not invent a hidden second state plane for approval mode.
-- Do not silently widen the desktop app into a hidden autonomous orchestrator
-  beyond what the shipped runtime already supports.
-- Keep the UI simpler, not broader.
-- If a current control surface is only useful for secondary or advanced flows,
-  it should no longer dominate the main window.
+- Reuse the shipped Phase 10C/10E bootstrap runtime contract instead of
+  bypassing it for UI convenience.
+- Do not silently bootstrap merely because a folder was selected.
+- Do not weaken refusal behavior for `partial_target` or `malformed_target`.
+- Do not claim the UI can fully bootstrap and start a project unless the actual
+  bounded implementation in this slice really does so.
+- Keep this slice centered on UX contract and operator guidance, not on broad
+  runtime expansion.
 
 ## Likely files
 - `scripts/agent_loop.py`
 - `tests/test_desktop_app.py`
-- any other focused desktop-app test file you need to adjust
+- `tests/test_desktop_project_start.py`
+- `tests/test_desktop_action_bridge.py`
+- any other focused desktop/external-target/bootstrap tests you need to update
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required

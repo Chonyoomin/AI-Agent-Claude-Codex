@@ -14890,6 +14890,440 @@ def _primary_desktop_run_button_label(is_running: bool) -> str:
     return "Stop" if is_running else "Run"
 
 
+# ---------------------------------------------------------------------------
+# Native folder-browse UX (human-directed).
+#
+# Adds a primary "Select Project Folder" button that opens a native OS
+# folder-picker dialog, classifies the chosen folder via the shipped
+# Phase 10C pre-bootstrap classifier, and surfaces UX-contract guidance
+# for the operator. The currently attached target (if any) surfaces
+# beneath the button as a plain Label so the operator always sees which
+# folder the agent is pointed at.
+#
+# Kept intentionally thin: all non-Tk logic (dialog-result normalization,
+# attach-record read, display-label formatting, CLI guidance formatting)
+# is factored into module-level helpers so it is unit-testable without a
+# Tk instance. Per Fix Phase B1 the desktop shell does NOT dispatch
+# `attach_external_target(...)` from the Tk callback; it surfaces the
+# shipped CLI command for the operator to run. This preserves the
+# no-auto-fill identity boundary (operator supplies `--attached-by`
+# themselves) and keeps the B1 slice scoped to UX contract rather than
+# canonical mutation.
+# ---------------------------------------------------------------------------
+
+
+def _primary_desktop_normalize_selected_folder(
+    dialog_result,
+) -> Optional[str]:
+    """Normalize the return of `tkinter.filedialog.askdirectory(...)`
+    into either `None` (cancel / empty) or a stripped path string.
+    The Tk dialog returns `""` (or an empty tuple on some platforms)
+    when the operator cancels; the shipped attach runtime refuses on
+    empty strings, so the desktop shell MUST treat cancel as
+    silently-noop rather than dispatching an attach.
+    """
+    if dialog_result is None:
+        return None
+    if isinstance(dialog_result, (list, tuple)):
+        if not dialog_result:
+            return None
+        dialog_result = dialog_result[0]
+    if not isinstance(dialog_result, str):
+        return None
+    stripped = dialog_result.strip()
+    if not stripped:
+        return None
+    return stripped
+
+
+def _primary_desktop_read_attached_target_path(
+    controller_root: Path,
+) -> Optional[str]:
+    """Read the currently attached external-target path (if any)
+    via the shipped `inspect_external_target_attach(...)` inspector.
+    Soft-fails to `None` on HaltError so the desktop shell renders
+    an `unattached` label rather than crashing when the attach
+    record is missing or malformed.
+    """
+    try:
+        report = inspect_external_target_attach(controller_root)
+    except HaltError:
+        return None
+    if not report.get("attached"):
+        return None
+    freshness = report.get("freshness")
+    if isinstance(freshness, dict):
+        canonical = freshness.get("current_target_path_canonical")
+        if isinstance(canonical, str) and canonical:
+            return canonical
+    return None
+
+
+def _primary_desktop_format_attached_target_label(
+    attached_path: Optional[str],
+) -> str:
+    """Format the attached-target Label text. Empty / `None`
+    surfaces as `Attached project: (none)`; a present path surfaces
+    with the canonical form so the operator can copy it from the
+    label. Pure helper so the Tk-free tests can pin the label
+    contract.
+    """
+    if not attached_path:
+        return "Attached project: (none)"
+    return f"Attached project: {attached_path}"
+
+
+def _primary_desktop_format_attach_cli_guidance(
+    *,
+    target_path: str,
+    approval_mode: str,
+) -> str:
+    """Return the shipped `attach-external-target` CLI as a
+    copy-paste-ready guidance string, with the operator-selected
+    `target_path` and `approval_mode` filled in and `--attached-by`
+    left as a `<NAME>` placeholder so the operator MUST supply their
+    own identity. UX-only helper: the desktop shell does NOT dispatch
+    canonical mutation from the Tk callback; the operator runs this
+    CLI in their own terminal so the shipped attach runtime remains
+    the sole audit-metadata write path (no auto-fill of `attached_by`
+    from a synthetic desktop identity).
+
+    Values are wrapped in double quotes in the surfaced CLI so paths
+    with spaces stay one token. Because shell double-quote escaping
+    is shell-specific (POSIX `\\"`, cmd `""`, PowerShell `` `" ``)
+    and this text is intended for the operator to copy verbatim into
+    any of those shells, an embedded literal double quote in a value
+    is REFUSED fail-closed rather than silently interpolated into a
+    syntactically broken command. The operator can rename the folder
+    or reselect a mode without an embedded quote.
+    """
+    for field_name, field_value in (
+        ("target_path", target_path),
+        ("approval_mode", approval_mode),
+    ):
+        if (
+            not isinstance(field_value, str)
+            or not field_value.strip()
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop attach guidance refused: field "
+                    f"{field_name!r} is empty / whitespace-only"
+                ),
+            )
+        if "\"" in field_value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop attach guidance refused: field "
+                    f"{field_name!r} contains an embedded double "
+                    f"quote (\"), which would break the "
+                    f"copy-paste-ready CLI. Rename / reselect "
+                    f"without an embedded quote and retry."
+                ),
+            )
+    return (
+        f"python scripts/agent_loop.py attach-external-target "
+        f"--target-path \"{target_path.strip()}\" "
+        f"--attached-by <NAME> "
+        f"--approval-mode \"{approval_mode.strip()}\""
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase B1: Desktop Bootstrap UX Contract.
+#
+# Bounded UX-contract slice that turns the shipped Phase 10C pre-
+# bootstrap target-state classification (`empty_target` / `full_
+# target` / `partial_target` / `malformed_target`) into a closed
+# desktop UX mode enumeration so the "Select Project Folder" flow
+# stops at the raw `empty_target` refusal wall and instead routes
+# the operator into a bounded bootstrap path.
+#
+# Kept intentionally at the UX-contract layer: the closed mode
+# vocabulary + closed field vocabulary + pure classification-to-mode
+# mapping + pure form validator + pure CLI-guidance formatter
+# (`_primary_desktop_format_bootstrap_cli_guidance(...)`) together
+# define WHAT the desktop UI is allowed to do without introducing
+# any new runtime path, second bootstrap runtime, hidden state
+# store, or background control plane. Per the Fix Phase B1 fix
+# cycle, the desktop shell does NOT dispatch canonical mutation
+# from the Tk callback; the guided bootstrap dialog surfaces the
+# shipped `attach-external-target --bootstrap ...` CLI as
+# copy-paste-ready text and the operator runs it themselves. The
+# shipped Phase 10C / 10E / 10D bootstrap + attach runtime remains
+# the only path that actually mutates a target's canonical
+# artifact set.
+# ---------------------------------------------------------------------------
+
+# Closed UX-mode vocabulary. Every operator folder selection MUST
+# resolve to exactly one of these modes; the desktop UI decides
+# whether to run the plain attach flow, open the guided bootstrap
+# form, or surface an explicit refusal.
+PRIMARY_DESKTOP_FOLDER_UX_MODE_ATTACH_EXISTING = (
+    "attach_existing_project"
+)
+PRIMARY_DESKTOP_FOLDER_UX_MODE_BOOTSTRAP_NEW = (
+    "bootstrap_new_project"
+)
+PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_PARTIAL = (
+    "refused_partial_target"
+)
+PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_MALFORMED = (
+    "refused_malformed_target"
+)
+PRIMARY_DESKTOP_FOLDER_UX_MODES = (
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_ATTACH_EXISTING,
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_BOOTSTRAP_NEW,
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_PARTIAL,
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_MALFORMED,
+)
+
+# Closed 5-field vocabulary for the bootstrap form. The desktop UI
+# MUST NOT prompt the operator for any field outside this closed
+# set; every field MUST be operator-supplied per invocation (no
+# auto-fill from OS state, environment variables, or hidden
+# defaults).
+PRIMARY_DESKTOP_BOOTSTRAP_FIELD_ATTACHED_BY = "attached_by"
+PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE = "approval_mode"
+PRIMARY_DESKTOP_BOOTSTRAP_FIELD_BOOTSTRAPPED_BY = "bootstrapped_by"
+PRIMARY_DESKTOP_BOOTSTRAP_FIELD_HUMAN_OBJECTIVE = "human_objective"
+PRIMARY_DESKTOP_BOOTSTRAP_FIELD_PROJECT_INTENT = "project_intent"
+PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES = (
+    PRIMARY_DESKTOP_BOOTSTRAP_FIELD_ATTACHED_BY,
+    PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE,
+    PRIMARY_DESKTOP_BOOTSTRAP_FIELD_BOOTSTRAPPED_BY,
+    PRIMARY_DESKTOP_BOOTSTRAP_FIELD_HUMAN_OBJECTIVE,
+    PRIMARY_DESKTOP_BOOTSTRAP_FIELD_PROJECT_INTENT,
+)
+
+# Operator-facing copy that MUST appear next to the bootstrap form
+# so the operator understands that a successful bootstrap does NOT
+# activate the first phase; the target lands at
+# `awaiting_first_activation` and the shipped Phase 4C activator +
+# APPROVED_FOR_ACTIVATION human approval remain the only path that
+# advances a bootstrapped target.
+PRIMARY_DESKTOP_BOOTSTRAP_NEXT_STEP_COPY = (
+    "Bootstrap is distinct from first-phase activation. On success, "
+    "the target's canonical artifact set is initialized and its "
+    "loop-state lands at "
+    "'awaiting_first_activation'. The shipped Phase 4C activator "
+    "and an explicit APPROVED_FOR_ACTIVATION human approval remain "
+    "the only path that advances a bootstrapped target past that "
+    "state."
+)
+
+
+def _primary_desktop_derive_folder_ux_mode(
+    pre_bootstrap_state: str,
+) -> str:
+    """Map the closed Phase 10C `classify_pre_bootstrap_target_state
+    (...)` classification into the closed desktop UX mode
+    enumeration. Pure closed mapping; raises HaltError on any
+    unrecognized classification so a future Phase 10C vocabulary
+    drift is refused fail-closed rather than silently unlocking a
+    non-existent UX mode.
+    """
+    if (
+        pre_bootstrap_state
+        == EXTERNAL_TARGET_PRE_BOOTSTRAP_FULL
+    ):
+        return PRIMARY_DESKTOP_FOLDER_UX_MODE_ATTACH_EXISTING
+    if (
+        pre_bootstrap_state
+        == EXTERNAL_TARGET_PRE_BOOTSTRAP_EMPTY
+    ):
+        return PRIMARY_DESKTOP_FOLDER_UX_MODE_BOOTSTRAP_NEW
+    if (
+        pre_bootstrap_state
+        == EXTERNAL_TARGET_PRE_BOOTSTRAP_PARTIAL
+    ):
+        return PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_PARTIAL
+    if (
+        pre_bootstrap_state
+        == EXTERNAL_TARGET_PRE_BOOTSTRAP_MALFORMED
+    ):
+        return PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_MALFORMED
+    raise HaltError(
+        "halted_input_missing",
+        (
+            f"desktop bootstrap UX refused: unrecognized pre-"
+            f"bootstrap state {pre_bootstrap_state!r}; the shipped "
+            f"Phase 10C classification returns exactly one of "
+            f"{EXTERNAL_TARGET_PRE_BOOTSTRAP_STATES!r}"
+        ),
+    )
+
+
+def _primary_desktop_classify_folder_for_ux(
+    target_path: str,
+) -> str:
+    """Classify a Tk-selected folder path via the shipped
+    `classify_pre_bootstrap_target_state(...)` primitive so the Tk
+    callback can branch on the returned UX mode without duplicating
+    the shipped classification logic. Refuses fail-closed via
+    HaltError on a missing / non-string / empty path OR on a path
+    that is not an existing directory (matching the shipped
+    `attach_external_target(...)` path validation surface).
+    """
+    if target_path is None or not isinstance(target_path, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop bootstrap UX refused: target_path must be "
+                f"a non-empty str, got {target_path!r}"
+            ),
+        )
+    stripped = target_path.strip()
+    if not stripped:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop bootstrap UX refused: target_path is "
+                "empty / whitespace-only"
+            ),
+        )
+    resolved = Path(stripped).resolve()
+    if not resolved.exists() or not resolved.is_dir():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop bootstrap UX refused: target_path "
+                f"{stripped!r} is not an existing directory"
+            ),
+        )
+    return classify_pre_bootstrap_target_state(resolved)
+
+
+def _primary_desktop_validate_bootstrap_form(
+    fields: dict,
+) -> None:
+    """Validate that the operator-supplied bootstrap form carries a
+    non-empty string for every field in
+    `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`. Refuses fail-closed
+    via HaltError on any missing / non-string / empty / whitespace-
+    only value.
+
+    The shipped `attach_external_target(..., bootstrap=True, ...)`
+    runtime also validates each field with its own bounds (length
+    caps, approval-mode closed enum). This desktop-side validator
+    is intentionally narrower: it only enforces the presence
+    contract so the UI can surface a clean prompt before the
+    subprocess-style refusal fires. The runtime remains the source
+    of truth for every bound.
+    """
+    if not isinstance(fields, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop bootstrap UX refused: fields must be a "
+                f"dict, got {type(fields).__name__}={fields!r}"
+            ),
+        )
+    for name in PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES:
+        value = fields.get(name)
+        if value is None:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"is required; the shipped Phase 10C contract "
+                    f"forbids auto-fill from OS state, environment "
+                    f"variables, or hidden defaults"
+                ),
+            )
+        if not isinstance(value, str):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"must be a str, got "
+                    f"{type(value).__name__}={value!r}"
+                ),
+            )
+        if not value.strip():
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"is empty / whitespace-only"
+                ),
+            )
+
+
+def _primary_desktop_format_bootstrap_cli_guidance(
+    *,
+    target_path: str,
+    approval_mode: str,
+    attached_by: str,
+    bootstrapped_by: str,
+    human_objective: str,
+    project_intent: str,
+) -> str:
+    """Return the shipped `attach-external-target --bootstrap` CLI
+    as a copy-paste-ready guidance string, with every field filled
+    from the operator-supplied bootstrap form. UX-only helper: the
+    desktop shell does NOT dispatch canonical mutation from the Tk
+    callback; the operator runs this CLI in their own terminal so
+    Fix Phase B1 stays scoped to the desktop UX contract and every
+    Phase 10C / 10D / 10E validation fires on the shipped CLI
+    boundary rather than in a second desktop-side dispatch path.
+
+    Values are wrapped in double quotes in the surfaced CLI so text
+    with spaces stays one token. Because shell double-quote escaping
+    is shell-specific (POSIX `\\"`, cmd `""`, PowerShell `` `" ``)
+    and this text is intended for the operator to copy verbatim into
+    any of those shells, an embedded literal double quote in ANY
+    field (including the free-text `human_objective` and
+    `project_intent`) is REFUSED fail-closed rather than silently
+    interpolated into a syntactically broken command. The operator
+    re-types the value without an embedded quote and re-submits;
+    typed context is preserved because the bootstrap dialog does
+    NOT destroy itself on submit.
+    """
+    for field_name, field_value in (
+        ("target_path", target_path),
+        ("approval_mode", approval_mode),
+        ("attached_by", attached_by),
+        ("bootstrapped_by", bootstrapped_by),
+        ("human_objective", human_objective),
+        ("project_intent", project_intent),
+    ):
+        if (
+            not isinstance(field_value, str)
+            or not field_value.strip()
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop bootstrap guidance refused: field "
+                    f"{field_name!r} is empty / whitespace-only"
+                ),
+            )
+        if "\"" in field_value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop bootstrap guidance refused: field "
+                    f"{field_name!r} contains an embedded double "
+                    f"quote (\"), which would break the "
+                    f"copy-paste-ready CLI. Re-type without an "
+                    f"embedded quote and re-submit."
+                ),
+            )
+    return (
+        f"python scripts/agent_loop.py attach-external-target "
+        f"--target-path \"{target_path.strip()}\" "
+        f"--attached-by \"{attached_by.strip()}\" "
+        f"--approval-mode \"{approval_mode.strip()}\" "
+        f"--bootstrap "
+        f"--bootstrapped-by \"{bootstrapped_by.strip()}\" "
+        f"--human-objective \"{human_objective.strip()}\" "
+        f"--project-intent \"{project_intent.strip()}\""
+    )
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -15206,6 +15640,321 @@ def _launch_desktop_app_window(
         command=_code_review_button_click,
     )
     code_review_button.pack(fill=tk.X, padx=4, pady=(0, 8))
+
+    # Native folder-browse UX (human-directed): open the OS
+    # folder picker, feed the chosen path through the shipped
+    # `attach_external_target(...)` runtime, and surface the
+    # currently attached target in a Label beneath the button.
+    # The Label is refreshed every poll so external attaches /
+    # detaches (via the CLI) also propagate to the desktop.
+    from tkinter import filedialog as _filedialog
+
+    attached_target_label = tk.Label(
+        primary_controls_frame,
+        text=_primary_desktop_format_attached_target_label(
+            _primary_desktop_read_attached_target_path(
+                controller_root,
+            ),
+        ),
+        anchor=tk.W,
+        justify=tk.LEFT,
+        wraplength=340,
+    )
+
+    def _refresh_attached_label() -> None:
+        attached_target_label.config(
+            text=(
+                _primary_desktop_format_attached_target_label(
+                    _primary_desktop_read_attached_target_path(
+                        controller_root,
+                    ),
+                )
+            ),
+        )
+
+    def _open_bootstrap_form_dialog(target_folder: str) -> None:
+        # Fix Phase B1: guided bootstrap UX-guidance form for the
+        # `empty_target` UX mode. Opens a modal Toplevel with one
+        # Entry per closed `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`
+        # field. On submit the values are validated by the shipped
+        # desktop-side form validator (presence contract only) and
+        # then rendered into the shipped `attach-external-target
+        # --bootstrap ...` CLI as copy-paste-ready guidance via
+        # `_primary_desktop_format_bootstrap_cli_guidance(...)`. The
+        # desktop shell does NOT dispatch canonical mutation from
+        # this Tk callback; the operator runs the surfaced CLI in
+        # their own terminal so Fix Phase B1 stays scoped to the
+        # desktop UX contract per the fix prompt.
+        dialog = tk.Toplevel(root)
+        dialog.title("Bootstrap new project (Fix Phase B1)")
+        dialog.transient(root)
+        dialog.grab_set()
+        dialog.geometry("560x520")
+        header = tk.Label(
+            dialog,
+            text=(
+                f"Selected empty target: {target_folder}\n\n"
+                "Bootstrap mode: bootstrap_new_project"
+            ),
+            anchor=tk.W, justify=tk.LEFT, wraplength=520,
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        header.pack(fill=tk.X, padx=12, pady=(12, 4))
+        explain = tk.Label(
+            dialog,
+            text=PRIMARY_DESKTOP_BOOTSTRAP_NEXT_STEP_COPY,
+            anchor=tk.W, justify=tk.LEFT, wraplength=520,
+            fg="#4a4a4a",
+        )
+        explain.pack(fill=tk.X, padx=12, pady=(0, 12))
+        prompts = {
+            PRIMARY_DESKTOP_BOOTSTRAP_FIELD_ATTACHED_BY: (
+                "attached_by (operator identity for the "
+                "controller-side attach record):"
+            ),
+            PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE: (
+                "approval_mode (`review` / `strict` / "
+                "`autonomous`; per Phase 10B):"
+            ),
+            PRIMARY_DESKTOP_BOOTSTRAP_FIELD_BOOTSTRAPPED_BY: (
+                "bootstrapped_by (operator identity for the "
+                "bootstrap audit; MUST equal attached_by):"
+            ),
+            PRIMARY_DESKTOP_BOOTSTRAP_FIELD_HUMAN_OBJECTIVE: (
+                "human_objective (one paragraph; what the operator "
+                "wants the project to achieve):"
+            ),
+            PRIMARY_DESKTOP_BOOTSTRAP_FIELD_PROJECT_INTENT: (
+                "project_intent (one paragraph; bounded scope, "
+                "constraints, deliverable shape):"
+            ),
+        }
+        entry_vars: dict = {}
+        for field in PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES:
+            tk.Label(
+                dialog,
+                text=prompts[field],
+                anchor=tk.W, justify=tk.LEFT, wraplength=520,
+            ).pack(fill=tk.X, padx=12, pady=(4, 0))
+            var = tk.StringVar(
+                value=(
+                    approval_mode_var.get()
+                    if field
+                    == (
+                        PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE
+                    )
+                    else ""
+                ),
+            )
+            entry = tk.Entry(dialog, textvariable=var)
+            entry.pack(fill=tk.X, padx=12, pady=(0, 4))
+            entry_vars[field] = var
+
+        button_row = tk.Frame(dialog)
+        button_row.pack(fill=tk.X, padx=12, pady=(12, 12))
+        dialog_status = tk.Label(
+            dialog,
+            text="",
+            anchor=tk.W, justify=tk.LEFT, wraplength=520,
+            fg="#a94442",
+        )
+        dialog_status.pack(fill=tk.X, padx=12, pady=(0, 6))
+        # Fix Phase B1 fix cycle: on submit the dialog surfaces the
+        # shipped `attach-external-target --bootstrap ...` CLI as
+        # copy-paste-ready text in this Text widget so the operator
+        # runs it themselves. The desktop shell does NOT dispatch
+        # canonical mutation from this callback.
+        guidance_output = tk.Text(
+            dialog,
+            height=5,
+            wrap=tk.WORD,
+        )
+        guidance_output.pack(fill=tk.X, padx=12, pady=(0, 6))
+        guidance_output.configure(state=tk.DISABLED)
+
+        def _cancel_dialog() -> None:
+            dialog.destroy()
+            status_caption.config(
+                text=(
+                    "Bootstrap cancelled: no CLI guidance surfaced."
+                ),
+            )
+
+        def _submit_dialog() -> None:
+            fields = {
+                name: var.get()
+                for name, var in entry_vars.items()
+            }
+            try:
+                _primary_desktop_validate_bootstrap_form(fields)
+            except HaltError as halt:
+                dialog_status.config(text=halt.reason)
+                return
+            try:
+                cli_guidance = (
+                    _primary_desktop_format_bootstrap_cli_guidance(
+                        target_path=target_folder,
+                        attached_by=fields[
+                            (
+                                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_ATTACHED_BY
+                            )
+                        ].strip(),
+                        approval_mode=fields[
+                            (
+                                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE
+                            )
+                        ].strip(),
+                        bootstrapped_by=fields[
+                            (
+                                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_BOOTSTRAPPED_BY
+                            )
+                        ].strip(),
+                        human_objective=fields[
+                            (
+                                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_HUMAN_OBJECTIVE
+                            )
+                        ].strip(),
+                        project_intent=fields[
+                            (
+                                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_PROJECT_INTENT
+                            )
+                        ].strip(),
+                    )
+                )
+            except HaltError as halt:
+                dialog_status.config(text=halt.reason)
+                return
+            dialog_status.config(
+                text=(
+                    "Copy the shipped CLI below and run it in a "
+                    "terminal. The desktop shell does NOT dispatch "
+                    "bootstrap; the shipped runtime remains the "
+                    "only canonical-mutation path."
+                ),
+                fg="#31708f",
+            )
+            guidance_output.configure(state=tk.NORMAL)
+            guidance_output.delete("1.0", tk.END)
+            guidance_output.insert("1.0", cli_guidance)
+            guidance_output.configure(state=tk.DISABLED)
+
+        cancel_btn = tk.Button(
+            button_row, text="Close", command=_cancel_dialog,
+        )
+        cancel_btn.pack(side=tk.LEFT, padx=(0, 6))
+        submit_btn = tk.Button(
+            button_row,
+            text="Build bootstrap CLI",
+            command=_submit_dialog,
+        )
+        submit_btn.pack(side=tk.LEFT)
+
+    def _select_project_folder_click() -> None:
+        chosen = _primary_desktop_normalize_selected_folder(
+            _filedialog.askdirectory(
+                title="Select project folder to attach",
+                mustexist=True,
+            ),
+        )
+        if chosen is None:
+            status_caption.config(
+                text="Select project folder: cancelled.",
+            )
+            return
+        # Fix Phase B1: classify the selected folder and branch on
+        # the closed desktop UX mode enum. `full_target` runs the
+        # plain attach; `empty_target` opens the guided bootstrap
+        # form; `partial_target` and `malformed_target` surface an
+        # explicit refusal note so the operator sees the shipped
+        # Phase 10C guarantee rather than a silent no-op.
+        try:
+            pre_state = (
+                _primary_desktop_classify_folder_for_ux(chosen)
+            )
+            ux_mode = (
+                _primary_desktop_derive_folder_ux_mode(pre_state)
+            )
+        except HaltError as halt:
+            status_caption.config(
+                text=f"Select project folder refused: {halt.reason}",
+            )
+            return
+        if (
+            ux_mode
+            == PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_PARTIAL
+        ):
+            status_caption.config(
+                text=(
+                    f"Refused: {chosen} classifies as "
+                    f"'partial_target'. The shipped Phase 10C "
+                    f"bootstrap-never-overwrites guarantee "
+                    f"refuses any attach here. Resolve the "
+                    f"partial canonical set (delete the present "
+                    f"artifacts to reduce to empty_target, or "
+                    f"manually complete the canonical set to "
+                    f"reduce to full_target) before re-attempting."
+                ),
+            )
+            return
+        if (
+            ux_mode
+            == PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_MALFORMED
+        ):
+            status_caption.config(
+                text=(
+                    f"Refused: {chosen} classifies as "
+                    f"'malformed_target' (loop-state.json fails "
+                    f"the shipped Phase 3A schema validator). "
+                    f"Repair the target's loop-state.json before "
+                    f"re-attempting."
+                ),
+            )
+            return
+        if (
+            ux_mode
+            == PRIMARY_DESKTOP_FOLDER_UX_MODE_BOOTSTRAP_NEW
+        ):
+            _open_bootstrap_form_dialog(chosen)
+            return
+        # attach_existing_project: Fix Phase B1 fix cycle - surface
+        # the shipped attach CLI as copy-paste-ready guidance rather
+        # than dispatching from the Tk callback. The operator MUST
+        # supply their own `--attached-by` identity when they run the
+        # CLI in their terminal; the desktop shell no longer
+        # auto-fills a synthetic `desktop-ui-operator` identity into
+        # the controller-owned attach record.
+        try:
+            cli_guidance = (
+                _primary_desktop_format_attach_cli_guidance(
+                    target_path=chosen,
+                    approval_mode=approval_mode_var.get(),
+                )
+            )
+        except HaltError as halt:
+            status_caption.config(
+                text=(
+                    f"Attach guidance refused: {halt.reason}"
+                ),
+            )
+            return
+        status_caption.config(
+            text=(
+                f"Selected full_target: {chosen}. Run the shipped "
+                f"CLI below in a terminal (supply --attached-by "
+                f"<NAME>): {cli_guidance}"
+            ),
+        )
+        _refresh_attached_label()
+
+    select_project_button = tk.Button(
+        primary_controls_frame,
+        text="Select Project Folder",
+        command=_select_project_folder_click,
+    )
+    select_project_button.pack(fill=tk.X, padx=4, pady=(0, 4))
+    attached_target_label.pack(
+        fill=tk.X, padx=4, pady=(0, 8),
+    )
 
     def _on_approval_mode_changed(_event=None) -> None:
         chosen = approval_mode_var.get()
@@ -15565,6 +16314,19 @@ def _launch_desktop_app_window(
         )
         if canonical_mode != approval_mode_var.get():
             approval_mode_var.set(canonical_mode)
+        # Native folder-browse UX: keep the attached-target Label in
+        # sync with the canonical attach record in case an external
+        # `attach-external-target` / `detach-external-target` fired
+        # between polls.
+        attached_target_label.config(
+            text=(
+                _primary_desktop_format_attached_target_label(
+                    _primary_desktop_read_attached_target_path(
+                        controller_root,
+                    ),
+                )
+            ),
+        )
         view = assemble_desktop_app_view(controller_root)
         summary = _desktop_native_summary_payload(view)
         summary_header.config(text=summary["window_title"])
