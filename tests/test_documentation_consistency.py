@@ -6354,7 +6354,7 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
         # canonical active phase. Bounded, deterministic: only
         # the first non-blank line after a "### Status" header
         # is inspected.
-        canonical_active = "Phase 10AE"  # tracked by the file
+        canonical_active = "Fix Phase B2"  # tracked by the file
         lines = self.text.splitlines()
         offending = []
         current_section = None

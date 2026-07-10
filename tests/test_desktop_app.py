@@ -1892,5 +1892,269 @@ class PrimaryDesktopBootstrapUxContractTests(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase B2 - Desktop Bootstrap Form And Validation
+# ---------------------------------------------------------------------------
+class PrimaryDesktopBootstrapFormClassifierTests(unittest.TestCase):
+    """Cover the Fix Phase B2 pure classifier
+    `_primary_desktop_classify_bootstrap_form_refusal(...)` and its
+    fail-closed wrapper `_primary_desktop_validate_bootstrap_form(
+    ...)`. The classifier returns None on a passing form, else a
+    dict with the offending field, closed refusal category, and
+    human-readable reason. Kept Tk-free so the branches are
+    exercised on a headless CI.
+    """
+
+    def _base_valid_fields(self) -> dict:
+        return {
+            "attached_by": "alice",
+            "approval_mode": "review",
+            "bootstrapped_by": "alice",
+            "human_objective": "Build a bounded thing.",
+            "project_intent": "Ship a bounded slice.",
+        }
+
+    def test_refusal_categories_closed_enum(self) -> None:
+        self.assertEqual(
+            agent_loop.PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES,
+            (
+                "input_non_dict",
+                "field_missing",
+                "field_wrong_type",
+                "field_empty",
+                "field_embedded_double_quote",
+                "approval_mode_not_in_shipped_enum",
+                "bootstrapped_by_does_not_match_attached_by",
+            ),
+        )
+
+    def test_classifier_returns_none_on_valid_form(self) -> None:
+        self.assertIsNone(
+            agent_loop._primary_desktop_classify_bootstrap_form_refusal(
+                self._base_valid_fields(),
+            ),
+        )
+
+    def test_classifier_returns_input_non_dict(self) -> None:
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(
+                "not a dict",
+            )
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(got["category"], "input_non_dict")
+        # Not field-scoped: the offending-field slot is None so the
+        # Tk callback does not try to focus a non-existent entry.
+        self.assertIsNone(got["field"])
+        self.assertIn("dict", got["reason"])
+
+    def test_classifier_returns_field_missing(self) -> None:
+        # Every field must trigger the missing branch when absent.
+        for missing in (
+            "attached_by",
+            "approval_mode",
+            "bootstrapped_by",
+            "human_objective",
+            "project_intent",
+        ):
+            fields = self._base_valid_fields()
+            del fields[missing]
+            got = (
+                agent_loop
+                ._primary_desktop_classify_bootstrap_form_refusal(
+                    fields,
+                )
+            )
+            self.assertIsNotNone(got, missing)
+            self.assertEqual(got["category"], "field_missing", missing)
+            self.assertEqual(got["field"], missing)
+            self.assertIn(missing, got["reason"])
+
+    def test_classifier_returns_field_wrong_type(self) -> None:
+        fields = self._base_valid_fields()
+        fields["human_objective"] = 42
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(got["category"], "field_wrong_type")
+        self.assertEqual(got["field"], "human_objective")
+
+    def test_classifier_returns_field_empty(self) -> None:
+        for empty in ("", "   ", "\t\n"):
+            fields = self._base_valid_fields()
+            fields["project_intent"] = empty
+            got = (
+                agent_loop
+                ._primary_desktop_classify_bootstrap_form_refusal(
+                    fields,
+                )
+            )
+            self.assertIsNotNone(got, empty)
+            self.assertEqual(got["category"], "field_empty", empty)
+            self.assertEqual(got["field"], "project_intent")
+
+    def test_classifier_returns_field_embedded_quote(self) -> None:
+        # Embedded double quote in any field surfaces early so the
+        # operator sees the refusal at form-validation time instead
+        # of at CLI-format time.
+        for tainted in (
+            "attached_by",
+            "approval_mode",
+            "bootstrapped_by",
+            "human_objective",
+            "project_intent",
+        ):
+            fields = self._base_valid_fields()
+            fields[tainted] = fields[tainted] + " with \" mark"
+            got = (
+                agent_loop
+                ._primary_desktop_classify_bootstrap_form_refusal(
+                    fields,
+                )
+            )
+            self.assertIsNotNone(got, tainted)
+            self.assertEqual(
+                got["category"],
+                "field_embedded_double_quote",
+                tainted,
+            )
+            self.assertEqual(got["field"], tainted)
+
+    def test_classifier_returns_approval_mode_not_in_enum(
+        self,
+    ) -> None:
+        fields = self._base_valid_fields()
+        fields["approval_mode"] = "invented_mode"
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["category"], "approval_mode_not_in_shipped_enum",
+        )
+        self.assertEqual(got["field"], "approval_mode")
+        self.assertIn("invented_mode", got["reason"])
+
+    def test_classifier_accepts_every_shipped_approval_mode(
+        self,
+    ) -> None:
+        # Every shipped closed-enum value MUST pass the desktop
+        # form validator so the desktop UI stays in lockstep with
+        # the shipped Phase 10B contract.
+        for mode in agent_loop.EXTERNAL_TARGET_APPROVAL_MODES:
+            fields = self._base_valid_fields()
+            fields["approval_mode"] = mode
+            got = (
+                agent_loop
+                ._primary_desktop_classify_bootstrap_form_refusal(
+                    fields,
+                )
+            )
+            self.assertIsNone(got, mode)
+
+    def test_classifier_returns_identity_mismatch(self) -> None:
+        fields = self._base_valid_fields()
+        fields["bootstrapped_by"] = "eve"
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["category"],
+            "bootstrapped_by_does_not_match_attached_by",
+        )
+        self.assertEqual(got["field"], "bootstrapped_by")
+        self.assertIn("alice", got["reason"])
+        self.assertIn("eve", got["reason"])
+
+    def test_classifier_identity_match_is_whitespace_stripped(
+        self,
+    ) -> None:
+        # bootstrapped_by "  alice  " should equal attached_by
+        # "alice" after whitespace-stripping, matching the shipped
+        # Phase 10C single-operator-identity invariant.
+        fields = self._base_valid_fields()
+        fields["attached_by"] = "alice"
+        fields["bootstrapped_by"] = "  alice  "
+        self.assertIsNone(
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields),
+        )
+
+    def test_check_precedence_missing_before_enum(self) -> None:
+        # Precedence pin: missing beats the closed-enum check so a
+        # form with a missing approval_mode surfaces the missing
+        # refusal rather than the enum refusal.
+        fields = self._base_valid_fields()
+        del fields["approval_mode"]
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(got["category"], "field_missing")
+
+    def test_check_precedence_empty_before_identity_mismatch(
+        self,
+    ) -> None:
+        # Precedence pin: per-field empty check beats the identity-
+        # mismatch check so an empty bootstrapped_by surfaces the
+        # empty refusal, not the mismatch refusal.
+        fields = self._base_valid_fields()
+        fields["bootstrapped_by"] = "   "
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(got["category"], "field_empty")
+
+    def test_check_precedence_quote_before_enum(self) -> None:
+        # Precedence pin: embedded-quote check beats the closed-
+        # enum check so a quoted approval_mode surfaces the quote
+        # refusal, not the enum refusal.
+        fields = self._base_valid_fields()
+        fields["approval_mode"] = "re\"view"
+        got = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["category"], "field_embedded_double_quote",
+        )
+
+    def test_validator_raises_halt_error_when_classifier_returns(
+        self,
+    ) -> None:
+        # The fail-closed wrapper MUST raise HaltError whenever the
+        # classifier returns non-None, using the same reason string
+        # so the Tk dialog status Label matches the raised error.
+        fields = self._base_valid_fields()
+        fields["approval_mode"] = "invented_mode"
+        expected = (
+            agent_loop
+            ._primary_desktop_classify_bootstrap_form_refusal(fields)
+        )
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._primary_desktop_validate_bootstrap_form(
+                fields,
+            )
+        self.assertEqual(cm.exception.reason, expected["reason"])
+
+    def test_validator_returns_none_on_valid_form(self) -> None:
+        # Happy path: no exception, no return value.
+        self.assertIsNone(
+            agent_loop._primary_desktop_validate_bootstrap_form(
+                self._base_valid_fields(),
+            ),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
