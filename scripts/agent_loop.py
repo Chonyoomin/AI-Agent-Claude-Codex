@@ -15114,6 +15114,185 @@ PRIMARY_DESKTOP_BOOTSTRAP_NEXT_STEP_COPY = (
     "state."
 )
 
+# Fix Phase B2: closed refusal-category vocabulary for the bootstrap
+# form validator. Every desktop-side refusal MUST resolve to exactly
+# one of these categories so the Tk callback can focus the offending
+# Entry widget and so a future policy change can be traced back to a
+# single closed enum rather than a scattered set of regex-matched
+# reason strings. The categories are ordered by check precedence so a
+# malformed input surfaces the earliest applicable refusal.
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_INPUT_NON_DICT = "input_non_dict"
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_MISSING = "field_missing"
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_WRONG_TYPE = (
+    "field_wrong_type"
+)
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_EMPTY = "field_empty"
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_EMBEDDED_QUOTE = (
+    "field_embedded_double_quote"
+)
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_APPROVAL_MODE_NOT_IN_ENUM = (
+    "approval_mode_not_in_shipped_enum"
+)
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_IDENTITY_MISMATCH = (
+    "bootstrapped_by_does_not_match_attached_by"
+)
+PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES = (
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_INPUT_NON_DICT,
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_MISSING,
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_WRONG_TYPE,
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_EMPTY,
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_EMBEDDED_QUOTE,
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_APPROVAL_MODE_NOT_IN_ENUM,
+    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_IDENTITY_MISMATCH,
+)
+
+
+def _primary_desktop_classify_bootstrap_form_refusal(
+    fields,
+) -> Optional[dict]:
+    """Classify the first refusal in the operator-supplied bootstrap
+    form, or return `None` if the form passes every check. The
+    return dict carries three keys:
+
+      - `field`: the offending field name (Optional[str]; `None`
+        only for the non-dict input-shape refusal which is not
+        field-scoped)
+      - `category`: one of
+        `PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES` so the
+        caller can act on a closed enum rather than a reason string
+      - `reason`: human-readable reason string suitable for the Tk
+        dialog status Label AND for the HaltError raised by
+        `_primary_desktop_validate_bootstrap_form(...)`
+
+    Pure classifier: no exception raised.
+    `_primary_desktop_validate_bootstrap_form(...)` wraps this and
+    raises HaltError when the classifier returns non-`None`. The Tk
+    callback uses this return value directly to focus the offending
+    Entry widget so typed operator context is preserved across a
+    validation refusal (the dialog does NOT destroy itself; other
+    entries retain their text).
+
+    Check precedence (Fix Phase B2 bounded refinement):
+
+      1. non-dict shape
+      2. each field: missing -> wrong-type -> empty -> quote
+      3. approval_mode outside the shipped closed
+         `EXTERNAL_TARGET_APPROVAL_MODES` enum
+      4. bootstrapped_by != attached_by (whitespace-stripped
+         comparison; matches the shipped Phase 10C single-
+         operator-identity invariant)
+
+    The shipped `attach_external_target(..., bootstrap=True, ...)`
+    runtime remains the source of truth for every bound; this
+    classifier hoists the shipped Phase 10B/10C invariants up so
+    the operator sees the refusal at form-validation time instead
+    of after copy-pasting the CLI.
+    """
+    if not isinstance(fields, dict):
+        return {
+            "field": None,
+            "category": (
+                PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_INPUT_NON_DICT
+            ),
+            "reason": (
+                f"desktop bootstrap UX refused: fields must be a "
+                f"dict, got {type(fields).__name__}={fields!r}"
+            ),
+        }
+    for name in PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES:
+        value = fields.get(name)
+        if value is None:
+            return {
+                "field": name,
+                "category": (
+                    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_MISSING
+                ),
+                "reason": (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"is required; the shipped Phase 10C contract "
+                    f"forbids auto-fill from OS state, environment "
+                    f"variables, or hidden defaults"
+                ),
+            }
+        if not isinstance(value, str):
+            return {
+                "field": name,
+                "category": (
+                    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_WRONG_TYPE
+                ),
+                "reason": (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"must be a str, got "
+                    f"{type(value).__name__}={value!r}"
+                ),
+            }
+        if not value.strip():
+            return {
+                "field": name,
+                "category": (
+                    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_EMPTY
+                ),
+                "reason": (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"is empty / whitespace-only"
+                ),
+            }
+        if "\"" in value:
+            return {
+                "field": name,
+                "category": (
+                    PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_FIELD_EMBEDDED_QUOTE
+                ),
+                "reason": (
+                    f"desktop bootstrap UX refused: field {name!r} "
+                    f"contains an embedded double quote (\") which "
+                    f"would break the copy-paste-ready CLI. "
+                    f"Re-type without an embedded quote and "
+                    f"re-submit."
+                ),
+            }
+    approval_stripped = fields[
+        PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE
+    ].strip()
+    if approval_stripped not in EXTERNAL_TARGET_APPROVAL_MODES:
+        return {
+            "field": (
+                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_APPROVAL_MODE
+            ),
+            "category": (
+                PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_APPROVAL_MODE_NOT_IN_ENUM
+            ),
+            "reason": (
+                f"desktop bootstrap UX refused: approval_mode "
+                f"{approval_stripped!r} is not in the shipped "
+                f"closed Phase 10B enumeration "
+                f"{sorted(EXTERNAL_TARGET_APPROVAL_MODES)!r}"
+            ),
+        }
+    attached_stripped = fields[
+        PRIMARY_DESKTOP_BOOTSTRAP_FIELD_ATTACHED_BY
+    ].strip()
+    bootstrapped_stripped = fields[
+        PRIMARY_DESKTOP_BOOTSTRAP_FIELD_BOOTSTRAPPED_BY
+    ].strip()
+    if bootstrapped_stripped != attached_stripped:
+        return {
+            "field": (
+                PRIMARY_DESKTOP_BOOTSTRAP_FIELD_BOOTSTRAPPED_BY
+            ),
+            "category": (
+                PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_IDENTITY_MISMATCH
+            ),
+            "reason": (
+                f"desktop bootstrap UX refused: bootstrapped_by "
+                f"{bootstrapped_stripped!r} does not match "
+                f"attached_by {attached_stripped!r}; the shipped "
+                f"Phase 10C contract requires the attach and the "
+                f"bootstrap to record the same operator identity"
+            ),
+        }
+    return None
+
 
 def _primary_desktop_derive_folder_ux_mode(
     pre_bootstrap_state: str,
@@ -15197,59 +15376,39 @@ def _primary_desktop_classify_folder_for_ux(
 
 
 def _primary_desktop_validate_bootstrap_form(
-    fields: dict,
+    fields,
 ) -> None:
-    """Validate that the operator-supplied bootstrap form carries a
-    non-empty string for every field in
-    `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`. Refuses fail-closed
-    via HaltError on any missing / non-string / empty / whitespace-
-    only value.
+    """Fail-closed wrapper around
+    `_primary_desktop_classify_bootstrap_form_refusal(...)` that
+    raises `HaltError("halted_input_missing", reason)` on any
+    non-`None` classifier return. The classifier owns the refusal
+    ordering; this wrapper preserves the pre-Fix-Phase-B2 exception
+    contract so existing call sites (the Tk bootstrap dialog) do
+    not have to change.
+
+    Refuses in this order per Fix Phase B2 (see the classifier
+    docstring for details):
+      1. non-dict input shape
+      2. per-field missing / wrong-type / empty / embedded-quote
+      3. approval_mode outside the shipped closed Phase 10B enum
+      4. bootstrapped_by != attached_by (Phase 10C single-operator-
+         identity invariant, whitespace-stripped)
 
     The shipped `attach_external_target(..., bootstrap=True, ...)`
-    runtime also validates each field with its own bounds (length
-    caps, approval-mode closed enum). This desktop-side validator
-    is intentionally narrower: it only enforces the presence
-    contract so the UI can surface a clean prompt before the
-    subprocess-style refusal fires. The runtime remains the source
-    of truth for every bound.
+    runtime remains the source of truth for every runtime bound
+    (length caps, canonical-artifact-write atomicity, rollback);
+    this validator only hoists the shipped Phase 10B/10C
+    invariants up so the operator sees the refusal at form-
+    validation time instead of after copy-pasting the CLI.
     """
-    if not isinstance(fields, dict):
+    result = _primary_desktop_classify_bootstrap_form_refusal(
+        fields,
+    )
+    if result is not None:
         raise HaltError(
             "halted_input_missing",
-            (
-                f"desktop bootstrap UX refused: fields must be a "
-                f"dict, got {type(fields).__name__}={fields!r}"
-            ),
+            result["reason"],
         )
-    for name in PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES:
-        value = fields.get(name)
-        if value is None:
-            raise HaltError(
-                "halted_input_missing",
-                (
-                    f"desktop bootstrap UX refused: field {name!r} "
-                    f"is required; the shipped Phase 10C contract "
-                    f"forbids auto-fill from OS state, environment "
-                    f"variables, or hidden defaults"
-                ),
-            )
-        if not isinstance(value, str):
-            raise HaltError(
-                "halted_input_missing",
-                (
-                    f"desktop bootstrap UX refused: field {name!r} "
-                    f"must be a str, got "
-                    f"{type(value).__name__}={value!r}"
-                ),
-            )
-        if not value.strip():
-            raise HaltError(
-                "halted_input_missing",
-                (
-                    f"desktop bootstrap UX refused: field {name!r} "
-                    f"is empty / whitespace-only"
-                ),
-            )
 
 
 def _primary_desktop_format_bootstrap_cli_guidance(
@@ -15673,20 +15832,33 @@ def _launch_desktop_app_window(
         )
 
     def _open_bootstrap_form_dialog(target_folder: str) -> None:
-        # Fix Phase B1: guided bootstrap UX-guidance form for the
-        # `empty_target` UX mode. Opens a modal Toplevel with one
-        # Entry per closed `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`
-        # field. On submit the values are validated by the shipped
-        # desktop-side form validator (presence contract only) and
-        # then rendered into the shipped `attach-external-target
+        # Fix Phase B2: guided bootstrap form-and-validation dialog
+        # for the `empty_target` UX mode. Opens a modal Toplevel
+        # with one Entry per closed
+        # `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES` field. On submit
+        # the values are classified by the shipped
+        # `_primary_desktop_classify_bootstrap_form_refusal(...)`
+        # pure classifier which enforces the closed
+        # `PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES` (non-dict
+        # input shape, per-field missing / wrong-type / empty /
+        # embedded-double-quote, approval_mode outside the shipped
+        # closed `EXTERNAL_TARGET_APPROVAL_MODES` enum, and
+        # bootstrapped_by != attached_by per the shipped Phase 10C
+        # single-operator-identity invariant). On refusal the
+        # dialog surfaces the classifier's reason and focuses the
+        # offending Entry via `focus_set()` while preserving typed
+        # context in every other Entry (the dialog does NOT
+        # destroy itself). On a passing classifier the values are
+        # rendered into the shipped `attach-external-target
         # --bootstrap ...` CLI as copy-paste-ready guidance via
-        # `_primary_desktop_format_bootstrap_cli_guidance(...)`. The
-        # desktop shell does NOT dispatch canonical mutation from
-        # this Tk callback; the operator runs the surfaced CLI in
-        # their own terminal so Fix Phase B1 stays scoped to the
-        # desktop UX contract per the fix prompt.
+        # `_primary_desktop_format_bootstrap_cli_guidance(...)`.
+        # The desktop shell does NOT dispatch canonical mutation
+        # from this Tk callback (per the Fix Phase B1 fix cycle
+        # boundary); the operator runs the surfaced CLI in their
+        # own terminal so the shipped `attach_external_target(...)`
+        # runtime remains the sole audit-metadata write path.
         dialog = tk.Toplevel(root)
-        dialog.title("Bootstrap new project (Fix Phase B1)")
+        dialog.title("Bootstrap new project (Fix Phase B2)")
         dialog.transient(root)
         dialog.grab_set()
         dialog.geometry("560x520")
@@ -15730,6 +15902,12 @@ def _launch_desktop_app_window(
             ),
         }
         entry_vars: dict = {}
+        # Fix Phase B2: track each Entry widget by field name so the
+        # dialog can focus the offending Entry on validation refusal.
+        # Typed operator context is preserved: other Entries retain
+        # their text, the dialog does NOT destroy itself, and the
+        # operator sees exactly which field to correct.
+        entry_widgets: dict = {}
         for field in PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES:
             tk.Label(
                 dialog,
@@ -15749,6 +15927,7 @@ def _launch_desktop_app_window(
             entry = tk.Entry(dialog, textvariable=var)
             entry.pack(fill=tk.X, padx=12, pady=(0, 4))
             entry_vars[field] = var
+            entry_widgets[field] = entry
 
         button_row = tk.Frame(dialog)
         button_row.pack(fill=tk.X, padx=12, pady=(12, 12))
@@ -15785,10 +15964,26 @@ def _launch_desktop_app_window(
                 name: var.get()
                 for name, var in entry_vars.items()
             }
-            try:
-                _primary_desktop_validate_bootstrap_form(fields)
-            except HaltError as halt:
-                dialog_status.config(text=halt.reason)
+            # Fix Phase B2: call the pure classifier directly so
+            # the dialog can focus the offending Entry when the
+            # classifier names a field. Typed operator context is
+            # preserved across every refusal (dialog does NOT
+            # destroy itself; other Entries retain their text).
+            refusal = (
+                _primary_desktop_classify_bootstrap_form_refusal(
+                    fields,
+                )
+            )
+            if refusal is not None:
+                dialog_status.config(
+                    text=refusal["reason"], fg="#a94442",
+                )
+                offending = refusal.get("field")
+                if (
+                    isinstance(offending, str)
+                    and offending in entry_widgets
+                ):
+                    entry_widgets[offending].focus_set()
                 return
             try:
                 cli_guidance = (
@@ -15822,7 +16017,9 @@ def _launch_desktop_app_window(
                     )
                 )
             except HaltError as halt:
-                dialog_status.config(text=halt.reason)
+                dialog_status.config(
+                    text=halt.reason, fg="#a94442",
+                )
                 return
             dialog_status.config(
                 text=(

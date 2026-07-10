@@ -1,30 +1,29 @@
 # Current Task
 
 ## Phase
-Phase 10 - Future Product Features
+Fix Phase B - Desktop Empty-Target Bootstrap Flow
 
 ## Sub-Phase
-Phase 10AE - Framework Evaluation Beyond The Native Loop
+Fix Phase B2 - Desktop Bootstrap Form And Validation
 
 ## Status
-Phase 10AD is complete and approved to advance. Phase 10AE is now active as
-the next mainline slice focused on evaluating whether framework layers such as
-CrewAI, LangGraph, and LangChain add real value beyond the shipped native
-Codex/Claude loop now that the desktop surface, MCP/RAG controls, durable
-memory, and controlled-concurrency model are in place.
+Fix Phase B1 is complete and approved to advance. Fix Phase B2 is now active
+as the next remediation slice focused on turning the approved desktop bootstrap
+UX contract into a bounded in-app form and validation surface for empty-target
+project setup, while preserving the shipped external-target/runtime boundaries.
 
 ## Task
-Implement Phase 10AE for the agent loop. This slice should evaluate framework
-options beyond the native loop and define a bounded comparison surface for
-CrewAI, LangGraph, LangChain, or similar delegated-role runtimes without
-rewriting the shipped Codex/Claude ownership model.
+Implement Fix Phase B2 for the agent loop. This slice should add the bounded
+desktop bootstrap form, required-field entry flow, and fail-closed validation
+surface for empty-target project setup without yet introducing direct desktop
+bootstrap dispatch or weakening the shipped attach/bootstrap runtime contract.
 
 ## Notes
 
-- keep this slice evaluation-first and bounded; do not widen into a full
-  framework migration, hidden orchestrator, or parallel worker runtime
-- preserve the shipped ownership boundaries, evidence-review model, approval
-  semantics, artifact source-of-truth model, and desktop/runtime contracts
-  while comparing framework affordances against the native loop
-- do not widen into packaging, auto-update work, live multi-worker scheduling,
-  or any path that replaces the current shipped Python runtime by stealth
+- keep this slice focused on the desktop form and validation layer only; do not
+  widen into bootstrap dispatch, post-bootstrap activation, or hidden desktop
+  automation
+- preserve the shipped operator-input rule: no hidden defaults for
+  `attached_by`, `bootstrapped_by`, `human_objective`, or `project_intent`
+- preserve the shipped empty/full/partial/malformed target vocabulary and
+  refusal boundaries instead of inventing a second UI-only state plane

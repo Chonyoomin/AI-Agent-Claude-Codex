@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AE - Framework Evaluation Beyond The Native Loop)
+Fix Phase B - Desktop Empty-Target Bootstrap Flow (sub-phase: Fix Phase B2 - Desktop Bootstrap Form And Validation)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5796,13 +5796,10 @@ active Claude task context under the shipped Phase 10AB/10AC rules.
 
 ### Status
 
-Active. Phase 10AE is the current implementation focus after Phase 10AD closed
-with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human approved the
-advance. Phase 10AE scope is a bounded framework-evaluation slice: compare the
-shipped native Codex/Claude loop against CrewAI, LangGraph, LangChain, or
-similar delegated-role frameworks only where the desktop surface, MCP/RAG
-controls, durable memory, and controlled-concurrency model are stable enough to
-evaluate without rewriting the shipped runtime.
+Complete and approved by human to advance to the next slice. Phase 10AE closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded
+framework-evaluation surface, explicit native-vs-framework comparison criteria,
+and focused validation were verified in the current repo state.
 
 ### Objective
 
@@ -5844,6 +5841,102 @@ runtimes without rewriting the shipped Codex/Claude ownership model.
   under the banner of this evaluation slice
 - no rewrite of current shipped behavior just to make future autonomy work
   easier
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Fix Phase B1 - Desktop Bootstrap UX Contract
+
+### Status
+
+Complete and approved by human to advance to Fix Phase B2. Fix Phase B1 closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded desktop
+bootstrap UX contract, empty/full/partial/malformed target routing, guidance-
+only attach/bootstrap CLI surfacing, and quote-safe validation on the guidance
+surface were verified in the current repo state.
+
+### Objective
+
+Define the desktop-side rules for empty-target detection, when the bootstrap
+form appears, which fields are required, how the UI distinguishes
+attach-to-existing-project vs bootstrap-new-project, and how refusal copy maps
+back to the shipped Phase 10C/10E runtime vocabulary without inventing a
+second source of truth.
+
+### Done Criteria
+
+- the repository defines a bounded desktop UX vocabulary for `empty_target`,
+  `full_target`, `partial_target`, and `malformed_target`
+- the implementation makes the attach-existing-project vs bootstrap-new-project
+  distinction explicit in the desktop flow
+- the desktop shell preserves the no-auto-fill operator-input rule for
+  identity/objective/intent fields
+- the desktop shell remains guidance-only for attach/bootstrap in this slice
+  and does not dispatch canonical mutation from the Tk callback
+- focused validation proves the UX contract is explicit, bounded, and
+  fail-closed
+
+### Exclusions
+
+- no direct desktop bootstrap dispatch
+- no post-bootstrap activation/start flow
+- no hidden defaults for `attached_by`, `bootstrapped_by`, `human_objective`,
+  or `project_intent`
+- no second desktop-only bootstrap state plane
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Fix Phase B2 - Desktop Bootstrap Form And Validation
+
+### Status
+
+Active. Fix Phase B2 is the current implementation focus after Fix Phase B1
+closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
+approved the advance. Fix Phase B2 scope is a bounded desktop form-and-
+validation slice: add the explicit required-field capture and fail-closed
+validation surface for empty-target project bootstrap without yet reintroducing
+desktop-side bootstrap dispatch.
+
+### Objective
+
+Add the bounded desktop bootstrap form, required-field entry flow, and
+fail-closed validation surface for empty-target project setup without yet
+introducing direct desktop bootstrap dispatch or weakening the shipped
+attach/bootstrap runtime contract.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Fix Phase B / B2 as active
+- the repository adds a bounded desktop form for bootstrapping a new target
+  project from an `empty_target` folder
+- the form explicitly captures `attached_by`, `approval_mode`,
+  `bootstrapped_by`, `human_objective`, and `project_intent`
+- the desktop flow validates the required fields fail-closed, preserves typed
+  operator context on validation failure, and continues to refuse
+  `partial_target` and `malformed_target` explicitly
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of introducing hidden automation,
+  silent mutation, or a second desktop-only bootstrap state plane
+- focused validation proves the bounded form/validation surface is explicit,
+  auditable, and does not yet silently dispatch bootstrap mutation
+- `README.md` reflects that Fix Phase B2 is active and that desktop bootstrap
+  form/validation work is now the implementation focus
+
+### Exclusions
+
+- no direct desktop-side dispatch to `attach_external_target(...)`
+- no second hidden bootstrap runtime or UI-only canonical state plane
+- no hidden defaults for `attached_by`, `bootstrapped_by`, `human_objective`,
+  or `project_intent`
+- no post-bootstrap activation/start flow or first-phase execution
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no change to the Phase 2A Evidence Collection Contract
 - no change to the Phase 3A Orchestrator Contract body

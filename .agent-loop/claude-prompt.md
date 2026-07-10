@@ -1,92 +1,80 @@
 # Claude Code Task
 
 ## Phase
-Fix Phase B1 - Desktop Bootstrap UX Contract
+Fix Phase B2 - Desktop Bootstrap Form And Validation
 
 ## Objective
-Define and implement the bounded desktop UX contract for bootstrapping a new
-empty target project from the desktop app, so selecting a brand-new folder no
-longer stops at the raw `empty_target` refusal wall.
+Implement the bounded desktop bootstrap form and validation layer for
+empty-target project setup, so the operator can enter the required bootstrap
+fields safely inside the desktop app before any later dispatch slice.
 
 ## Context
-The shipped runtime already supports explicit empty-target bootstrap through the
-existing external-target path:
+Fix Phase B1 is complete. The repo now has the approved desktop bootstrap UX
+contract:
 
-- `attach-external-target --bootstrap`
-- `--bootstrapped-by`
-- `--human-objective`
-- `--project-intent`
+- target folders are classified as `empty_target`, `full_target`,
+  `partial_target`, or `malformed_target`
+- `empty_target` enters the bootstrap path
+- `full_target` surfaces attach guidance
+- `partial_target` and `malformed_target` refuse fail-closed
+- the desktop shell is currently guidance-only and does NOT dispatch canonical
+  attach/bootstrap mutation from Tk callbacks
 
-The gap is desktop UX. Today the operator can point the app at a folder, but
-when that folder is an `empty_target`, the desktop flow only surfaces the
-Phase 10C/10E refusal instead of giving the operator a bounded bootstrap path.
-
-This task is the first slice only. Stay at the UX-contract layer: define how
-the desktop app should detect `empty_target`, when it should present bootstrap
-vs attach-existing-project choices, which fields are required, and how the UI
-must explain the next step. Do not widen into a broad architecture rewrite.
-
-Work against the actual desktop implementation in `scripts/agent_loop.py` and
-the current desktop project-start / attach surfaces. Reuse the shipped
-external-target bootstrap runtime boundaries rather than inventing a second
-desktop-only bootstrap state plane.
+This slice is the next bounded step. Add the in-app form-and-validation layer
+for bootstrap input capture, but do not widen into direct bootstrap dispatch.
+The shipped runtime and canonical artifacts remain the source of truth.
 
 ## Required work
-- define the desktop-side UX contract for handling target-folder selection when
-  the selected folder is:
-  - `empty_target`
-  - `full_target`
-  - `partial_target`
-  - `malformed_target`
-- implement the first bounded desktop UX behavior for the `empty_target` case
-  so the operator is routed toward bootstrap rather than only seeing a raw
-  refusal
-- make the contract explicit about when the UI is in:
-  - attach-existing-project mode
-  - bootstrap-new-project mode
-- make the required bootstrap fields explicit in the desktop flow:
+- implement or refine the bounded desktop bootstrap form flow for
+  `empty_target` project setup so the operator can enter:
   - `attached_by`
   - `approval_mode`
   - `bootstrapped_by`
   - `human_objective`
   - `project_intent`
-- preserve the explicit-operator-input rule; do not auto-fill identity,
-  objective, or intent fields from OS state, environment variables, or hidden
-  defaults
-- ensure the desktop app explains that bootstrap is distinct from first phase
-  activation and that a bootstrapped target still lands in
-  `awaiting_first_activation`
-- add or update focused tests for the desktop bootstrap UX contract behavior
+- ensure the form validates those fields fail-closed in the desktop flow:
+  - missing values refused
+  - empty or whitespace-only values refused
+  - any other unsupported input shape explicitly refused where required by the
+    current desktop guidance contract
+- preserve typed operator context on validation failure so the user can correct
+  fields instead of re-entering everything from scratch
+- preserve the existing explicit refusal behavior for:
+  - `partial_target`
+  - `malformed_target`
+- keep the bootstrap form/operator flow clearly separate from:
+  - attach-existing-project flow
+  - first-phase activation
+  - actual bootstrap dispatch
+- add or update focused tests for the form/validation behavior
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay narrowly focused on the desktop bootstrap UX contract and directly
-  related desktop view or renderer changes.
+- Stay narrowly focused on the desktop bootstrap form and validation layer.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not silently transition the canonical phase/task artifacts to Fix Phase B;
-  that task-state work remains Codex-owned unless explicitly reassigned.
-- Do not introduce a second bootstrap runtime, hidden state store, or
-  background control plane.
+- Do not silently transition canonical phase/task artifacts.
+- Do not reintroduce direct desktop-side dispatch to
+  `attach_external_target(...)`.
+- Do not invent hidden defaults for `attached_by`, `bootstrapped_by`,
+  `human_objective`, or `project_intent`.
+- Do not weaken the shipped `partial_target` / `malformed_target` refusal
+  behavior.
 - Prefer small, testable, reversible changes.
-- Add or update tests when behavior changes.
 
 ## Important guardrails
-- Reuse the shipped Phase 10C/10E bootstrap runtime contract instead of
-  bypassing it for UI convenience.
+- Reuse the shipped Phase 10C / 10E bootstrap runtime vocabulary rather than
+  inventing a second desktop-only state plane.
 - Do not silently bootstrap merely because a folder was selected.
-- Do not weaken refusal behavior for `partial_target` or `malformed_target`.
-- Do not claim the UI can fully bootstrap and start a project unless the actual
-  bounded implementation in this slice really does so.
-- Keep this slice centered on UX contract and operator guidance, not on broad
-  runtime expansion.
+- Do not claim the desktop app can fully bootstrap and start a project unless
+  the actual code in this slice truly does that.
+- Keep this slice centered on input capture, validation, and bounded desktop
+  UX behavior.
 
 ## Likely files
 - `scripts/agent_loop.py`
 - `tests/test_desktop_app.py`
-- `tests/test_desktop_project_start.py`
-- `tests/test_desktop_action_bridge.py`
-- any other focused desktop/external-target/bootstrap tests you need to update
+- any other focused desktop/bootstrap tests you need to update
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required

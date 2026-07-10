@@ -1,3 +1,3 @@
 # Current Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AE - Framework Evaluation Beyond The Native Loop)
+Fix Phase B - Desktop Empty-Target Bootstrap Flow (sub-phase: Fix Phase B2 - Desktop Bootstrap Form And Validation)
