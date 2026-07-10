@@ -714,6 +714,79 @@ Success:
 - the repo clearly documents the difference between "automatic local
   Claude/Codex invocation" and "fully autonomous PRD-to-product mode"
 
+### Fix Phase B - Desktop Empty-Target Bootstrap Flow
+
+Close the gap between the shipped external-target bootstrap runtime and
+the current desktop app project-start experience. Right now the desktop
+app can point at a folder, but selecting a brand-new empty project
+folder only surfaces the Phase 10C/10E refusal because the UI does not
+yet collect the required bootstrap inputs or drive the existing
+`attach-external-target --bootstrap ...` path.
+
+This fix phase should be implemented in three small slices:
+
+- Fix Phase B1 - Desktop Bootstrap UX Contract: define the desktop-side
+  rules for empty-target detection, when the bootstrap form appears,
+  which fields are required (`attached_by`, `approval_mode`,
+  `bootstrapped_by`, `human_objective`, `project_intent`), how the UI
+  distinguishes attach-to-existing-project vs bootstrap-new-project, and
+  how refusal copy must map back to the shipped Phase 10C/10E runtime
+  vocabulary without inventing a second source of truth
+- Fix Phase B2 - Desktop Bootstrap Form And Validation: add the bounded
+  desktop form for bootstrapping a new target project, including folder
+  selection, required-field entry, explicit operator identity capture,
+  approval-mode selection, empty-target detection, inline validation,
+  and fail-closed handling for partial or malformed targets
+- Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff:
+  wire the validated desktop form into the shipped
+  `attach-external-target --bootstrap --bootstrapped-by
+  --human-objective --project-intent` runtime path, surface success and
+  refusal state in the desktop app, refresh the attached-target view
+  after bootstrap, and make the first post-bootstrap next-step guidance
+  explicit (`plan` -> `activate` -> prompt/bootstrap -> `run`)
+
+Build:
+
+- a first-class desktop path for "bootstrap a new project" instead of
+  only "attach an existing managed project"
+- explicit empty-target detection that routes the operator to bootstrap
+  instead of only showing a raw refusal message
+- a bounded bootstrap form that collects the exact runtime-required
+  inputs and does not auto-fill identity or project-intent fields
+- dispatch through the existing shipped bootstrap runtime rather than a
+  second hidden initialization path
+- desktop success/refusal messaging that clearly explains whether the
+  chosen folder was `empty_target`, `full_target`, `partial_target`, or
+  `malformed_target`
+- post-bootstrap operator guidance that explains the target is attached
+  and initialized but still awaiting first activation
+
+Design rules:
+
+- this fix phase must preserve the shipped Phase 10C/10E bootstrap
+  contract rather than weakening it for UI convenience
+- the desktop app must not silently bootstrap on folder selection alone;
+  bootstrap remains an explicit operator opt-in action
+- the desktop app must not invent defaults for `attached_by`,
+  `bootstrapped_by`, `human_objective`, or `project_intent`
+- the UI must reuse the shipped attach/bootstrap runtime and canonical
+  artifacts instead of introducing a UI-only bootstrap state plane
+- partial or malformed targets must continue to refuse fail-closed
+- bootstrap must remain distinct from first phase activation; the target
+  still lands in `awaiting_first_activation`
+- no Git automation is introduced
+
 Success:
+
+- an operator can point the desktop app at a brand-new project folder
+  and successfully bootstrap it without dropping to the CLI
+- the desktop app clearly distinguishes "attach existing project" from
+  "bootstrap new project"
+- empty-target bootstrap uses the same canonical runtime path and
+  produces the same canonical artifacts as the shipped CLI flow
+- the desktop app gives a clear next-step handoff after bootstrap
+  instead of leaving the operator at a refusal wall
+
+Notes:
 
 - future ideas are preserved without expanding the MVP scope
