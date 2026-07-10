@@ -14987,26 +14987,42 @@ def _primary_desktop_format_attach_cli_guidance(
     CLI in their own terminal so the shipped attach runtime remains
     the sole audit-metadata write path (no auto-fill of `attached_by`
     from a synthetic desktop identity).
+
+    Values are wrapped in double quotes in the surfaced CLI so paths
+    with spaces stay one token. Because shell double-quote escaping
+    is shell-specific (POSIX `\\"`, cmd `""`, PowerShell `` `" ``)
+    and this text is intended for the operator to copy verbatim into
+    any of those shells, an embedded literal double quote in a value
+    is REFUSED fail-closed rather than silently interpolated into a
+    syntactically broken command. The operator can rename the folder
+    or reselect a mode without an embedded quote.
     """
-    if not isinstance(target_path, str) or not target_path.strip():
-        raise HaltError(
-            "halted_input_missing",
-            (
-                "desktop attach guidance refused: target_path is "
-                "empty / whitespace-only"
-            ),
-        )
-    if (
-        not isinstance(approval_mode, str)
-        or not approval_mode.strip()
+    for field_name, field_value in (
+        ("target_path", target_path),
+        ("approval_mode", approval_mode),
     ):
-        raise HaltError(
-            "halted_input_missing",
-            (
-                "desktop attach guidance refused: approval_mode is "
-                "empty / whitespace-only"
-            ),
-        )
+        if (
+            not isinstance(field_value, str)
+            or not field_value.strip()
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop attach guidance refused: field "
+                    f"{field_name!r} is empty / whitespace-only"
+                ),
+            )
+        if "\"" in field_value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop attach guidance refused: field "
+                    f"{field_name!r} contains an embedded double "
+                    f"quote (\"), which would break the "
+                    f"copy-paste-ready CLI. Rename / reselect "
+                    f"without an embedded quote and retry."
+                ),
+            )
     return (
         f"python scripts/agent_loop.py attach-external-target "
         f"--target-path \"{target_path.strip()}\" "
@@ -15027,12 +15043,18 @@ def _primary_desktop_format_attach_cli_guidance(
 #
 # Kept intentionally at the UX-contract layer: the closed mode
 # vocabulary + closed field vocabulary + pure classification-to-mode
-# mapping + pure form validator + a thin bootstrap-dispatch wrapper
-# together define WHAT the desktop UI is allowed to do without
-# introducing any new runtime path, second bootstrap runtime, hidden
-# state store, or background control plane. The shipped Phase 10C /
-# 10E / 10D bootstrap + attach runtime remains the only path that
-# actually mutates a target's canonical artifact set.
+# mapping + pure form validator + pure CLI-guidance formatter
+# (`_primary_desktop_format_bootstrap_cli_guidance(...)`) together
+# define WHAT the desktop UI is allowed to do without introducing
+# any new runtime path, second bootstrap runtime, hidden state
+# store, or background control plane. Per the Fix Phase B1 fix
+# cycle, the desktop shell does NOT dispatch canonical mutation
+# from the Tk callback; the guided bootstrap dialog surfaces the
+# shipped `attach-external-target --bootstrap ...` CLI as
+# copy-paste-ready text and the operator runs it themselves. The
+# shipped Phase 10C / 10E / 10D bootstrap + attach runtime remains
+# the only path that actually mutates a target's canonical
+# artifact set.
 # ---------------------------------------------------------------------------
 
 # Closed UX-mode vocabulary. Every operator folder selection MUST
@@ -15247,6 +15269,18 @@ def _primary_desktop_format_bootstrap_cli_guidance(
     Fix Phase B1 stays scoped to the desktop UX contract and every
     Phase 10C / 10D / 10E validation fires on the shipped CLI
     boundary rather than in a second desktop-side dispatch path.
+
+    Values are wrapped in double quotes in the surfaced CLI so text
+    with spaces stays one token. Because shell double-quote escaping
+    is shell-specific (POSIX `\\"`, cmd `""`, PowerShell `` `" ``)
+    and this text is intended for the operator to copy verbatim into
+    any of those shells, an embedded literal double quote in ANY
+    field (including the free-text `human_objective` and
+    `project_intent`) is REFUSED fail-closed rather than silently
+    interpolated into a syntactically broken command. The operator
+    re-types the value without an embedded quote and re-submits;
+    typed context is preserved because the bootstrap dialog does
+    NOT destroy itself on submit.
     """
     for field_name, field_value in (
         ("target_path", target_path),
@@ -15265,6 +15299,17 @@ def _primary_desktop_format_bootstrap_cli_guidance(
                 (
                     f"desktop bootstrap guidance refused: field "
                     f"{field_name!r} is empty / whitespace-only"
+                ),
+            )
+        if "\"" in field_value:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop bootstrap guidance refused: field "
+                    f"{field_name!r} contains an embedded double "
+                    f"quote (\"), which would break the "
+                    f"copy-paste-ready CLI. Re-type without an "
+                    f"embedded quote and re-submit."
                 ),
             )
     return (

@@ -1492,6 +1492,35 @@ class PrimaryDesktopFolderBrowseHelpersTests(unittest.TestCase):
             )
         p.assert_not_called()
 
+    def test_format_attach_cli_guidance_refuses_quote_in_target(
+        self,
+    ) -> None:
+        # Fix Phase B1 second fix cycle: an embedded double-quote
+        # in a value would break the copy-paste-ready CLI regardless
+        # of which shell the operator pastes into (POSIX / cmd /
+        # PowerShell all treat `"` as a quote delimiter but differ
+        # on how to escape an embedded `"`). Refuse fail-closed so
+        # the desktop shell never surfaces a syntactically broken
+        # command.
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._primary_desktop_format_attach_cli_guidance(
+                target_path="/tmp/bad\"name",
+                approval_mode="review",
+            )
+        self.assertIn("target_path", cm.exception.reason)
+        self.assertIn("double quote", cm.exception.reason)
+
+    def test_format_attach_cli_guidance_refuses_quote_in_mode(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._primary_desktop_format_attach_cli_guidance(
+                target_path="/tmp/my-project",
+                approval_mode="re\"view",
+            )
+        self.assertIn("approval_mode", cm.exception.reason)
+        self.assertIn("double quote", cm.exception.reason)
+
 
 # ---------------------------------------------------------------------------
 # Fix Phase B1 - Desktop Bootstrap UX Contract
@@ -1806,6 +1835,38 @@ class PrimaryDesktopBootstrapUxContractTests(unittest.TestCase):
                 )
             )
         p.assert_not_called()
+
+    def test_format_bootstrap_cli_guidance_refuses_embedded_quote(
+        self,
+    ) -> None:
+        # Fix Phase B1 second fix cycle: an embedded double-quote
+        # in ANY field would break the copy-paste-ready CLI
+        # regardless of which shell the operator pastes into.
+        # Refuse fail-closed on every field, including the
+        # free-text `human_objective` and `project_intent` where an
+        # operator is most likely to type quotes for emphasis.
+        base = {
+            "target_path": "/tmp/new-project",
+            "approval_mode": "review",
+            "attached_by": "alice",
+            "bootstrapped_by": "alice",
+            "human_objective": "Build a bounded thing.",
+            "project_intent": "Ship a bounded slice.",
+        }
+        for tainted in base:
+            fields = dict(base)
+            fields[tainted] = fields[tainted] + " with a \" mark"
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                (
+                    agent_loop
+                    ._primary_desktop_format_bootstrap_cli_guidance(
+                        **fields,
+                    )
+                )
+            self.assertIn(tainted, cm.exception.reason, tainted)
+            self.assertIn(
+                "double quote", cm.exception.reason, tainted,
+            )
 
     def test_removed_dispatch_helpers_are_gone(self) -> None:
         # Fix Phase B1 fix cycle: the previous dispatch wrappers and
