@@ -6176,18 +6176,19 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
     still advertised its own phase as active.
     """
 
-    CANONICAL_ACTIVE_PHASE = "Phase 10AE"
+    CANONICAL_ACTIVE_PHASE = "Fix Phase B2"
     # Matches the README per-phase paragraph header form
     # `Phase 10X (Slice Name, active|complete) ...` at the start of
     # a line. The phase id grammar matches the shipped sub-phase
     # naming used in the README (`Phase 10A` through `Phase 10Z`,
-    # `Phase 10AA` onward, plus older numeric-only ids like `Phase
-    # 1` / `Phase 9G` and `Fix Phase A`). We restrict to the
+    # `Phase 10AA` onward, older numeric-only ids like `Phase 1` /
+    # `Phase 9G`, and `Fix Phase A` / `Fix Phase B1` / `Fix Phase
+    # B2` style remediation-slice ids). We restrict to the
     # canonical "X (slice name, status)" header form so prose
     # mentions of phase ids inside paragraph bodies do not get
     # falsely matched.
     _PHASE_HEADER_RE = re.compile(
-        r"^(?P<phase>(?:Fix )?Phase [0-9]+[A-Z]{0,2}) "
+        r"^(?P<phase>(?:Fix )?Phase [0-9A-Z]+) "
         r"\([^)]*?, (?P<status>active|complete)\)",
         re.MULTILINE,
     )
@@ -6240,6 +6241,8 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         # status-line summary but forgets to flip the per-phase
         # paragraph header.
         completed_sentinels = (
+            "Fix Phase B1",
+            "Phase 10AE",
             "Phase 10AD",
             "Phase 10AC",
             "Phase 10AB",

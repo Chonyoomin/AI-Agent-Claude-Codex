@@ -15832,20 +15832,33 @@ def _launch_desktop_app_window(
         )
 
     def _open_bootstrap_form_dialog(target_folder: str) -> None:
-        # Fix Phase B1: guided bootstrap UX-guidance form for the
-        # `empty_target` UX mode. Opens a modal Toplevel with one
-        # Entry per closed `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`
-        # field. On submit the values are validated by the shipped
-        # desktop-side form validator (presence contract only) and
-        # then rendered into the shipped `attach-external-target
+        # Fix Phase B2: guided bootstrap form-and-validation dialog
+        # for the `empty_target` UX mode. Opens a modal Toplevel
+        # with one Entry per closed
+        # `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES` field. On submit
+        # the values are classified by the shipped
+        # `_primary_desktop_classify_bootstrap_form_refusal(...)`
+        # pure classifier which enforces the closed
+        # `PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES` (non-dict
+        # input shape, per-field missing / wrong-type / empty /
+        # embedded-double-quote, approval_mode outside the shipped
+        # closed `EXTERNAL_TARGET_APPROVAL_MODES` enum, and
+        # bootstrapped_by != attached_by per the shipped Phase 10C
+        # single-operator-identity invariant). On refusal the
+        # dialog surfaces the classifier's reason and focuses the
+        # offending Entry via `focus_set()` while preserving typed
+        # context in every other Entry (the dialog does NOT
+        # destroy itself). On a passing classifier the values are
+        # rendered into the shipped `attach-external-target
         # --bootstrap ...` CLI as copy-paste-ready guidance via
-        # `_primary_desktop_format_bootstrap_cli_guidance(...)`. The
-        # desktop shell does NOT dispatch canonical mutation from
-        # this Tk callback; the operator runs the surfaced CLI in
-        # their own terminal so Fix Phase B1 stays scoped to the
-        # desktop UX contract per the fix prompt.
+        # `_primary_desktop_format_bootstrap_cli_guidance(...)`.
+        # The desktop shell does NOT dispatch canonical mutation
+        # from this Tk callback (per the Fix Phase B1 fix cycle
+        # boundary); the operator runs the surfaced CLI in their
+        # own terminal so the shipped `attach_external_target(...)`
+        # runtime remains the sole audit-metadata write path.
         dialog = tk.Toplevel(root)
-        dialog.title("Bootstrap new project (Fix Phase B1)")
+        dialog.title("Bootstrap new project (Fix Phase B2)")
         dialog.transient(root)
         dialog.grab_set()
         dialog.geometry("560x520")

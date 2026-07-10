@@ -1,47 +1,49 @@
 # Claude Code Fix Task
 
 ## Phase
-Fix Phase B1 - Desktop Bootstrap UX Contract
+Fix Phase B2 - Desktop Bootstrap Form And Validation
 
 ## Objective
-Resolve the remaining desktop bootstrap UX issues in the current guidance-only
-implementation so the surfaced bootstrap command is actually safe to copy/paste
-for valid user input and the adjacent implementation comments match the shipped
-contract.
+Resolve the remaining repo-alignment and stale-copy issues in the current Fix
+Phase B2 slice so the documentation, consistency harness, and desktop bootstrap
+dialog all reflect the same active-phase and validator contract.
 
 ## Context
-The previous fix cycle correctly removed the synthetic
-`desktop-ui-operator` path and narrowed the desktop back to UX-only CLI
-guidance. A fresh Codex review found two residual issues:
+The current B2 implementation correctly adds the bootstrap-form classifier and
+validation behavior, but the latest Codex review found two residual issues:
 
-1. the bootstrap CLI guidance helper interpolates raw free-text values into
-   double-quoted arguments without escaping embedded quotes, so a valid entered
-   value like `human_objective = Build "v2"` produces a broken command
-2. the nearby Fix Phase B1 comment block still describes a removed
-   "bootstrap-dispatch wrapper", which no longer matches the implemented
-   guidance-only boundary
+1. README still presents `Phase 10AE` as the active implementation focus even
+   though the canonical task artifacts now mark `Fix Phase B2` as active, and
+   the test update works around that contradiction by allowing two different
+   active-phase anchors in the consistency harness
+2. the active bootstrap-dialog comment/title still contain B1-era wording,
+   including "presence contract only" and `Fix Phase B1`, which no longer match
+   the shipped B2 validator behavior
 
 Treat `.agent-loop/codex-review.md` as the source of truth for this fix cycle.
 
 ## Required fixes
-- make the surfaced bootstrap CLI guidance robust for operator-entered text:
-  either escape embedded quotes correctly for the intended shell surface or
-  fail closed with a clear validation/refusal path when a field contains
-  unsupported quote characters
-- add focused tests that pin the chosen contract so quote-bearing input cannot
-  silently regress into broken copy/paste guidance
-- correct the stale Fix Phase B1 comment text so it no longer describes a
-  removed dispatch wrapper and instead reflects the current UX-only CLI
-  guidance boundary
+- update README so the active-phase/status text reflects `Fix Phase B2` rather
+  than `Phase 10AE`, and make the desktop bootstrap form/validation slice the
+  current documented implementation focus
+- realign `tests/test_documentation_consistency.py` so it enforces one
+  canonical active-phase story instead of tolerating the README/task-artifact
+  mismatch through split anchors
+- update the active bootstrap-dialog code-path copy so it reflects B2 rather
+  than B1:
+  - remove the stale "presence contract only" wording
+  - update B1 labels/comments/titles that are now inaccurate in the active B2
+    path
 - keep the fix narrowly scoped to these findings and directly related tests
 
 ## Constraints
 - Follow `CLAUDE.md`.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not reintroduce direct desktop-side attach/bootstrap mutation.
-- Do not introduce hidden defaults for any identity field.
-- Do not weaken the shipped Phase 10C / 10D / 10E refusal behavior.
+- Do not reintroduce direct desktop-side dispatch to
+  `attach_external_target(...)`.
+- Do not weaken the shipped `partial_target` / `malformed_target` refusal
+  behavior.
 - Preserve the canonical-artifact-first model and avoid a second desktop-only
   state plane.
 
