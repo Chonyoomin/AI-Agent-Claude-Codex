@@ -15938,11 +15938,13 @@ def _launch_desktop_app_window(
             fg="#a94442",
         )
         dialog_status.pack(fill=tk.X, padx=12, pady=(0, 6))
-        # Fix Phase B1 fix cycle: on submit the dialog surfaces the
-        # shipped `attach-external-target --bootstrap ...` CLI as
-        # copy-paste-ready text in this Text widget so the operator
-        # runs it themselves. The desktop shell does NOT dispatch
-        # canonical mutation from this callback.
+        # Fix Phase B2: on a passing classifier return the dialog
+        # surfaces the shipped `attach-external-target --bootstrap
+        # ...` CLI as copy-paste-ready text in this Text widget so
+        # the operator runs it themselves. The desktop shell does
+        # NOT dispatch canonical mutation from this callback (the
+        # UX-only no-dispatch boundary is inherited from the Fix
+        # Phase B1 fix cycle).
         guidance_output = tk.Text(
             dialog,
             height=5,
