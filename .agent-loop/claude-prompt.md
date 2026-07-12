@@ -1,61 +1,60 @@
 # Claude Code Task
 
 ## Phase
-Fix Phase B2 - Desktop Bootstrap Form And Validation
+Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff
 
 ## Objective
-Implement the bounded desktop bootstrap form and validation layer for
-empty-target project setup, so the operator can enter the required bootstrap
-fields safely inside the desktop app before any later dispatch slice.
+Wire the validated desktop bootstrap form into the shipped
+`attach-external-target --bootstrap` runtime path, refresh the attached-target
+view after success, and surface the first explicit post-bootstrap next-step
+guidance without introducing a second bootstrap runtime or hidden desktop-only
+state plane.
 
 ## Context
-Fix Phase B1 is complete. The repo now has the approved desktop bootstrap UX
-contract:
+Fix Phase B1 established the desktop bootstrap UX contract and Fix Phase B2
+added the bounded desktop form/validation layer. The remaining remediation gap
+is runtime dispatch and post-bootstrap handoff.
 
-- target folders are classified as `empty_target`, `full_target`,
-  `partial_target`, or `malformed_target`
-- `empty_target` enters the bootstrap path
-- `full_target` surfaces attach guidance
-- `partial_target` and `malformed_target` refuse fail-closed
-- the desktop shell is currently guidance-only and does NOT dispatch canonical
-  attach/bootstrap mutation from Tk callbacks
+Today the desktop bootstrap dialog validates input and surfaces a copy-paste
+CLI, but the operator still has to leave the app and run the shipped bootstrap
+command manually. This slice should close that gap by calling the existing
+bootstrap runtime directly from the desktop path, while preserving the shipped
+controller-vs-target boundaries, artifact truth, and refusal behavior.
 
-This slice is the next bounded step. Add the in-app form-and-validation layer
-for bootstrap input capture, but do not widen into direct bootstrap dispatch.
-The shipped runtime and canonical artifacts remain the source of truth.
+Work against the actual desktop implementation in `scripts/agent_loop.py` and
+reuse the shipped `attach_external_target(..., bootstrap=True, ...)` path
+rather than inventing a second bootstrap plane.
 
 ## Required work
-- implement or refine the bounded desktop bootstrap form flow for
-  `empty_target` project setup so the operator can enter:
-  - `attached_by`
-  - `approval_mode`
-  - `bootstrapped_by`
-  - `human_objective`
-  - `project_intent`
-- ensure the form validates those fields fail-closed in the desktop flow:
-  - missing values refused
-  - empty or whitespace-only values refused
-  - any other unsupported input shape explicitly refused where required by the
-    current desktop guidance contract
-- preserve typed operator context on validation failure so the user can correct
-  fields instead of re-entering everything from scratch
+- wire the validated desktop bootstrap form into the shipped bootstrap runtime:
+  - dispatch through the existing `attach_external_target(...)` path with
+    `bootstrap=True`
+  - preserve the shipped required-field and refusal semantics
+- on successful bootstrap:
+  - surface explicit success state in the desktop app
+  - refresh the attached-target label/view so the new target is visible
+  - make the first post-bootstrap next-step guidance explicit, including that
+    the target is attached/initialized but still awaits first activation
+- on refusal/failure:
+  - surface the refusal clearly in the desktop app
+  - preserve typed operator context where practical instead of forcing full
+    re-entry for ordinary validation/runtime refusals
 - preserve the existing explicit refusal behavior for:
   - `partial_target`
   - `malformed_target`
-- keep the bootstrap form/operator flow clearly separate from:
-  - attach-existing-project flow
-  - first-phase activation
-  - actual bootstrap dispatch
-- add or update focused tests for the form/validation behavior
+- add or update focused tests for the dispatch and post-bootstrap handoff
+  behavior
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Stay narrowly focused on the desktop bootstrap form and validation layer.
+- Stay narrowly focused on bootstrap dispatch and immediate post-bootstrap
+  handoff.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
 - Do not silently transition canonical phase/task artifacts.
-- Do not reintroduce direct desktop-side dispatch to
-  `attach_external_target(...)`.
+- Reuse the shipped bootstrap runtime; do not invent a second hidden bootstrap
+  implementation.
+- Do not add first-phase activation/start behavior.
 - Do not invent hidden defaults for `attached_by`, `bootstrapped_by`,
   `human_objective`, or `project_intent`.
 - Do not weaken the shipped `partial_target` / `malformed_target` refusal
@@ -63,18 +62,16 @@ The shipped runtime and canonical artifacts remain the source of truth.
 - Prefer small, testable, reversible changes.
 
 ## Important guardrails
-- Reuse the shipped Phase 10C / 10E bootstrap runtime vocabulary rather than
-  inventing a second desktop-only state plane.
-- Do not silently bootstrap merely because a folder was selected.
-- Do not claim the desktop app can fully bootstrap and start a project unless
-  the actual code in this slice truly does that.
-- Keep this slice centered on input capture, validation, and bounded desktop
-  UX behavior.
+- The shipped runtime and canonical artifacts remain the source of truth.
+- Bootstrap remains distinct from first-phase activation.
+- Do not add hidden background orchestration or a UI-only state plane.
+- Keep this slice centered on bounded dispatch and explicit next-step handoff.
 
 ## Likely files
 - `scripts/agent_loop.py`
 - `tests/test_desktop_app.py`
 - any other focused desktop/bootstrap tests you need to update
+- `README.md` if the operator-visible workflow changes
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required
