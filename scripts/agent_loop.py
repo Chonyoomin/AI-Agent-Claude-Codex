@@ -15483,6 +15483,123 @@ def _primary_desktop_format_bootstrap_cli_guidance(
     )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase B3: Desktop Bootstrap Dispatch And Post-Bootstrap Handoff.
+#
+# Bounded dispatch slice that wires the Fix Phase B2 validated
+# desktop bootstrap form into the shipped
+# `attach_external_target(..., bootstrap=True, ...)` runtime path
+# and formats the operator-facing post-bootstrap next-step guidance
+# so a successful desktop-side bootstrap leaves the operator with
+# an explicit "attached + initialized, still awaits first
+# activation" story rather than a silent state change.
+#
+# Kept intentionally thin: both helpers are Tk-free and unit-
+# testable. The dispatch wrapper delegates verbatim to the shipped
+# runtime so every Phase 10C / 10D / 10E refusal path fires
+# unchanged; the desktop shell adds NO parallel bootstrap logic,
+# NO second state store, NO hidden control plane. Bootstrap remains
+# distinct from first-phase activation: the shipped Phase 4C
+# activator + APPROVED_FOR_ACTIVATION human approval remain the
+# only path that advances a bootstrapped target past
+# `awaiting_first_activation`.
+# ---------------------------------------------------------------------------
+
+
+def _primary_desktop_dispatch_bootstrap_attach(
+    controller_root: Path,
+    *,
+    target_path: str,
+    attached_by: str,
+    approval_mode: str,
+    bootstrapped_by: str,
+    human_objective: str,
+    project_intent: str,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Fix Phase B3 dispatch wrapper: thin delegation to the shipped
+    `attach_external_target(..., bootstrap=True, ...)` runtime for
+    the desktop bootstrap dialog's submit callback. Restores the
+    direct-dispatch surface that Fix Phase B1's fix cycle removed,
+    now that Fix Phase B2 has shipped the bounded desktop-side
+    form/validation layer that closes the shipped Phase 10B/10C
+    invariants up front. Delegates verbatim so every shipped
+    canonical-artifact-write atomicity + rollback + audit-log
+    rotation invariant fires unchanged; the desktop shell does NOT
+    re-implement any bootstrap validation and does NOT auto-fill
+    any identity / free-text field (the caller MUST pass operator-
+    supplied values verbatim, per the Fix Phase B1 no-auto-fill
+    identity boundary).
+
+    HaltError from the shipped runtime propagates so the Tk
+    callback can surface the reason in the dialog status Label
+    while preserving typed operator context (the dialog does NOT
+    destroy itself on runtime refusal).
+    """
+    return attach_external_target(
+        controller_root,
+        target_path=target_path,
+        attached_by=attached_by,
+        approval_mode=approval_mode,
+        log_path=log_path,
+        bootstrap=True,
+        bootstrapped_by=bootstrapped_by,
+        human_objective=human_objective,
+        project_intent=project_intent,
+    )
+
+
+def _primary_desktop_format_post_bootstrap_success(
+    *,
+    target_path: str,
+    attach_record_name: str,
+) -> str:
+    """Fix Phase B3 post-bootstrap next-step guidance formatter:
+    return the operator-facing message that surfaces after a
+    successful desktop-side bootstrap dispatch. The message MUST
+    name three shipped anchors explicitly so the operator sees
+    that bootstrap is distinct from first-phase activation:
+
+      - the target's loop-state lands at `awaiting_first_activation`
+      - the shipped Phase 4C activator is the only path forward
+      - the shipped `APPROVED_FOR_ACTIVATION` human approval token
+        gates that activator
+
+    Pure helper: no Tk dependency, no dispatch. A dedicated
+    regression test pins the three anchors so a future edit that
+    drops any of them fails loudly.
+    """
+    if not isinstance(target_path, str) or not target_path.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop post-bootstrap message refused: "
+                "target_path is empty / whitespace-only"
+            ),
+        )
+    if (
+        not isinstance(attach_record_name, str)
+        or not attach_record_name.strip()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop post-bootstrap message refused: "
+                "attach_record_name is empty / whitespace-only"
+            ),
+        )
+    return (
+        f"Bootstrapped + attached: {target_path.strip()}. "
+        f"Attach record: {attach_record_name.strip()}. Target "
+        f"loop-state landed at 'awaiting_first_activation'; run "
+        f"the shipped Phase 4C activator against the target and "
+        f"record the APPROVED_FOR_ACTIVATION human approval to "
+        f"advance past that state. Bootstrap is distinct from "
+        f"first-phase activation; the desktop shell does NOT "
+        f"activate the first phase."
+    )
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -15832,33 +15949,44 @@ def _launch_desktop_app_window(
         )
 
     def _open_bootstrap_form_dialog(target_folder: str) -> None:
-        # Fix Phase B2: guided bootstrap form-and-validation dialog
-        # for the `empty_target` UX mode. Opens a modal Toplevel
-        # with one Entry per closed
-        # `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES` field. On submit
-        # the values are classified by the shipped
+        # Fix Phase B3: guided bootstrap dispatch dialog for the
+        # `empty_target` UX mode. Opens a modal Toplevel with one
+        # Entry per closed `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`
+        # field. On submit the values are classified by the
+        # shipped
         # `_primary_desktop_classify_bootstrap_form_refusal(...)`
-        # pure classifier which enforces the closed
+        # pure classifier (Fix Phase B2) which enforces the closed
         # `PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES` (non-dict
         # input shape, per-field missing / wrong-type / empty /
         # embedded-double-quote, approval_mode outside the shipped
         # closed `EXTERNAL_TARGET_APPROVAL_MODES` enum, and
         # bootstrapped_by != attached_by per the shipped Phase 10C
-        # single-operator-identity invariant). On refusal the
-        # dialog surfaces the classifier's reason and focuses the
-        # offending Entry via `focus_set()` while preserving typed
-        # context in every other Entry (the dialog does NOT
-        # destroy itself). On a passing classifier the values are
-        # rendered into the shipped `attach-external-target
-        # --bootstrap ...` CLI as copy-paste-ready guidance via
-        # `_primary_desktop_format_bootstrap_cli_guidance(...)`.
-        # The desktop shell does NOT dispatch canonical mutation
-        # from this Tk callback (per the Fix Phase B1 fix cycle
-        # boundary); the operator runs the surfaced CLI in their
-        # own terminal so the shipped `attach_external_target(...)`
-        # runtime remains the sole audit-metadata write path.
+        # single-operator-identity invariant). On classifier
+        # refusal the dialog surfaces the classifier's reason and
+        # focuses the offending Entry via `focus_set()` while
+        # preserving typed context in every other Entry (the
+        # dialog does NOT destroy itself). On a passing classifier
+        # the values are dispatched through the shipped
+        # `attach_external_target(..., bootstrap=True, ...)`
+        # runtime via
+        # `_primary_desktop_dispatch_bootstrap_attach(...)`. On
+        # runtime HaltError the dialog surfaces the reason and
+        # keeps typed context intact for retry (no focus_set
+        # because runtime refusals are not always field-scoped).
+        # On dispatch success the dialog closes, the primary
+        # attached-target Label refreshes, and the main status
+        # caption surfaces
+        # `_primary_desktop_format_post_bootstrap_success(...)`
+        # which explicitly names that the target is attached /
+        # initialized but still awaits first activation (bootstrap
+        # is distinct from first-phase activation; the shipped
+        # Phase 4C activator + APPROVED_FOR_ACTIVATION human
+        # approval remain the only path to advance past
+        # `awaiting_first_activation`). No parallel bootstrap
+        # runtime, no second desktop state plane, no hidden
+        # control plane.
         dialog = tk.Toplevel(root)
-        dialog.title("Bootstrap new project (Fix Phase B2)")
+        dialog.title("Bootstrap new project (Fix Phase B3)")
         dialog.transient(root)
         dialog.grab_set()
         dialog.geometry("560x520")
@@ -15938,26 +16066,12 @@ def _launch_desktop_app_window(
             fg="#a94442",
         )
         dialog_status.pack(fill=tk.X, padx=12, pady=(0, 6))
-        # Fix Phase B2: on a passing classifier return the dialog
-        # surfaces the shipped `attach-external-target --bootstrap
-        # ...` CLI as copy-paste-ready text in this Text widget so
-        # the operator runs it themselves. The desktop shell does
-        # NOT dispatch canonical mutation from this callback (the
-        # UX-only no-dispatch boundary is inherited from the Fix
-        # Phase B1 fix cycle).
-        guidance_output = tk.Text(
-            dialog,
-            height=5,
-            wrap=tk.WORD,
-        )
-        guidance_output.pack(fill=tk.X, padx=12, pady=(0, 6))
-        guidance_output.configure(state=tk.DISABLED)
 
         def _cancel_dialog() -> None:
             dialog.destroy()
             status_caption.config(
                 text=(
-                    "Bootstrap cancelled: no CLI guidance surfaced."
+                    "Bootstrap cancelled: no dispatch attempted."
                 ),
             )
 
@@ -15966,11 +16080,12 @@ def _launch_desktop_app_window(
                 name: var.get()
                 for name, var in entry_vars.items()
             }
-            # Fix Phase B2: call the pure classifier directly so
-            # the dialog can focus the offending Entry when the
-            # classifier names a field. Typed operator context is
-            # preserved across every refusal (dialog does NOT
-            # destroy itself; other Entries retain their text).
+            # Fix Phase B2 classifier: closes the shipped Phase
+            # 10B / 10C invariants up front so obvious form
+            # refusals never reach the runtime. Typed operator
+            # context is preserved across every classifier refusal
+            # (dialog does NOT destroy itself; the offending Entry
+            # is focused).
             refusal = (
                 _primary_desktop_classify_bootstrap_form_refusal(
                     fields,
@@ -15987,9 +16102,19 @@ def _launch_desktop_app_window(
                 ):
                     entry_widgets[offending].focus_set()
                 return
+            # Fix Phase B3: dispatch through the shipped runtime.
+            # Runtime HaltError propagates to a red dialog_status
+            # while the dialog stays open so typed operator
+            # context is preserved for retry.
+            log_path = (
+                controller_root
+                / ".agent-loop"
+                / "orchestrator.log"
+            )
             try:
-                cli_guidance = (
-                    _primary_desktop_format_bootstrap_cli_guidance(
+                record_path = (
+                    _primary_desktop_dispatch_bootstrap_attach(
+                        controller_root,
                         target_path=target_folder,
                         attached_by=fields[
                             (
@@ -16016,34 +16141,35 @@ def _launch_desktop_app_window(
                                 PRIMARY_DESKTOP_BOOTSTRAP_FIELD_PROJECT_INTENT
                             )
                         ].strip(),
+                        log_path=log_path,
                     )
                 )
             except HaltError as halt:
                 dialog_status.config(
-                    text=halt.reason, fg="#a94442",
+                    text=(
+                        f"Bootstrap dispatch refused: {halt.reason}"
+                    ),
+                    fg="#a94442",
                 )
                 return
-            dialog_status.config(
+            dialog.destroy()
+            _refresh_attached_label()
+            status_caption.config(
                 text=(
-                    "Copy the shipped CLI below and run it in a "
-                    "terminal. The desktop shell does NOT dispatch "
-                    "bootstrap; the shipped runtime remains the "
-                    "only canonical-mutation path."
+                    _primary_desktop_format_post_bootstrap_success(
+                        target_path=target_folder,
+                        attach_record_name=record_path.name,
+                    )
                 ),
-                fg="#31708f",
             )
-            guidance_output.configure(state=tk.NORMAL)
-            guidance_output.delete("1.0", tk.END)
-            guidance_output.insert("1.0", cli_guidance)
-            guidance_output.configure(state=tk.DISABLED)
 
         cancel_btn = tk.Button(
-            button_row, text="Close", command=_cancel_dialog,
+            button_row, text="Cancel", command=_cancel_dialog,
         )
         cancel_btn.pack(side=tk.LEFT, padx=(0, 6))
         submit_btn = tk.Button(
             button_row,
-            text="Build bootstrap CLI",
+            text="Bootstrap and attach",
             command=_submit_dialog,
         )
         submit_btn.pack(side=tk.LEFT)
