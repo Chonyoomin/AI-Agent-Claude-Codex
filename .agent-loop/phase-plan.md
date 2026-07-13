@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AE - Framework Evaluation Beyond The Native Loop)
+Phase 10 - Future Product Features (sub-phase: Phase 10AF - Desktop Codex Conversation And Intervention Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5790,6 +5790,90 @@ active Claude task context under the shipped Phase 10AB/10AC rules.
 - no change to the Phase 3A Orchestrator Contract body
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Phase 10AF - Desktop Codex Conversation And Intervention Contract
+
+### Status
+
+Active.
+
+### Objective
+
+Define how the desktop app may expose a bounded in-app conversation and
+intervention surface to Codex so the operator can ask for reviews, fix
+routing, roadmap changes, or targeted Codex-owned repo changes without
+bypassing canonical artifacts, ownership rules, review evidence, or shipped
+approval/audit boundaries.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
+- the repository defines the bounded request/response contract for desktop
+  operator-to-Codex interaction
+- the contract distinguishes advisory desktop request composition from
+  canonical artifact mutation and preserves the shipped ownership model
+- the contract defines in-scope operator intents such as reviews, owner
+  classification, roadmap/task-state changes, and targeted Codex-owned changes
+- the contract defines refusal cases, approval boundaries, and audit
+  expectations for the future runtime slice
+- the contract keeps the desktop surface canonical-artifact-first and does not
+  invent a hidden UI-only request/reply state plane
+- `README.md` reflects that `Phase 10AF` is active if current implementation
+  focus text changes
+
+### Exclusions
+
+- no implementation of the actual desktop Codex conversation runtime; that is
+  deferred to `Phase 10AG`
+- no hidden UI-only request queue, reply cache, desktop-side task state, or
+  Codex-side state plane outside canonical artifacts
+- no weakening of ownership boundaries, evidence review, approval gating,
+  overlap-safe detection, or canonical-artifact-first behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 10AF - Desktop Codex Conversation And Intervention Contract
+
+### Status
+
+Active.
+
+### Objective
+
+Define how the desktop app may expose a bounded in-app conversation and
+intervention surface to Codex so the operator can ask for reviews, fix
+routing, roadmap changes, or targeted Codex-owned repo changes without
+bypassing canonical artifacts, ownership rules, review evidence, or shipped
+approval/audit boundaries.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
+- the repository defines the bounded request/response contract for desktop
+  operator-to-Codex interaction
+- the contract distinguishes advisory desktop request composition from
+  canonical artifact mutation and preserves the shipped ownership model
+- the contract defines in-scope operator intents such as reviews, owner
+  classification, roadmap/task-state changes, and targeted Codex-owned changes
+- the contract defines refusal cases, approval boundaries, and audit
+  expectations for the future runtime slice
+- the contract keeps the desktop surface canonical-artifact-first and does not
+  invent a hidden UI-only request/reply state plane
+- `README.md` reflects that `Phase 10AF` is active if current implementation
+  focus text changes
+
+### Exclusions
+
+- no implementation of the actual desktop Codex conversation runtime; that is
+  deferred to `Phase 10AG`
+- no hidden UI-only request queue, reply cache, desktop-side task state, or
+  Codex-side state plane outside canonical artifacts
+- no weakening of ownership boundaries, evidence review, approval gating,
+  overlap-safe detection, or canonical-artifact-first behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no Git automation
 
 ## Phase 10AE - Framework Evaluation Beyond The Native Loop

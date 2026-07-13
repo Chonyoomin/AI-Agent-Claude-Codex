@@ -24,48 +24,48 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10AE - Framework Evaluation Beyond The Native Loop
+Phase 10AF - Desktop Codex Conversation And Intervention Contract
 
 ## Phase Status
 
-Phase 10AE is complete as the latest mainline slice. Fix Phase B1, Fix Phase
-B2, and Fix Phase B3 are also complete and approved as remediation work against
-the desktop bootstrap flow. The main roadmap currently has no predefined next
-mainline Phase 10 sub-phase after 10AE, so the repo is parked back on the main
-track awaiting the next human-approved roadmap addition or objective.
+Active and ready for implementation.
 
 ## Active Task
 
-The mainline Phase 10 roadmap is complete through Phase 10AE. The current repo
-state is awaiting the next mainline roadmap definition or human-directed next
-objective after the approved Fix Phase B remediation track.
+Define the bounded desktop-side contract for an in-app Codex conversation and
+intervention surface so the operator can ask Codex for reviews, fix routing,
+roadmap changes, and targeted repo changes from the desktop app without
+bypassing canonical artifacts, ownership rules, review evidence, or the
+shipped approval and audit boundaries.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify the repo as returned to the main
-  roadmap after the approved Fix Phase B remediation track
-- `.agent-loop/phase-plan.md` records Phase 10AE and Fix Phase B1/B2/B3 as
-  closed history
-- the repo is ready for a new human-approved mainline phase definition if
-  additional work is desired
+  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
+- `.agent-loop/phase-plan.md` records `Phase 10AF` as the active phase section
+  and preserves prior phases as closed history
+- `.agent-loop/claude-prompt.md` contains a scoped implementation prompt for
+  the `Phase 10AF` contract slice
 
 ## Next-Phase Gate
 
-Do not activate further mainline work until:
+Do not mark this phase complete until:
 
-- a new mainline roadmap slice is defined
-- the human approves that next phase activation
-- the next slice is written into the canonical phase/task artifacts before
-  implementation starts
+- the bounded Codex conversation/intervention contract is defined in repo
+  artifacts
+- the contract preserves canonical-artifact-first routing and ownership
+  boundaries
+- implementation/runtime work for the actual desktop interaction surface
+  remains deferred to a later slice
 
 ## Out Of Scope For Current Phase
 
-- fabricating a non-existent `Phase 10AF` without updating the roadmap
-- silently reopening a completed Fix Phase B slice
+- implementing the actual desktop Codex conversation runtime that belongs to
+  `Phase 10AG`
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
-- implementation work for a new phase before that phase is explicitly defined
+- introducing a hidden UI-only request queue, reply cache, or Codex-side state
+  plane outside canonical artifacts
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

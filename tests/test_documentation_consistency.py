@@ -6176,7 +6176,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
     still advertised its own phase as active.
     """
 
-    CANONICAL_ACTIVE_PHASE = "Fix Phase B3"
+    CANONICAL_ACTIVE_PHASE = "Phase 10AE"
     # Matches the README per-phase paragraph header form
     # `Phase 10X (Slice Name, active|complete) ...` at the start of
     # a line. The phase id grammar matches the shipped sub-phase
@@ -6217,7 +6217,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
             f"status line is {self.CANONICAL_ACTIVE_PHASE!r}",
         )
 
-    def test_active_phase_paragraph_matches_canonical_phase_10s(
+    def test_active_phase_paragraph_matches_canonical_phase_10ae(
         self,
     ) -> None:
         active = self._claimed_active()
@@ -6243,7 +6243,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         completed_sentinels = (
             "Fix Phase B2",
             "Fix Phase B1",
-            "Phase 10AE",
+            "Fix Phase B3",
             "Phase 10AD",
             "Phase 10AC",
             "Phase 10AB",
@@ -6358,7 +6358,7 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
         # canonical active phase. Bounded, deterministic: only
         # the first non-blank line after a "### Status" header
         # is inspected.
-        canonical_active = "Fix Phase B3"  # tracked by the file
+        canonical_active = "Phase 10AE"  # tracked by the file
         lines = self.text.splitlines()
         offending = []
         current_section = None

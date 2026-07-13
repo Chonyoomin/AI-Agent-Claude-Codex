@@ -1,36 +1,22 @@
 # Claude Code Fix Task
 
 ## Phase
-Fix Phase B2 - Desktop Bootstrap Form And Validation
+No active Claude fix task
 
 ## Objective
-Resolve the last stale-copy issue in the active Fix Phase B2 desktop bootstrap
-dialog so the shipped code path no longer contains a leftover B1 phase label.
+None. The latest Codex review for Phase 10AE found no remaining Claude-owned
+issues.
 
 ## Context
-The latest Codex review found one residual issue after the B2 documentation and
-dialog-copy fix:
-
-1. the comment above the bootstrap dialog's `guidance_output = tk.Text(...)`
-   widget still says `Fix Phase B1 fix cycle` even though the active dialog
-   path is now described elsewhere as Fix Phase B2
-
-Treat `.agent-loop/codex-review.md` as the source of truth for this fix cycle.
+`.agent-loop/codex-review.md` is the source of truth for the current review
+verdict. Any prior fix instructions in this file are stale and superseded.
 
 ## Required fixes
-- update the stale comment above the active bootstrap dialog guidance Text
-  widget so it reflects the current Fix Phase B2 slice
-- keep the fix narrowly scoped to this local stale-copy cleanup
+- none
 
 ## Constraints
-- Follow `CLAUDE.md`.
-- Do not modify `AGENTS.md`.
-- Do not modify `CLAUDE.md`.
-- Do not reintroduce direct desktop-side dispatch to
-  `attach_external_target(...)`.
-- Preserve the current B2 validation behavior and the UX-only no-dispatch
-  boundary.
+- do not start a new fix cycle unless a new Codex review writes actionable
+  findings here
 
 ## Required output
-After implementation, write `.agent-loop/claude-summary.md` using the required
-Claude Implementation Summary format and include the validation you ran.
+No Claude fix work is currently requested.
