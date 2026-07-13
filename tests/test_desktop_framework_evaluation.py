@@ -242,6 +242,7 @@ class ValidatorTests(unittest.TestCase):
             "display_name": "X",
             "criterion_category": "shipped_boundary_preservation",
             "native_loop_status": "shipped_boundary_preserved",
+            "docs_anchor": "docs/architecture.md",
             "description": "d",
             "safety_copy": "s",
             "framework_verdicts": (
@@ -249,21 +250,33 @@ class ValidatorTests(unittest.TestCase):
                     "framework_id": "native_loop",
                     "verdict": "preserves_shipped_boundary",
                     "reason": "r",
+                    "evidence_anchors": (
+                        "scripts/agent_loop.py::x",
+                    ),
                 },
                 {
                     "framework_id": "crewai",
                     "verdict": "not_applicable",
                     "reason": "r",
+                    "evidence_anchors": (
+                        "docs/architecture.md",
+                    ),
                 },
                 {
                     "framework_id": "langgraph",
                     "verdict": "not_applicable",
                     "reason": "r",
+                    "evidence_anchors": (
+                        "docs/architecture.md",
+                    ),
                 },
                 {
                     "framework_id": "langchain",
                     "verdict": "not_applicable",
                     "reason": "r",
+                    "evidence_anchors": (
+                        "docs/architecture.md",
+                    ),
                 },
             ),
             "deferred_runtime_marker": "m",
@@ -413,27 +426,161 @@ class ValidatorTests(unittest.TestCase):
                 "framework_id": "native_loop",
                 "verdict": "preserves_shipped_boundary",
                 "reason": "",
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::x",
+                ),
             },
             {
                 "framework_id": "crewai",
                 "verdict": "not_applicable",
                 "reason": "r",
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
             {
                 "framework_id": "langgraph",
                 "verdict": "not_applicable",
                 "reason": "r",
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
             {
                 "framework_id": "langchain",
                 "verdict": "not_applicable",
                 "reason": "r",
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
         )
         with self.assertRaises(agent_loop.HaltError):
             agent_loop._desktop_framework_evaluation_validate_descriptor(
                 spec,
             )
+
+    # ------------------------------------------------------------------
+    # Phase 10AE refinement: auditability anchors
+    # ------------------------------------------------------------------
+    def test_missing_docs_anchor_refuses(self) -> None:
+        # Phase 10AE refinement: every criterion MUST carry a
+        # non-empty docs_anchor so a reviewer can navigate from a
+        # surfaced criterion to a canonical / advisory shipped
+        # artifact. A missing docs_anchor is refused fail-closed.
+        spec = self._valid()
+        del spec["docs_anchor"]
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_framework_evaluation_validate_descriptor(
+                spec,
+            )
+        self.assertIn("docs_anchor", cm.exception.reason)
+
+    def test_empty_docs_anchor_refuses(self) -> None:
+        for bad in ("", "   ", "\t"):
+            spec = self._valid()
+            spec["docs_anchor"] = bad
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop._desktop_framework_evaluation_validate_descriptor(
+                    spec,
+                )
+            self.assertIn("docs_anchor", cm.exception.reason)
+
+    def test_non_string_docs_anchor_refuses(self) -> None:
+        spec = self._valid()
+        spec["docs_anchor"] = 42
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._desktop_framework_evaluation_validate_descriptor(
+                spec,
+            )
+
+    def test_missing_evidence_anchors_refuses(self) -> None:
+        # Phase 10AE refinement: every framework_verdict MUST
+        # carry a non-empty evidence_anchors tuple citing the
+        # repo-relative artifact(s) backing the verdict.
+        spec = self._valid()
+        # Rebuild verdicts without evidence_anchors on the first entry.
+        head = dict(spec["framework_verdicts"][0])
+        del head["evidence_anchors"]
+        spec["framework_verdicts"] = (
+            head,
+        ) + spec["framework_verdicts"][1:]
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_framework_evaluation_validate_descriptor(
+                spec,
+            )
+        self.assertIn("evidence_anchors", cm.exception.reason)
+
+    def test_empty_evidence_anchors_tuple_refuses(self) -> None:
+        spec = self._valid()
+        head = dict(spec["framework_verdicts"][0])
+        head["evidence_anchors"] = ()
+        spec["framework_verdicts"] = (
+            head,
+        ) + spec["framework_verdicts"][1:]
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_framework_evaluation_validate_descriptor(
+                spec,
+            )
+        self.assertIn("evidence_anchors", cm.exception.reason)
+
+    def test_non_tuple_evidence_anchors_refuses(self) -> None:
+        # A list would silently coerce; the shipped invariant
+        # demands a tuple to match the closed-vocabulary shape used
+        # elsewhere in the descriptor (`framework_verdicts` is also
+        # a tuple).
+        spec = self._valid()
+        head = dict(spec["framework_verdicts"][0])
+        head["evidence_anchors"] = [
+            "scripts/agent_loop.py::x",
+        ]
+        spec["framework_verdicts"] = (
+            head,
+        ) + spec["framework_verdicts"][1:]
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            agent_loop._desktop_framework_evaluation_validate_descriptor(
+                spec,
+            )
+        self.assertIn("evidence_anchors", cm.exception.reason)
+
+    def test_empty_evidence_anchor_entry_refuses(self) -> None:
+        for bad in ("", "   ", 42):
+            spec = self._valid()
+            head = dict(spec["framework_verdicts"][0])
+            head["evidence_anchors"] = (bad,)
+            spec["framework_verdicts"] = (
+                head,
+            ) + spec["framework_verdicts"][1:]
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                agent_loop._desktop_framework_evaluation_validate_descriptor(
+                    spec,
+                )
+            self.assertIn("evidence_anchors", cm.exception.reason)
+
+    def test_every_shipped_registry_entry_names_anchors(self) -> None:
+        # Regression pin: every shipped registry entry MUST carry a
+        # non-empty docs_anchor and each of its four framework_
+        # verdicts MUST carry a non-empty evidence_anchors tuple.
+        # A future edit that forgets an anchor on any new criterion
+        # would violate the Phase 10AE auditability rule.
+        for spec in agent_loop._DESKTOP_FRAMEWORK_EVALUATION_REGISTRY:
+            self.assertIsInstance(spec["docs_anchor"], str)
+            self.assertTrue(
+                spec["docs_anchor"].strip(),
+                spec["id"],
+            )
+            for entry in spec["framework_verdicts"]:
+                anchors = entry["evidence_anchors"]
+                self.assertIsInstance(anchors, tuple, spec["id"])
+                self.assertGreaterEqual(
+                    len(anchors), 1, (spec["id"], entry["framework_id"]),
+                )
+                for a in anchors:
+                    self.assertIsInstance(a, str, spec["id"])
+                    self.assertTrue(
+                        a.strip(),
+                        (spec["id"], entry["framework_id"]),
+                    )
 
 
 # ---------------------------------------------------------------------------
@@ -601,6 +748,57 @@ class BuildViewTests(unittest.TestCase):
             expected_count,
         )
 
+    def test_view_criteria_include_docs_anchor(self) -> None:
+        # Phase 10AE refinement: the assembled view MUST surface a
+        # non-empty docs_anchor per criterion so the operator-
+        # visible renderer + CLI reporter can navigate from the
+        # verdict to the canonical shipping artifact that pins the
+        # boundary.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_framework_evaluation_view(
+                    controller,
+                )
+            )
+        for criterion in view["criteria"]:
+            self.assertIn("docs_anchor", criterion, criterion["id"])
+            self.assertIsInstance(
+                criterion["docs_anchor"], str, criterion["id"],
+            )
+            self.assertTrue(
+                criterion["docs_anchor"].strip(), criterion["id"],
+            )
+
+    def test_view_verdicts_include_evidence_anchors(self) -> None:
+        # Phase 10AE refinement: every per-framework verdict in the
+        # assembled view MUST surface a non-empty evidence_anchors
+        # list so a reviewer can navigate from the verdict to the
+        # shipped artifact(s) backing it.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_framework_evaluation_view(
+                    controller,
+                )
+            )
+        for criterion in view["criteria"]:
+            for entry in criterion["framework_verdicts"]:
+                self.assertIn(
+                    "evidence_anchors", entry,
+                    (criterion["id"], entry["framework_id"]),
+                )
+                # View surfaces the anchors as a list (JSON-
+                # friendly) rather than the descriptor's tuple.
+                self.assertIsInstance(
+                    entry["evidence_anchors"], list,
+                    (criterion["id"], entry["framework_id"]),
+                )
+                self.assertGreaterEqual(
+                    len(entry["evidence_anchors"]), 1,
+                    (criterion["id"], entry["framework_id"]),
+                )
+
 
 # ---------------------------------------------------------------------------
 # Renderer
@@ -630,8 +828,42 @@ class RendererTests(unittest.TestCase):
             "[framework-summary]",
             "[deferred-runtime]",
             "[refused]",
+            # Phase 10AE refinement: auditability anchor tags.
+            "[framework-anchor]",
+            "[framework-evidence]",
         ):
             self.assertIn(tag, output, tag)
+
+    def test_render_surfaces_shipped_anchor_citations(self) -> None:
+        # Phase 10AE refinement: the rendered text MUST include the
+        # concrete anchor citations from the shipped registry so
+        # the operator sees the actual navigation targets, not
+        # just the tag.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            view = (
+                agent_loop.build_desktop_framework_evaluation_view(
+                    controller,
+                )
+            )
+        output = "\n".join(
+            agent_loop.render_desktop_framework_evaluation_text(
+                view,
+            ),
+        )
+        # Sample concrete anchors from the shipped registry.
+        for anchor in (
+            "docs/controlled-concurrency-contract.md",
+            "docs/approval-modes.md",
+            "docs/desktop-app-contract.md",
+            "docs/mcp-integration-contract.md",
+            "AGENTS.md",
+            "scripts/agent_loop.py::_DESKTOP_CONCURRENCY_OWNERSHIP_MAP",
+            "scripts/agent_loop.py::_fire_strict_gate",
+            "scripts/agent_loop.py::load_loop_state",
+            "scripts/agent_loop.py::enforce_overlap_safe_runtime_gate",
+        ):
+            self.assertIn(anchor, output, anchor)
 
     def test_render_never_advertises_shipped_framework_runtime(
         self,

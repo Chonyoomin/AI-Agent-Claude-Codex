@@ -20,81 +20,52 @@ fixes, and human gating between phases.
 
 ## Active Phase
 
-Fix Phase B - Desktop Empty-Target Bootstrap Flow
+Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff
+Phase 10AE - Framework Evaluation Beyond The Native Loop
 
 ## Phase Status
 
-Fix Phase B2 is complete and approved to advance. Fix Phase B3 is now active
-as the next remediation slice focused on wiring the validated desktop bootstrap
-flow into the shipped bootstrap runtime and surfacing the first explicit
-post-bootstrap handoff in the desktop app.
+Phase 10AE is complete as the latest mainline slice. Fix Phase B1, Fix Phase
+B2, and Fix Phase B3 are also complete and approved as remediation work against
+the desktop bootstrap flow. The main roadmap currently has no predefined next
+mainline Phase 10 sub-phase after 10AE, so the repo is parked back on the main
+track awaiting the next human-approved roadmap addition or objective.
 
 ## Active Task
 
-Implement Fix Phase B3 for the agent loop. This slice should wire the validated
-desktop bootstrap form into the shipped `attach-external-target --bootstrap`
-runtime path, refresh the attached-target view after success, and surface the
-first explicit post-bootstrap next-step guidance without introducing a second
-bootstrap runtime or hidden desktop-only state plane.
+The mainline Phase 10 roadmap is complete through Phase 10AE. The current repo
+state is awaiting the next mainline roadmap definition or human-directed next
+objective after the approved Fix Phase B remediation track.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify Fix Phase B / B3 as active
-- `.agent-loop/phase-plan.md` records Fix Phase B2 as closed history and
-  contains a
-  `## Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff`
-  section with concrete objective, done criteria, and exclusions
-- the repository dispatches validated desktop bootstrap input through the
-  shipped `attach-external-target --bootstrap` runtime path rather than a
-  second hidden bootstrap implementation
-- the desktop flow surfaces explicit success/refusal state for the bootstrap
-  attempt, refreshes the attached-target view after a successful bootstrap, and
-  makes the first post-bootstrap next-step guidance explicit
-- the implementation preserves approval gating, evidence review,
-  external-workspace boundaries, desktop/UI boundaries, and the
-  canonical-artifact-first model instead of introducing hidden automation,
-  silent mutation, or a second desktop-only bootstrap state plane
-- focused validation proves the bounded dispatch/handoff surface is explicit,
-  auditable, and still routes through the shipped runtime and artifact model
-- `README.md` reflects that Fix Phase B3 is active and that desktop bootstrap
-  dispatch/post-bootstrap handoff work is now the implementation focus
+  `.agent-loop/loop-state.json` identify the repo as returned to the main
+  roadmap after the approved Fix Phase B remediation track
+- `.agent-loop/phase-plan.md` records Phase 10AE and Fix Phase B1/B2/B3 as
+  closed history
+- the repo is ready for a new human-approved mainline phase definition if
+  additional work is desired
 
 ## Next-Phase Gate
 
-Do not widen into first-phase activation/start automation until:
+Do not activate further mainline work until:
 
-- Fix Phase B3 receives `APPROVED_FOR_HUMAN_REVIEW`
-- the human approves the desktop bootstrap dispatch/handoff slice
-- any first-phase activation or project-start automation is activated through a
-  later dedicated phase instead of being folded into this bootstrap slice
+- a new mainline roadmap slice is defined
+- the human approves that next phase activation
+- the next slice is written into the canonical phase/task artifacts before
+  implementation starts
 
 ## Out Of Scope For Current Phase
 
-- any first-phase activation/start flow that bypasses the shipped Phase 4C
-  activator + human approval contract
+- fabricating a non-existent `Phase 10AF` without updating the roadmap
+- silently reopening a completed Fix Phase B slice
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
-- any claim that fully autonomous PRD-to-product execution is already solved
-- any packaging work, hidden orchestration, or live automation added under the
-  banner of this bootstrap dispatch slice
-- any rewrite of current shipped behavior just to make future desktop flows
-  easier
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
-- inventing unreviewable autonomous behavior that the repo does not currently
-  ship just to simplify the implementation
-- collapsing later first-phase activation, packaging, or external sync work
-  into this slice
-- implementation of end-to-end fully autonomous PRD-to-product execution
+- implementation work for a new phase before that phase is explicitly defined
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
-- any change to the Phase 2A Evidence Collection Contract
-- any change to the Phase 3A Orchestrator Contract body
-- any change to the Phase 4A Planning Contract body
-- any change to `scripts/run_checks.sh`
-- adding any project-wide CI suite beyond focused validation for the
-  contract surface
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

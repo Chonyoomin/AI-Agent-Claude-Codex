@@ -1,3 +1,3 @@
 # Current Phase
 
-Fix Phase B - Desktop Empty-Target Bootstrap Flow (sub-phase: Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff)
+Phase 10 - Future Product Features (sub-phase: Phase 10AE - Framework Evaluation Beyond The Native Loop)

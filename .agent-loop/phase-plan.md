@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Fix Phase B - Desktop Empty-Target Bootstrap Flow (sub-phase: Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff)
+Phase 10 - Future Product Features (sub-phase: Phase 10AE - Framework Evaluation Beyond The Native Loop)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5947,14 +5947,11 @@ attach/bootstrap runtime contract.
 
 ### Status
 
-Active. Fix Phase B3 is the current implementation focus after Fix Phase B2
-closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
-approved the advance. Fix Phase B3 scope is a bounded desktop bootstrap
-dispatch/handoff slice: wire the validated desktop bootstrap flow into the
-shipped `attach-external-target --bootstrap` runtime path, refresh the
-attached-target view after success, and surface the first explicit
-post-bootstrap next-step guidance without introducing a second bootstrap
-runtime or hidden desktop-only state plane.
+Complete and approved by human as the final Fix Phase B remediation slice. Fix
+Phase B3 closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the
+desktop bootstrap dialog was wired into the shipped bootstrap runtime, the
+attached-target refresh path landed, and the explicit post-bootstrap next-step
+handoff was verified in the current repo state.
 
 ### Objective
 

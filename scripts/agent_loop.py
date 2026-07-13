@@ -33882,7 +33882,13 @@ DESKTOP_FRAMEWORK_EVALUATION_PRECEDENCE_NOTE = (
     "subprocess, NEVER schedules a background watcher, NEVER auto-"
     "fills any --*-by operator-identity argument, and NEVER "
     "introduces a framework-side database / preference store / "
-    "recents list / identity token / session token"
+    "recents list / identity token / session token. The Phase 10AE "
+    "refinement adds a per-criterion `docs_anchor` (single string) "
+    "and a per-verdict `evidence_anchors` (non-empty tuple of "
+    "repo-relative citations) so every surfaced judgment is "
+    "auditable from a canonical/advisory shipped artifact rather "
+    "than hidden in code comments; the validator refuses fail-"
+    "closed on any missing / empty / non-string anchor"
 )
 
 # Phase 10AE runtime refusal status: an evaluation-only surface must
@@ -34085,6 +34091,35 @@ def _desktop_framework_evaluation_validate_descriptor(
                     f"{reason!r}"
                 ),
             )
+        # Phase 10AE refinement: every framework_verdict MUST carry
+        # a non-empty `evidence_anchors` tuple citing repo-relative
+        # paths / symbols that back the verdict. Auditability rule:
+        # a reviewer must be able to navigate from the surfaced
+        # verdict to a shipped artifact rather than trust a hidden
+        # judgment in code comments.
+        anchors = entry.get("evidence_anchors")
+        if not isinstance(anchors, tuple) or not anchors:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdict.evidence_anchors for "
+                    f"framework_id {fid!r} must be a non-empty "
+                    f"tuple of repo-relative citations, got "
+                    f"{anchors!r}"
+                ),
+            )
+        for anchor in anchors:
+            if not isinstance(anchor, str) or not anchor.strip():
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"desktop framework-evaluation refused: "
+                        f"framework_verdict.evidence_anchors "
+                        f"entry for framework_id {fid!r} must be "
+                        f"a non-empty str, got {anchor!r}"
+                    ),
+                )
     if set(seen_ids) != set(FRAMEWORK_EVALUATION_FRAMEWORK_IDS):
         missing = (
             set(FRAMEWORK_EVALUATION_FRAMEWORK_IDS) - set(seen_ids)
@@ -34097,6 +34132,22 @@ def _desktop_framework_evaluation_validate_descriptor(
                 f"{sorted(missing)!r}"
             ),
         )
+    # Phase 10AE refinement: every criterion MUST carry a non-empty
+    # `docs_anchor` string citing the canonical / advisory shipped
+    # artifact that pins the boundary being evaluated (e.g. a docs/
+    # contract path or a shipped README paragraph anchor). Same
+    # auditability rule as `evidence_anchors`: judgment MUST be
+    # traceable to a repo artifact, not hidden in comments.
+    docs_anchor = spec.get("docs_anchor")
+    if not isinstance(docs_anchor, str) or not docs_anchor.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: descriptor "
+                f"field 'docs_anchor' must be a non-empty str, got "
+                f"{docs_anchor!r}"
+            ),
+        )
 
 
 _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
@@ -34107,6 +34158,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/controlled-concurrency-contract.md",
         "description": (
             "The shipped Phase 10AB / 10AC / 10AD contract "
             "assigns every canonical artifact to exactly one "
@@ -34135,6 +34187,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`_desktop_codex_concurrent_work_evaluate_"
                     "eligibility(...)` step 2."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::_DESKTOP_CONCURRENCY_OWNERSHIP_MAP",
+                    "scripts/agent_loop.py::_desktop_codex_concurrent_work_evaluate_eligibility",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34150,6 +34206,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "let a delegated role silently mutate "
                     "Claude-owned implementation artifacts."
                 ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
+                ),
             },
             {
                 "framework_id": "langgraph",
@@ -34162,6 +34221,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "shipped Phase 10AB contract and must ship "
                     "with the same fail-closed default."
                 ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34171,6 +34233,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "toolchain rather than a role-delegation "
                     "runtime; it does not directly propose an "
                     "alternate ownership boundary."
+                ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
                 ),
             },
         ),
@@ -34194,6 +34259,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/approval-modes.md",
         "description": (
             "The shipped `review` / `strict` / `autonomous` "
             "approval modes gate every cycle at explicit "
@@ -34218,6 +34284,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`_log_autonomous_bypass(...)` and refuses "
                     "advance without explicit resume."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::_fire_strict_gate",
+                    "scripts/agent_loop.py::_log_autonomous_bypass",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34230,6 +34300,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "worker returns; wiring it in without an "
                     "explicit approval-gate shim would bypass "
                     "the shipped strict-mode pause."
+                ),
+                "evidence_anchors": (
+                    "docs/approval-modes.md",
                 ),
             },
             {
@@ -34244,6 +34317,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "shipped strict-mode contract to remain "
                     "the source of truth."
                 ),
+                "evidence_anchors": (
+                    "docs/approval-modes.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34253,6 +34329,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "approval-mode gate; the shipped gate "
                     "layer must remain outside of the "
                     "framework."
+                ),
+                "evidence_anchors": (
+                    "docs/approval-modes.md",
                 ),
             },
         ),
@@ -34277,6 +34356,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "AGENTS.md",
         "description": (
             "The shipped Phase 2A evidence collection contract "
             "and Phase 2B `scripts/run_checks.sh` runner "
@@ -34303,6 +34383,11 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`scripts/run_checks.sh` which is "
                     "explicitly Phase 2B-frozen."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::invoke_run_checks",
+                    "scripts/agent_loop.py::validate_evidence_files",
+                    "scripts/run_checks.sh",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34313,6 +34398,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "there is no CrewAI abstraction that "
                     "improves on the shipped evidence "
                     "pipeline. It remains native-loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
             {
@@ -34325,6 +34413,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "the Phase 2A contract stays "
                     "native-loop-only."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34334,6 +34425,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "structured evidence bundle; the shipped "
                     "Phase 2A contract remains "
                     "native-loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
         ),
@@ -34357,6 +34451,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/architecture.md",
         "description": (
             "The shipped model treats `.agent-loop/loop-state."
             "json` plus the shipped canonical artifacts "
@@ -34383,6 +34478,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "canonical artifacts are the sole source "
                     "of truth."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::load_loop_state",
+                    "scripts/agent_loop.py::save_loop_state",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34396,6 +34495,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "is proxied through the shipped canonical "
                     "artifacts."
                 ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
             {
                 "framework_id": "langgraph",
@@ -34406,6 +34508,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "the shipped canonical artifacts, but the "
                     "shipped source-of-truth rule remains the "
                     "authority."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
             {
@@ -34420,6 +34525,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "outside the shipped canonical artifacts; "
                     "adopting them wholesale would introduce a "
                     "competing memory source."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
         ),
@@ -34443,6 +34551,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/controlled-concurrency-contract.md",
         "description": (
             "The shipped Phase 10AC "
             "`enforce_overlap_safe_runtime_gate(...)` refuses "
@@ -34464,6 +34573,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`enforce_overlap_safe_runtime_gate(...)` "
                     "at the pre-Codex-review step 8b."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::enforce_overlap_safe_runtime_gate",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34474,6 +34586,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "CrewAI's parallel-task runner would need "
                     "an explicit shim to consult the shipped "
                     "gate before every worker dispatch."
+                ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
                 ),
             },
             {
@@ -34486,6 +34601,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "evaluation shim; the shipped gate "
                     "remains the authority."
                 ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34495,6 +34613,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "worker runtime, so the overlap-safe "
                     "detection gate does not apply to it "
                     "directly."
+                ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
                 ),
             },
         ),
@@ -34519,6 +34640,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/desktop-app-contract.md",
         "description": (
             "The shipped Phase 10L / 10M contract makes the "
             "desktop app a read-only reporter that never "
@@ -34540,6 +34662,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "Phase 10I cap and every Phase 10Q+ button "
                     "is copy-paste only."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::assemble_desktop_app_view",
+                    "scripts/agent_loop.py::render_desktop_app_text",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34548,6 +34674,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "CrewAI does not ship a desktop UI; it "
                     "does not affect the shipped Phase 10L "
                     "contract directly."
+                ),
+                "evidence_anchors": (
+                    "docs/desktop-app-contract.md",
                 ),
             },
             {
@@ -34558,6 +34687,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "does not affect the shipped Phase 10L "
                     "contract directly."
                 ),
+                "evidence_anchors": (
+                    "docs/desktop-app-contract.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34566,6 +34698,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "LangChain does not ship a desktop UI; it "
                     "does not affect the shipped Phase 10L "
                     "contract directly."
+                ),
+                "evidence_anchors": (
+                    "docs/desktop-app-contract.md",
                 ),
             },
         ),
@@ -34588,6 +34723,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "native_loop_strength",
         "native_loop_status": "native_loop_only",
+        "docs_anchor": "AGENTS.md",
         "description": (
             "The shipped Codex review reads the actual git "
             "diff + shipped evidence bundle rather than "
@@ -34608,6 +34744,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "+ `.agent-loop/*.log` bundle is the "
                     "review substrate."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::validate_evidence_files",
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34617,6 +34757,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "without improving the raw diff / evidence "
                     "review; the shipped flow stays native-"
                     "loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
             {
@@ -34628,6 +34771,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "evidence review; the shipped flow stays "
                     "native-loop-only."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34637,6 +34783,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "layer without improving the diff / "
                     "evidence review; the shipped flow stays "
                     "native-loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
         ),
@@ -34661,6 +34810,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         "native_loop_status": (
             "framework_leverage_opportunity_bounded"
         ),
+        "docs_anchor": "docs/architecture.md",
         "description": (
             "A structured state-graph model (LangGraph-style "
             "nodes + conditional edges) can make the shipped "
@@ -34686,6 +34836,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "a documentation / testing aid, not a "
                     "replacement."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::_run_normal_cycle_from_increment",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34694,6 +34847,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "CrewAI's crew-role model does not map "
                     "cleanly onto the shipped single-loop "
                     "transition topology."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
             {
@@ -34706,6 +34862,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "while the shipped Python runtime remains "
                     "authoritative."
                 ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34714,6 +34873,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "LangChain's chain primitives do not "
                     "model a cycle transition graph "
                     "directly."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
         ),
@@ -34739,6 +34901,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         "native_loop_status": (
             "framework_leverage_opportunity_bounded"
         ),
+        "docs_anchor": "AGENTS.md",
         "description": (
             "A multi-role delegation model (CrewAI-style crew "
             "with per-role specialization) is a natural "
@@ -34763,6 +34926,11 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "contract already assigns the Codex vs "
                     "Claude roles explicitly."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                    "scripts/agent_loop.py::SubprocessClaudeAdapter",
+                    "scripts/agent_loop.py::SubprocessCodexAdapter",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34773,6 +34941,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "documentation / diagram purposes, but "
                     "adopting its runtime would compete with "
                     "the shipped orchestrator contract."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
             {
@@ -34786,6 +34957,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "structure rather than the shipped "
                     "explicit Phase 3A role contract."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34797,6 +34971,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "assumes a single agent with tools rather "
                     "than an explicit Codex/Claude role "
                     "split."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
         ),
@@ -34821,6 +34998,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         "native_loop_status": (
             "framework_leverage_opportunity_bounded"
         ),
+        "docs_anchor": "docs/mcp-integration-contract.md",
         "description": (
             "Prompt / tool orchestration primitives "
             "(LangChain-style chains + tool binding) are a "
@@ -34846,6 +35024,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "artifacts and gates tool use through the "
                     "shipped MCP contracts."
                 ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
+                    "scripts/agent_loop.py::_run_normal_cycle_from_increment",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34853,6 +35035,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                 "reason": (
                     "CrewAI focuses on role delegation rather "
                     "than prompt / tool orchestration."
+                ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
                 ),
             },
             {
@@ -34862,6 +35047,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "LangGraph focuses on state-graph "
                     "orchestration rather than prompt / tool "
                     "orchestration."
+                ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
                 ),
             },
             {
@@ -34873,6 +35061,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "chain for future evaluation, but the "
                     "shipped canonical-artifact prompt model "
                     "remains the source of truth."
+                ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
                 ),
             },
         ),
@@ -35033,6 +35224,9 @@ def build_desktop_framework_evaluation_view(
                 "framework_id": entry["framework_id"],
                 "verdict": entry["verdict"],
                 "reason": entry["reason"],
+                "evidence_anchors": list(
+                    entry["evidence_anchors"],
+                ),
             })
             verdict_summary_counts[entry["framework_id"]][
                 entry["verdict"]
@@ -35042,6 +35236,7 @@ def build_desktop_framework_evaluation_view(
             "display_name": spec["display_name"],
             "criterion_category": spec["criterion_category"],
             "native_loop_status": spec["native_loop_status"],
+            "docs_anchor": spec["docs_anchor"],
             "description": spec["description"],
             "safety_copy": spec["safety_copy"],
             "framework_verdicts": per_framework,
@@ -35203,6 +35398,17 @@ def render_desktop_framework_evaluation_text(view: dict) -> list:
             f"    [advisory] safety_copy: "
             f"{criterion['safety_copy']}"
         )
+        # Phase 10AE refinement: surface the shipped docs_anchor per
+        # criterion so the operator can navigate from the surfaced
+        # verdict to the canonical shipping artifact that pins the
+        # boundary being evaluated. Auditability rule: no hidden
+        # judgment in code comments alone.
+        lines.append(
+            f"    [framework-anchor] docs_anchor "
+            f"(canonical/advisory shipped artifact pinning this "
+            f"criterion's boundary): "
+            f"{criterion['docs_anchor']}"
+        )
         for entry in criterion.get("framework_verdicts", []):
             tag = (
                 "[refused]"
@@ -35217,6 +35423,17 @@ def render_desktop_framework_evaluation_text(view: dict) -> list:
             )
             lines.append(
                 f"      [advisory] reason: {entry['reason']}"
+            )
+            # Phase 10AE refinement: per-verdict evidence anchors so
+            # a reviewer can navigate from the verdict to the
+            # shipped artifact(s) backing it (either the shipped
+            # code path the native_loop verdict cites, or the
+            # shipped doc/contract path that pins the boundary a
+            # framework verdict would conflict with).
+            lines.append(
+                f"      [framework-evidence] evidence_anchors "
+                f"(repo-relative citations backing this verdict): "
+                f"{entry.get('evidence_anchors', [])!r}"
             )
         lines.append(
             f"    [deferred-runtime] deferred_runtime_marker: "
