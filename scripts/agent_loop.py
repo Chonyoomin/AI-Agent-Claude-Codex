@@ -15483,6 +15483,123 @@ def _primary_desktop_format_bootstrap_cli_guidance(
     )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase B3: Desktop Bootstrap Dispatch And Post-Bootstrap Handoff.
+#
+# Bounded dispatch slice that wires the Fix Phase B2 validated
+# desktop bootstrap form into the shipped
+# `attach_external_target(..., bootstrap=True, ...)` runtime path
+# and formats the operator-facing post-bootstrap next-step guidance
+# so a successful desktop-side bootstrap leaves the operator with
+# an explicit "attached + initialized, still awaits first
+# activation" story rather than a silent state change.
+#
+# Kept intentionally thin: both helpers are Tk-free and unit-
+# testable. The dispatch wrapper delegates verbatim to the shipped
+# runtime so every Phase 10C / 10D / 10E refusal path fires
+# unchanged; the desktop shell adds NO parallel bootstrap logic,
+# NO second state store, NO hidden control plane. Bootstrap remains
+# distinct from first-phase activation: the shipped Phase 4C
+# activator + APPROVED_FOR_ACTIVATION human approval remain the
+# only path that advances a bootstrapped target past
+# `awaiting_first_activation`.
+# ---------------------------------------------------------------------------
+
+
+def _primary_desktop_dispatch_bootstrap_attach(
+    controller_root: Path,
+    *,
+    target_path: str,
+    attached_by: str,
+    approval_mode: str,
+    bootstrapped_by: str,
+    human_objective: str,
+    project_intent: str,
+    log_path: Optional[Path] = None,
+) -> Path:
+    """Fix Phase B3 dispatch wrapper: thin delegation to the shipped
+    `attach_external_target(..., bootstrap=True, ...)` runtime for
+    the desktop bootstrap dialog's submit callback. Restores the
+    direct-dispatch surface that Fix Phase B1's fix cycle removed,
+    now that Fix Phase B2 has shipped the bounded desktop-side
+    form/validation layer that closes the shipped Phase 10B/10C
+    invariants up front. Delegates verbatim so every shipped
+    canonical-artifact-write atomicity + rollback + audit-log
+    rotation invariant fires unchanged; the desktop shell does NOT
+    re-implement any bootstrap validation and does NOT auto-fill
+    any identity / free-text field (the caller MUST pass operator-
+    supplied values verbatim, per the Fix Phase B1 no-auto-fill
+    identity boundary).
+
+    HaltError from the shipped runtime propagates so the Tk
+    callback can surface the reason in the dialog status Label
+    while preserving typed operator context (the dialog does NOT
+    destroy itself on runtime refusal).
+    """
+    return attach_external_target(
+        controller_root,
+        target_path=target_path,
+        attached_by=attached_by,
+        approval_mode=approval_mode,
+        log_path=log_path,
+        bootstrap=True,
+        bootstrapped_by=bootstrapped_by,
+        human_objective=human_objective,
+        project_intent=project_intent,
+    )
+
+
+def _primary_desktop_format_post_bootstrap_success(
+    *,
+    target_path: str,
+    attach_record_name: str,
+) -> str:
+    """Fix Phase B3 post-bootstrap next-step guidance formatter:
+    return the operator-facing message that surfaces after a
+    successful desktop-side bootstrap dispatch. The message MUST
+    name three shipped anchors explicitly so the operator sees
+    that bootstrap is distinct from first-phase activation:
+
+      - the target's loop-state lands at `awaiting_first_activation`
+      - the shipped Phase 4C activator is the only path forward
+      - the shipped `APPROVED_FOR_ACTIVATION` human approval token
+        gates that activator
+
+    Pure helper: no Tk dependency, no dispatch. A dedicated
+    regression test pins the three anchors so a future edit that
+    drops any of them fails loudly.
+    """
+    if not isinstance(target_path, str) or not target_path.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop post-bootstrap message refused: "
+                "target_path is empty / whitespace-only"
+            ),
+        )
+    if (
+        not isinstance(attach_record_name, str)
+        or not attach_record_name.strip()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop post-bootstrap message refused: "
+                "attach_record_name is empty / whitespace-only"
+            ),
+        )
+    return (
+        f"Bootstrapped + attached: {target_path.strip()}. "
+        f"Attach record: {attach_record_name.strip()}. Target "
+        f"loop-state landed at 'awaiting_first_activation'; run "
+        f"the shipped Phase 4C activator against the target and "
+        f"record the APPROVED_FOR_ACTIVATION human approval to "
+        f"advance past that state. Bootstrap is distinct from "
+        f"first-phase activation; the desktop shell does NOT "
+        f"activate the first phase."
+    )
+
+
 def _launch_desktop_app_window(
     controller_root: Path,
     *,
@@ -15832,33 +15949,44 @@ def _launch_desktop_app_window(
         )
 
     def _open_bootstrap_form_dialog(target_folder: str) -> None:
-        # Fix Phase B2: guided bootstrap form-and-validation dialog
-        # for the `empty_target` UX mode. Opens a modal Toplevel
-        # with one Entry per closed
-        # `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES` field. On submit
-        # the values are classified by the shipped
+        # Fix Phase B3: guided bootstrap dispatch dialog for the
+        # `empty_target` UX mode. Opens a modal Toplevel with one
+        # Entry per closed `PRIMARY_DESKTOP_BOOTSTRAP_FIELD_NAMES`
+        # field. On submit the values are classified by the
+        # shipped
         # `_primary_desktop_classify_bootstrap_form_refusal(...)`
-        # pure classifier which enforces the closed
+        # pure classifier (Fix Phase B2) which enforces the closed
         # `PRIMARY_DESKTOP_BOOTSTRAP_REFUSAL_CATEGORIES` (non-dict
         # input shape, per-field missing / wrong-type / empty /
         # embedded-double-quote, approval_mode outside the shipped
         # closed `EXTERNAL_TARGET_APPROVAL_MODES` enum, and
         # bootstrapped_by != attached_by per the shipped Phase 10C
-        # single-operator-identity invariant). On refusal the
-        # dialog surfaces the classifier's reason and focuses the
-        # offending Entry via `focus_set()` while preserving typed
-        # context in every other Entry (the dialog does NOT
-        # destroy itself). On a passing classifier the values are
-        # rendered into the shipped `attach-external-target
-        # --bootstrap ...` CLI as copy-paste-ready guidance via
-        # `_primary_desktop_format_bootstrap_cli_guidance(...)`.
-        # The desktop shell does NOT dispatch canonical mutation
-        # from this Tk callback (per the Fix Phase B1 fix cycle
-        # boundary); the operator runs the surfaced CLI in their
-        # own terminal so the shipped `attach_external_target(...)`
-        # runtime remains the sole audit-metadata write path.
+        # single-operator-identity invariant). On classifier
+        # refusal the dialog surfaces the classifier's reason and
+        # focuses the offending Entry via `focus_set()` while
+        # preserving typed context in every other Entry (the
+        # dialog does NOT destroy itself). On a passing classifier
+        # the values are dispatched through the shipped
+        # `attach_external_target(..., bootstrap=True, ...)`
+        # runtime via
+        # `_primary_desktop_dispatch_bootstrap_attach(...)`. On
+        # runtime HaltError the dialog surfaces the reason and
+        # keeps typed context intact for retry (no focus_set
+        # because runtime refusals are not always field-scoped).
+        # On dispatch success the dialog closes, the primary
+        # attached-target Label refreshes, and the main status
+        # caption surfaces
+        # `_primary_desktop_format_post_bootstrap_success(...)`
+        # which explicitly names that the target is attached /
+        # initialized but still awaits first activation (bootstrap
+        # is distinct from first-phase activation; the shipped
+        # Phase 4C activator + APPROVED_FOR_ACTIVATION human
+        # approval remain the only path to advance past
+        # `awaiting_first_activation`). No parallel bootstrap
+        # runtime, no second desktop state plane, no hidden
+        # control plane.
         dialog = tk.Toplevel(root)
-        dialog.title("Bootstrap new project (Fix Phase B2)")
+        dialog.title("Bootstrap new project (Fix Phase B3)")
         dialog.transient(root)
         dialog.grab_set()
         dialog.geometry("560x520")
@@ -15938,24 +16066,12 @@ def _launch_desktop_app_window(
             fg="#a94442",
         )
         dialog_status.pack(fill=tk.X, padx=12, pady=(0, 6))
-        # Fix Phase B1 fix cycle: on submit the dialog surfaces the
-        # shipped `attach-external-target --bootstrap ...` CLI as
-        # copy-paste-ready text in this Text widget so the operator
-        # runs it themselves. The desktop shell does NOT dispatch
-        # canonical mutation from this callback.
-        guidance_output = tk.Text(
-            dialog,
-            height=5,
-            wrap=tk.WORD,
-        )
-        guidance_output.pack(fill=tk.X, padx=12, pady=(0, 6))
-        guidance_output.configure(state=tk.DISABLED)
 
         def _cancel_dialog() -> None:
             dialog.destroy()
             status_caption.config(
                 text=(
-                    "Bootstrap cancelled: no CLI guidance surfaced."
+                    "Bootstrap cancelled: no dispatch attempted."
                 ),
             )
 
@@ -15964,11 +16080,12 @@ def _launch_desktop_app_window(
                 name: var.get()
                 for name, var in entry_vars.items()
             }
-            # Fix Phase B2: call the pure classifier directly so
-            # the dialog can focus the offending Entry when the
-            # classifier names a field. Typed operator context is
-            # preserved across every refusal (dialog does NOT
-            # destroy itself; other Entries retain their text).
+            # Fix Phase B2 classifier: closes the shipped Phase
+            # 10B / 10C invariants up front so obvious form
+            # refusals never reach the runtime. Typed operator
+            # context is preserved across every classifier refusal
+            # (dialog does NOT destroy itself; the offending Entry
+            # is focused).
             refusal = (
                 _primary_desktop_classify_bootstrap_form_refusal(
                     fields,
@@ -15985,9 +16102,19 @@ def _launch_desktop_app_window(
                 ):
                     entry_widgets[offending].focus_set()
                 return
+            # Fix Phase B3: dispatch through the shipped runtime.
+            # Runtime HaltError propagates to a red dialog_status
+            # while the dialog stays open so typed operator
+            # context is preserved for retry.
+            log_path = (
+                controller_root
+                / ".agent-loop"
+                / "orchestrator.log"
+            )
             try:
-                cli_guidance = (
-                    _primary_desktop_format_bootstrap_cli_guidance(
+                record_path = (
+                    _primary_desktop_dispatch_bootstrap_attach(
+                        controller_root,
                         target_path=target_folder,
                         attached_by=fields[
                             (
@@ -16014,34 +16141,35 @@ def _launch_desktop_app_window(
                                 PRIMARY_DESKTOP_BOOTSTRAP_FIELD_PROJECT_INTENT
                             )
                         ].strip(),
+                        log_path=log_path,
                     )
                 )
             except HaltError as halt:
                 dialog_status.config(
-                    text=halt.reason, fg="#a94442",
+                    text=(
+                        f"Bootstrap dispatch refused: {halt.reason}"
+                    ),
+                    fg="#a94442",
                 )
                 return
-            dialog_status.config(
+            dialog.destroy()
+            _refresh_attached_label()
+            status_caption.config(
                 text=(
-                    "Copy the shipped CLI below and run it in a "
-                    "terminal. The desktop shell does NOT dispatch "
-                    "bootstrap; the shipped runtime remains the "
-                    "only canonical-mutation path."
+                    _primary_desktop_format_post_bootstrap_success(
+                        target_path=target_folder,
+                        attach_record_name=record_path.name,
+                    )
                 ),
-                fg="#31708f",
             )
-            guidance_output.configure(state=tk.NORMAL)
-            guidance_output.delete("1.0", tk.END)
-            guidance_output.insert("1.0", cli_guidance)
-            guidance_output.configure(state=tk.DISABLED)
 
         cancel_btn = tk.Button(
-            button_row, text="Close", command=_cancel_dialog,
+            button_row, text="Cancel", command=_cancel_dialog,
         )
         cancel_btn.pack(side=tk.LEFT, padx=(0, 6))
         submit_btn = tk.Button(
             button_row,
-            text="Build bootstrap CLI",
+            text="Bootstrap and attach",
             command=_submit_dialog,
         )
         submit_btn.pack(side=tk.LEFT)
@@ -33754,7 +33882,13 @@ DESKTOP_FRAMEWORK_EVALUATION_PRECEDENCE_NOTE = (
     "subprocess, NEVER schedules a background watcher, NEVER auto-"
     "fills any --*-by operator-identity argument, and NEVER "
     "introduces a framework-side database / preference store / "
-    "recents list / identity token / session token"
+    "recents list / identity token / session token. The Phase 10AE "
+    "refinement adds a per-criterion `docs_anchor` (single string) "
+    "and a per-verdict `evidence_anchors` (non-empty tuple of "
+    "repo-relative citations) so every surfaced judgment is "
+    "auditable from a canonical/advisory shipped artifact rather "
+    "than hidden in code comments; the validator refuses fail-"
+    "closed on any missing / empty / non-string anchor"
 )
 
 # Phase 10AE runtime refusal status: an evaluation-only surface must
@@ -33957,6 +34091,35 @@ def _desktop_framework_evaluation_validate_descriptor(
                     f"{reason!r}"
                 ),
             )
+        # Phase 10AE refinement: every framework_verdict MUST carry
+        # a non-empty `evidence_anchors` tuple citing repo-relative
+        # paths / symbols that back the verdict. Auditability rule:
+        # a reviewer must be able to navigate from the surfaced
+        # verdict to a shipped artifact rather than trust a hidden
+        # judgment in code comments.
+        anchors = entry.get("evidence_anchors")
+        if not isinstance(anchors, tuple) or not anchors:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop framework-evaluation refused: "
+                    f"framework_verdict.evidence_anchors for "
+                    f"framework_id {fid!r} must be a non-empty "
+                    f"tuple of repo-relative citations, got "
+                    f"{anchors!r}"
+                ),
+            )
+        for anchor in anchors:
+            if not isinstance(anchor, str) or not anchor.strip():
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"desktop framework-evaluation refused: "
+                        f"framework_verdict.evidence_anchors "
+                        f"entry for framework_id {fid!r} must be "
+                        f"a non-empty str, got {anchor!r}"
+                    ),
+                )
     if set(seen_ids) != set(FRAMEWORK_EVALUATION_FRAMEWORK_IDS):
         missing = (
             set(FRAMEWORK_EVALUATION_FRAMEWORK_IDS) - set(seen_ids)
@@ -33969,6 +34132,22 @@ def _desktop_framework_evaluation_validate_descriptor(
                 f"{sorted(missing)!r}"
             ),
         )
+    # Phase 10AE refinement: every criterion MUST carry a non-empty
+    # `docs_anchor` string citing the canonical / advisory shipped
+    # artifact that pins the boundary being evaluated (e.g. a docs/
+    # contract path or a shipped README paragraph anchor). Same
+    # auditability rule as `evidence_anchors`: judgment MUST be
+    # traceable to a repo artifact, not hidden in comments.
+    docs_anchor = spec.get("docs_anchor")
+    if not isinstance(docs_anchor, str) or not docs_anchor.strip():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop framework-evaluation refused: descriptor "
+                f"field 'docs_anchor' must be a non-empty str, got "
+                f"{docs_anchor!r}"
+            ),
+        )
 
 
 _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
@@ -33979,6 +34158,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/controlled-concurrency-contract.md",
         "description": (
             "The shipped Phase 10AB / 10AC / 10AD contract "
             "assigns every canonical artifact to exactly one "
@@ -34007,6 +34187,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`_desktop_codex_concurrent_work_evaluate_"
                     "eligibility(...)` step 2."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::_DESKTOP_CONCURRENCY_OWNERSHIP_MAP",
+                    "scripts/agent_loop.py::_desktop_codex_concurrent_work_evaluate_eligibility",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34022,6 +34206,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "let a delegated role silently mutate "
                     "Claude-owned implementation artifacts."
                 ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
+                ),
             },
             {
                 "framework_id": "langgraph",
@@ -34034,6 +34221,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "shipped Phase 10AB contract and must ship "
                     "with the same fail-closed default."
                 ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34043,6 +34233,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "toolchain rather than a role-delegation "
                     "runtime; it does not directly propose an "
                     "alternate ownership boundary."
+                ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
                 ),
             },
         ),
@@ -34066,6 +34259,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/approval-modes.md",
         "description": (
             "The shipped `review` / `strict` / `autonomous` "
             "approval modes gate every cycle at explicit "
@@ -34090,6 +34284,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`_log_autonomous_bypass(...)` and refuses "
                     "advance without explicit resume."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::_fire_strict_gate",
+                    "scripts/agent_loop.py::_log_autonomous_bypass",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34102,6 +34300,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "worker returns; wiring it in without an "
                     "explicit approval-gate shim would bypass "
                     "the shipped strict-mode pause."
+                ),
+                "evidence_anchors": (
+                    "docs/approval-modes.md",
                 ),
             },
             {
@@ -34116,6 +34317,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "shipped strict-mode contract to remain "
                     "the source of truth."
                 ),
+                "evidence_anchors": (
+                    "docs/approval-modes.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34125,6 +34329,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "approval-mode gate; the shipped gate "
                     "layer must remain outside of the "
                     "framework."
+                ),
+                "evidence_anchors": (
+                    "docs/approval-modes.md",
                 ),
             },
         ),
@@ -34149,6 +34356,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "AGENTS.md",
         "description": (
             "The shipped Phase 2A evidence collection contract "
             "and Phase 2B `scripts/run_checks.sh` runner "
@@ -34175,6 +34383,11 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`scripts/run_checks.sh` which is "
                     "explicitly Phase 2B-frozen."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::invoke_run_checks",
+                    "scripts/agent_loop.py::validate_evidence_files",
+                    "scripts/run_checks.sh",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34185,6 +34398,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "there is no CrewAI abstraction that "
                     "improves on the shipped evidence "
                     "pipeline. It remains native-loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
             {
@@ -34197,6 +34413,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "the Phase 2A contract stays "
                     "native-loop-only."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34206,6 +34425,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "structured evidence bundle; the shipped "
                     "Phase 2A contract remains "
                     "native-loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
         ),
@@ -34229,6 +34451,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/architecture.md",
         "description": (
             "The shipped model treats `.agent-loop/loop-state."
             "json` plus the shipped canonical artifacts "
@@ -34255,6 +34478,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "canonical artifacts are the sole source "
                     "of truth."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::load_loop_state",
+                    "scripts/agent_loop.py::save_loop_state",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34268,6 +34495,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "is proxied through the shipped canonical "
                     "artifacts."
                 ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
             {
                 "framework_id": "langgraph",
@@ -34278,6 +34508,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "the shipped canonical artifacts, but the "
                     "shipped source-of-truth rule remains the "
                     "authority."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
             {
@@ -34292,6 +34525,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "outside the shipped canonical artifacts; "
                     "adopting them wholesale would introduce a "
                     "competing memory source."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
         ),
@@ -34315,6 +34551,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/controlled-concurrency-contract.md",
         "description": (
             "The shipped Phase 10AC "
             "`enforce_overlap_safe_runtime_gate(...)` refuses "
@@ -34336,6 +34573,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "`enforce_overlap_safe_runtime_gate(...)` "
                     "at the pre-Codex-review step 8b."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::enforce_overlap_safe_runtime_gate",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34346,6 +34586,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "CrewAI's parallel-task runner would need "
                     "an explicit shim to consult the shipped "
                     "gate before every worker dispatch."
+                ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
                 ),
             },
             {
@@ -34358,6 +34601,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "evaluation shim; the shipped gate "
                     "remains the authority."
                 ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34367,6 +34613,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "worker runtime, so the overlap-safe "
                     "detection gate does not apply to it "
                     "directly."
+                ),
+                "evidence_anchors": (
+                    "docs/controlled-concurrency-contract.md",
                 ),
             },
         ),
@@ -34391,6 +34640,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "shipped_boundary_preservation",
         "native_loop_status": "shipped_boundary_preserved",
+        "docs_anchor": "docs/desktop-app-contract.md",
         "description": (
             "The shipped Phase 10L / 10M contract makes the "
             "desktop app a read-only reporter that never "
@@ -34412,6 +34662,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "Phase 10I cap and every Phase 10Q+ button "
                     "is copy-paste only."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::assemble_desktop_app_view",
+                    "scripts/agent_loop.py::render_desktop_app_text",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34420,6 +34674,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "CrewAI does not ship a desktop UI; it "
                     "does not affect the shipped Phase 10L "
                     "contract directly."
+                ),
+                "evidence_anchors": (
+                    "docs/desktop-app-contract.md",
                 ),
             },
             {
@@ -34430,6 +34687,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "does not affect the shipped Phase 10L "
                     "contract directly."
                 ),
+                "evidence_anchors": (
+                    "docs/desktop-app-contract.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34438,6 +34698,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "LangChain does not ship a desktop UI; it "
                     "does not affect the shipped Phase 10L "
                     "contract directly."
+                ),
+                "evidence_anchors": (
+                    "docs/desktop-app-contract.md",
                 ),
             },
         ),
@@ -34460,6 +34723,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         ),
         "criterion_category": "native_loop_strength",
         "native_loop_status": "native_loop_only",
+        "docs_anchor": "AGENTS.md",
         "description": (
             "The shipped Codex review reads the actual git "
             "diff + shipped evidence bundle rather than "
@@ -34480,6 +34744,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "+ `.agent-loop/*.log` bundle is the "
                     "review substrate."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::validate_evidence_files",
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34489,6 +34757,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "without improving the raw diff / evidence "
                     "review; the shipped flow stays native-"
                     "loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
             {
@@ -34500,6 +34771,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "evidence review; the shipped flow stays "
                     "native-loop-only."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34509,6 +34783,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "layer without improving the diff / "
                     "evidence review; the shipped flow stays "
                     "native-loop-only."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
         ),
@@ -34533,6 +34810,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         "native_loop_status": (
             "framework_leverage_opportunity_bounded"
         ),
+        "docs_anchor": "docs/architecture.md",
         "description": (
             "A structured state-graph model (LangGraph-style "
             "nodes + conditional edges) can make the shipped "
@@ -34558,6 +34836,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "a documentation / testing aid, not a "
                     "replacement."
                 ),
+                "evidence_anchors": (
+                    "scripts/agent_loop.py::_run_normal_cycle_from_increment",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34566,6 +34847,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "CrewAI's crew-role model does not map "
                     "cleanly onto the shipped single-loop "
                     "transition topology."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
             {
@@ -34578,6 +34862,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "while the shipped Python runtime remains "
                     "authoritative."
                 ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34586,6 +34873,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "LangChain's chain primitives do not "
                     "model a cycle transition graph "
                     "directly."
+                ),
+                "evidence_anchors": (
+                    "docs/architecture.md",
                 ),
             },
         ),
@@ -34611,6 +34901,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         "native_loop_status": (
             "framework_leverage_opportunity_bounded"
         ),
+        "docs_anchor": "AGENTS.md",
         "description": (
             "A multi-role delegation model (CrewAI-style crew "
             "with per-role specialization) is a natural "
@@ -34635,6 +34926,11 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "contract already assigns the Codex vs "
                     "Claude roles explicitly."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                    "scripts/agent_loop.py::SubprocessClaudeAdapter",
+                    "scripts/agent_loop.py::SubprocessCodexAdapter",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34645,6 +34941,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "documentation / diagram purposes, but "
                     "adopting its runtime would compete with "
                     "the shipped orchestrator contract."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
             {
@@ -34658,6 +34957,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "structure rather than the shipped "
                     "explicit Phase 3A role contract."
                 ),
+                "evidence_anchors": (
+                    "AGENTS.md",
+                ),
             },
             {
                 "framework_id": "langchain",
@@ -34669,6 +34971,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "assumes a single agent with tools rather "
                     "than an explicit Codex/Claude role "
                     "split."
+                ),
+                "evidence_anchors": (
+                    "AGENTS.md",
                 ),
             },
         ),
@@ -34693,6 +34998,7 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
         "native_loop_status": (
             "framework_leverage_opportunity_bounded"
         ),
+        "docs_anchor": "docs/mcp-integration-contract.md",
         "description": (
             "Prompt / tool orchestration primitives "
             "(LangChain-style chains + tool binding) are a "
@@ -34718,6 +35024,10 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "artifacts and gates tool use through the "
                     "shipped MCP contracts."
                 ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
+                    "scripts/agent_loop.py::_run_normal_cycle_from_increment",
+                ),
             },
             {
                 "framework_id": "crewai",
@@ -34725,6 +35035,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                 "reason": (
                     "CrewAI focuses on role delegation rather "
                     "than prompt / tool orchestration."
+                ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
                 ),
             },
             {
@@ -34734,6 +35047,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "LangGraph focuses on state-graph "
                     "orchestration rather than prompt / tool "
                     "orchestration."
+                ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
                 ),
             },
             {
@@ -34745,6 +35061,9 @@ _DESKTOP_FRAMEWORK_EVALUATION_REGISTRY: tuple = (
                     "chain for future evaluation, but the "
                     "shipped canonical-artifact prompt model "
                     "remains the source of truth."
+                ),
+                "evidence_anchors": (
+                    "docs/mcp-integration-contract.md",
                 ),
             },
         ),
@@ -34905,6 +35224,9 @@ def build_desktop_framework_evaluation_view(
                 "framework_id": entry["framework_id"],
                 "verdict": entry["verdict"],
                 "reason": entry["reason"],
+                "evidence_anchors": list(
+                    entry["evidence_anchors"],
+                ),
             })
             verdict_summary_counts[entry["framework_id"]][
                 entry["verdict"]
@@ -34914,6 +35236,7 @@ def build_desktop_framework_evaluation_view(
             "display_name": spec["display_name"],
             "criterion_category": spec["criterion_category"],
             "native_loop_status": spec["native_loop_status"],
+            "docs_anchor": spec["docs_anchor"],
             "description": spec["description"],
             "safety_copy": spec["safety_copy"],
             "framework_verdicts": per_framework,
@@ -35075,6 +35398,17 @@ def render_desktop_framework_evaluation_text(view: dict) -> list:
             f"    [advisory] safety_copy: "
             f"{criterion['safety_copy']}"
         )
+        # Phase 10AE refinement: surface the shipped docs_anchor per
+        # criterion so the operator can navigate from the surfaced
+        # verdict to the canonical shipping artifact that pins the
+        # boundary being evaluated. Auditability rule: no hidden
+        # judgment in code comments alone.
+        lines.append(
+            f"    [framework-anchor] docs_anchor "
+            f"(canonical/advisory shipped artifact pinning this "
+            f"criterion's boundary): "
+            f"{criterion['docs_anchor']}"
+        )
         for entry in criterion.get("framework_verdicts", []):
             tag = (
                 "[refused]"
@@ -35089,6 +35423,17 @@ def render_desktop_framework_evaluation_text(view: dict) -> list:
             )
             lines.append(
                 f"      [advisory] reason: {entry['reason']}"
+            )
+            # Phase 10AE refinement: per-verdict evidence anchors so
+            # a reviewer can navigate from the verdict to the
+            # shipped artifact(s) backing it (either the shipped
+            # code path the native_loop verdict cites, or the
+            # shipped doc/contract path that pins the boundary a
+            # framework verdict would conflict with).
+            lines.append(
+                f"      [framework-evidence] evidence_anchors "
+                f"(repo-relative citations backing this verdict): "
+                f"{entry.get('evidence_anchors', [])!r}"
             )
         lines.append(
             f"    [deferred-runtime] deferred_runtime_marker: "

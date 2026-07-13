@@ -1,29 +1,26 @@
 # Current Task
 
 ## Phase
-Fix Phase B - Desktop Empty-Target Bootstrap Flow
+Phase 10 - Future Product Features
 
 ## Sub-Phase
-Fix Phase B2 - Desktop Bootstrap Form And Validation
+Phase 10AF - Desktop Codex Conversation And Intervention Contract
 
 ## Status
-Fix Phase B1 is complete and approved to advance. Fix Phase B2 is now active
-as the next remediation slice focused on turning the approved desktop bootstrap
-UX contract into a bounded in-app form and validation surface for empty-target
-project setup, while preserving the shipped external-target/runtime boundaries.
+Active and ready for implementation.
 
 ## Task
-Implement Fix Phase B2 for the agent loop. This slice should add the bounded
-desktop bootstrap form, required-field entry flow, and fail-closed validation
-surface for empty-target project setup without yet introducing direct desktop
-bootstrap dispatch or weakening the shipped attach/bootstrap runtime contract.
+Define the bounded desktop-side contract for an in-app Codex conversation and
+intervention surface so the operator can ask Codex for reviews, fix routing,
+roadmap changes, and targeted repo changes from the desktop app without
+bypassing canonical artifacts, ownership rules, review evidence, or the
+shipped approval and audit boundaries.
 
 ## Notes
 
-- keep this slice focused on the desktop form and validation layer only; do not
-  widen into bootstrap dispatch, post-bootstrap activation, or hidden desktop
-  automation
-- preserve the shipped operator-input rule: no hidden defaults for
-  `attached_by`, `bootstrapped_by`, `human_objective`, or `project_intent`
-- preserve the shipped empty/full/partial/malformed target vocabulary and
-  refusal boundaries instead of inventing a second UI-only state plane
+- this is a contract-definition slice, not the first desktop runtime for the
+  Codex conversation surface
+- the shipped desktop app must remain canonical-artifact-first; this phase must
+  not invent a hidden UI-only state plane for Codex requests or replies
+- future implementation work for the actual desktop interaction panel is
+  tracked in `Phase 10AG`

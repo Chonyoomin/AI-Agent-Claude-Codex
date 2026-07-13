@@ -2156,5 +2156,185 @@ class PrimaryDesktopBootstrapFormClassifierTests(unittest.TestCase):
         )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff
+# ---------------------------------------------------------------------------
+class PrimaryDesktopBootstrapDispatchHelperTests(unittest.TestCase):
+    """Cover the Fix Phase B3 dispatch wrapper
+    `_primary_desktop_dispatch_bootstrap_attach(...)`: delegates
+    verbatim to the shipped `attach_external_target(...,
+    bootstrap=True, ...)` runtime; does NOT auto-fill any
+    identity/free-text field; propagates HaltError so the Tk
+    callback can surface refusals while preserving typed context.
+    """
+
+    def test_dispatch_wrapper_delegates_verbatim(self) -> None:
+        with mock.patch.object(
+            agent_loop,
+            "attach_external_target",
+        ) as p:
+            p.return_value = Path("/tmp/attach-record.json")
+            got = (
+                agent_loop
+                ._primary_desktop_dispatch_bootstrap_attach(
+                    Path("/tmp/controller"),
+                    target_path="/tmp/new-project",
+                    attached_by="alice",
+                    approval_mode="review",
+                    bootstrapped_by="alice",
+                    human_objective="Build a bounded thing.",
+                    project_intent="Ship a bounded slice.",
+                    log_path=Path("/tmp/orch.log"),
+                )
+            )
+        self.assertEqual(got, Path("/tmp/attach-record.json"))
+        p.assert_called_once_with(
+            Path("/tmp/controller"),
+            target_path="/tmp/new-project",
+            attached_by="alice",
+            approval_mode="review",
+            log_path=Path("/tmp/orch.log"),
+            bootstrap=True,
+            bootstrapped_by="alice",
+            human_objective="Build a bounded thing.",
+            project_intent="Ship a bounded slice.",
+        )
+
+    def test_dispatch_wrapper_propagates_halt_error(self) -> None:
+        # Runtime HaltError MUST propagate so the Tk callback can
+        # surface the reason in the dialog status Label without
+        # silently swallowing it. Preserves typed operator context
+        # for retry per the Fix Phase B3 prompt.
+        with mock.patch.object(
+            agent_loop,
+            "attach_external_target",
+            side_effect=agent_loop.HaltError(
+                "halted_input_missing", "synthetic refusal",
+            ),
+        ):
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                (
+                    agent_loop
+                    ._primary_desktop_dispatch_bootstrap_attach(
+                        Path("/tmp/controller"),
+                        target_path="/tmp/new-project",
+                        attached_by="alice",
+                        approval_mode="review",
+                        bootstrapped_by="alice",
+                        human_objective="obj",
+                        project_intent="intent",
+                    )
+                )
+        self.assertEqual(cm.exception.reason, "synthetic refusal")
+
+    def test_dispatch_wrapper_defaults_log_path_to_none(
+        self,
+    ) -> None:
+        # Callers that omit log_path get the shipped runtime's
+        # default None behavior (no orchestrator.log audit
+        # append). The Tk callback always passes a log_path so the
+        # audit line is written; this test just pins the default.
+        with mock.patch.object(
+            agent_loop,
+            "attach_external_target",
+        ) as p:
+            p.return_value = Path("/tmp/rec.json")
+            (
+                agent_loop
+                ._primary_desktop_dispatch_bootstrap_attach(
+                    Path("/tmp/controller"),
+                    target_path="/tmp/new-project",
+                    attached_by="alice",
+                    approval_mode="review",
+                    bootstrapped_by="alice",
+                    human_objective="obj",
+                    project_intent="intent",
+                )
+            )
+        _, kwargs = p.call_args
+        self.assertIsNone(kwargs["log_path"])
+        # bootstrap=True MUST always be set; the wrapper's raison
+        # d'etre is the bootstrap path.
+        self.assertIs(kwargs["bootstrap"], True)
+
+
+class PrimaryDesktopPostBootstrapSuccessMessageTests(
+    unittest.TestCase,
+):
+    """Cover the Fix Phase B3 post-bootstrap next-step guidance
+    formatter `_primary_desktop_format_post_bootstrap_success(...)`.
+    The message MUST name three shipped anchors so the operator
+    sees that bootstrap is distinct from first-phase activation.
+    """
+
+    def test_success_message_names_three_shipped_anchors(
+        self,
+    ) -> None:
+        got = (
+            agent_loop
+            ._primary_desktop_format_post_bootstrap_success(
+                target_path="/tmp/new-project",
+                attach_record_name="attach-record.json",
+            )
+        )
+        # Anchor 1: target loop-state landing spot.
+        self.assertIn("awaiting_first_activation", got)
+        # Anchor 2: named path forward.
+        self.assertIn("Phase 4C activator", got)
+        # Anchor 3: human approval gate.
+        self.assertIn("APPROVED_FOR_ACTIVATION", got)
+        # Bootstrap-not-activation explicit callout.
+        self.assertIn(
+            "Bootstrap is distinct from first-phase activation",
+            got,
+        )
+        # Operator-facing surface names the resolved target path
+        # and attach record so the operator can locate them
+        # without leaving the desktop.
+        self.assertIn("/tmp/new-project", got)
+        self.assertIn("attach-record.json", got)
+
+    def test_success_message_refuses_missing_target_path(
+        self,
+    ) -> None:
+        for bad in (None, "", "   ", 42):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._primary_desktop_format_post_bootstrap_success(
+                        target_path=bad,  # type: ignore[arg-type]
+                        attach_record_name="attach-record.json",
+                    )
+                )
+
+    def test_success_message_refuses_missing_record_name(
+        self,
+    ) -> None:
+        for bad in (None, "", "   ", 42):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._primary_desktop_format_post_bootstrap_success(
+                        target_path="/tmp/new-project",
+                        attach_record_name=(
+                            bad  # type: ignore[arg-type]
+                        ),
+                    )
+                )
+
+    def test_success_message_strips_whitespace(self) -> None:
+        # Leading / trailing whitespace on the inputs MUST NOT
+        # bleed into the surfaced message.
+        got = (
+            agent_loop
+            ._primary_desktop_format_post_bootstrap_success(
+                target_path="  /tmp/new-project  ",
+                attach_record_name="  attach-record.json  ",
+            )
+        )
+        self.assertIn("/tmp/new-project.", got)
+        self.assertIn("attach-record.json.", got)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,3 +1,3 @@
 # Current Phase
 
-Fix Phase B - Desktop Empty-Target Bootstrap Flow (sub-phase: Fix Phase B2 - Desktop Bootstrap Form And Validation)
+Phase 10 - Future Product Features (sub-phase: Phase 10AF - Desktop Codex Conversation And Intervention Contract)

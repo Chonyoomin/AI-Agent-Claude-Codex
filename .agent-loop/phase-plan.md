@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Fix Phase B - Desktop Empty-Target Bootstrap Flow (sub-phase: Fix Phase B2 - Desktop Bootstrap Form And Validation)
+Phase 10 - Future Product Features (sub-phase: Phase 10AF - Desktop Codex Conversation And Intervention Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5792,6 +5792,90 @@ active Claude task context under the shipped Phase 10AB/10AC rules.
 - no change to `scripts/run_checks.sh`
 - no Git automation
 
+## Phase 10AF - Desktop Codex Conversation And Intervention Contract
+
+### Status
+
+Active.
+
+### Objective
+
+Define how the desktop app may expose a bounded in-app conversation and
+intervention surface to Codex so the operator can ask for reviews, fix
+routing, roadmap changes, or targeted Codex-owned repo changes without
+bypassing canonical artifacts, ownership rules, review evidence, or shipped
+approval/audit boundaries.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
+- the repository defines the bounded request/response contract for desktop
+  operator-to-Codex interaction
+- the contract distinguishes advisory desktop request composition from
+  canonical artifact mutation and preserves the shipped ownership model
+- the contract defines in-scope operator intents such as reviews, owner
+  classification, roadmap/task-state changes, and targeted Codex-owned changes
+- the contract defines refusal cases, approval boundaries, and audit
+  expectations for the future runtime slice
+- the contract keeps the desktop surface canonical-artifact-first and does not
+  invent a hidden UI-only request/reply state plane
+- `README.md` reflects that `Phase 10AF` is active if current implementation
+  focus text changes
+
+### Exclusions
+
+- no implementation of the actual desktop Codex conversation runtime; that is
+  deferred to `Phase 10AG`
+- no hidden UI-only request queue, reply cache, desktop-side task state, or
+  Codex-side state plane outside canonical artifacts
+- no weakening of ownership boundaries, evidence review, approval gating,
+  overlap-safe detection, or canonical-artifact-first behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 10AF - Desktop Codex Conversation And Intervention Contract
+
+### Status
+
+Active.
+
+### Objective
+
+Define how the desktop app may expose a bounded in-app conversation and
+intervention surface to Codex so the operator can ask for reviews, fix
+routing, roadmap changes, or targeted Codex-owned repo changes without
+bypassing canonical artifacts, ownership rules, review evidence, or shipped
+approval/audit boundaries.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
+- the repository defines the bounded request/response contract for desktop
+  operator-to-Codex interaction
+- the contract distinguishes advisory desktop request composition from
+  canonical artifact mutation and preserves the shipped ownership model
+- the contract defines in-scope operator intents such as reviews, owner
+  classification, roadmap/task-state changes, and targeted Codex-owned changes
+- the contract defines refusal cases, approval boundaries, and audit
+  expectations for the future runtime slice
+- the contract keeps the desktop surface canonical-artifact-first and does not
+  invent a hidden UI-only request/reply state plane
+- `README.md` reflects that `Phase 10AF` is active if current implementation
+  focus text changes
+
+### Exclusions
+
+- no implementation of the actual desktop Codex conversation runtime; that is
+  deferred to `Phase 10AG`
+- no hidden UI-only request queue, reply cache, desktop-side task state, or
+  Codex-side state plane outside canonical artifacts
+- no weakening of ownership boundaries, evidence review, approval gating,
+  overlap-safe detection, or canonical-artifact-first behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
 ## Phase 10AE - Framework Evaluation Beyond The Native Loop
 
 ### Status
@@ -5893,12 +5977,11 @@ second source of truth.
 
 ### Status
 
-Active. Fix Phase B2 is the current implementation focus after Fix Phase B1
-closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` and the human
-approved the advance. Fix Phase B2 scope is a bounded desktop form-and-
-validation slice: add the explicit required-field capture and fail-closed
-validation surface for empty-target project bootstrap without yet reintroducing
-desktop-side bootstrap dispatch.
+Complete and approved by human to advance to Fix Phase B3. Fix Phase B2 closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded desktop
+bootstrap form/validation layer, closed refusal-category classifier, typed
+context preservation, and repo-facing documentation alignment were verified in
+the current repo state.
 
 ### Objective
 
@@ -5934,6 +6017,62 @@ attach/bootstrap runtime contract.
 - no hidden defaults for `attached_by`, `bootstrapped_by`, `human_objective`,
   or `project_intent`
 - no post-bootstrap activation/start flow or first-phase execution
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no claim that fully autonomous PRD-to-product execution is already solved
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no change to the Phase 2A Evidence Collection Contract
+- no change to the Phase 3A Orchestrator Contract body
+- no change to the Phase 4A Planning Contract body
+- no change to `scripts/run_checks.sh`
+- no Git automation
+
+## Fix Phase B3 - Desktop Bootstrap Dispatch And Post-Bootstrap Handoff
+
+### Status
+
+Complete and approved by human as the final Fix Phase B remediation slice. Fix
+Phase B3 closed with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the
+desktop bootstrap dialog was wired into the shipped bootstrap runtime, the
+attached-target refresh path landed, and the explicit post-bootstrap next-step
+handoff was verified in the current repo state.
+
+### Objective
+
+Wire the validated desktop bootstrap form into the shipped
+`attach-external-target --bootstrap` runtime path, refresh the attached-target
+view after success, and surface the first explicit post-bootstrap next-step
+guidance without introducing a second bootstrap runtime or hidden desktop-only
+state plane.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify Fix Phase B / B3 as active
+- the repository dispatches validated desktop bootstrap input through the
+  shipped `attach-external-target --bootstrap` runtime path rather than a
+  second hidden bootstrap implementation
+- the desktop flow surfaces explicit success/refusal state for the bootstrap
+  attempt and refreshes the attached-target view after a successful bootstrap
+- the desktop surface makes the first post-bootstrap next-step guidance
+  explicit, including that the target is attached/initialized but still awaits
+  first activation
+- the implementation preserves approval gating, evidence review,
+  external-workspace boundaries, desktop/UI boundaries, and the
+  canonical-artifact-first model instead of introducing hidden automation,
+  silent mutation, or a second desktop-only bootstrap state plane
+- focused validation proves the bounded dispatch/handoff surface is explicit,
+  auditable, and still routes through the shipped runtime and artifact model
+- `README.md` reflects that Fix Phase B3 is active and that desktop bootstrap
+  dispatch/post-bootstrap handoff work is now the implementation focus
+
+### Exclusions
+
+- no first-phase activation/start flow that bypasses the shipped Phase 4C
+  activator + human approval contract
+- no second hidden bootstrap runtime or UI-only canonical state plane
+- no hidden defaults for `attached_by`, `bootstrapped_by`, `human_objective`,
+  or `project_intent`
 - no automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - no claim that fully autonomous PRD-to-product execution is already solved
