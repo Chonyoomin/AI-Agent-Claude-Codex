@@ -24,7 +24,7 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10AF - Desktop Codex Conversation And Intervention Contract
+Phase 10AG - Desktop Codex Conversation Surface Initial Slice
 
 ## Phase Status
 
@@ -32,36 +32,33 @@ Active and ready for implementation.
 
 ## Active Task
 
-Define the bounded desktop-side contract for an in-app Codex conversation and
-intervention surface so the operator can ask Codex for reviews, fix routing,
-roadmap changes, and targeted repo changes from the desktop app without
-bypassing canonical artifacts, ownership rules, review evidence, or the
-shipped approval and audit boundaries.
+Implement the first bounded desktop-side Codex interaction surface so the
+operator can compose an in-app Codex request, inspect Codex response mirrors,
+and route approved Codex-owned actions through the shipped adapter/artifact
+model instead of separate chat windows.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
-- `.agent-loop/phase-plan.md` records `Phase 10AF` as the active phase section
+  `.agent-loop/loop-state.json` identify `Phase 10AG` as the active sub-phase
+- `.agent-loop/phase-plan.md` records `Phase 10AG` as the active phase section
   and preserves prior phases as closed history
 - `.agent-loop/claude-prompt.md` contains a scoped implementation prompt for
-  the `Phase 10AF` contract slice
+  the `Phase 10AG` runtime slice
 
 ## Next-Phase Gate
 
 Do not mark this phase complete until:
 
-- the bounded Codex conversation/intervention contract is defined in repo
-  artifacts
-- the contract preserves canonical-artifact-first routing and ownership
-  boundaries
-- implementation/runtime work for the actual desktop interaction surface
-  remains deferred to a later slice
+- the first bounded desktop Codex interaction surface ships and is operator-
+  usable
+- the runtime preserves Phase 10AF canonical-artifact-first routing,
+  ownership, refusal, and audit boundaries
+- the implementation stays bounded rather than widening into an autonomous
+  desktop chat/orchestrator model
 
 ## Out Of Scope For Current Phase
 
-- implementing the actual desktop Codex conversation runtime that belongs to
-  `Phase 10AG`
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`

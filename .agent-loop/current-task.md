@@ -4,23 +4,21 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10AF - Desktop Codex Conversation And Intervention Contract
+Phase 10AG - Desktop Codex Conversation Surface Initial Slice
 
 ## Status
 Active and ready for implementation.
 
 ## Task
-Define the bounded desktop-side contract for an in-app Codex conversation and
-intervention surface so the operator can ask Codex for reviews, fix routing,
-roadmap changes, and targeted repo changes from the desktop app without
-bypassing canonical artifacts, ownership rules, review evidence, or the
-shipped approval and audit boundaries.
+Implement the first bounded desktop-side Codex interaction surface so the
+operator can compose an in-app Codex request, inspect Codex response mirrors,
+and route approved Codex-owned actions through the shipped adapter/artifact
+model instead of separate chat windows.
 
 ## Notes
 
-- this is a contract-definition slice, not the first desktop runtime for the
-  Codex conversation surface
+- this is the first runtime slice for the desktop Codex conversation surface
 - the shipped desktop app must remain canonical-artifact-first; this phase must
-  not invent a hidden UI-only state plane for Codex requests or replies
-- future implementation work for the actual desktop interaction panel is
-  tracked in `Phase 10AG`
+  not invent a hidden UI-only request/reply state plane
+- preserve the Phase 10AF closed intent vocabulary, refusal vocabulary, audit
+  expectations, and adapter routing rules

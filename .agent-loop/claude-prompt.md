@@ -1,77 +1,69 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AF - Desktop Codex Conversation And Intervention Contract
+Phase 10AG - Desktop Codex Conversation Surface Initial Slice
 
 ## Objective
-Define the bounded contract for an in-app desktop surface that lets the
-operator communicate with Codex for reviews, fix routing, roadmap changes, and
-targeted repo changes without bypassing canonical artifacts, ownership rules,
-review evidence, or shipped approval/audit boundaries.
+Implement the first bounded desktop-side Codex interaction surface so the
+operator can compose an in-app Codex request, inspect Codex response mirrors,
+and route approved Codex-owned actions through the shipped adapter/artifact
+model instead of separate chat windows.
 
 ## Context
-`Phase 10AF` is now the active mainline slice. The repo already ships a
-desktop app shell, action bridges, artifact/status dashboards, MCP/RAG
-selection surfaces, controlled-concurrency rules, overlap-safe detection, and
-a bounded Codex-owned concurrent-work slice. What does NOT yet exist is the
-contract for how the desktop app should expose an operator-to-Codex request
-surface without inventing a hidden second control plane.
+`Phase 10AG` is now the active mainline slice. `Phase 10AF` defined the
+desktop Codex conversation contract: closed intent vocabulary, refusal
+vocabulary, canonical routing rules, advisory-vs-canonical mirrors, and
+approval/audit boundaries. This slice is the first runtime that materializes
+that contract into the shipped desktop app.
 
-This phase is contract-definition first. It should establish the request
-types, artifact routing, safety boundaries, canonical-vs-advisory state rules,
-approval boundaries, refusal cases, and desktop-surface expectations for a
-future implementation slice (`Phase 10AG`).
+The implementation must stay bounded. It should expose a real desktop-side
+interaction surface, but it must not widen into an autonomous chat runtime, a
+hidden queue/cache, a second orchestrator, or direct desktop-side canonical
+writes outside the shipped adapter/artifact model.
 
 Work against the actual repo state. Do not rely on prior chat context.
 
 ## Required work
-- add the bounded `Phase 10AF` contract artifact(s) for desktop Codex
-  conversation and intervention
-- define which operator intents are in scope, such as:
-  - ask Codex for a review
-  - ask Codex to classify issues by owner
-  - ask Codex to update roadmap/planning artifacts
-  - ask Codex for targeted Codex-owned repo changes
-- define how desktop-side requests map back to canonical artifacts rather than
-  becoming a hidden UI-only request/reply store
-- define how the surface distinguishes:
-  - advisory request composition
-  - canonical artifact mutation
-  - Claude-owned follow-up versus Codex-owned follow-up
-- define the safety, refusal, approval, and audit boundaries the future runtime
-  must preserve
-- add or update focused tests covering README/doc consistency for the new
-  contract
-- update `README.md` if the documented current implementation focus changes
+- implement the first bounded desktop Codex conversation surface in the shipped
+  desktop app
+- allow the operator to compose in-app Codex requests aligned to the Phase 10AF
+  closed request vocabulary
+- surface Codex responses in a bounded way as advisory/canonical mirrors
+  consistent with the Phase 10AF contract
+- route approved Codex-owned actions through the shipped adapter/artifact model
+  instead of direct hidden desktop mutation
+- preserve refusal behavior, approval gates, overlap-safe boundaries, audit
+  expectations, and canonical-artifact-first behavior
+- add or update focused tests for the new desktop surface
+- update `README.md` if the current implementation focus or shipped operator
+  behavior changes
 
 ## Constraints
 - Follow `CLAUDE.md`.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Keep this slice contract-only unless a tiny bounded runtime helper is
-  necessary for testable documentation alignment.
-- Do not implement the actual desktop chat/runtime panel that belongs to
-  `Phase 10AG`.
-- Do not create a hidden UI-only request queue, reply cache, or operator state
-  plane outside canonical artifacts.
-- Do not weaken ownership boundaries, evidence review, approval gating,
-  overlap-safe rules, or canonical-artifact-first behavior.
+- Do not invent a hidden UI-only request queue, reply cache, session state
+  plane, or background chat driver.
+- Do not implement a networked Codex server, WebSocket, SSE stream, or MCP-side
+  "codex chat" endpoint.
+- Do not bypass the shipped ownership model, evidence review flow, approval
+  gates, or adapter boundaries.
+- Prefer small, testable, reversible changes.
 
 ## Important guardrails
-- Codex conversation from the desktop app must remain a routing surface over
-  the shipped artifact model, not a separate autonomous orchestrator.
-- Any operator request that would change canonical artifacts must still route
-  through the same explicit ownership model already used elsewhere in the repo.
-- Claude-owned implementation work must still become a prompt/fix-prompt style
-  handoff rather than a direct hidden desktop-side mutation.
-- Future desktop responses may be advisory mirrors, but the contract must make
-  clear which artifacts remain canonical.
+- The desktop Codex surface is a routing layer over the shipped artifacts and
+  adapters, not a separate autonomous control plane.
+- Claude-owned follow-up must still become prompt/fix-prompt handoff, not a
+  hidden direct mutation path.
+- Orchestrator-owned targets must still refuse fail-closed.
+- Keep the surface operator-usable, but bounded.
 
 ## Likely files
-- `README.md`
-- `docs/` new contract file(s)
+- `scripts/agent_loop.py`
+- `tests/test_desktop_app.py`
 - `tests/test_documentation_consistency.py`
-- any desktop-contract consistency tests already present in the repo
+- `README.md`
+- `docs/desktop-codex-conversation-contract.md`
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required

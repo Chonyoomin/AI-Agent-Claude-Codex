@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AF - Desktop Codex Conversation And Intervention Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10AG - Desktop Codex Conversation Surface Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5852,39 +5852,45 @@ runtimes without rewriting the shipped Codex/Claude ownership model.
 
 ### Status
 
+Complete and approved by human to advance to Phase 10AG. Phase 10AF closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded desktop
+Codex conversation contract, closed intent/refusal vocabularies, canonical
+routing rules, and focused validation were verified in the current repo state.
+
+## Phase 10AG - Desktop Codex Conversation Surface Initial Slice
+
+### Status
+
 Active.
 
 ### Objective
 
-Define how the desktop app may expose a bounded in-app conversation and
-intervention surface to Codex so the operator can ask for reviews, fix
-routing, roadmap changes, or targeted Codex-owned repo changes without
-bypassing canonical artifacts, ownership rules, review evidence, or shipped
-approval/audit boundaries.
+Implement the first bounded desktop-side Codex interaction surface so the
+operator can compose an in-app Codex request, inspect Codex response mirrors,
+and route approved Codex-owned actions through the shipped adapter/artifact
+model instead of separate chat windows.
 
 ### Done Criteria
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify `Phase 10AF` as the active sub-phase
-- the repository defines the bounded request/response contract for desktop
-  operator-to-Codex interaction
-- the contract distinguishes advisory desktop request composition from
-  canonical artifact mutation and preserves the shipped ownership model
-- the contract defines in-scope operator intents such as reviews, owner
-  classification, roadmap/task-state changes, and targeted Codex-owned changes
-- the contract defines refusal cases, approval boundaries, and audit
-  expectations for the future runtime slice
-- the contract keeps the desktop surface canonical-artifact-first and does not
-  invent a hidden UI-only request/reply state plane
-- `README.md` reflects that `Phase 10AF` is active if current implementation
-  focus text changes
+  `.agent-loop/loop-state.json` identify `Phase 10AG` as the active sub-phase
+- the desktop app exposes the first bounded Codex interaction panel or controls
+  aligned to the Phase 10AF contract
+- the operator can compose at least the shipped closed request vocabulary
+  through the desktop surface without inventing a hidden UI-only state plane
+- Codex responses are surfaced as advisory or canonical mirrors consistent with
+  the Phase 10AF contract
+- approved Codex-owned actions route through the shipped adapter/artifact model
+  rather than direct hidden desktop mutation
+- the implementation preserves refusal, audit, approval, ownership, and
+  overlap-safe boundaries from the shipped contracts
 
 ### Exclusions
 
-- no implementation of the actual desktop Codex conversation runtime; that is
-  deferred to `Phase 10AG`
-- no hidden UI-only request queue, reply cache, desktop-side task state, or
-  Codex-side state plane outside canonical artifacts
+- no autonomous desktop chat/orchestrator loop
+- no hidden UI-only request queue, reply cache, or desktop-side task state
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
 - no weakening of ownership boundaries, evidence review, approval gating,
   overlap-safe detection, or canonical-artifact-first behavior
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
