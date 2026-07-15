@@ -16337,6 +16337,227 @@ def _launch_desktop_app_window(
     )
     advanced_toggle_button.pack(fill=tk.X, padx=4, pady=(0, 8))
 
+    # Phase 10AG: bounded Codex conversation panel. Materialises
+    # the shipped Phase 10AF contract: closed six-intent
+    # Combobox + operator-identity Entry + message-body Text +
+    # Send button. Only `request_codex_review` has a shipped
+    # dispatch path in this initial slice (subprocess of the
+    # shipped `resume` subcommand); the other five intents are
+    # recognised by the classifier but refused at dispatch time.
+    # Advisory drafts are held ONLY in-memory in this Tk surface;
+    # NEVER persisted, NEVER carried across sessions. Canonical
+    # responses surface as READ-ONLY mirrors of the per-intent
+    # primary target artifact with `[canonical mirror]`
+    # attribution matching the shipped Phase 10K / 10L
+    # convention. On refusal the panel surfaces the classifier /
+    # dispatch reason and keeps typed operator context for retry.
+    codex_conversation_frame = tk.Frame(control_frame)
+    codex_conversation_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(codex_conversation_frame)
+    tk.Label(
+        codex_conversation_frame,
+        text="Codex Conversation (Phase 10AG)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
+    tk.Label(
+        codex_conversation_frame,
+        text="Intent (Phase 10AF closed vocabulary):",
+        anchor=tk.W, justify=tk.LEFT,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    codex_conversation_intent_var = tk.StringVar(
+        value=(
+            DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW
+        ),
+    )
+    codex_conversation_intent_combo = _ttk.Combobox(
+        codex_conversation_frame,
+        textvariable=codex_conversation_intent_var,
+        values=list(DESKTOP_CODEX_CONVERSATION_INTENT_IDS),
+        state="readonly",
+    )
+    codex_conversation_intent_combo.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    tk.Label(
+        codex_conversation_frame,
+        text=(
+            "Operator identity (typed per invocation; NEVER "
+            "auto-filled from OS state):"
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=320,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    codex_conversation_identity_var = tk.StringVar(value="")
+    codex_conversation_identity_entry = tk.Entry(
+        codex_conversation_frame,
+        textvariable=codex_conversation_identity_var,
+    )
+    codex_conversation_identity_entry.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    tk.Label(
+        codex_conversation_frame,
+        text=(
+            "Message body (advisory in-memory draft; NEVER "
+            "persisted, NEVER carried across sessions):"
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=320,
+    ).pack(anchor=tk.NW, padx=4, pady=(2, 0))
+    codex_conversation_message = tk.Text(
+        codex_conversation_frame,
+        height=4,
+        wrap=tk.WORD,
+    )
+    codex_conversation_message.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    codex_conversation_status = tk.Label(
+        codex_conversation_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=320,
+        fg="#a94442",
+    )
+    codex_conversation_status.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    codex_conversation_mirror_label = tk.Label(
+        codex_conversation_frame,
+        text=(
+            "[canonical mirror] "
+            + DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP[
+                DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW
+            ]
+            + " (read-only; refreshes per poll):"
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=320,
+    )
+    codex_conversation_mirror_label.pack(
+        anchor=tk.NW, padx=4, pady=(4, 0),
+    )
+    codex_conversation_mirror = tk.Text(
+        codex_conversation_frame,
+        height=6,
+        wrap=tk.WORD,
+    )
+    codex_conversation_mirror.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    codex_conversation_mirror.configure(state=tk.DISABLED)
+
+    codex_conversation_popen_holder: list = [None]
+
+    def _refresh_codex_conversation_mirror() -> None:
+        intent = codex_conversation_intent_var.get()
+        mirror = (
+            _desktop_codex_conversation_read_canonical_response_mirror(
+                controller_root, intent,
+            )
+        )
+        target_path = mirror.get("target_artifact") or ""
+        codex_conversation_mirror_label.config(
+            text=(
+                f"[canonical mirror] {target_path} "
+                f"(read-only; refreshes per poll):"
+            ),
+        )
+        codex_conversation_mirror.configure(state=tk.NORMAL)
+        codex_conversation_mirror.delete("1.0", tk.END)
+        if mirror.get("present") and mirror.get("mirror_text"):
+            codex_conversation_mirror.insert(
+                "1.0", mirror["mirror_text"],
+            )
+        else:
+            err = mirror.get("error") or "(no on-disk mirror yet)"
+            codex_conversation_mirror.insert("1.0", err)
+        codex_conversation_mirror.configure(state=tk.DISABLED)
+
+    def _on_codex_conversation_intent_changed(_event=None) -> None:
+        _refresh_codex_conversation_mirror()
+
+    codex_conversation_intent_combo.bind(
+        "<<ComboboxSelected>>",
+        _on_codex_conversation_intent_changed,
+    )
+
+    def _send_codex_conversation_click() -> None:
+        intent = codex_conversation_intent_var.get()
+        identity = codex_conversation_identity_var.get()
+        body = codex_conversation_message.get("1.0", tk.END)
+        current = codex_conversation_popen_holder[0]
+        in_flight = (
+            current is not None and current.poll() is None
+        )
+        refusal = (
+            _desktop_codex_conversation_classify_request(
+                intent_id=intent,
+                operator_identity=identity,
+                message_body=body,
+                in_flight=in_flight,
+                overlap_state="no_signal",
+                strict_mode_gate_pending=False,
+            )
+        )
+        if refusal is not None:
+            codex_conversation_status.config(
+                text=refusal["reason"], fg="#a94442",
+            )
+            return
+        try:
+            _desktop_codex_conversation_format_request(
+                intent_id=intent,
+                operator_identity=identity,
+                message_body=body,
+            )
+        except HaltError as halt:
+            codex_conversation_status.config(
+                text=halt.reason, fg="#a94442",
+            )
+            return
+        try:
+            cmd = (
+                _desktop_codex_conversation_build_dispatch_command(
+                    intent_id=intent,
+                    controller_root=controller_root,
+                )
+            )
+        except HaltError as halt:
+            codex_conversation_status.config(
+                text=halt.reason, fg="#a94442",
+            )
+            return
+        try:
+            proc = subprocess.Popen(
+                cmd, cwd=str(controller_root),
+            )
+        except OSError as exc:
+            codex_conversation_status.config(
+                text=(
+                    f"Codex conversation dispatch refused: "
+                    f"could not spawn subprocess ({exc!r})"
+                ),
+                fg="#a94442",
+            )
+            return
+        codex_conversation_popen_holder[0] = proc
+        codex_conversation_status.config(
+            text=(
+                f"Codex conversation dispatched (PID "
+                f"{proc.pid}); mirror refreshes on next poll. "
+                f"Advisory draft NOT persisted."
+            ),
+            fg="#31708f",
+        )
+        _refresh_codex_conversation_mirror()
+
+    codex_conversation_send_button = tk.Button(
+        codex_conversation_frame,
+        text="Send Codex request",
+        command=_send_codex_conversation_click,
+    )
+    codex_conversation_send_button.pack(
+        fill=tk.X, padx=4, pady=(0, 8),
+    )
+    _refresh_codex_conversation_mirror()
+
     run_profiles_frame = tk.Frame(control_frame)
     run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
     advanced_frames_holder.append(run_profiles_frame)
@@ -16652,6 +16873,11 @@ def _launch_desktop_app_window(
                 )
             ),
         )
+        # Phase 10AG: refresh the Codex conversation canonical
+        # mirror so the operator sees a fresh view of the
+        # per-intent primary target artifact if the shipped
+        # adapter has written between polls.
+        _refresh_codex_conversation_mirror()
         view = assemble_desktop_app_view(controller_root)
         summary = _desktop_native_summary_payload(view)
         summary_header.config(text=summary["window_title"])
@@ -35636,6 +35862,548 @@ def evaluate_framework_runtime_availability(
             "NOT swap in any framework runtime."
         ),
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AG: Desktop Codex Conversation Surface Initial Slice.
+#
+# First bounded runtime that materialises the shipped Phase 10AF
+# desktop-codex-conversation contract into the shipped desktop app.
+# The runtime is intentionally minimal: it ships the closed intent
+# vocabulary + closed refusal vocabulary + pure classifier + pure
+# request/response formatters + pure dispatch-command builder for
+# ONE shipped intent (`request_codex_review`, which routes through
+# the existing `resume` subcommand -> shipped Codex adapter).
+#
+# NON-goals for this initial slice (per the Phase 10AF contract's
+# Out Of Scope section):
+#   - autonomous chat driver / background chat loop
+#   - hidden UI-only request queue / reply cache / session state store
+#   - networked Codex server / WebSocket / SSE / MCP-side chat endpoint
+#   - new canonical artifact (the shipped canonical set is preserved)
+#   - direct desktop-side canonical writes (every canonical write
+#     routes through the shipped `AGENT_LOOP_CODEX_CMD` local adapter
+#     via the shipped `resume` subcommand)
+#   - dispatch for the other five shipped intents (deferred to a
+#     later slice; the pure classifier + formatters already accept
+#     all six intents so the Tk panel can present them, but the
+#     dispatch-command builder refuses fail-closed on any intent
+#     other than `request_codex_review`)
+# ---------------------------------------------------------------------------
+
+DESKTOP_CODEX_CONVERSATION_SIGNAL_VERSION = "phase-10ag-v1"
+
+# Closed six-intent operator vocabulary matching the Phase 10AF
+# contract's `In-Scope Operator Intent Vocabulary` section verbatim.
+# The desktop panel MUST refuse fail-closed on any intent outside
+# this closed set.
+DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW = (
+    "request_codex_review"
+)
+DESKTOP_CODEX_CONVERSATION_INTENT_ISSUE_CLASSIFICATION = (
+    "request_codex_issue_classification"
+)
+DESKTOP_CODEX_CONVERSATION_INTENT_ROADMAP_UPDATE = (
+    "request_codex_roadmap_update"
+)
+DESKTOP_CODEX_CONVERSATION_INTENT_TARGETED_REPO_CHANGE = (
+    "request_codex_targeted_repo_change"
+)
+DESKTOP_CODEX_CONVERSATION_INTENT_CLAUDE_PROMPT_AUTHORSHIP = (
+    "request_codex_claude_prompt_authorship"
+)
+DESKTOP_CODEX_CONVERSATION_INTENT_FIX_PROMPT_AUTHORSHIP = (
+    "request_codex_fix_prompt_authorship"
+)
+DESKTOP_CODEX_CONVERSATION_INTENT_IDS = (
+    DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW,
+    DESKTOP_CODEX_CONVERSATION_INTENT_ISSUE_CLASSIFICATION,
+    DESKTOP_CODEX_CONVERSATION_INTENT_ROADMAP_UPDATE,
+    DESKTOP_CODEX_CONVERSATION_INTENT_TARGETED_REPO_CHANGE,
+    DESKTOP_CODEX_CONVERSATION_INTENT_CLAUDE_PROMPT_AUTHORSHIP,
+    DESKTOP_CODEX_CONVERSATION_INTENT_FIX_PROMPT_AUTHORSHIP,
+)
+
+# Closed eight-category refusal vocabulary matching the Phase 10AF
+# contract's `Refusal Behavior` section verbatim.
+DESKTOP_CODEX_CONVERSATION_REFUSAL_INTENT_OUTSIDE_VOCAB = (
+    "refused_intent_outside_closed_vocabulary"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_ORCHESTRATOR_OWNED = (
+    "refused_orchestrator_owned_target"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_CLAUDE_OWNED = (
+    "refused_claude_owned_target"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_OVERLAP_UNSAFE = (
+    "refused_overlap_unsafe"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_STRICT_MODE_GATE = (
+    "refused_strict_mode_gate"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_AUTO_FILL_IDENTITY = (
+    "refused_auto_fill_operator_identity"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_IN_FLIGHT_INVOCATION = (
+    "refused_in_flight_codex_invocation"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_ADVISORY_PERSISTENCE = (
+    "refused_advisory_persistence"
+)
+DESKTOP_CODEX_CONVERSATION_REFUSAL_CATEGORIES = (
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_INTENT_OUTSIDE_VOCAB,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_ORCHESTRATOR_OWNED,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_CLAUDE_OWNED,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_OVERLAP_UNSAFE,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_STRICT_MODE_GATE,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_AUTO_FILL_IDENTITY,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_IN_FLIGHT_INVOCATION,
+    DESKTOP_CODEX_CONVERSATION_REFUSAL_ADVISORY_PERSISTENCE,
+)
+
+# Per-intent primary canonical artifact target (advisory routing
+# map matching the Phase 10AF contract's `Routing To Canonical
+# Artifacts` section). All paths are controller-relative.
+DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP = {
+    DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW: (
+        ".agent-loop/codex-review.md"
+    ),
+    DESKTOP_CODEX_CONVERSATION_INTENT_ISSUE_CLASSIFICATION: (
+        ".agent-loop/codex-review.md"
+    ),
+    DESKTOP_CODEX_CONVERSATION_INTENT_ROADMAP_UPDATE: (
+        ".agent-loop/phase-plan.md"
+    ),
+    DESKTOP_CODEX_CONVERSATION_INTENT_TARGETED_REPO_CHANGE: (
+        ".agent-loop/codex-review.md"
+    ),
+    DESKTOP_CODEX_CONVERSATION_INTENT_CLAUDE_PROMPT_AUTHORSHIP: (
+        ".agent-loop/claude-prompt.md"
+    ),
+    DESKTOP_CODEX_CONVERSATION_INTENT_FIX_PROMPT_AUTHORSHIP: (
+        ".agent-loop/fix-prompt.md"
+    ),
+}
+
+# Attribution tags matching the Phase 10AF contract's
+# `Advisory-Vs-Canonical Mirror Rule` section. Every displayed
+# line in the desktop panel MUST carry one of these tags.
+DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR = (
+    "[canonical mirror]"
+)
+DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_ADVISORY = (
+    "[codex-conversation-advisory]"
+)
+
+
+def _desktop_codex_conversation_classify_request(
+    *,
+    intent_id,
+    operator_identity,
+    message_body,
+    in_flight,
+    overlap_state,
+    strict_mode_gate_pending,
+) -> Optional[dict]:
+    """Pure classifier: return `None` on a passing request, else a
+    dict `{intent_id, refusal_category, reason}` naming the first
+    refusal per the closed Phase 10AF refusal vocabulary. Tk-free
+    so unit tests exercise every branch without importing tkinter.
+
+    Refusal precedence (deterministic):
+      1. intent outside the closed vocabulary
+      2. operator identity missing / empty / whitespace / non-string
+         (`refused_auto_fill_operator_identity` per the shipped
+         no-auto-fill boundary)
+      3. message body missing / empty / whitespace / non-string
+         (`refused_advisory_persistence` because an empty advisory
+         draft would materialise into a canonical write with no
+         operator context)
+      4. shipped overlap-safe detection aggregate is
+         `refused_pending_recovery`
+      5. shipped Phase 5C strict-mode gate is pending
+      6. Codex invocation already in flight (serial-invocation
+         boundary)
+
+    The classifier does NOT resolve target-artifact owner_role
+    (which is done by the shipped Phase 10AB
+    `_DESKTOP_CONCURRENCY_OWNERSHIP_MAP` at dispatch time). The
+    per-intent primary target is derived from
+    `DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP` so a future
+    slice can layer per-target refusal on top without changing this
+    classifier.
+    """
+    if intent_id not in DESKTOP_CODEX_CONVERSATION_INTENT_IDS:
+        return {
+            "intent_id": intent_id,
+            "refusal_category": (
+                DESKTOP_CODEX_CONVERSATION_REFUSAL_INTENT_OUTSIDE_VOCAB
+            ),
+            "reason": (
+                f"desktop codex conversation refused: intent "
+                f"{intent_id!r} is not in the shipped closed "
+                f"Phase 10AF vocabulary "
+                f"{DESKTOP_CODEX_CONVERSATION_INTENT_IDS!r}"
+            ),
+        }
+    if (
+        not isinstance(operator_identity, str)
+        or not operator_identity.strip()
+    ):
+        return {
+            "intent_id": intent_id,
+            "refusal_category": (
+                DESKTOP_CODEX_CONVERSATION_REFUSAL_AUTO_FILL_IDENTITY
+            ),
+            "reason": (
+                f"desktop codex conversation refused: operator "
+                f"identity must be operator-supplied per "
+                f"invocation (no auto-fill from OS state, "
+                f"environment variables, browser session, or "
+                f"packaging-time identity), got "
+                f"{operator_identity!r}"
+            ),
+        }
+    if (
+        not isinstance(message_body, str)
+        or not message_body.strip()
+    ):
+        return {
+            "intent_id": intent_id,
+            "refusal_category": (
+                DESKTOP_CODEX_CONVERSATION_REFUSAL_ADVISORY_PERSISTENCE
+            ),
+            "reason": (
+                f"desktop codex conversation refused: message "
+                f"body is empty / whitespace-only; the shipped "
+                f"contract forbids materialising an empty draft "
+                f"into a canonical write"
+            ),
+        }
+    if overlap_state == "refused_pending_recovery":
+        return {
+            "intent_id": intent_id,
+            "refusal_category": (
+                DESKTOP_CODEX_CONVERSATION_REFUSAL_OVERLAP_UNSAFE
+            ),
+            "reason": (
+                "desktop codex conversation refused: shipped "
+                "Phase 10AC overlap-safe detection aggregate is "
+                "'refused_pending_recovery'; the shipped gate "
+                "fires first"
+            ),
+        }
+    if strict_mode_gate_pending:
+        return {
+            "intent_id": intent_id,
+            "refusal_category": (
+                DESKTOP_CODEX_CONVERSATION_REFUSAL_STRICT_MODE_GATE
+            ),
+            "reason": (
+                "desktop codex conversation refused: shipped "
+                "Phase 5C strict-mode gate is pending explicit "
+                "operator resume; the shipped gate fires first"
+            ),
+        }
+    if in_flight:
+        return {
+            "intent_id": intent_id,
+            "refusal_category": (
+                DESKTOP_CODEX_CONVERSATION_REFUSAL_IN_FLIGHT_INVOCATION
+            ),
+            "reason": (
+                "desktop codex conversation refused: a prior "
+                "Codex invocation is still in flight; the "
+                "shipped local-adapter contract requires serial "
+                "invocation. Wait for the prior invocation to "
+                "land in a canonical artifact and retry"
+            ),
+        }
+    return None
+
+
+def _desktop_codex_conversation_format_request(
+    *,
+    intent_id,
+    operator_identity,
+    message_body,
+) -> dict:
+    """Pure request formatter: return the shaped operator-composed
+    request payload the shipped adapter will read. NO canonical
+    write happens here; this only formats the in-memory payload the
+    Tk callback then hands to the dispatch-command builder. The
+    payload's `target_artifact` field is looked up from the closed
+    per-intent map so the desktop panel can display it without
+    hardcoding the mapping.
+
+    Refuses fail-closed via HaltError on any missing / empty /
+    non-string field so the caller sees the refusal before it
+    reaches the dispatch layer.
+    """
+    if intent_id not in DESKTOP_CODEX_CONVERSATION_INTENT_IDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex conversation refused: intent "
+                f"{intent_id!r} is not in the shipped closed "
+                f"Phase 10AF vocabulary "
+                f"{DESKTOP_CODEX_CONVERSATION_INTENT_IDS!r}"
+            ),
+        )
+    for field_name, field_value in (
+        ("operator_identity", operator_identity),
+        ("message_body", message_body),
+    ):
+        if (
+            not isinstance(field_value, str)
+            or not field_value.strip()
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop codex conversation refused: field "
+                    f"{field_name!r} must be a non-empty str, "
+                    f"got {field_value!r}"
+                ),
+            )
+    return {
+        "signal_version": (
+            DESKTOP_CODEX_CONVERSATION_SIGNAL_VERSION
+        ),
+        "intent_id": intent_id,
+        "operator_identity": operator_identity.strip(),
+        "message_body": message_body.strip(),
+        "target_artifact": (
+            DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP[intent_id]
+        ),
+        "attribution_tag": (
+            DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_ADVISORY
+        ),
+    }
+
+
+def _desktop_codex_conversation_read_canonical_response_mirror(
+    controller_root,
+    intent_id,
+) -> dict:
+    """Pure response-mirror reader: return the READ-ONLY canonical
+    mirror of the per-intent primary target artifact, or a bounded
+    dict describing why the mirror is empty. NO write, no
+    canonical mutation. The returned dict always carries the
+    canonical-mirror attribution tag so the Tk panel renders every
+    line with the shipped `[canonical mirror]` attribution
+    matching the Phase 10K / 10L convention.
+
+    Fail-safe on missing / unreadable file: returns `present=False`
+    with an explanatory `error` field rather than raising.
+    """
+    if intent_id not in DESKTOP_CODEX_CONVERSATION_INTENT_IDS:
+        return {
+            "intent_id": intent_id,
+            "present": False,
+            "mirror_text": "",
+            "attribution_tag": (
+                DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR
+            ),
+            "target_artifact": None,
+            "error": (
+                f"intent {intent_id!r} is not in the shipped "
+                f"closed Phase 10AF vocabulary"
+            ),
+        }
+    rel_path = (
+        DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP[intent_id]
+    )
+    try:
+        controller_path = Path(controller_root)
+    except TypeError:
+        return {
+            "intent_id": intent_id,
+            "present": False,
+            "mirror_text": "",
+            "attribution_tag": (
+                DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR
+            ),
+            "target_artifact": rel_path,
+            "error": (
+                f"controller_root must be a Path-like object, "
+                f"got {controller_root!r}"
+            ),
+        }
+    target_path = controller_path / rel_path
+    if not target_path.exists():
+        return {
+            "intent_id": intent_id,
+            "present": False,
+            "mirror_text": "",
+            "attribution_tag": (
+                DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR
+            ),
+            "target_artifact": rel_path,
+            "error": (
+                f"canonical target {rel_path!r} is not present "
+                f"on disk; run the shipped adapter to produce it"
+            ),
+        }
+    try:
+        text = target_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return {
+            "intent_id": intent_id,
+            "present": True,
+            "mirror_text": "",
+            "attribution_tag": (
+                DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR
+            ),
+            "target_artifact": rel_path,
+            "error": (
+                f"canonical target {rel_path!r} is present but "
+                f"unreadable ({exc!r})"
+            ),
+        }
+    return {
+        "intent_id": intent_id,
+        "present": True,
+        "mirror_text": text,
+        "attribution_tag": (
+            DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR
+        ),
+        "target_artifact": rel_path,
+        "error": None,
+    }
+
+
+def _desktop_codex_conversation_build_dispatch_command(
+    *,
+    intent_id,
+    controller_root,
+) -> list:
+    """Pure dispatch-command builder: return the subprocess argv
+    the Tk callback spawns for the given intent. This slice only
+    ships a dispatch path for `request_codex_review`, which routes
+    through the shipped `resume` subcommand -> shipped Codex
+    adapter (matching the existing "Code Review" primary button
+    pattern; see `_primary_desktop_build_code_review_command`).
+
+    Every other shipped intent in the closed vocabulary is
+    RECOGNISED (so the panel accepts composition + validation)
+    but REFUSED at dispatch time with a HaltError that names the
+    deferred-to-later-slice boundary. Any intent outside the
+    closed vocabulary is refused fail-closed with the same
+    refusal category the classifier uses.
+
+    Returns a list matching the shape of
+    `_primary_desktop_build_code_review_command(...)` /
+    `_primary_desktop_build_run_command(...)` so the Tk callback
+    can pass it verbatim to `subprocess.Popen(cmd,
+    cwd=controller_root)`.
+    """
+    if intent_id not in DESKTOP_CODEX_CONVERSATION_INTENT_IDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex conversation refused: intent "
+                f"{intent_id!r} is not in the shipped closed "
+                f"Phase 10AF vocabulary "
+                f"{DESKTOP_CODEX_CONVERSATION_INTENT_IDS!r}"
+            ),
+        )
+    if (
+        intent_id
+        != DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex conversation refused: intent "
+                f"{intent_id!r} is recognised by the shipped "
+                f"Phase 10AF closed vocabulary but does NOT yet "
+                f"have a shipped dispatch path in this Phase "
+                f"10AG initial slice. Only "
+                f"{DESKTOP_CODEX_CONVERSATION_INTENT_REVIEW!r} "
+                f"dispatches through the shipped `resume` "
+                f"subcommand in this slice. Author the request "
+                f"body per the Phase 10AF contract; a later "
+                f"slice will add the shipped dispatch path for "
+                f"this intent"
+            ),
+        )
+    return [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "resume",
+    ]
+
+
+def _desktop_codex_conversation_format_audit_line(
+    *,
+    intent_id,
+    operator_identity,
+    refusal_category=None,
+    epoch_seconds,
+) -> str:
+    """Pure audit-line formatter matching the shipped Phase 3A
+    orchestrator.log convention. The Tk callback appends the
+    returned line via the shipped audit-log writer; NEVER writes
+    a parallel audit file per the Phase 10AF Source-Of-Truth
+    Preservation rule.
+
+    Line shape:
+      `[desktop-codex-conversation] intent_id=<id>
+       operator_identity=<name> refusal_category=<cat|None>
+       epoch_seconds=<int>`
+    """
+    if not isinstance(intent_id, str) or not intent_id:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex conversation audit refused: "
+                f"intent_id must be a non-empty str, got "
+                f"{intent_id!r}"
+            ),
+        )
+    if (
+        not isinstance(operator_identity, str)
+        or not operator_identity.strip()
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex conversation audit refused: "
+                f"operator_identity must be a non-empty str, "
+                f"got {operator_identity!r}"
+            ),
+        )
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in DESKTOP_CODEX_CONVERSATION_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop codex conversation audit refused: "
+                    f"refusal_category {refusal_category!r} is "
+                    f"not in the shipped closed Phase 10AF "
+                    f"refusal vocabulary "
+                    f"{DESKTOP_CODEX_CONVERSATION_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop codex conversation audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-codex-conversation] intent_id="
+        f"{intent_id!r} operator_identity="
+        f"{operator_identity.strip()!r} refusal_category="
+        f"{refusal_category!r} epoch_seconds={epoch_seconds!r}"
+    )
 
 
 # ---------------------------------------------------------------------------
