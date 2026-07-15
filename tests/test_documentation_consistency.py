@@ -6241,6 +6241,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         # status-line summary but forgets to flip the per-phase
         # paragraph header.
         completed_sentinels = (
+            "Phase 10AG",
             "Phase 10AF",
             "Phase 10AE",
             "Fix Phase B2",
@@ -6587,6 +6588,162 @@ class Phase10AFDesktopCodexConversationContractTests(
             "Intervention Contract",
             self.phase_plan_text,
             "phase-plan.md MUST name Phase 10AF",
+        )
+
+
+class Phase10AHOrchestrationVisualizationContractTests(
+    unittest.TestCase,
+):
+    """Anchor test: the Phase 10AH contract file exists, is
+    well-formed, pins the closed visualization vocabulary, the
+    canonical-mirror-vs-advisory-derived-state rule, the closed
+    node / edge / status-icon model, and the closed refusal
+    vocabulary, and is linked from README + phase-plan.md.
+    Phase 10AI runtime is explicitly deferred; the contract MUST
+    say so.
+    """
+
+    _CONTRACT_PATH = (
+        REPO_ROOT / "docs"
+        / "desktop-orchestration-visualization-contract.md"
+    )
+
+    def setUp(self) -> None:
+        self.text = _read(self._CONTRACT_PATH)
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.phase_plan_text = _read(
+            REPO_ROOT / ".agent-loop" / "phase-plan.md",
+        )
+
+    def test_contract_file_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self._CONTRACT_PATH.exists(),
+            f"{self._CONTRACT_PATH!r} MUST exist",
+        )
+        self.assertGreater(len(self.text.strip()), 100)
+
+    def test_contract_carries_required_section_headers(
+        self,
+    ) -> None:
+        for section in (
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## In-Scope Visualization Vocabulary",
+            "## Canonical Mirror Vs Advisory Derived State",
+            "## Node / Edge / Status Model For The Future Graph View",
+            "## Refresh And Cadence",
+            "## Refusal Behavior",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Source-Of-Truth Preservation (No Hidden UI Store)",
+            "## Ownership Boundary Preservation",
+            "## Dependencies On Phase 10AI (Runtime Implementation)",
+            "## Out Of Scope For Phase 10AH",
+        ):
+            self.assertIn(section, self.text, section)
+
+    def test_contract_pins_closed_visualization_vocabulary(
+        self,
+    ) -> None:
+        for value in (
+            "`phase`",
+            "`sub_phase`",
+            "`task`",
+            "`loop_state_status`",
+            "`approval_mode`",
+            "`cycle_count`",
+            "`max_cycles`",
+            "`awaiting_human_for`",
+            "`last_verdict`",
+            "`last_verdict_phase`",
+            "`review_branch_active`",
+            "`fix_branch_active`",
+            "`human_gate_pending`",
+            "`blocked_or_halted`",
+            "`artifact_backed_progress`",
+        ):
+            self.assertIn(value, self.text, value)
+
+    def test_contract_pins_canonical_mirror_vs_advisory_tags(
+        self,
+    ) -> None:
+        self.assertIn("[canonical mirror]", self.text)
+        self.assertIn("[visualization-advisory]", self.text)
+
+    def test_contract_pins_closed_status_category_set(self) -> None:
+        for category in (
+            "`in_progress`",
+            "`awaiting_review`",
+            "`awaiting_human`",
+            "`halted`",
+            "`complete`",
+        ):
+            self.assertIn(category, self.text, category)
+
+    def test_contract_pins_closed_refusal_vocabulary(self) -> None:
+        for category in (
+            "refused_value_outside_closed_vocabulary",
+            "refused_source_category_outside_closed_vocabulary",
+            "refused_gate_category_outside_closed_vocabulary",
+            "refused_status_category_outside_closed_vocabulary",
+            "refused_canonical_write_from_visualization",
+            "refused_auto_progression_from_visualization",
+            "refused_auto_fill_operator_identity",
+            "refused_advisory_persistence",
+            "refused_background_watcher_beyond_cadence",
+        ):
+            self.assertIn(category, self.text, category)
+
+    def test_contract_pins_shipped_boundary_anchors(self) -> None:
+        for anchor in (
+            "docs/desktop-app-contract.md",
+            "docs/artifact-dashboard-contract.md",
+            "docs/desktop-codex-conversation-contract.md",
+            "docs/controlled-concurrency-contract.md",
+            "Phase 3A",
+            "Phase 4C",
+            "Phase 5A",
+            "Phase 5F",
+            "Phase 9G",
+            "Phase 10AB",
+            "Phase 10AC",
+            "Phase 10AD",
+            "Phase 10AF",
+            "Phase 10AG",
+            "Phase 10AI",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(anchor, self.text, anchor)
+
+    def test_contract_defers_runtime_to_phase_10ai(self) -> None:
+        self.assertIn("deferred to", self.text)
+        self.assertIn("Phase 10AI", self.text)
+        self.assertNotIn(
+            "ships a visualization runtime", self.text,
+        )
+        self.assertNotIn("ships a graph view", self.text)
+
+    def test_readme_links_the_contract_and_names_phase_10ah(
+        self,
+    ) -> None:
+        self.assertIn(
+            "docs/desktop-orchestration-visualization-contract.md",
+            self.readme_text,
+            "README MUST link the Phase 10AH contract file",
+        )
+        self.assertIn(
+            "Phase 10AH",
+            self.readme_text,
+            "README MUST name Phase 10AH",
+        )
+
+    def test_phase_plan_pins_phase_10ah_active(self) -> None:
+        self.assertIn(
+            "## Phase 10AH - Orchestration Graph And Phase-State "
+            "Visualization Contract",
+            self.phase_plan_text,
+            "phase-plan.md MUST name Phase 10AH",
         )
 
 
