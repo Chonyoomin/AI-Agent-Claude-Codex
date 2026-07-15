@@ -6176,7 +6176,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
     still advertised its own phase as active.
     """
 
-    CANONICAL_ACTIVE_PHASE = "Phase 10AE"
+    CANONICAL_ACTIVE_PHASE = "Phase 10AF"
     # Matches the README per-phase paragraph header form
     # `Phase 10X (Slice Name, active|complete) ...` at the start of
     # a line. The phase id grammar matches the shipped sub-phase
@@ -6241,6 +6241,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         # status-line summary but forgets to flip the per-phase
         # paragraph header.
         completed_sentinels = (
+            "Phase 10AE",
             "Fix Phase B2",
             "Fix Phase B1",
             "Fix Phase B3",
@@ -6358,7 +6359,7 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
         # canonical active phase. Bounded, deterministic: only
         # the first non-blank line after a "### Status" header
         # is inspected.
-        canonical_active = "Phase 10AE"  # tracked by the file
+        canonical_active = "Phase 10AF"  # tracked by the file
         lines = self.text.splitlines()
         offending = []
         current_section = None
@@ -6442,6 +6443,149 @@ class McpServerSelectionUxContractDoesNotClaimRuntimeShipsTests(
             "MCP Server Selection UX Contract",
             self.roadmap_collapsed,
             "ROADMAP.md does not pin the canonical Phase 10S title",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AF: Desktop Codex Conversation And Intervention Contract
+# ---------------------------------------------------------------------------
+class Phase10AFDesktopCodexConversationContractTests(
+    unittest.TestCase,
+):
+    """Anchor test: the Phase 10AF contract file exists, is
+    well-formed, pins the closed operator-intent vocabulary, and
+    is linked from README + phase-plan.md. Phase 10AG runtime is
+    explicitly deferred; the contract MUST say so.
+    """
+
+    _CONTRACT_PATH = (
+        REPO_ROOT / "docs"
+        / "desktop-codex-conversation-contract.md"
+    )
+
+    def setUp(self) -> None:
+        self.text = _read(self._CONTRACT_PATH)
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.phase_plan_text = _read(
+            REPO_ROOT / ".agent-loop" / "phase-plan.md",
+        )
+
+    def test_contract_file_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self._CONTRACT_PATH.exists(),
+            f"{self._CONTRACT_PATH!r} MUST exist",
+        )
+        self.assertGreater(len(self.text.strip()), 100)
+
+    def test_contract_carries_required_section_headers(
+        self,
+    ) -> None:
+        # Match the shipped contract-doc convention: `## Status`,
+        # `## Scope`, `## Refusal Behavior`, etc.
+        for section in (
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## In-Scope Operator Intent Vocabulary",
+            "## Routing To Canonical Artifacts",
+            "## Advisory-Vs-Canonical Mirror Rule",
+            "## Claude-Owned Vs Codex-Owned Follow-Up",
+            "## Refusal Behavior",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Source-Of-Truth Preservation (No Hidden UI Store)",
+            "## Ownership Boundary Preservation",
+            "## Dependencies On Phase 10AG (Runtime Implementation)",
+            "## Out Of Scope For Phase 10AF",
+        ):
+            self.assertIn(section, self.text, section)
+
+    def test_contract_pins_closed_intent_vocabulary(self) -> None:
+        # The contract MUST name every one of the six shipped
+        # closed intents so a future Phase 10AG runtime can lift
+        # the vocabulary verbatim.
+        for intent in (
+            "request_codex_review",
+            "request_codex_issue_classification",
+            "request_codex_roadmap_update",
+            "request_codex_targeted_repo_change",
+            "request_codex_claude_prompt_authorship",
+            "request_codex_fix_prompt_authorship",
+        ):
+            self.assertIn(intent, self.text, intent)
+
+    def test_contract_pins_closed_refusal_vocabulary(self) -> None:
+        # The contract MUST name every one of the eight shipped
+        # closed refusal categories.
+        for category in (
+            "refused_intent_outside_closed_vocabulary",
+            "refused_orchestrator_owned_target",
+            "refused_claude_owned_target",
+            "refused_overlap_unsafe",
+            "refused_strict_mode_gate",
+            "refused_auto_fill_operator_identity",
+            "refused_in_flight_codex_invocation",
+            "refused_advisory_persistence",
+        ):
+            self.assertIn(category, self.text, category)
+
+    def test_contract_pins_shipped_boundary_anchors(self) -> None:
+        # The contract MUST cite the shipped boundaries it
+        # preserves so a reviewer can navigate to each source of
+        # truth rather than trusting the contract in isolation.
+        for anchor in (
+            "docs/desktop-app-contract.md",
+            "docs/mcp-integration-contract.md",
+            "docs/controlled-concurrency-contract.md",
+            "docs/local-adapter-contract.md",
+            "Phase 3A",
+            "Phase 4C",
+            "Phase 5A",
+            "Phase 5F",
+            "Phase 9G",
+            "Phase 10AB",
+            "Phase 10AC",
+            "Phase 10AD",
+            "Phase 10AE",
+            "Phase 10AG",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(anchor, self.text, anchor)
+
+    def test_contract_defers_runtime_to_phase_10ag(self) -> None:
+        # A hard invariant: this slice is contract-only. The
+        # contract MUST explicitly say the runtime is deferred to
+        # Phase 10AG and MUST NOT claim any runtime ships in this
+        # slice.
+        self.assertIn(
+            "deferred to",
+            self.text,
+        )
+        self.assertIn("Phase 10AG", self.text)
+        # No claim that a runtime ships in 10AF.
+        self.assertNotIn("ships a desktop conversation runtime", self.text)
+        self.assertNotIn("ships a chat/intervention panel", self.text)
+
+    def test_readme_links_the_contract_and_names_phase_10af(
+        self,
+    ) -> None:
+        self.assertIn(
+            "docs/desktop-codex-conversation-contract.md",
+            self.readme_text,
+            "README MUST link the Phase 10AF contract file",
+        )
+        self.assertIn(
+            "Phase 10AF",
+            self.readme_text,
+            "README MUST name Phase 10AF",
+        )
+
+    def test_phase_plan_pins_phase_10af_active(self) -> None:
+        self.assertIn(
+            "## Phase 10AF - Desktop Codex Conversation And "
+            "Intervention Contract",
+            self.phase_plan_text,
+            "phase-plan.md MUST name Phase 10AF",
         )
 
 
