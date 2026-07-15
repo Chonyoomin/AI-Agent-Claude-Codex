@@ -1,77 +1,70 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AF - Desktop Codex Conversation And Intervention Contract
+Phase 10AH - Orchestration Graph And Phase-State Visualization Contract
 
 ## Objective
-Define the bounded contract for an in-app desktop surface that lets the
-operator communicate with Codex for reviews, fix routing, roadmap changes, and
-targeted repo changes without bypassing canonical artifacts, ownership rules,
-review evidence, or shipped approval/audit boundaries.
+Define the contract for a bounded desktop orchestration-visualization surface so
+the app can show live loop state as a graph or icon-based flow without
+inventing UI-only truth or bypassing canonical artifact ownership.
 
 ## Context
-`Phase 10AF` is now the active mainline slice. The repo already ships a
-desktop app shell, action bridges, artifact/status dashboards, MCP/RAG
-selection surfaces, controlled-concurrency rules, overlap-safe detection, and
-a bounded Codex-owned concurrent-work slice. What does NOT yet exist is the
-contract for how the desktop app should expose an operator-to-Codex request
-surface without inventing a hidden second control plane.
+`Phase 10AH` is now the active mainline slice. The prior slice, `Phase 10AG`,
+shipped the first bounded desktop Codex conversation runtime. The next slice is
+documentation/contract work for a future visualization surface that helps the
+operator see how the orchestration is performing inside the desktop app.
 
-This phase is contract-definition first. It should establish the request
-types, artifact routing, safety boundaries, canonical-vs-advisory state rules,
-approval boundaries, refusal cases, and desktop-surface expectations for a
-future implementation slice (`Phase 10AG`).
+This contract should make the visualization concrete enough for a later runtime
+slice to implement without further design decisions, while preserving the
+project's existing canonical-artifact-first, approval-gated, audit-aware model.
 
 Work against the actual repo state. Do not rely on prior chat context.
 
 ## Required work
-- add the bounded `Phase 10AF` contract artifact(s) for desktop Codex
-  conversation and intervention
-- define which operator intents are in scope, such as:
-  - ask Codex for a review
-  - ask Codex to classify issues by owner
-  - ask Codex to update roadmap/planning artifacts
-  - ask Codex for targeted Codex-owned repo changes
-- define how desktop-side requests map back to canonical artifacts rather than
-  becoming a hidden UI-only request/reply store
-- define how the surface distinguishes:
-  - advisory request composition
-  - canonical artifact mutation
-  - Claude-owned follow-up versus Codex-owned follow-up
-- define the safety, refusal, approval, and audit boundaries the future runtime
-  must preserve
-- add or update focused tests covering README/doc consistency for the new
-  contract
-- update `README.md` if the documented current implementation focus changes
+- author the `Phase 10AH` contract in the repo's canonical planning/docs
+  artifacts
+- define the bounded visualization vocabulary for at least:
+  phase, sub-phase, current task, current loop-state status, review branch, fix
+  branch, human-gated pause states, blocked/halted states, and artifact-backed
+  progress
+- define how a future desktop graph/node/icon-based flow view distinguishes
+  canonical mirrors from advisory derived state
+- define how a future visualization surface can show orchestration progress
+  without creating a hidden desktop-only state plane, progress cache, or second
+  controller
+- define the safety, approval, audit, and source-of-truth boundaries this future
+  visualization runtime must preserve
+- add or update focused documentation-consistency coverage if the repo expects
+  new phase/doc alignment tests
+- update `README.md` to reflect the active phase and any new contract doc added
 
 ## Constraints
 - Follow `CLAUDE.md`.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Keep this slice contract-only unless a tiny bounded runtime helper is
-  necessary for testable documentation alignment.
-- Do not implement the actual desktop chat/runtime panel that belongs to
-  `Phase 10AG`.
-- Do not create a hidden UI-only request queue, reply cache, or operator state
-  plane outside canonical artifacts.
-- Do not weaken ownership boundaries, evidence review, approval gating,
-  overlap-safe rules, or canonical-artifact-first behavior.
+- Do not implement the runtime graph/icon UI in this phase; this is a contract
+  slice.
+- Do not invent a hidden UI-only graph state store, progress cache, or
+  background watcher.
+- Do not bypass canonical artifact ownership, approval gates, audit boundaries,
+  or the planner/activator separation.
+- Prefer small, testable, reversible changes.
 
 ## Important guardrails
-- Codex conversation from the desktop app must remain a routing surface over
-  the shipped artifact model, not a separate autonomous orchestrator.
-- Any operator request that would change canonical artifacts must still route
-  through the same explicit ownership model already used elsewhere in the repo.
-- Claude-owned implementation work must still become a prompt/fix-prompt style
-  handoff rather than a direct hidden desktop-side mutation.
-- Future desktop responses may be advisory mirrors, but the contract must make
-  clear which artifacts remain canonical.
+- The future visualization surface is a reporting layer over shipped canonical
+  artifacts, not a second orchestrator.
+- The contract must clearly separate canonical mirrors from advisory derived
+  state.
+- The contract should be concrete enough that a later runtime slice can build an
+  N8N-like phase/orchestration view without guessing the data model or safety
+  boundaries.
 
 ## Likely files
+- `.agent-loop/phase-plan.md`
+- `docs/`
 - `README.md`
-- `docs/` new contract file(s)
+- `ROADMAP.md` if alignment is needed
 - `tests/test_documentation_consistency.py`
-- any desktop-contract consistency tests already present in the repo
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required

@@ -2336,5 +2336,698 @@ class PrimaryDesktopPostBootstrapSuccessMessageTests(
         self.assertIn("attach-record.json.", got)
 
 
+# ---------------------------------------------------------------------------
+# Phase 10AG - Desktop Codex Conversation Surface Initial Slice
+# ---------------------------------------------------------------------------
+class DesktopCodexConversationConstantsTests(unittest.TestCase):
+    """Cover the Phase 10AG closed vocabulary constants that
+    mirror the shipped Phase 10AF contract verbatim.
+    """
+
+    def test_signal_version_pin(self) -> None:
+        self.assertEqual(
+            agent_loop.DESKTOP_CODEX_CONVERSATION_SIGNAL_VERSION,
+            "phase-10ag-v1",
+        )
+
+    def test_intent_vocabulary_matches_contract(self) -> None:
+        self.assertEqual(
+            agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_IDS,
+            (
+                "request_codex_review",
+                "request_codex_issue_classification",
+                "request_codex_roadmap_update",
+                "request_codex_targeted_repo_change",
+                "request_codex_claude_prompt_authorship",
+                "request_codex_fix_prompt_authorship",
+            ),
+        )
+
+    def test_refusal_vocabulary_matches_contract(self) -> None:
+        self.assertEqual(
+            agent_loop.DESKTOP_CODEX_CONVERSATION_REFUSAL_CATEGORIES,
+            (
+                "refused_intent_outside_closed_vocabulary",
+                "refused_orchestrator_owned_target",
+                "refused_claude_owned_target",
+                "refused_overlap_unsafe",
+                "refused_strict_mode_gate",
+                "refused_auto_fill_operator_identity",
+                "refused_in_flight_codex_invocation",
+                "refused_advisory_persistence",
+            ),
+        )
+
+    def test_intent_target_map_covers_every_intent(self) -> None:
+        target_map = (
+            agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP
+        )
+        self.assertEqual(
+            set(target_map.keys()),
+            set(agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_IDS),
+        )
+        for path in target_map.values():
+            self.assertIsInstance(path, str)
+            self.assertTrue(path.startswith(".agent-loop/"))
+
+    def test_attribution_tags(self) -> None:
+        self.assertEqual(
+            agent_loop.DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_CANONICAL_MIRROR,
+            "[canonical mirror]",
+        )
+        self.assertEqual(
+            agent_loop.DESKTOP_CODEX_CONVERSATION_ATTRIBUTION_ADVISORY,
+            "[codex-conversation-advisory]",
+        )
+
+
+class DesktopCodexConversationClassifierTests(unittest.TestCase):
+    """Cover the pure classifier
+    `_desktop_codex_conversation_classify_request(...)`. Refusals
+    are ordered so a malformed request surfaces the earliest
+    applicable refusal per the contract's precedence rule.
+    """
+
+    def _happy_kwargs(self) -> dict:
+        return {
+            "intent_id": "request_codex_review",
+            "operator_identity": "alice",
+            "message_body": "please review the current branch",
+            "in_flight": False,
+            "overlap_state": "no_signal",
+            "strict_mode_gate_pending": False,
+        }
+
+    def test_classifier_returns_none_on_happy_request(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            agent_loop._desktop_codex_conversation_classify_request(
+                **self._happy_kwargs(),
+            ),
+        )
+
+    def test_classifier_refuses_unknown_intent(self) -> None:
+        kw = self._happy_kwargs()
+        kw["intent_id"] = "invented_intent"
+        got = agent_loop._desktop_codex_conversation_classify_request(
+            **kw,
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["refusal_category"],
+            "refused_intent_outside_closed_vocabulary",
+        )
+
+    def test_classifier_refuses_missing_operator_identity(
+        self,
+    ) -> None:
+        for bad in (None, "", "   "):
+            kw = self._happy_kwargs()
+            kw["operator_identity"] = bad
+            got = (
+                agent_loop
+                ._desktop_codex_conversation_classify_request(**kw)
+            )
+            self.assertIsNotNone(got)
+            self.assertEqual(
+                got["refusal_category"],
+                "refused_auto_fill_operator_identity",
+                bad,
+            )
+
+    def test_classifier_refuses_missing_message_body(self) -> None:
+        for bad in (None, "", "   ", "\n\t"):
+            kw = self._happy_kwargs()
+            kw["message_body"] = bad
+            got = (
+                agent_loop
+                ._desktop_codex_conversation_classify_request(**kw)
+            )
+            self.assertIsNotNone(got)
+            self.assertEqual(
+                got["refusal_category"],
+                "refused_advisory_persistence",
+                bad,
+            )
+
+    def test_classifier_refuses_overlap_unsafe(self) -> None:
+        kw = self._happy_kwargs()
+        kw["overlap_state"] = "refused_pending_recovery"
+        got = agent_loop._desktop_codex_conversation_classify_request(
+            **kw,
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["refusal_category"], "refused_overlap_unsafe",
+        )
+
+    def test_classifier_refuses_strict_mode_gate_pending(
+        self,
+    ) -> None:
+        kw = self._happy_kwargs()
+        kw["strict_mode_gate_pending"] = True
+        got = agent_loop._desktop_codex_conversation_classify_request(
+            **kw,
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["refusal_category"], "refused_strict_mode_gate",
+        )
+
+    def test_classifier_refuses_in_flight(self) -> None:
+        kw = self._happy_kwargs()
+        kw["in_flight"] = True
+        got = agent_loop._desktop_codex_conversation_classify_request(
+            **kw,
+        )
+        self.assertIsNotNone(got)
+        self.assertEqual(
+            got["refusal_category"],
+            "refused_in_flight_codex_invocation",
+        )
+
+    def test_classifier_precedence_intent_before_identity(
+        self,
+    ) -> None:
+        # Unknown intent MUST be refused before missing identity;
+        # the panel should not blame the operator for the wrong
+        # intent selection.
+        kw = self._happy_kwargs()
+        kw["intent_id"] = "invented_intent"
+        kw["operator_identity"] = ""
+        got = agent_loop._desktop_codex_conversation_classify_request(
+            **kw,
+        )
+        self.assertEqual(
+            got["refusal_category"],
+            "refused_intent_outside_closed_vocabulary",
+        )
+
+    def test_classifier_precedence_identity_before_body(
+        self,
+    ) -> None:
+        kw = self._happy_kwargs()
+        kw["operator_identity"] = ""
+        kw["message_body"] = ""
+        got = agent_loop._desktop_codex_conversation_classify_request(
+            **kw,
+        )
+        self.assertEqual(
+            got["refusal_category"],
+            "refused_auto_fill_operator_identity",
+        )
+
+
+class DesktopCodexConversationFormatRequestTests(unittest.TestCase):
+    """Cover the pure request formatter
+    `_desktop_codex_conversation_format_request(...)`. Payload
+    shape MUST include the six required fields; missing / empty
+    fields refuse fail-closed via HaltError.
+    """
+
+    def test_format_request_shape(self) -> None:
+        payload = (
+            agent_loop._desktop_codex_conversation_format_request(
+                intent_id="request_codex_review",
+                operator_identity="alice",
+                message_body="please review",
+            )
+        )
+        self.assertEqual(
+            payload["signal_version"], "phase-10ag-v1",
+        )
+        self.assertEqual(
+            payload["intent_id"], "request_codex_review",
+        )
+        self.assertEqual(payload["operator_identity"], "alice")
+        self.assertEqual(payload["message_body"], "please review")
+        self.assertEqual(
+            payload["target_artifact"],
+            ".agent-loop/codex-review.md",
+        )
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[codex-conversation-advisory]",
+        )
+
+    def test_format_request_strips_whitespace(self) -> None:
+        payload = (
+            agent_loop._desktop_codex_conversation_format_request(
+                intent_id="request_codex_review",
+                operator_identity="  alice  ",
+                message_body="  please review\n",
+            )
+        )
+        self.assertEqual(payload["operator_identity"], "alice")
+        self.assertEqual(payload["message_body"], "please review")
+
+    def test_format_request_refuses_unknown_intent(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._desktop_codex_conversation_format_request(
+                intent_id="invented_intent",
+                operator_identity="alice",
+                message_body="body",
+            )
+
+    def test_format_request_refuses_missing_identity(self) -> None:
+        for bad in (None, "", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._desktop_codex_conversation_format_request(
+                        intent_id="request_codex_review",
+                        operator_identity=bad,
+                        message_body="body",
+                    )
+                )
+
+    def test_format_request_refuses_missing_body(self) -> None:
+        for bad in (None, "", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._desktop_codex_conversation_format_request(
+                        intent_id="request_codex_review",
+                        operator_identity="alice",
+                        message_body=bad,
+                    )
+                )
+
+    def test_target_artifact_matches_intent_map(self) -> None:
+        # Every shipped intent's format_request payload MUST use
+        # the closed per-intent target-artifact map.
+        for intent in agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_IDS:
+            payload = (
+                agent_loop
+                ._desktop_codex_conversation_format_request(
+                    intent_id=intent,
+                    operator_identity="alice",
+                    message_body="body",
+                )
+            )
+            self.assertEqual(
+                payload["target_artifact"],
+                agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_TARGET_MAP[
+                    intent
+                ],
+                intent,
+            )
+
+
+class DesktopCodexConversationDispatchCommandTests(unittest.TestCase):
+    """Cover the pure dispatch-command builder
+    `_desktop_codex_conversation_build_dispatch_command(...)`.
+    Only `request_codex_review` has a shipped dispatch path in
+    this initial slice; every other closed-vocabulary intent is
+    refused fail-closed with an explanatory HaltError.
+    """
+
+    def test_review_intent_returns_resume_command(self) -> None:
+        cmd = (
+            agent_loop
+            ._desktop_codex_conversation_build_dispatch_command(
+                intent_id="request_codex_review",
+                controller_root=Path("."),
+            )
+        )
+        self.assertEqual(cmd[0], sys.executable)
+        self.assertTrue(
+            cmd[1].endswith("agent_loop.py")
+            or cmd[1].endswith("agent_loop.pyc"),
+            cmd[1],
+        )
+        self.assertEqual(cmd[-1], "resume")
+
+    def test_other_shipped_intents_refuse_dispatch(self) -> None:
+        # Every closed intent OTHER than `request_codex_review`
+        # MUST refuse fail-closed in this initial slice; the
+        # panel accepts composition + validation but dispatch is
+        # deferred to a later slice.
+        deferred = tuple(
+            i
+            for i in agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_IDS
+            if i != "request_codex_review"
+        )
+        for intent in deferred:
+            with self.assertRaises(agent_loop.HaltError) as cm:
+                (
+                    agent_loop
+                    ._desktop_codex_conversation_build_dispatch_command(
+                        intent_id=intent,
+                        controller_root=Path("."),
+                    )
+                )
+            self.assertIn(intent, cm.exception.reason)
+
+    def test_unknown_intent_refuses(self) -> None:
+        with self.assertRaises(agent_loop.HaltError) as cm:
+            (
+                agent_loop
+                ._desktop_codex_conversation_build_dispatch_command(
+                    intent_id="invented_intent",
+                    controller_root=Path("."),
+                )
+            )
+        self.assertIn(
+            "closed", cm.exception.reason,
+        )
+
+
+class DesktopCodexConversationResponseMirrorTests(unittest.TestCase):
+    """Cover the pure response-mirror reader
+    `_desktop_codex_conversation_read_canonical_response_mirror
+    (...)`. NEVER writes; NEVER raises on missing / unreadable
+    file (returns `present=False` + `error` field instead so the
+    Tk panel can render an operator-facing hint).
+    """
+
+    def test_read_returns_present_true_when_file_exists(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "controller"
+            (controller / ".agent-loop").mkdir(parents=True)
+            (controller / ".agent-loop" / "codex-review.md").write_text(
+                "# Codex Review\n\nAPPROVED_FOR_HUMAN_REVIEW\n",
+                encoding="utf-8",
+            )
+            mirror = (
+                agent_loop
+                ._desktop_codex_conversation_read_canonical_response_mirror(
+                    controller, "request_codex_review",
+                )
+            )
+        self.assertTrue(mirror["present"])
+        self.assertIn(
+            "APPROVED_FOR_HUMAN_REVIEW", mirror["mirror_text"],
+        )
+        self.assertEqual(
+            mirror["attribution_tag"], "[canonical mirror]",
+        )
+        self.assertEqual(
+            mirror["target_artifact"],
+            ".agent-loop/codex-review.md",
+        )
+        self.assertIsNone(mirror["error"])
+
+    def test_read_returns_present_false_when_missing(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "controller"
+            controller.mkdir()
+            mirror = (
+                agent_loop
+                ._desktop_codex_conversation_read_canonical_response_mirror(
+                    controller, "request_codex_review",
+                )
+            )
+        self.assertFalse(mirror["present"])
+        self.assertEqual(mirror["mirror_text"], "")
+        self.assertIn("not present", mirror["error"])
+
+    def test_read_returns_error_on_unknown_intent(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "controller"
+            controller.mkdir()
+            mirror = (
+                agent_loop
+                ._desktop_codex_conversation_read_canonical_response_mirror(
+                    controller, "invented_intent",
+                )
+            )
+        self.assertFalse(mirror["present"])
+        self.assertIn("closed", mirror["error"])
+
+    def test_read_covers_every_intent(self) -> None:
+        # Every shipped intent's read MUST succeed (either
+        # present or explanatory-missing) without raising.
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "controller"
+            controller.mkdir()
+            for intent in (
+                agent_loop.DESKTOP_CODEX_CONVERSATION_INTENT_IDS
+            ):
+                mirror = (
+                    agent_loop
+                    ._desktop_codex_conversation_read_canonical_response_mirror(
+                        controller, intent,
+                    )
+                )
+                self.assertEqual(
+                    mirror["attribution_tag"],
+                    "[canonical mirror]",
+                    intent,
+                )
+                self.assertFalse(mirror["present"], intent)
+
+
+class DesktopCodexConversationAuditLineTests(unittest.TestCase):
+    """Cover the pure audit-line formatter
+    `_desktop_codex_conversation_format_audit_line(...)` which
+    the Tk callback appends via the shipped audit-log writer.
+    NEVER writes a parallel audit file per the Phase 10AF
+    Source-Of-Truth Preservation rule.
+    """
+
+    def test_audit_line_shape_success(self) -> None:
+        line = (
+            agent_loop._desktop_codex_conversation_format_audit_line(
+                intent_id="request_codex_review",
+                operator_identity="alice",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[desktop-codex-conversation]", line)
+        self.assertIn("intent_id='request_codex_review'", line)
+        self.assertIn("operator_identity='alice'", line)
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_audit_line_shape_refusal(self) -> None:
+        line = (
+            agent_loop._desktop_codex_conversation_format_audit_line(
+                intent_id="request_codex_review",
+                operator_identity="alice",
+                refusal_category=(
+                    "refused_overlap_unsafe"
+                ),
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_overlap_unsafe'", line,
+        )
+
+    def test_audit_line_refuses_unknown_refusal_category(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._desktop_codex_conversation_format_audit_line(
+                    intent_id="request_codex_review",
+                    operator_identity="alice",
+                    refusal_category="invented_category",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_audit_line_refuses_missing_identity(self) -> None:
+        for bad in (None, "", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._desktop_codex_conversation_format_audit_line(
+                        intent_id="request_codex_review",
+                        operator_identity=bad,
+                        epoch_seconds=1700000000,
+                    )
+                )
+
+    def test_audit_line_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._desktop_codex_conversation_format_audit_line(
+                    intent_id="request_codex_review",
+                    operator_identity="alice",
+                    epoch_seconds="not an int",
+                )
+            )
+
+
+class DesktopCodexConversationRuntimeGateInputsTests(
+    unittest.TestCase,
+):
+    """Cover
+    `_desktop_codex_conversation_derive_runtime_gate_inputs(...)`
+    which the Tk callback uses in place of the previously-
+    hardcoded `overlap_state='no_signal'` /
+    `strict_mode_gate_pending=False` inputs. Regression pin: if
+    this helper is bypassed or replaced with a synthetic stub,
+    the shipped 10AG desktop Send path stops honoring the
+    overlap-safe / strict-mode gates.
+    """
+
+    def test_missing_controller_soft_fails_to_neutral(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "no_agent_loop_dir"
+            controller.mkdir()
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertFalse(result["strict_mode_gate_pending"])
+        self.assertIn(
+            result["overlap_state"],
+            (
+                None, "no_signal", "signal_detected",
+                "unknown", "refused_pending_recovery",
+            ),
+        )
+
+    def test_non_strict_status_reports_gate_not_pending(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td), status="awaiting_claude_implementation",
+            )
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertFalse(result["strict_mode_gate_pending"])
+
+    def test_every_strict_gate_halt_marks_gate_pending(
+        self,
+    ) -> None:
+        for status in agent_loop.STRICT_GATE_HALT_STATUSES:
+            with TemporaryDirectory() as td:
+                controller = _make_controller(
+                    Path(td), status=status,
+                )
+                result = (
+                    agent_loop
+                    ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                        controller,
+                    )
+                )
+            self.assertTrue(
+                result["strict_mode_gate_pending"],
+                msg=(
+                    f"strict_mode_gate_pending must be True for "
+                    f"loop-state status={status!r}"
+                ),
+            )
+
+    def test_overlap_state_reflects_shipped_view(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            expected = None
+            try:
+                view = (
+                    agent_loop
+                    .build_desktop_overlap_detection_view(
+                        controller,
+                    )
+                )
+            except agent_loop.HaltError:
+                view = None
+            if isinstance(view, dict):
+                overall = view.get("overall") or {}
+                cand = overall.get("overall_signal_state")
+                if isinstance(cand, str):
+                    expected = cand
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertEqual(result["overlap_state"], expected)
+
+    def test_returns_only_the_expected_two_keys(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertEqual(
+            set(result.keys()),
+            {"overlap_state", "strict_mode_gate_pending"},
+        )
+
+
+class DesktopCodexConversationSendCallbackWiringTests(
+    unittest.TestCase,
+):
+    """Source-inspection regression pin for the shipped Tk
+    callback wiring inside `_launch_desktop_app_window(...)`.
+    The callback body is a closure, so we inspect the enclosing
+    function's source text and assert:
+      - the derive-runtime-gate-inputs helper IS called
+      - the audit-line formatter IS called
+      - the shipped `_log_note` audit writer IS called
+      - the previously-hardcoded gate literals are ABSENT
+    A regression that hardcodes the gate inputs or drops the
+    audit emit will fail this pin loudly.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_calls_derive_runtime_gate_inputs_helper(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_desktop_codex_conversation_derive_runtime_gate_inputs",
+            self._source,
+        )
+
+    def test_calls_audit_line_formatter(self) -> None:
+        self.assertIn(
+            "_desktop_codex_conversation_format_audit_line",
+            self._source,
+        )
+
+    def test_calls_shipped_log_note_writer(self) -> None:
+        self.assertIn("_log_note(", self._source)
+
+    def test_does_not_hardcode_overlap_state_no_signal(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            'overlap_state="no_signal"', self._source,
+        )
+        self.assertNotIn(
+            "overlap_state='no_signal'", self._source,
+        )
+
+    def test_does_not_hardcode_strict_mode_gate_pending_false(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            "strict_mode_gate_pending=False", self._source,
+        )
+
+    def test_dispatches_orchestrator_log_as_audit_path(
+        self,
+    ) -> None:
+        self.assertIn("orchestrator.log", self._source)
+
+
 if __name__ == "__main__":
     unittest.main()
