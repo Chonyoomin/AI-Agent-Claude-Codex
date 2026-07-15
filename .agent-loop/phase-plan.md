@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AG - Desktop Codex Conversation Surface Initial Slice)
+Phase 10 - Future Product Features (sub-phase: Phase 10AH - Orchestration Graph And Phase-State Visualization Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5861,7 +5861,10 @@ routing rules, and focused validation were verified in the current repo state.
 
 ### Status
 
-Active.
+Complete and approved by human to advance to Phase 10AH. Phase 10AG closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded desktop
+Codex conversation runtime, real gate wiring, audit emit path, and focused
+validation were verified in the current repo state.
 
 ### Objective
 
@@ -5893,6 +5896,44 @@ model instead of separate chat windows.
 - no Git automation
 - no weakening of ownership boundaries, evidence review, approval gating,
   overlap-safe detection, or canonical-artifact-first behavior
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 10AH - Orchestration Graph And Phase-State Visualization Contract
+
+### Status
+
+Active.
+
+### Objective
+
+Define the contract for a bounded desktop orchestration-visualization surface so
+the app can show the live loop state as a graph or icon-based flow view without
+inventing UI-only truth or bypassing canonical artifact ownership.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Phase 10AH` as the active sub-phase
+- `.agent-loop/phase-plan.md` records the visualization contract as the active
+  section and preserves prior phases as closed history
+- the repository defines the bounded visualization vocabulary for at least:
+  phase, sub-phase, current task, current loop-state status, review branch,
+  fix branch, human-gated pause states, blocked/halted states, and artifact-
+  backed progress
+- the contract makes clear which displayed values are canonical mirrors vs
+  advisory derived state and forbids a desktop-only truth plane
+- the contract defines how a future graph/node/icon view may represent the
+  live orchestration state without mutating canonical artifacts
+- the contract is concrete enough that a later runtime slice can implement the
+  visualization surface without further design decisions
+
+### Exclusions
+
+- no runtime graph or icon rendering implementation in this slice
+- no hidden UI-only graph state store, progress cache, or background watcher
+- no new orchestrator or control plane separate from canonical artifacts
+- no automatic next-phase activation or autonomous orchestration widening
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no Git automation
 

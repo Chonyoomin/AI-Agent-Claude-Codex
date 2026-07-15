@@ -24,7 +24,7 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10AG - Desktop Codex Conversation Surface Initial Slice
+Phase 10AH - Orchestration Graph And Phase-State Visualization Contract
 
 ## Phase Status
 
@@ -32,37 +32,37 @@ Active and ready for implementation.
 
 ## Active Task
 
-Implement the first bounded desktop-side Codex interaction surface so the
-operator can compose an in-app Codex request, inspect Codex response mirrors,
-and route approved Codex-owned actions through the shipped adapter/artifact
-model instead of separate chat windows.
+Define the contract for a bounded desktop orchestration-visualization surface so
+the app can show live loop state as a graph or icon-based flow without
+inventing UI-only truth or bypassing canonical artifact ownership.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify `Phase 10AG` as the active sub-phase
-- `.agent-loop/phase-plan.md` records `Phase 10AG` as the active phase section
+  `.agent-loop/loop-state.json` identify `Phase 10AH` as the active sub-phase
+- `.agent-loop/phase-plan.md` records `Phase 10AH` as the active phase section
   and preserves prior phases as closed history
 - `.agent-loop/claude-prompt.md` contains a scoped implementation prompt for
-  the `Phase 10AG` runtime slice
+  the `Phase 10AH` contract slice
 
 ## Next-Phase Gate
 
 Do not mark this phase complete until:
 
-- the first bounded desktop Codex interaction surface ships and is operator-
-  usable
-- the runtime preserves Phase 10AF canonical-artifact-first routing,
-  ownership, refusal, and audit boundaries
-- the implementation stays bounded rather than widening into an autonomous
-  desktop chat/orchestrator model
+- the repository defines a bounded orchestration-visualization contract for the
+  desktop app
+- the contract makes phase/sub-phase, current loop state, review/fix branch,
+  blocked/halted states, and artifact-backed progress legible without
+  inventing a second source of truth
+- the contract stays bounded to reporting and visualization rather than hidden
+  control or autonomous orchestration
 
 ## Out Of Scope For Current Phase
 
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
-- introducing a hidden UI-only request queue, reply cache, or Codex-side state
-  plane outside canonical artifacts
+- introducing a hidden UI-only graph state store, progress cache, or desktop-
+  side orchestration plane outside canonical artifacts
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

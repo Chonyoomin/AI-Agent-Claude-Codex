@@ -4,21 +4,21 @@
 Phase 10 - Future Product Features
 
 ## Sub-Phase
-Phase 10AG - Desktop Codex Conversation Surface Initial Slice
+Phase 10AH - Orchestration Graph And Phase-State Visualization Contract
 
 ## Status
 Active and ready for implementation.
 
 ## Task
-Implement the first bounded desktop-side Codex interaction surface so the
-operator can compose an in-app Codex request, inspect Codex response mirrors,
-and route approved Codex-owned actions through the shipped adapter/artifact
-model instead of separate chat windows.
+Define the contract for a bounded desktop orchestration-visualization surface so
+the app can show live loop state as a graph or icon-based flow without
+inventing UI-only truth or bypassing canonical artifact ownership.
 
 ## Notes
 
-- this is the first runtime slice for the desktop Codex conversation surface
+- this is a contract-definition slice for visualizing the live orchestration
+  state inside the desktop app
 - the shipped desktop app must remain canonical-artifact-first; this phase must
-  not invent a hidden UI-only request/reply state plane
-- preserve the Phase 10AF closed intent vocabulary, refusal vocabulary, audit
-  expectations, and adapter routing rules
+  not invent a hidden UI-only graph/progress state plane
+- preserve the existing phase/task/loop-state ownership, approval, audit, and
+  canonical-mirror boundaries while defining the visualization surface
