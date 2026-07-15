@@ -16486,17 +16486,46 @@ def _launch_desktop_app_window(
         in_flight = (
             current is not None and current.poll() is None
         )
+        gate_inputs = (
+            _desktop_codex_conversation_derive_runtime_gate_inputs(
+                controller_root,
+            )
+        )
+        audit_log_path = (
+            controller_root
+            / ".agent-loop"
+            / "orchestrator.log"
+        )
+        epoch_seconds = int(time.time())
+
+        def _emit_audit(refusal_category) -> None:
+            try:
+                line = (
+                    _desktop_codex_conversation_format_audit_line(
+                        intent_id=intent,
+                        operator_identity=identity,
+                        refusal_category=refusal_category,
+                        epoch_seconds=epoch_seconds,
+                    )
+                )
+            except HaltError:
+                return
+            _log_note(audit_log_path, line)
+
         refusal = (
             _desktop_codex_conversation_classify_request(
                 intent_id=intent,
                 operator_identity=identity,
                 message_body=body,
                 in_flight=in_flight,
-                overlap_state="no_signal",
-                strict_mode_gate_pending=False,
+                overlap_state=gate_inputs["overlap_state"],
+                strict_mode_gate_pending=(
+                    gate_inputs["strict_mode_gate_pending"]
+                ),
             )
         )
         if refusal is not None:
+            _emit_audit(refusal["refusal_category"])
             codex_conversation_status.config(
                 text=refusal["reason"], fg="#a94442",
             )
@@ -16508,6 +16537,7 @@ def _launch_desktop_app_window(
                 message_body=body,
             )
         except HaltError as halt:
+            _emit_audit(None)
             codex_conversation_status.config(
                 text=halt.reason, fg="#a94442",
             )
@@ -16520,6 +16550,7 @@ def _launch_desktop_app_window(
                 )
             )
         except HaltError as halt:
+            _emit_audit(None)
             codex_conversation_status.config(
                 text=halt.reason, fg="#a94442",
             )
@@ -16529,6 +16560,7 @@ def _launch_desktop_app_window(
                 cmd, cwd=str(controller_root),
             )
         except OSError as exc:
+            _emit_audit(None)
             codex_conversation_status.config(
                 text=(
                     f"Codex conversation dispatch refused: "
@@ -16538,6 +16570,7 @@ def _launch_desktop_app_window(
             )
             return
         codex_conversation_popen_holder[0] = proc
+        _emit_audit(None)
         codex_conversation_status.config(
             text=(
                 f"Codex conversation dispatched (PID "
@@ -36404,6 +36437,70 @@ def _desktop_codex_conversation_format_audit_line(
         f"{operator_identity.strip()!r} refusal_category="
         f"{refusal_category!r} epoch_seconds={epoch_seconds!r}"
     )
+
+
+def _desktop_codex_conversation_derive_runtime_gate_inputs(
+    controller_root,
+) -> dict:
+    """Derive the two shipped canonical runtime gate inputs the
+    Phase 10AG Tk callback must pass into the pure classifier so
+    the desktop Send path honors the same overlap-safe and
+    strict-mode gates the shipped runtime enforces.
+
+    Returns a dict `{overlap_state, strict_mode_gate_pending}`
+    where:
+      - `overlap_state` is the aggregate
+        `overall_signal_state` read from the shipped Phase 10AC
+        detection view (`build_desktop_overlap_detection_view`).
+        A structural HaltError or missing view soft-fails to
+        `None` matching the shipped Phase 10AD reader convention;
+        the pure classifier only refuses on
+        `refused_pending_recovery`.
+      - `strict_mode_gate_pending` is `True` when the shipped
+        loop-state `status` is one of the Phase 5C
+        `STRICT_GATE_HALT_STATUSES` (the same set `resume`
+        dispatches from). A missing or unreadable loop-state
+        soft-fails to `False` because a controller with no
+        loop-state is not sitting at a strict-mode pause.
+
+    Pure Tk-free helper; performs bounded read-only IO through
+    the shipped canonical readers only. NEVER writes to any
+    canonical artifact, NEVER mutates loop-state, NEVER spawns a
+    subprocess.
+    """
+    overlap_state = None
+    try:
+        overlap_view = build_desktop_overlap_detection_view(
+            controller_root,
+        )
+    except HaltError:
+        overlap_view = None
+    if isinstance(overlap_view, dict):
+        overall = overlap_view.get("overall") or {}
+        candidate = overall.get("overall_signal_state")
+        if isinstance(candidate, str):
+            overlap_state = candidate
+    strict_mode_gate_pending = False
+    state_path = (
+        Path(controller_root)
+        / ".agent-loop"
+        / "loop-state.json"
+    )
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    if isinstance(loop_state, dict):
+        status_value = loop_state.get("status")
+        if (
+            isinstance(status_value, str)
+            and status_value in STRICT_GATE_HALT_STATUSES
+        ):
+            strict_mode_gate_pending = True
+    return {
+        "overlap_state": overlap_state,
+        "strict_mode_gate_pending": strict_mode_gate_pending,
+    }
 
 
 # ---------------------------------------------------------------------------

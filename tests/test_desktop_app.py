@@ -2856,5 +2856,178 @@ class DesktopCodexConversationAuditLineTests(unittest.TestCase):
             )
 
 
+class DesktopCodexConversationRuntimeGateInputsTests(
+    unittest.TestCase,
+):
+    """Cover
+    `_desktop_codex_conversation_derive_runtime_gate_inputs(...)`
+    which the Tk callback uses in place of the previously-
+    hardcoded `overlap_state='no_signal'` /
+    `strict_mode_gate_pending=False` inputs. Regression pin: if
+    this helper is bypassed or replaced with a synthetic stub,
+    the shipped 10AG desktop Send path stops honoring the
+    overlap-safe / strict-mode gates.
+    """
+
+    def test_missing_controller_soft_fails_to_neutral(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "no_agent_loop_dir"
+            controller.mkdir()
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertFalse(result["strict_mode_gate_pending"])
+        self.assertIn(
+            result["overlap_state"],
+            (
+                None, "no_signal", "signal_detected",
+                "unknown", "refused_pending_recovery",
+            ),
+        )
+
+    def test_non_strict_status_reports_gate_not_pending(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td), status="awaiting_claude_implementation",
+            )
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertFalse(result["strict_mode_gate_pending"])
+
+    def test_every_strict_gate_halt_marks_gate_pending(
+        self,
+    ) -> None:
+        for status in agent_loop.STRICT_GATE_HALT_STATUSES:
+            with TemporaryDirectory() as td:
+                controller = _make_controller(
+                    Path(td), status=status,
+                )
+                result = (
+                    agent_loop
+                    ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                        controller,
+                    )
+                )
+            self.assertTrue(
+                result["strict_mode_gate_pending"],
+                msg=(
+                    f"strict_mode_gate_pending must be True for "
+                    f"loop-state status={status!r}"
+                ),
+            )
+
+    def test_overlap_state_reflects_shipped_view(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            expected = None
+            try:
+                view = (
+                    agent_loop
+                    .build_desktop_overlap_detection_view(
+                        controller,
+                    )
+                )
+            except agent_loop.HaltError:
+                view = None
+            if isinstance(view, dict):
+                overall = view.get("overall") or {}
+                cand = overall.get("overall_signal_state")
+                if isinstance(cand, str):
+                    expected = cand
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertEqual(result["overlap_state"], expected)
+
+    def test_returns_only_the_expected_two_keys(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            result = (
+                agent_loop
+                ._desktop_codex_conversation_derive_runtime_gate_inputs(
+                    controller,
+                )
+            )
+        self.assertEqual(
+            set(result.keys()),
+            {"overlap_state", "strict_mode_gate_pending"},
+        )
+
+
+class DesktopCodexConversationSendCallbackWiringTests(
+    unittest.TestCase,
+):
+    """Source-inspection regression pin for the shipped Tk
+    callback wiring inside `_launch_desktop_app_window(...)`.
+    The callback body is a closure, so we inspect the enclosing
+    function's source text and assert:
+      - the derive-runtime-gate-inputs helper IS called
+      - the audit-line formatter IS called
+      - the shipped `_log_note` audit writer IS called
+      - the previously-hardcoded gate literals are ABSENT
+    A regression that hardcodes the gate inputs or drops the
+    audit emit will fail this pin loudly.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_calls_derive_runtime_gate_inputs_helper(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_desktop_codex_conversation_derive_runtime_gate_inputs",
+            self._source,
+        )
+
+    def test_calls_audit_line_formatter(self) -> None:
+        self.assertIn(
+            "_desktop_codex_conversation_format_audit_line",
+            self._source,
+        )
+
+    def test_calls_shipped_log_note_writer(self) -> None:
+        self.assertIn("_log_note(", self._source)
+
+    def test_does_not_hardcode_overlap_state_no_signal(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            'overlap_state="no_signal"', self._source,
+        )
+        self.assertNotIn(
+            "overlap_state='no_signal'", self._source,
+        )
+
+    def test_does_not_hardcode_strict_mode_gate_pending_false(
+        self,
+    ) -> None:
+        self.assertNotIn(
+            "strict_mode_gate_pending=False", self._source,
+        )
+
+    def test_dispatches_orchestrator_log_as_audit_path(
+        self,
+    ) -> None:
+        self.assertIn("orchestrator.log", self._source)
+
+
 if __name__ == "__main__":
     unittest.main()
