@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AH - Orchestration Graph And Phase-State Visualization Contract)
+Phase 10 - Future Product Features (sub-phase: Phase 10AI - Orchestration Graph And Performance View Initial Slice)
 
 ## Phase 0 - Instruction Foundation
 
@@ -5903,7 +5903,10 @@ model instead of separate chat windows.
 
 ### Status
 
-Active.
+Complete and approved by human to advance to Phase 10AI. Phase 10AH closed
+with terminal verdict `APPROVED_FOR_HUMAN_REVIEW` after the bounded desktop
+orchestration-visualization contract, README alignment, and focused
+documentation-consistency validation were verified in the current repo state.
 
 ### Objective
 
@@ -5934,6 +5937,44 @@ inventing UI-only truth or bypassing canonical artifact ownership.
 - no hidden UI-only graph state store, progress cache, or background watcher
 - no new orchestrator or control plane separate from canonical artifacts
 - no automatic next-phase activation or autonomous orchestration widening
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Phase 10AI - Orchestration Graph And Performance View Initial Slice
+
+### Status
+
+Active.
+
+### Objective
+
+Implement the first bounded desktop orchestration graph and performance view so
+the operator can see where the loop currently is, what step just completed,
+what is waiting next, and where the run is blocked or halted.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Phase 10AI` as the active sub-phase
+- the desktop app exposes the first bounded orchestration graph or icon-based
+  flow view derived from shipped canonical artifacts
+- the runtime surfaces at least the closed 10AH visualization vocabulary and
+  preserves the canonical mirror vs advisory derived-state distinction
+- the runtime makes current phase/sub-phase/task, loop-state status,
+  review/fix branch, human-gated pause state, and blocked/halted state legible
+  to the operator
+- the runtime preserves the shipped Phase 10L/10M poll cadence, keeps the
+  Phase 10I library-callable control cap intact, and does not introduce a
+  hidden graph-state store, progress cache, or second controller
+- focused validation covers the new runtime surface and README alignment if
+  shipped operator-visible behavior changes
+
+### Exclusions
+
+- no automatic phase progression or downstream action dispatch from the graph
+- no hidden UI-only graph state store, progress cache, layout cache, or
+  background watcher beyond the shipped cadence rules
+- no new canonical artifact
 - no contract rewrites in `AGENTS.md` or `CLAUDE.md`
 - no Git automation
 

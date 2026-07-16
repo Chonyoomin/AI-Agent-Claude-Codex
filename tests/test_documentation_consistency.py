@@ -6176,7 +6176,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
     still advertised its own phase as active.
     """
 
-    CANONICAL_ACTIVE_PHASE = "Phase 10AH"
+    CANONICAL_ACTIVE_PHASE = "Phase 10AI"
     # Matches the README per-phase paragraph header form
     # `Phase 10X (Slice Name, active|complete) ...` at the start of
     # a line. The phase id grammar matches the shipped sub-phase
@@ -6241,6 +6241,8 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         # status-line summary but forgets to flip the per-phase
         # paragraph header.
         completed_sentinels = (
+            "Phase 10AH",
+            "Phase 10AG",
             "Phase 10AF",
             "Phase 10AE",
             "Fix Phase B2",
@@ -6360,7 +6362,7 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
         # canonical active phase. Bounded, deterministic: only
         # the first non-blank line after a "### Status" header
         # is inspected.
-        canonical_active = "Phase 10AH"  # tracked by the file
+        canonical_active = "Phase 10AI"  # tracked by the file
         lines = self.text.splitlines()
         offending = []
         current_section = None
@@ -6587,6 +6589,244 @@ class Phase10AFDesktopCodexConversationContractTests(
             "Intervention Contract",
             self.phase_plan_text,
             "phase-plan.md MUST name Phase 10AF",
+        )
+
+
+class Phase10AHOrchestrationVisualizationContractTests(
+    unittest.TestCase,
+):
+    """Anchor test: the Phase 10AH contract file exists, is
+    well-formed, pins the closed visualization vocabulary, the
+    canonical-mirror-vs-advisory-derived-state rule, the closed
+    node / edge / status-icon model, and the closed refusal
+    vocabulary, and is linked from README + phase-plan.md.
+    Phase 10AI runtime is explicitly deferred; the contract MUST
+    say so.
+    """
+
+    _CONTRACT_PATH = (
+        REPO_ROOT / "docs"
+        / "desktop-orchestration-visualization-contract.md"
+    )
+
+    def setUp(self) -> None:
+        self.text = _read(self._CONTRACT_PATH)
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.phase_plan_text = _read(
+            REPO_ROOT / ".agent-loop" / "phase-plan.md",
+        )
+
+    def test_contract_file_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self._CONTRACT_PATH.exists(),
+            f"{self._CONTRACT_PATH!r} MUST exist",
+        )
+        self.assertGreater(len(self.text.strip()), 100)
+
+    def test_contract_carries_required_section_headers(
+        self,
+    ) -> None:
+        for section in (
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## In-Scope Visualization Vocabulary",
+            "## Canonical Mirror Vs Advisory Derived State",
+            "## Node / Edge / Status Model For The Future Graph View",
+            "## Refresh And Cadence",
+            "## Refusal Behavior",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Source-Of-Truth Preservation (No Hidden UI Store)",
+            "## Ownership Boundary Preservation",
+            "## Dependencies On Phase 10AI (Runtime Implementation)",
+            "## Out Of Scope For Phase 10AH",
+        ):
+            self.assertIn(section, self.text, section)
+
+    def test_contract_pins_closed_visualization_vocabulary(
+        self,
+    ) -> None:
+        for value in (
+            "`phase`",
+            "`sub_phase`",
+            "`task`",
+            "`loop_state_status`",
+            "`approval_mode`",
+            "`cycle_count`",
+            "`max_cycles`",
+            "`awaiting_human_for`",
+            "`last_verdict`",
+            "`last_verdict_phase`",
+            "`review_branch_active`",
+            "`fix_branch_active`",
+            "`human_gate_pending`",
+            "`blocked_or_halted`",
+            "`artifact_backed_progress`",
+        ):
+            self.assertIn(value, self.text, value)
+
+    def test_contract_pins_canonical_mirror_vs_advisory_tags(
+        self,
+    ) -> None:
+        self.assertIn("[canonical mirror]", self.text)
+        self.assertIn("[visualization-advisory]", self.text)
+
+    def test_contract_pins_closed_status_category_set(self) -> None:
+        for category in (
+            "`in_progress`",
+            "`awaiting_review`",
+            "`awaiting_human`",
+            "`halted`",
+            "`complete`",
+        ):
+            self.assertIn(category, self.text, category)
+
+    def test_contract_pins_closed_refusal_vocabulary(self) -> None:
+        for category in (
+            "refused_value_outside_closed_vocabulary",
+            "refused_source_category_outside_closed_vocabulary",
+            "refused_gate_category_outside_closed_vocabulary",
+            "refused_status_category_outside_closed_vocabulary",
+            "refused_canonical_write_from_visualization",
+            "refused_auto_progression_from_visualization",
+            "refused_auto_fill_operator_identity",
+            "refused_advisory_persistence",
+            "refused_background_watcher_beyond_cadence",
+        ):
+            self.assertIn(category, self.text, category)
+
+    def test_contract_pins_shipped_boundary_anchors(self) -> None:
+        for anchor in (
+            "docs/desktop-app-contract.md",
+            "docs/artifact-dashboard-contract.md",
+            "docs/desktop-codex-conversation-contract.md",
+            "docs/controlled-concurrency-contract.md",
+            "Phase 3A",
+            "Phase 4C",
+            "Phase 5A",
+            "Phase 5F",
+            "Phase 9G",
+            "Phase 10AB",
+            "Phase 10AC",
+            "Phase 10AD",
+            "Phase 10AF",
+            "Phase 10AG",
+            "Phase 10AI",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(anchor, self.text, anchor)
+
+    def test_contract_defers_runtime_to_phase_10ai(self) -> None:
+        self.assertIn("deferred to", self.text)
+        self.assertIn("Phase 10AI", self.text)
+        self.assertNotIn(
+            "ships a visualization runtime", self.text,
+        )
+        self.assertNotIn("ships a graph view", self.text)
+
+    def test_readme_links_the_contract_and_names_phase_10ah(
+        self,
+    ) -> None:
+        self.assertIn(
+            "docs/desktop-orchestration-visualization-contract.md",
+            self.readme_text,
+            "README MUST link the Phase 10AH contract file",
+        )
+        self.assertIn(
+            "Phase 10AH",
+            self.readme_text,
+            "README MUST name Phase 10AH",
+        )
+
+    def test_phase_plan_pins_phase_10ah_active(self) -> None:
+        self.assertIn(
+            "## Phase 10AH - Orchestration Graph And Phase-State "
+            "Visualization Contract",
+            self.phase_plan_text,
+            "phase-plan.md MUST name Phase 10AH",
+        )
+
+    def test_dependencies_section_vocabulary_count_matches_actual(
+        self,
+    ) -> None:
+        # Regression pin for the review's Issue 1: the dependencies
+        # section MUST agree with the closed vocabulary the
+        # contract actually enumerates (ten canonical mirrors + five
+        # advisory-derived = fifteen). Any wrong count word ("ten",
+        # "eleven", "twelve", "thirteen", "fourteen") in the
+        # `matching the ... values named above` clause would
+        # contradict the shipped enumeration.
+        header = (
+            "## Dependencies On Phase 10AI (Runtime Implementation)"
+        )
+        self.assertIn(header, self.text)
+        deps_body = self.text.split(header, 1)[1]
+        deps_body = deps_body.split("\n## ", 1)[0]
+        self.assertIn(
+            "fifteen values", deps_body,
+            "Dependencies section MUST claim the closed "
+            "vocabulary constant has 'fifteen values' to match "
+            "the 10 canonical-mirror + 5 advisory-derived "
+            "enumeration in `## In-Scope Visualization "
+            "Vocabulary`",
+        )
+        for wrong in (
+            "eleven values",
+            "twelve values",
+            "thirteen values",
+            "fourteen values",
+        ):
+            self.assertNotIn(
+                wrong, deps_body,
+                f"Dependencies section MUST NOT claim "
+                f"{wrong!r}; the shipped vocabulary is 15",
+            )
+
+    def test_task_mirror_is_a_human_readable_summary(self) -> None:
+        # Regression pin for the review's Issue 2: the `task`
+        # vocabulary entry MUST describe the canonical value as a
+        # human-readable task summary (matching what
+        # `.agent-loop/loop-state.json` field `task` and
+        # `.agent-loop/current-task.md` actually hold), NOT a
+        # slugged / kebab-case task-id token. The bullet MUST NOT
+        # include the fake id example the earlier draft carried,
+        # and MUST include the shipped summary vocabulary
+        # ("summary" / "sentence" / "verbatim") so a reader knows
+        # to render the string as-is.
+        vocab_header = "## In-Scope Visualization Vocabulary"
+        self.assertIn(vocab_header, self.text)
+        vocab_body = self.text.split(vocab_header, 1)[1]
+        vocab_body = vocab_body.split("\n## ", 1)[0]
+        # Find the `task` bullet (its subsequent content up to
+        # the next `- ` bullet at column 0 of the next entry).
+        task_marker = "- `task` - "
+        self.assertIn(task_marker, vocab_body)
+        task_body = vocab_body.split(task_marker, 1)[1]
+        task_body = task_body.split("\n- ", 1)[0]
+        self.assertNotIn(
+            "phase-10ah-implement-visualization-contract",
+            task_body,
+            "The `task` vocabulary bullet MUST NOT describe the "
+            "canonical value as a slugged / kebab-case task id; "
+            "the shipped canonical source holds a human-readable "
+            "task summary sentence",
+        )
+        self.assertNotIn(
+            "task id", task_body,
+            "The `task` vocabulary bullet MUST NOT call the "
+            "canonical value a `task id`; the shipped canonical "
+            "source holds a human-readable task summary",
+        )
+        self.assertTrue(
+            any(
+                word in task_body
+                for word in ("summary", "sentence", "verbatim")
+            ),
+            "The `task` vocabulary bullet MUST describe the "
+            "canonical value as a summary / sentence / verbatim "
+            "string so a future runtime slice does not attempt "
+            "to re-derive a task-id token",
         )
 
 

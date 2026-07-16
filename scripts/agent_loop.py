@@ -16591,6 +16591,95 @@ def _launch_desktop_app_window(
     )
     _refresh_codex_conversation_mirror()
 
+    # Phase 10AI: bounded orchestration graph and performance
+    # view. READ-ONLY reporting surface over the shipped Phase
+    # 10AH visualization vocabulary. Every displayed value carries
+    # either the `[canonical mirror]` attribution tag (10 keys)
+    # or the `[visualization-advisory]` attribution tag (5 keys).
+    # The panel refreshes on the shipped Phase 10L / 10M poll
+    # cadence; there is NO background thread, timer, or watcher,
+    # NO cross-tick advisory cache, NO downstream action
+    # dispatch, and NO canonical write path.
+    orchestration_visualization_frame = tk.Frame(control_frame)
+    orchestration_visualization_frame.pack(side=tk.TOP, fill=tk.X)
+    advanced_frames_holder.append(
+        orchestration_visualization_frame,
+    )
+    tk.Label(
+        orchestration_visualization_frame,
+        text="Orchestration View (Phase 10AI)",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
+    orchestration_visualization_status_label = tk.Label(
+        orchestration_visualization_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=320,
+    )
+    orchestration_visualization_status_label.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    orchestration_visualization_body = tk.Text(
+        orchestration_visualization_frame,
+        height=10,
+        wrap=tk.WORD,
+    )
+    orchestration_visualization_body.pack(
+        fill=tk.X, padx=4, pady=(0, 4),
+    )
+    orchestration_visualization_body.configure(state=tk.DISABLED)
+    orchestration_visualization_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+
+    def _refresh_orchestration_visualization() -> None:
+        try:
+            view = (
+                build_desktop_orchestration_visualization_view(
+                    controller_root,
+                )
+            )
+        except HaltError as halt:
+            orchestration_visualization_status_label.config(
+                text=(
+                    f"Orchestration view refused: {halt.reason}"
+                ),
+            )
+            return
+        status_category = view.get("status_category") or "unknown"
+        orchestration_visualization_status_label.config(
+            text=(
+                f"Status: {status_category} "
+                f"(source: "
+                f"{view['status_category_source_mirror']})"
+            ),
+        )
+        lines = (
+            render_desktop_orchestration_visualization_text(view)
+        )
+        orchestration_visualization_body.configure(state=tk.NORMAL)
+        orchestration_visualization_body.delete("1.0", tk.END)
+        orchestration_visualization_body.insert(
+            "1.0", "\n".join(lines) + "\n",
+        )
+        orchestration_visualization_body.configure(
+            state=tk.DISABLED,
+        )
+        try:
+            line = (
+                _desktop_orchestration_visualization_format_audit_line(
+                    epoch_seconds=int(time.time()),
+                )
+            )
+        except HaltError:
+            return
+        _log_note(
+            orchestration_visualization_audit_log_path, line,
+        )
+
+    _refresh_orchestration_visualization()
+
     run_profiles_frame = tk.Frame(control_frame)
     run_profiles_frame.pack(side=tk.TOP, fill=tk.X)
     advanced_frames_holder.append(run_profiles_frame)
@@ -16911,6 +17000,15 @@ def _launch_desktop_app_window(
         # per-intent primary target artifact if the shipped
         # adapter has written between polls.
         _refresh_codex_conversation_mirror()
+        # Phase 10AI: refresh the bounded orchestration graph
+        # and performance view so the operator sees the current
+        # phase / sub-phase / task / loop-state status / review
+        # or fix branch / advisory derived state / status
+        # category on the shipped Phase 10L / 10M poll cadence.
+        # No separate timer, no background thread, no cross-tick
+        # advisory cache. Emits the per-tick audit line through
+        # the shipped `_log_note(...)` writer.
+        _refresh_orchestration_visualization()
         view = assemble_desktop_app_view(controller_root)
         summary = _desktop_native_summary_payload(view)
         summary_header.config(text=summary["window_title"])
@@ -36501,6 +36599,658 @@ def _desktop_codex_conversation_derive_runtime_gate_inputs(
         "overlap_state": overlap_state,
         "strict_mode_gate_pending": strict_mode_gate_pending,
     }
+
+
+# ---------------------------------------------------------------------------
+# Phase 10AI: Orchestration Graph And Performance View Initial Slice.
+#
+# First bounded runtime that materialises the shipped Phase 10AH
+# desktop-orchestration-visualization contract into the shipped
+# desktop app. The runtime is intentionally minimal: it ships the
+# closed 15-value visualization vocabulary, the closed
+# canonical-mirror / advisory attribution tags, the closed
+# five-category status-icon vocabulary, the closed nine-category
+# refusal vocabulary, a Tk-free pure view builder that reads the
+# shipped canonical mirrors + derives the five advisory keys
+# from those mirrors, a Tk-free pure text renderer that emits
+# one line per vocabulary key with the shipped attribution tag,
+# and a Tk-free pure audit-line formatter reusing the shipped
+# Phase 10AG audit-line convention.
+#
+# NON-goals for this initial slice (per the Phase 10AH contract's
+# Out Of Scope section):
+#   - hidden UI-only orchestration graph store / progress cache /
+#     layout cache / animation state store
+#   - background watcher / separate timer / poll thread beyond
+#     the shipped Phase 10L / 10M poll cadence
+#   - automatic phase progression, verdict authorship, or
+#     downstream action dispatch from the visualization panel
+#   - graph-side canonical write path (the visualization panel is
+#     READ-ONLY)
+#   - new library-callable control (the shipped Phase 10I
+#     three-control cap is preserved)
+#   - new canonical artifact (the shipped canonical set is
+#     preserved)
+# ---------------------------------------------------------------------------
+
+PHASE_10AI_VISUALIZATION_SIGNAL_VERSION = "phase-10ai-v1"
+
+# Closed ten-key canonical-mirror vocabulary matching the Phase
+# 10AH contract's `## In-Scope Visualization Vocabulary` section
+# verbatim. Every canonical-mirror value is read verbatim from a
+# shipped canonical artifact; the visualization surface NEVER
+# mutates any of these.
+PHASE_10AI_CANONICAL_MIRROR_KEYS = (
+    "phase",
+    "sub_phase",
+    "task",
+    "loop_state_status",
+    "approval_mode",
+    "cycle_count",
+    "max_cycles",
+    "awaiting_human_for",
+    "last_verdict",
+    "last_verdict_phase",
+)
+
+# Closed five-key advisory-derived vocabulary matching the Phase
+# 10AH contract verbatim. Every advisory-derived value is
+# computed per poll tick from the canonical mirrors above; the
+# visualization surface NEVER caches advisory state across ticks.
+PHASE_10AI_ADVISORY_DERIVED_KEYS = (
+    "review_branch_active",
+    "fix_branch_active",
+    "human_gate_pending",
+    "blocked_or_halted",
+    "artifact_backed_progress",
+)
+
+# Full closed fifteen-key visualization vocabulary. The Tk-free
+# view builder and text renderer refuse fail-closed on any
+# key outside this set (see the closed refusal vocabulary below).
+PHASE_10AI_VISUALIZATION_VOCABULARY = (
+    PHASE_10AI_CANONICAL_MIRROR_KEYS
+    + PHASE_10AI_ADVISORY_DERIVED_KEYS
+)
+
+# Closed source-category attribution vocabulary matching the
+# Phase 10AH contract's `## Canonical Mirror Vs Advisory Derived
+# State` section verbatim.
+PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR = "canonical_mirror"
+PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY = (
+    "visualization_advisory"
+)
+PHASE_10AI_SOURCE_CATEGORIES = (
+    PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR,
+    PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY,
+)
+
+# Attribution tags matching the Phase 10AH contract's
+# `## Canonical Mirror Vs Advisory Derived State` section
+# verbatim. Every displayed line in the desktop panel MUST carry
+# one of these tags.
+PHASE_10AI_ATTRIBUTION_CANONICAL_MIRROR = "[canonical mirror]"
+PHASE_10AI_ATTRIBUTION_ADVISORY = "[visualization-advisory]"
+
+# Closed five-category status-icon vocabulary matching the Phase
+# 10AH contract's `## Node / Edge / Status Model` section
+# verbatim.
+PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS = "in_progress"
+PHASE_10AI_STATUS_CATEGORY_AWAITING_REVIEW = "awaiting_review"
+PHASE_10AI_STATUS_CATEGORY_AWAITING_HUMAN = "awaiting_human"
+PHASE_10AI_STATUS_CATEGORY_HALTED = "halted"
+PHASE_10AI_STATUS_CATEGORY_COMPLETE = "complete"
+PHASE_10AI_STATUS_CATEGORIES = (
+    PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS,
+    PHASE_10AI_STATUS_CATEGORY_AWAITING_REVIEW,
+    PHASE_10AI_STATUS_CATEGORY_AWAITING_HUMAN,
+    PHASE_10AI_STATUS_CATEGORY_HALTED,
+    PHASE_10AI_STATUS_CATEGORY_COMPLETE,
+)
+
+# Closed nine-category refusal vocabulary matching the Phase
+# 10AH contract's `## Refusal Behavior` section verbatim.
+PHASE_10AI_REFUSAL_VALUE_OUTSIDE_VOCAB = (
+    "refused_value_outside_closed_vocabulary"
+)
+PHASE_10AI_REFUSAL_SOURCE_CATEGORY_OUTSIDE_VOCAB = (
+    "refused_source_category_outside_closed_vocabulary"
+)
+PHASE_10AI_REFUSAL_GATE_CATEGORY_OUTSIDE_VOCAB = (
+    "refused_gate_category_outside_closed_vocabulary"
+)
+PHASE_10AI_REFUSAL_STATUS_CATEGORY_OUTSIDE_VOCAB = (
+    "refused_status_category_outside_closed_vocabulary"
+)
+PHASE_10AI_REFUSAL_CANONICAL_WRITE = (
+    "refused_canonical_write_from_visualization"
+)
+PHASE_10AI_REFUSAL_AUTO_PROGRESSION = (
+    "refused_auto_progression_from_visualization"
+)
+PHASE_10AI_REFUSAL_AUTO_FILL_IDENTITY = (
+    "refused_auto_fill_operator_identity"
+)
+PHASE_10AI_REFUSAL_ADVISORY_PERSISTENCE = (
+    "refused_advisory_persistence"
+)
+PHASE_10AI_REFUSAL_BACKGROUND_WATCHER = (
+    "refused_background_watcher_beyond_cadence"
+)
+PHASE_10AI_REFUSAL_CATEGORIES = (
+    PHASE_10AI_REFUSAL_VALUE_OUTSIDE_VOCAB,
+    PHASE_10AI_REFUSAL_SOURCE_CATEGORY_OUTSIDE_VOCAB,
+    PHASE_10AI_REFUSAL_GATE_CATEGORY_OUTSIDE_VOCAB,
+    PHASE_10AI_REFUSAL_STATUS_CATEGORY_OUTSIDE_VOCAB,
+    PHASE_10AI_REFUSAL_CANONICAL_WRITE,
+    PHASE_10AI_REFUSAL_AUTO_PROGRESSION,
+    PHASE_10AI_REFUSAL_AUTO_FILL_IDENTITY,
+    PHASE_10AI_REFUSAL_ADVISORY_PERSISTENCE,
+    PHASE_10AI_REFUSAL_BACKGROUND_WATCHER,
+)
+
+# Per-vocabulary-key source category (canonical mirror or
+# advisory) matching the Phase 10AH contract's Applies-To lines
+# verbatim. Any refactor that widens the closed vocabulary above
+# MUST also update this map or the view builder will refuse
+# fail-closed on the unmapped key.
+PHASE_10AI_KEY_SOURCE_CATEGORY_MAP = {
+    "phase": PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR,
+    "sub_phase": PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR,
+    "task": PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR,
+    "loop_state_status": (
+        PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+    ),
+    "approval_mode": (
+        PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+    ),
+    "cycle_count": PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR,
+    "max_cycles": PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR,
+    "awaiting_human_for": (
+        PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+    ),
+    "last_verdict": (
+        PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+    ),
+    "last_verdict_phase": (
+        PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+    ),
+    "review_branch_active": (
+        PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY
+    ),
+    "fix_branch_active": (
+        PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY
+    ),
+    "human_gate_pending": (
+        PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY
+    ),
+    "blocked_or_halted": (
+        PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY
+    ),
+    "artifact_backed_progress": (
+        PHASE_10AI_SOURCE_CATEGORY_VISUALIZATION_ADVISORY
+    ),
+}
+
+# Per-key source-artifact paths (controller-relative) so a future
+# node renderer can cite the shipped read source alongside each
+# displayed value. Advisory-derived keys name the shipped mirrors
+# they derive FROM.
+PHASE_10AI_KEY_SOURCE_ARTIFACTS_MAP = {
+    "phase": (
+        ".agent-loop/loop-state.json",
+        ".agent-loop/current-phase.md",
+    ),
+    "sub_phase": (
+        ".agent-loop/loop-state.json",
+        ".agent-loop/current-phase.md",
+    ),
+    "task": (
+        ".agent-loop/loop-state.json",
+        ".agent-loop/current-task.md",
+    ),
+    "loop_state_status": (".agent-loop/loop-state.json",),
+    "approval_mode": (".agent-loop/loop-state.json",),
+    "cycle_count": (".agent-loop/loop-state.json",),
+    "max_cycles": (".agent-loop/loop-state.json",),
+    "awaiting_human_for": (".agent-loop/loop-state.json",),
+    "last_verdict": (".agent-loop/loop-state.json",),
+    "last_verdict_phase": (".agent-loop/loop-state.json",),
+    "review_branch_active": (".agent-loop/loop-state.json",),
+    "fix_branch_active": (
+        ".agent-loop/loop-state.json",
+        ".agent-loop/fix-prompt.md",
+        ".agent-loop/claude-summary.md",
+    ),
+    "human_gate_pending": (".agent-loop/loop-state.json",),
+    "blocked_or_halted": (
+        ".agent-loop/loop-state.json",
+        # Overlap-safe detection view is derived from the same
+        # canonical set the shipped Phase 10AC helper reads.
+    ),
+    "artifact_backed_progress": (
+        ".agent-loop/claude-summary.md",
+        ".agent-loop/codex-review.md",
+        ".agent-loop/claude-prompt.md",
+        ".agent-loop/fix-prompt.md",
+        ".agent-loop/phase-plan.md",
+        ".agent-loop/current-phase.md",
+        ".agent-loop/current-task.md",
+        ".agent-loop/git-status.log",
+        ".agent-loop/git-diff.patch",
+        ".agent-loop/test-output.log",
+        ".agent-loop/lint-output.log",
+        ".agent-loop/typecheck-output.log",
+        ".agent-loop/build-output.log",
+    ),
+}
+
+# Closed shipped loop-state status sets used by the advisory
+# derivation. Both sets are subsets of the shipped Phase 3A /
+# Phase 5B status vocabulary; adding to either set here does NOT
+# widen the runtime, it only reclassifies which branch the
+# desktop panel shows as active for the displayed status.
+PHASE_10AI_NORMAL_CYCLE_STATUSES = frozenset({
+    "awaiting_claude_implementation",
+    "awaiting_codex_review",
+    "phase_complete_awaiting_human_approval",
+})
+PHASE_10AI_FIX_CYCLE_STATUSES = frozenset({
+    "awaiting_fix_prompt",
+    "awaiting_claude_fix",
+    "awaiting_codex_re_review",
+})
+
+
+def _desktop_orchestration_visualization_derive_advisory_state(
+    *,
+    loop_state,
+    overlap_state,
+    fix_prompt_mtime,
+    claude_summary_mtime,
+    artifact_backed_progress,
+) -> dict:
+    """Pure Tk-free derivation of the five Phase 10AH
+    advisory-derived vocabulary keys from the shipped canonical
+    mirrors. Every derivation is a pure function of the inputs;
+    the helper NEVER reads from disk itself so tests can pass a
+    controlled loop_state dict + overlap_state string + mtimes +
+    artifact_backed_progress dict without setting up a temp
+    controller.
+
+    Returns a dict with exactly the five advisory keys per the
+    Phase 10AH contract:
+      - `review_branch_active`: True when loop-state `status` is
+        in `PHASE_10AI_NORMAL_CYCLE_STATUSES` OR `last_verdict`
+        is `APPROVED_FOR_HUMAN_REVIEW`.
+      - `fix_branch_active`: True when loop-state `status` is in
+        `PHASE_10AI_FIX_CYCLE_STATUSES` OR the shipped
+        `.agent-loop/fix-prompt.md` mtime is strictly newer than
+        the shipped `.agent-loop/claude-summary.md` mtime.
+      - `human_gate_pending`: True when loop-state
+        `awaiting_human_for` is set OR loop-state `status` is in
+        `STRICT_GATE_HALT_STATUSES`.
+      - `blocked_or_halted`: True when loop-state `status`
+        starts with `halted_` OR `overlap_state ==
+        'refused_pending_recovery'`.
+      - `artifact_backed_progress`: passed through verbatim (the
+        caller reads it from `Path.stat()` via the shipped Phase
+        7B inspector convention).
+    """
+    if not isinstance(loop_state, dict):
+        loop_state = {}
+    status = loop_state.get("status") or ""
+    if not isinstance(status, str):
+        status = ""
+    last_verdict = loop_state.get("last_verdict") or ""
+    if not isinstance(last_verdict, str):
+        last_verdict = ""
+    awaiting_human_for = loop_state.get("awaiting_human_for")
+    review_branch_active = (
+        status in PHASE_10AI_NORMAL_CYCLE_STATUSES
+        or last_verdict == "APPROVED_FOR_HUMAN_REVIEW"
+    )
+    fix_branch_active = (
+        status in PHASE_10AI_FIX_CYCLE_STATUSES
+        or (
+            isinstance(fix_prompt_mtime, (int, float))
+            and isinstance(claude_summary_mtime, (int, float))
+            and fix_prompt_mtime > claude_summary_mtime
+        )
+    )
+    human_gate_pending = bool(
+        (isinstance(awaiting_human_for, str) and awaiting_human_for)
+        or status in STRICT_GATE_HALT_STATUSES
+    )
+    blocked_or_halted = (
+        status.startswith("halted_")
+        or overlap_state == "refused_pending_recovery"
+    )
+    return {
+        "review_branch_active": review_branch_active,
+        "fix_branch_active": fix_branch_active,
+        "human_gate_pending": human_gate_pending,
+        "blocked_or_halted": blocked_or_halted,
+        "artifact_backed_progress": artifact_backed_progress,
+    }
+
+
+def _desktop_orchestration_visualization_classify_status_category(
+    *,
+    loop_state,
+    overlap_state,
+) -> str:
+    """Pure Tk-free classifier: map the current shipped
+    loop-state status + Phase 10AC overlap aggregate to one of
+    the closed five-category status-icon vocabulary values.
+    Precedence is deterministic:
+      1. `halted` if status starts with `halted_` OR overlap
+         aggregate is `refused_pending_recovery`
+      2. `complete` if status is
+         `phase_complete_awaiting_human_approval` (the specific
+         complete signal takes precedence over the generic
+         awaiting-human classification)
+      3. `awaiting_human` if `awaiting_human_for` is set OR
+         status is in `STRICT_GATE_HALT_STATUSES`
+      4. `awaiting_review` if status names one of the Codex
+         review points (`awaiting_codex_review`,
+         `awaiting_codex_re_review`)
+      5. `in_progress` otherwise
+    """
+    if not isinstance(loop_state, dict):
+        loop_state = {}
+    status = loop_state.get("status") or ""
+    if not isinstance(status, str):
+        status = ""
+    awaiting_human_for = loop_state.get("awaiting_human_for")
+    if (
+        status.startswith("halted_")
+        or overlap_state == "refused_pending_recovery"
+    ):
+        return PHASE_10AI_STATUS_CATEGORY_HALTED
+    if status == "phase_complete_awaiting_human_approval":
+        return PHASE_10AI_STATUS_CATEGORY_COMPLETE
+    if (
+        (isinstance(awaiting_human_for, str) and awaiting_human_for)
+        or status in STRICT_GATE_HALT_STATUSES
+    ):
+        return PHASE_10AI_STATUS_CATEGORY_AWAITING_HUMAN
+    if status in ("awaiting_codex_review", "awaiting_codex_re_review"):
+        return PHASE_10AI_STATUS_CATEGORY_AWAITING_REVIEW
+    return PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS
+
+
+def _desktop_orchestration_visualization_format_audit_line(
+    *,
+    epoch_seconds,
+    refusal_category=None,
+) -> str:
+    """Pure audit-line formatter matching the shipped Phase 10AG
+    `_desktop_codex_conversation_format_audit_line` convention so
+    the Tk callback appends per poll tick via the shipped
+    `_log_note(...)` writer to `.agent-loop/orchestrator.log`.
+    NEVER writes a parallel audit file per the Phase 10AH
+    Source-Of-Truth Preservation rule.
+
+    Line shape:
+      `[desktop-orchestration-visualization]
+       signal_version=<version> refusal_category=<cat|None>
+       epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in PHASE_10AI_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop orchestration visualization audit "
+                    f"refused: refusal_category "
+                    f"{refusal_category!r} is not in the shipped "
+                    f"closed Phase 10AH refusal vocabulary "
+                    f"{PHASE_10AI_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop orchestration visualization audit "
+                f"refused: epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-orchestration-visualization] signal_version="
+        f"{PHASE_10AI_VISUALIZATION_SIGNAL_VERSION!r} "
+        f"refusal_category={refusal_category!r} epoch_seconds="
+        f"{epoch_seconds!r}"
+    )
+
+
+def _desktop_orchestration_visualization_stat_artifact_backed_progress(
+    controller_root,
+) -> dict:
+    """Pure Tk-free helper: read `Path.stat()` for each shipped
+    canonical artifact in `PHASE_10AI_KEY_SOURCE_ARTIFACTS_MAP[
+    'artifact_backed_progress']` and return an ordered dict of
+    `{rel_path: {present, size, modified_utc}}`. NEVER reads BODY
+    content beyond what the shipped Phase 7B inspector already
+    reads (stat-only). Fail-safe on OSError: the entry reports
+    `present=False` with `size=None` and `modified_utc=None`.
+    """
+    try:
+        controller_path = Path(controller_root)
+    except TypeError:
+        controller_path = None
+    entries: dict = {}
+    for rel_path in (
+        PHASE_10AI_KEY_SOURCE_ARTIFACTS_MAP[
+            "artifact_backed_progress"
+        ]
+    ):
+        if controller_path is None:
+            entries[rel_path] = {
+                "present": False,
+                "size": None,
+                "modified_utc": None,
+            }
+            continue
+        target = controller_path / rel_path
+        if not target.is_file():
+            entries[rel_path] = {
+                "present": False,
+                "size": None,
+                "modified_utc": None,
+            }
+            continue
+        try:
+            st = target.stat()
+        except OSError:
+            entries[rel_path] = {
+                "present": False,
+                "size": None,
+                "modified_utc": None,
+            }
+            continue
+        entries[rel_path] = {
+            "present": True,
+            "size": st.st_size,
+            "modified_utc": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(st.st_mtime),
+            ),
+        }
+    return entries
+
+
+def build_desktop_orchestration_visualization_view(
+    controller_root,
+) -> dict:
+    """Phase 10AI: assemble the bounded desktop orchestration-
+    visualization view. Reads the shipped canonical mirrors +
+    derives the five advisory keys per the Phase 10AH contract.
+    Returns a bounded dict shaped exactly to the closed
+    fifteen-key vocabulary, with per-key `source_category`,
+    `source_artifacts`, and `current_value` fields plus the
+    per-tick classified status category.
+
+    Pure Tk-free bounded read-only IO through the shipped
+    canonical readers only. NEVER writes to any canonical
+    artifact, NEVER mutates loop-state, NEVER spawns a
+    subprocess, NEVER opens a network socket, NEVER caches
+    across ticks. Refresh cadence is caller-controlled via the
+    shipped Phase 10L / 10M polling cadence.
+    """
+    controller_path = Path(controller_root)
+    state_path = (
+        controller_path / ".agent-loop" / "loop-state.json"
+    )
+    loop_state: Optional[dict] = None
+    try:
+        loop_state = load_loop_state(state_path)
+    except HaltError:
+        loop_state = None
+    if not isinstance(loop_state, dict):
+        loop_state = {}
+    overlap_state: Optional[str] = None
+    try:
+        overlap_view = build_desktop_overlap_detection_view(
+            controller_path,
+        )
+    except HaltError:
+        overlap_view = None
+    if isinstance(overlap_view, dict):
+        overall = overlap_view.get("overall") or {}
+        candidate = overall.get("overall_signal_state")
+        if isinstance(candidate, str):
+            overlap_state = candidate
+    fix_prompt_path = (
+        controller_path / ".agent-loop" / "fix-prompt.md"
+    )
+    claude_summary_path = (
+        controller_path / ".agent-loop" / "claude-summary.md"
+    )
+    fix_prompt_mtime = None
+    claude_summary_mtime = None
+    try:
+        fix_prompt_mtime = fix_prompt_path.stat().st_mtime
+    except OSError:
+        fix_prompt_mtime = None
+    try:
+        claude_summary_mtime = claude_summary_path.stat().st_mtime
+    except OSError:
+        claude_summary_mtime = None
+    artifact_backed_progress = (
+        _desktop_orchestration_visualization_stat_artifact_backed_progress(
+            controller_path,
+        )
+    )
+    advisory = (
+        _desktop_orchestration_visualization_derive_advisory_state(
+            loop_state=loop_state,
+            overlap_state=overlap_state,
+            fix_prompt_mtime=fix_prompt_mtime,
+            claude_summary_mtime=claude_summary_mtime,
+            artifact_backed_progress=artifact_backed_progress,
+        )
+    )
+    canonical_mirror_values = {
+        "phase": loop_state.get("phase"),
+        "sub_phase": loop_state.get("sub_phase"),
+        "task": loop_state.get("task"),
+        "loop_state_status": loop_state.get("status"),
+        "approval_mode": loop_state.get("approval_mode"),
+        "cycle_count": loop_state.get("cycle_count"),
+        "max_cycles": loop_state.get("max_cycles"),
+        "awaiting_human_for": loop_state.get("awaiting_human_for"),
+        "last_verdict": loop_state.get("last_verdict"),
+        "last_verdict_phase": loop_state.get("last_verdict_phase"),
+    }
+    nodes: list = []
+    for key in PHASE_10AI_VISUALIZATION_VOCABULARY:
+        source_category = PHASE_10AI_KEY_SOURCE_CATEGORY_MAP[key]
+        source_artifacts = list(
+            PHASE_10AI_KEY_SOURCE_ARTIFACTS_MAP[key]
+        )
+        if (
+            source_category
+            == PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+        ):
+            current_value = canonical_mirror_values[key]
+            attribution_tag = (
+                PHASE_10AI_ATTRIBUTION_CANONICAL_MIRROR
+            )
+        else:
+            current_value = advisory[key]
+            attribution_tag = PHASE_10AI_ATTRIBUTION_ADVISORY
+        nodes.append({
+            "id": key,
+            "source_category": source_category,
+            "source_artifacts": source_artifacts,
+            "current_value": current_value,
+            "attribution_tag": attribution_tag,
+        })
+    status_category = (
+        _desktop_orchestration_visualization_classify_status_category(
+            loop_state=loop_state,
+            overlap_state=overlap_state,
+        )
+    )
+    return {
+        "signal_version": (
+            PHASE_10AI_VISUALIZATION_SIGNAL_VERSION
+        ),
+        "controller_path_canonical": (
+            controller_path.resolve().as_posix()
+        ),
+        "vocabulary": list(
+            PHASE_10AI_VISUALIZATION_VOCABULARY
+        ),
+        "source_categories": list(
+            PHASE_10AI_SOURCE_CATEGORIES
+        ),
+        "status_categories": list(
+            PHASE_10AI_STATUS_CATEGORIES
+        ),
+        "refusal_categories": list(
+            PHASE_10AI_REFUSAL_CATEGORIES
+        ),
+        "nodes": nodes,
+        "status_category": status_category,
+        "status_category_source_mirror": (
+            ".agent-loop/loop-state.json"
+        ),
+        "overlap_state": overlap_state,
+    }
+
+
+def render_desktop_orchestration_visualization_text(
+    view: dict,
+) -> list:
+    """Phase 10AI: format the assembled view as text lines. Per-
+    line attribution tags (`[canonical mirror]` /
+    `[visualization-advisory]`) match the shipped Phase 10AH
+    contract convention. Every node MUST carry exactly one of the
+    two attribution tags; the header line names the current
+    status category and the source mirror it was classified from.
+    """
+    lines: list = []
+    lines.append(
+        f"[desktop-orchestration-visualization] view "
+        f"(signal_version={view['signal_version']!r} "
+        f"status_category={view['status_category']!r} "
+        f"source_mirror="
+        f"{view['status_category_source_mirror']!r})"
+    )
+    for node in view["nodes"]:
+        lines.append(
+            f"  {node['attribution_tag']} {node['id']}="
+            f"{node['current_value']!r} source_category="
+            f"{node['source_category']!r} source_artifacts="
+            f"{node['source_artifacts']!r}"
+        )
+    return lines
 
 
 # ---------------------------------------------------------------------------
