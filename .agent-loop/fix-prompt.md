@@ -4,7 +4,7 @@
 No active Claude fix task
 
 ## Objective
-None. The latest Codex review for Phase 10AG found no remaining Claude-owned
+None. The latest Codex review for Phase 10AH found no remaining Claude-owned
 issues.
 
 ## Context

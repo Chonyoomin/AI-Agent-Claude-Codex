@@ -24,7 +24,7 @@ Phase 10 - Future Product Features
 
 ## Active Sub-Phase
 
-Phase 10AH - Orchestration Graph And Phase-State Visualization Contract
+Phase 10AI - Orchestration Graph And Performance View Initial Slice
 
 ## Phase Status
 
@@ -32,37 +32,37 @@ Active and ready for implementation.
 
 ## Active Task
 
-Define the contract for a bounded desktop orchestration-visualization surface so
-the app can show live loop state as a graph or icon-based flow without
-inventing UI-only truth or bypassing canonical artifact ownership.
+Implement the first bounded desktop orchestration graph and performance view so
+the operator can see where the loop currently is, what just completed, what is
+waiting next, and where the run is blocked or halted.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify `Phase 10AH` as the active sub-phase
-- `.agent-loop/phase-plan.md` records `Phase 10AH` as the active phase section
+  `.agent-loop/loop-state.json` identify `Phase 10AI` as the active sub-phase
+- `.agent-loop/phase-plan.md` records `Phase 10AI` as the active phase section
   and preserves prior phases as closed history
 - `.agent-loop/claude-prompt.md` contains a scoped implementation prompt for
-  the `Phase 10AH` contract slice
+  the `Phase 10AI` runtime slice
 
 ## Next-Phase Gate
 
 Do not mark this phase complete until:
 
-- the repository defines a bounded orchestration-visualization contract for the
-  desktop app
-- the contract makes phase/sub-phase, current loop state, review/fix branch,
-  blocked/halted states, and artifact-backed progress legible without
-  inventing a second source of truth
-- the contract stays bounded to reporting and visualization rather than hidden
-  control or autonomous orchestration
+- the desktop app exposes the first bounded orchestration graph or icon-based
+  flow view derived from shipped canonical artifacts
+- the runtime makes current phase/sub-phase/task, loop-state status,
+  review/fix branch, and blocked/halted state legible to the operator
+- the implementation stays canonical-artifact-first and does not invent a
+  hidden graph-state store, progress cache, or second controller
 
 ## Out Of Scope For Current Phase
 
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`
-- introducing a hidden UI-only graph state store, progress cache, or desktop-
-  side orchestration plane outside canonical artifacts
+- introducing a hidden UI-only graph state store, progress cache, animation
+  persistence layer, or desktop-side orchestration plane outside canonical
+  artifacts
 - fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)

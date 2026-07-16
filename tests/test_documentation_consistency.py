@@ -6746,6 +6746,88 @@ class Phase10AHOrchestrationVisualizationContractTests(
             "phase-plan.md MUST name Phase 10AH",
         )
 
+    def test_dependencies_section_vocabulary_count_matches_actual(
+        self,
+    ) -> None:
+        # Regression pin for the review's Issue 1: the dependencies
+        # section MUST agree with the closed vocabulary the
+        # contract actually enumerates (ten canonical mirrors + five
+        # advisory-derived = fifteen). Any wrong count word ("ten",
+        # "eleven", "twelve", "thirteen", "fourteen") in the
+        # `matching the ... values named above` clause would
+        # contradict the shipped enumeration.
+        header = (
+            "## Dependencies On Phase 10AI (Runtime Implementation)"
+        )
+        self.assertIn(header, self.text)
+        deps_body = self.text.split(header, 1)[1]
+        deps_body = deps_body.split("\n## ", 1)[0]
+        self.assertIn(
+            "fifteen values", deps_body,
+            "Dependencies section MUST claim the closed "
+            "vocabulary constant has 'fifteen values' to match "
+            "the 10 canonical-mirror + 5 advisory-derived "
+            "enumeration in `## In-Scope Visualization "
+            "Vocabulary`",
+        )
+        for wrong in (
+            "eleven values",
+            "twelve values",
+            "thirteen values",
+            "fourteen values",
+        ):
+            self.assertNotIn(
+                wrong, deps_body,
+                f"Dependencies section MUST NOT claim "
+                f"{wrong!r}; the shipped vocabulary is 15",
+            )
+
+    def test_task_mirror_is_a_human_readable_summary(self) -> None:
+        # Regression pin for the review's Issue 2: the `task`
+        # vocabulary entry MUST describe the canonical value as a
+        # human-readable task summary (matching what
+        # `.agent-loop/loop-state.json` field `task` and
+        # `.agent-loop/current-task.md` actually hold), NOT a
+        # slugged / kebab-case task-id token. The bullet MUST NOT
+        # include the fake id example the earlier draft carried,
+        # and MUST include the shipped summary vocabulary
+        # ("summary" / "sentence" / "verbatim") so a reader knows
+        # to render the string as-is.
+        vocab_header = "## In-Scope Visualization Vocabulary"
+        self.assertIn(vocab_header, self.text)
+        vocab_body = self.text.split(vocab_header, 1)[1]
+        vocab_body = vocab_body.split("\n## ", 1)[0]
+        # Find the `task` bullet (its subsequent content up to
+        # the next `- ` bullet at column 0 of the next entry).
+        task_marker = "- `task` - "
+        self.assertIn(task_marker, vocab_body)
+        task_body = vocab_body.split(task_marker, 1)[1]
+        task_body = task_body.split("\n- ", 1)[0]
+        self.assertNotIn(
+            "phase-10ah-implement-visualization-contract",
+            task_body,
+            "The `task` vocabulary bullet MUST NOT describe the "
+            "canonical value as a slugged / kebab-case task id; "
+            "the shipped canonical source holds a human-readable "
+            "task summary sentence",
+        )
+        self.assertNotIn(
+            "task id", task_body,
+            "The `task` vocabulary bullet MUST NOT call the "
+            "canonical value a `task id`; the shipped canonical "
+            "source holds a human-readable task summary",
+        )
+        self.assertTrue(
+            any(
+                word in task_body
+                for word in ("summary", "sentence", "verbatim")
+            ),
+            "The `task` vocabulary bullet MUST describe the "
+            "canonical value as a summary / sentence / verbatim "
+            "string so a future runtime slice does not attempt "
+            "to re-derive a task-id token",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

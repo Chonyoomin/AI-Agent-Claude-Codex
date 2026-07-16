@@ -136,10 +136,17 @@ vocabulary is:
   Contract`). Canonical mirror of
   `.agent-loop/loop-state.json` field `sub_phase` (and of
   `.agent-loop/current-phase.md`).
-- `task` - the current active task id (e.g.
-  `phase-10ah-implement-visualization-contract`). Canonical
-  mirror of `.agent-loop/loop-state.json` field `task` (and of
-  `.agent-loop/current-task.md`).
+- `task` - the current active task summary (a human-readable
+  sentence describing the active task, e.g. "Define the contract
+  for a bounded desktop orchestration-visualization surface ..."
+  as written to `.agent-loop/loop-state.json` by the shipped
+  Phase 3A / 4A planner and mirrored into
+  `.agent-loop/current-task.md`). Canonical mirror of
+  `.agent-loop/loop-state.json` field `task` (and of the
+  `## Task` block in `.agent-loop/current-task.md`). The
+  visualization surface renders this string verbatim; it is
+  NOT a task-id token and MUST NOT be re-derived, truncated
+  into a slug, or reformatted.
 - `loop_state_status` - the current shipped Phase 3A / 5C loop
   state status (one of `awaiting_claude_implementation`,
   `awaiting_codex_review`, `awaiting_fix_prompt`,
@@ -451,7 +458,13 @@ Phase 10AI will implement the runtime that satisfies this
 contract. The Phase 10AI runtime is expected to add:
 
 - a closed visualization-vocabulary constant matching the
-  eleven values named above
+  fifteen values named above (the ten canonical-mirror keys
+  `phase`, `sub_phase`, `task`, `loop_state_status`,
+  `approval_mode`, `cycle_count`, `max_cycles`,
+  `awaiting_human_for`, `last_verdict`, `last_verdict_phase`,
+  plus the five advisory-derived keys `review_branch_active`,
+  `fix_branch_active`, `human_gate_pending`,
+  `blocked_or_halted`, `artifact_backed_progress`)
 - a closed node / edge / status-category constant matching the
   model named above
 - a pure visualization-view builder (Tk-free, unit-testable)
