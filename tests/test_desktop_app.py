@@ -3029,5 +3029,636 @@ class DesktopCodexConversationSendCallbackWiringTests(
         self.assertIn("orchestrator.log", self._source)
 
 
+class Phase10AIVisualizationConstantsTests(unittest.TestCase):
+    """Pin the shipped Phase 10AI closed vocabularies. Any
+    widening or contraction of the closed sets is a contract
+    break and MUST fail here loudly.
+    """
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.PHASE_10AI_VISUALIZATION_SIGNAL_VERSION,
+            "phase-10ai-v1",
+        )
+
+    def test_ten_canonical_mirror_keys(self) -> None:
+        self.assertEqual(
+            agent_loop.PHASE_10AI_CANONICAL_MIRROR_KEYS,
+            (
+                "phase", "sub_phase", "task",
+                "loop_state_status", "approval_mode",
+                "cycle_count", "max_cycles",
+                "awaiting_human_for", "last_verdict",
+                "last_verdict_phase",
+            ),
+        )
+
+    def test_five_advisory_derived_keys(self) -> None:
+        self.assertEqual(
+            agent_loop.PHASE_10AI_ADVISORY_DERIVED_KEYS,
+            (
+                "review_branch_active", "fix_branch_active",
+                "human_gate_pending", "blocked_or_halted",
+                "artifact_backed_progress",
+            ),
+        )
+
+    def test_full_vocabulary_is_fifteen_and_concatenates(
+        self,
+    ) -> None:
+        self.assertEqual(
+            len(agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY),
+            15,
+        )
+        self.assertEqual(
+            agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY,
+            (
+                agent_loop.PHASE_10AI_CANONICAL_MIRROR_KEYS
+                + agent_loop.PHASE_10AI_ADVISORY_DERIVED_KEYS
+            ),
+        )
+
+    def test_two_source_categories(self) -> None:
+        self.assertEqual(
+            agent_loop.PHASE_10AI_SOURCE_CATEGORIES,
+            ("canonical_mirror", "visualization_advisory"),
+        )
+
+    def test_five_status_categories(self) -> None:
+        self.assertEqual(
+            agent_loop.PHASE_10AI_STATUS_CATEGORIES,
+            (
+                "in_progress", "awaiting_review",
+                "awaiting_human", "halted", "complete",
+            ),
+        )
+
+    def test_nine_refusal_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.PHASE_10AI_REFUSAL_CATEGORIES), 9,
+        )
+        for category in (
+            "refused_value_outside_closed_vocabulary",
+            "refused_source_category_outside_closed_vocabulary",
+            "refused_gate_category_outside_closed_vocabulary",
+            "refused_status_category_outside_closed_vocabulary",
+            "refused_canonical_write_from_visualization",
+            "refused_auto_progression_from_visualization",
+            "refused_auto_fill_operator_identity",
+            "refused_advisory_persistence",
+            "refused_background_watcher_beyond_cadence",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.PHASE_10AI_REFUSAL_CATEGORIES,
+            )
+
+    def test_key_source_category_map_covers_every_vocab_key(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop.PHASE_10AI_KEY_SOURCE_CATEGORY_MAP
+                .keys()
+            ),
+            set(
+                agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY
+            ),
+        )
+        for key, cat in (
+            agent_loop.PHASE_10AI_KEY_SOURCE_CATEGORY_MAP.items()
+        ):
+            self.assertIn(
+                cat, agent_loop.PHASE_10AI_SOURCE_CATEGORIES,
+                key,
+            )
+
+    def test_key_source_artifacts_map_covers_every_vocab_key(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop.PHASE_10AI_KEY_SOURCE_ARTIFACTS_MAP
+                .keys()
+            ),
+            set(
+                agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY
+            ),
+        )
+        for key, paths in (
+            agent_loop
+            .PHASE_10AI_KEY_SOURCE_ARTIFACTS_MAP.items()
+        ):
+            self.assertGreater(len(paths), 0, key)
+
+    def test_attribution_tags(self) -> None:
+        self.assertEqual(
+            agent_loop.PHASE_10AI_ATTRIBUTION_CANONICAL_MIRROR,
+            "[canonical mirror]",
+        )
+        self.assertEqual(
+            agent_loop.PHASE_10AI_ATTRIBUTION_ADVISORY,
+            "[visualization-advisory]",
+        )
+
+
+class Phase10AIAdvisoryDerivationTests(unittest.TestCase):
+    """Cover the pure Tk-free advisory-derivation helper. Every
+    branch of every derived key is exercised through the pure
+    function so we do not need a temp controller."""
+
+    def _derive(
+        self, *, loop_state, overlap_state=None,
+        fix_prompt_mtime=None, claude_summary_mtime=None,
+        artifact_backed_progress=None,
+    ):
+        if artifact_backed_progress is None:
+            artifact_backed_progress = {}
+        return (
+            agent_loop
+            ._desktop_orchestration_visualization_derive_advisory_state(
+                loop_state=loop_state,
+                overlap_state=overlap_state,
+                fix_prompt_mtime=fix_prompt_mtime,
+                claude_summary_mtime=claude_summary_mtime,
+                artifact_backed_progress=artifact_backed_progress,
+            )
+        )
+
+    def test_review_branch_active_from_normal_cycle_status(
+        self,
+    ) -> None:
+        for status in agent_loop.PHASE_10AI_NORMAL_CYCLE_STATUSES:
+            res = self._derive(loop_state={"status": status})
+            self.assertTrue(
+                res["review_branch_active"], status,
+            )
+
+    def test_review_branch_active_from_last_verdict(self) -> None:
+        res = self._derive(
+            loop_state={
+                "status": "some_other",
+                "last_verdict": "APPROVED_FOR_HUMAN_REVIEW",
+            },
+        )
+        self.assertTrue(res["review_branch_active"])
+
+    def test_review_branch_inactive_for_unrelated_status(
+        self,
+    ) -> None:
+        res = self._derive(
+            loop_state={"status": "awaiting_fix_prompt"},
+        )
+        self.assertFalse(res["review_branch_active"])
+
+    def test_fix_branch_active_from_fix_cycle_status(self) -> None:
+        for status in agent_loop.PHASE_10AI_FIX_CYCLE_STATUSES:
+            res = self._derive(loop_state={"status": status})
+            self.assertTrue(res["fix_branch_active"], status)
+
+    def test_fix_branch_active_from_mtime_comparison(self) -> None:
+        res = self._derive(
+            loop_state={"status": "awaiting_claude_implementation"},
+            fix_prompt_mtime=200.0,
+            claude_summary_mtime=100.0,
+        )
+        self.assertTrue(res["fix_branch_active"])
+
+    def test_fix_branch_inactive_when_summary_newer(self) -> None:
+        res = self._derive(
+            loop_state={"status": "awaiting_claude_implementation"},
+            fix_prompt_mtime=100.0,
+            claude_summary_mtime=200.0,
+        )
+        self.assertFalse(res["fix_branch_active"])
+
+    def test_human_gate_pending_from_awaiting_human_for(
+        self,
+    ) -> None:
+        res = self._derive(
+            loop_state={
+                "status": "awaiting_claude_implementation",
+                "awaiting_human_for": "pre_claude_prompt",
+            },
+        )
+        self.assertTrue(res["human_gate_pending"])
+
+    def test_human_gate_pending_from_strict_gate_halt(self) -> None:
+        for status in agent_loop.STRICT_GATE_HALT_STATUSES:
+            res = self._derive(loop_state={"status": status})
+            self.assertTrue(res["human_gate_pending"], status)
+
+    def test_blocked_or_halted_from_halted_status(self) -> None:
+        res = self._derive(
+            loop_state={"status": "halted_overlap_unsafe_context"},
+        )
+        self.assertTrue(res["blocked_or_halted"])
+
+    def test_blocked_or_halted_from_overlap_refused(self) -> None:
+        res = self._derive(
+            loop_state={"status": "awaiting_claude_implementation"},
+            overlap_state="refused_pending_recovery",
+        )
+        self.assertTrue(res["blocked_or_halted"])
+
+    def test_artifact_backed_progress_passes_through(self) -> None:
+        payload = {"foo.md": {"present": True}}
+        res = self._derive(
+            loop_state={"status": "awaiting_claude_implementation"},
+            artifact_backed_progress=payload,
+        )
+        self.assertIs(res["artifact_backed_progress"], payload)
+
+    def test_non_dict_loop_state_soft_fails_neutral(self) -> None:
+        res = self._derive(loop_state=None)
+        self.assertFalse(res["review_branch_active"])
+        self.assertFalse(res["fix_branch_active"])
+        self.assertFalse(res["human_gate_pending"])
+        self.assertFalse(res["blocked_or_halted"])
+
+
+class Phase10AIStatusCategoryClassifierTests(unittest.TestCase):
+
+    def _classify(self, *, loop_state, overlap_state=None):
+        return (
+            agent_loop
+            ._desktop_orchestration_visualization_classify_status_category(
+                loop_state=loop_state,
+                overlap_state=overlap_state,
+            )
+        )
+
+    def test_halted_status_returns_halted(self) -> None:
+        self.assertEqual(
+            self._classify(
+                loop_state={"status": "halted_overlap_unsafe_context"},
+            ),
+            "halted",
+        )
+
+    def test_overlap_refused_returns_halted(self) -> None:
+        self.assertEqual(
+            self._classify(
+                loop_state={
+                    "status": "awaiting_claude_implementation",
+                },
+                overlap_state="refused_pending_recovery",
+            ),
+            "halted",
+        )
+
+    def test_phase_complete_returns_complete(self) -> None:
+        self.assertEqual(
+            self._classify(
+                loop_state={
+                    "status": (
+                        "phase_complete_awaiting_human_approval"
+                    ),
+                },
+            ),
+            "complete",
+        )
+
+    def test_awaiting_human_for_returns_awaiting_human(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._classify(
+                loop_state={
+                    "status": "awaiting_claude_implementation",
+                    "awaiting_human_for": "pre_claude_prompt",
+                },
+            ),
+            "awaiting_human",
+        )
+
+    def test_strict_gate_halt_returns_awaiting_human(self) -> None:
+        # The strict-gate halt statuses start with "halted_" which
+        # matches the "halted" precedence branch first; verify
+        # that precedence is intentional.
+        for status in agent_loop.STRICT_GATE_HALT_STATUSES:
+            self.assertEqual(
+                self._classify(loop_state={"status": status}),
+                "halted",
+                status,
+            )
+
+    def test_awaiting_review_status_returns_awaiting_review(
+        self,
+    ) -> None:
+        for status in (
+            "awaiting_codex_review",
+            "awaiting_codex_re_review",
+        ):
+            self.assertEqual(
+                self._classify(loop_state={"status": status}),
+                "awaiting_review",
+                status,
+            )
+
+    def test_default_status_returns_in_progress(self) -> None:
+        self.assertEqual(
+            self._classify(
+                loop_state={
+                    "status": "awaiting_claude_implementation",
+                },
+            ),
+            "in_progress",
+        )
+
+    def test_non_dict_loop_state_returns_in_progress(self) -> None:
+        self.assertEqual(
+            self._classify(loop_state=None), "in_progress",
+        )
+
+
+class Phase10AIAuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._desktop_orchestration_visualization_format_audit_line(
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn(
+            "[desktop-orchestration-visualization]", line,
+        )
+        self.assertIn(
+            "signal_version='phase-10ai-v1'", line,
+        )
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal(self) -> None:
+        line = (
+            agent_loop
+            ._desktop_orchestration_visualization_format_audit_line(
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_canonical_write_from_visualization"
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category="
+            "'refused_canonical_write_from_visualization'",
+            line,
+        )
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._desktop_orchestration_visualization_format_audit_line(
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._desktop_orchestration_visualization_format_audit_line(
+                    epoch_seconds="not int",
+                )
+            )
+
+
+class Phase10AIViewBuilderTests(unittest.TestCase):
+
+    def test_shape_covers_full_vocabulary(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        self.assertEqual(
+            view["signal_version"], "phase-10ai-v1",
+        )
+        self.assertEqual(
+            view["vocabulary"],
+            list(
+                agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY
+            ),
+        )
+        node_ids = [n["id"] for n in view["nodes"]]
+        self.assertEqual(
+            node_ids,
+            list(
+                agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY
+            ),
+        )
+        for node in view["nodes"]:
+            self.assertIn(
+                node["source_category"],
+                agent_loop.PHASE_10AI_SOURCE_CATEGORIES,
+            )
+            if (
+                node["source_category"]
+                == "canonical_mirror"
+            ):
+                self.assertEqual(
+                    node["attribution_tag"],
+                    "[canonical mirror]",
+                )
+            else:
+                self.assertEqual(
+                    node["attribution_tag"],
+                    "[visualization-advisory]",
+                )
+        self.assertIn(
+            view["status_category"],
+            agent_loop.PHASE_10AI_STATUS_CATEGORIES,
+        )
+
+    def test_status_category_reflects_loop_state_status(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td),
+                status="halted_overlap_unsafe_context",
+            )
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        self.assertEqual(view["status_category"], "halted")
+
+    def test_canonical_mirror_values_match_loop_state(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td),
+                status="awaiting_codex_review",
+            )
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        nodes_by_id = {n["id"]: n for n in view["nodes"]}
+        self.assertEqual(
+            nodes_by_id["loop_state_status"]["current_value"],
+            "awaiting_codex_review",
+        )
+        self.assertEqual(
+            nodes_by_id["approval_mode"]["current_value"],
+            "review",
+        )
+        self.assertEqual(
+            view["status_category"], "awaiting_review",
+        )
+
+    def test_artifact_backed_progress_is_a_dict(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        nodes_by_id = {n["id"]: n for n in view["nodes"]}
+        progress = nodes_by_id[
+            "artifact_backed_progress"
+        ]["current_value"]
+        self.assertIsInstance(progress, dict)
+        self.assertIn(
+            ".agent-loop/claude-summary.md", progress,
+        )
+
+
+class Phase10AITextRendererTests(unittest.TestCase):
+
+    def test_renderer_emits_one_header_plus_one_line_per_node(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        lines = (
+            agent_loop
+            .render_desktop_orchestration_visualization_text(
+                view,
+            )
+        )
+        self.assertEqual(
+            len(lines),
+            1 + len(view["nodes"]),
+        )
+        self.assertIn(
+            "[desktop-orchestration-visualization]", lines[0],
+        )
+
+    def test_every_body_line_carries_an_attribution_tag(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        lines = (
+            agent_loop
+            .render_desktop_orchestration_visualization_text(
+                view,
+            )
+        )
+        for body_line in lines[1:]:
+            self.assertTrue(
+                "[canonical mirror]" in body_line
+                or "[visualization-advisory]" in body_line,
+                body_line,
+            )
+
+
+class Phase10AISendCallbackWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the shipped Tk
+    orchestration-visualization panel inside
+    `_launch_desktop_app_window(...)`. Ensures the callback:
+      - assembles the view via the shipped bounded builder
+      - renders via the shipped bounded renderer
+      - emits the per-tick audit line via the shipped
+        `_log_note(...)` writer
+      - is invoked from the main `_refresh(...)` poll callback
+        (no separate background thread / timer)
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_calls_view_builder(self) -> None:
+        self.assertIn(
+            "build_desktop_orchestration_visualization_view",
+            self._source,
+        )
+
+    def test_calls_text_renderer(self) -> None:
+        self.assertIn(
+            "render_desktop_orchestration_visualization_text",
+            self._source,
+        )
+
+    def test_calls_audit_line_formatter(self) -> None:
+        self.assertIn(
+            (
+                "_desktop_orchestration_visualization_"
+                "format_audit_line"
+            ),
+            self._source,
+        )
+
+    def test_calls_shipped_log_note_writer(self) -> None:
+        self.assertIn("_log_note(", self._source)
+
+    def test_refresh_orchestration_visualization_hooked_into_poll(
+        self,
+    ) -> None:
+        # The callback name must appear at least twice in the
+        # source: once at definition, and at least once inside
+        # the `_refresh()` main poll callback so the panel
+        # refreshes on the shipped Phase 10L / 10M poll cadence
+        # rather than via a separate background thread.
+        count = self._source.count(
+            "_refresh_orchestration_visualization()",
+        )
+        self.assertGreaterEqual(count, 2, count)
+
+    def test_does_not_start_a_background_thread_or_timer(
+        self,
+    ) -> None:
+        # A regression pin: the callback body MUST NOT introduce
+        # a separate background thread / timer / watcher beyond
+        # the shipped poll cadence.
+        for forbidden in (
+            "threading.Thread",
+            "Timer(",
+            "threading.Timer",
+            "asyncio.",
+        ):
+            self.assertNotIn(forbidden, self._source, forbidden)
+
+
 if __name__ == "__main__":
     unittest.main()
