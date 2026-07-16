@@ -3540,7 +3540,7 @@ class Phase10AIViewBuilderTests(unittest.TestCase):
 
 class Phase10AITextRendererTests(unittest.TestCase):
 
-    def test_renderer_emits_one_header_plus_one_line_per_node(
+    def test_renderer_emits_header_plus_nodes_plus_edges(
         self,
     ) -> None:
         with TemporaryDirectory() as td:
@@ -3559,7 +3559,7 @@ class Phase10AITextRendererTests(unittest.TestCase):
         )
         self.assertEqual(
             len(lines),
-            1 + len(view["nodes"]),
+            1 + len(view["nodes"]) + len(view["edges"]),
         )
         self.assertIn(
             "[desktop-orchestration-visualization]", lines[0],
@@ -3582,10 +3582,14 @@ class Phase10AITextRendererTests(unittest.TestCase):
                 view,
             )
         )
+        # Node lines carry canonical / advisory tags; edge lines
+        # carry the graph-edge tag. Every body line MUST match
+        # exactly one of the three shipped attribution tags.
         for body_line in lines[1:]:
             self.assertTrue(
                 "[canonical mirror]" in body_line
-                or "[visualization-advisory]" in body_line,
+                or "[visualization-advisory]" in body_line
+                or "[graph-edge]" in body_line,
                 body_line,
             )
 
@@ -3611,12 +3615,6 @@ class Phase10AISendCallbackWiringTests(unittest.TestCase):
     def test_calls_view_builder(self) -> None:
         self.assertIn(
             "build_desktop_orchestration_visualization_view",
-            self._source,
-        )
-
-    def test_calls_text_renderer(self) -> None:
-        self.assertIn(
-            "render_desktop_orchestration_visualization_text",
             self._source,
         )
 
@@ -3658,6 +3656,455 @@ class Phase10AISendCallbackWiringTests(unittest.TestCase):
             "asyncio.",
         ):
             self.assertNotIn(forbidden, self._source, forbidden)
+
+
+class Phase10AIGraphModelConstantsTests(unittest.TestCase):
+    """Regression pin for the graph / icon materialisation added
+    in the Phase 10AI fix cycle. Every closed set (gate
+    categories, status icons, edge registry, node layout) MUST
+    match the shipped Phase 10AH `Node / Edge / Status Model`
+    section verbatim.
+    """
+
+    def test_seven_gate_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.PHASE_10AI_GATE_CATEGORIES), 7,
+        )
+        for category in (
+            "no_gate", "approval_gate", "evidence_gate",
+            "overlap_safe_gate", "strict_mode_gate",
+            "human_acceptance_gate", "token_exhaustion_gate",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.PHASE_10AI_GATE_CATEGORIES,
+            )
+
+    def test_status_icon_map_covers_every_status_category(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(agent_loop.PHASE_10AI_STATUS_ICON_MAP.keys()),
+            set(agent_loop.PHASE_10AI_STATUS_CATEGORIES),
+        )
+        for icon in (
+            agent_loop.PHASE_10AI_STATUS_ICON_MAP.values()
+        ):
+            self.assertIsInstance(icon, str)
+            self.assertGreater(len(icon), 0)
+
+    def test_status_color_map_covers_every_status_category(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .PHASE_10AI_STATUS_CATEGORY_COLOR_MAP.keys()
+            ),
+            set(agent_loop.PHASE_10AI_STATUS_CATEGORIES),
+        )
+        for color in (
+            agent_loop
+            .PHASE_10AI_STATUS_CATEGORY_COLOR_MAP.values()
+        ):
+            self.assertTrue(color.startswith("#"), color)
+
+    def test_node_layout_covers_every_vocab_key(self) -> None:
+        self.assertEqual(
+            set(agent_loop.PHASE_10AI_NODE_LAYOUT.keys()),
+            set(
+                agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY
+            ),
+        )
+        for key, (x, y) in (
+            agent_loop.PHASE_10AI_NODE_LAYOUT.items()
+        ):
+            self.assertIsInstance(x, int, key)
+            self.assertIsInstance(y, int, key)
+            self.assertGreaterEqual(x, 0, key)
+            self.assertGreaterEqual(y, 0, key)
+            self.assertLess(
+                x + agent_loop.PHASE_10AI_NODE_BOX_WIDTH,
+                agent_loop.PHASE_10AI_CANVAS_WIDTH + 1,
+                key,
+            )
+            self.assertLess(
+                y + agent_loop.PHASE_10AI_NODE_BOX_HEIGHT,
+                agent_loop.PHASE_10AI_CANVAS_HEIGHT + 1,
+                key,
+            )
+
+    def test_edge_registry_shape_is_closed_and_well_formed(
+        self,
+    ) -> None:
+        vocab = set(
+            agent_loop.PHASE_10AI_VISUALIZATION_VOCABULARY
+        )
+        gates = set(agent_loop.PHASE_10AI_GATE_CATEGORIES)
+        edge_ids = set()
+        for edge in agent_loop.PHASE_10AI_EDGE_REGISTRY:
+            for field in (
+                "id", "from_node", "to_node",
+                "transition_id", "gate_category",
+                "active_when",
+            ):
+                self.assertIn(field, edge, field)
+            self.assertNotIn(
+                edge["id"], edge_ids,
+                f"duplicate edge id {edge['id']!r}",
+            )
+            edge_ids.add(edge["id"])
+            self.assertIn(edge["from_node"], vocab)
+            self.assertIn(edge["to_node"], vocab)
+            self.assertIn(edge["gate_category"], gates)
+            self.assertIn(
+                edge["active_when"],
+                (
+                    "always", "review_branch_active",
+                    "fix_branch_active", "human_gate_pending",
+                    "blocked_or_halted",
+                ),
+                edge["active_when"],
+            )
+
+    def test_edge_registry_has_at_least_ten_edges(self) -> None:
+        # Regression pin: a bounded orchestration graph MUST
+        # have enough edges to actually connect the shipped
+        # cycle. A collapse below this size is almost certainly
+        # a refactor accident.
+        self.assertGreaterEqual(
+            len(agent_loop.PHASE_10AI_EDGE_REGISTRY), 10,
+        )
+
+
+class Phase10AIEdgeActiveDerivationTests(unittest.TestCase):
+
+    def _derive(self, edge, advisory_state):
+        return (
+            agent_loop
+            ._desktop_orchestration_visualization_derive_edge_active(
+                edge=edge,
+                advisory_state=advisory_state,
+            )
+        )
+
+    def test_always_rule_returns_true(self) -> None:
+        self.assertTrue(
+            self._derive({"active_when": "always"}, {}),
+        )
+
+    def test_review_branch_active_reads_advisory(self) -> None:
+        self.assertTrue(
+            self._derive(
+                {"active_when": "review_branch_active"},
+                {"review_branch_active": True},
+            ),
+        )
+        self.assertFalse(
+            self._derive(
+                {"active_when": "review_branch_active"},
+                {"review_branch_active": False},
+            ),
+        )
+
+    def test_fix_branch_active_reads_advisory(self) -> None:
+        self.assertTrue(
+            self._derive(
+                {"active_when": "fix_branch_active"},
+                {"fix_branch_active": True},
+            ),
+        )
+        self.assertFalse(
+            self._derive(
+                {"active_when": "fix_branch_active"},
+                {"fix_branch_active": False},
+            ),
+        )
+
+    def test_human_gate_pending_reads_advisory(self) -> None:
+        self.assertTrue(
+            self._derive(
+                {"active_when": "human_gate_pending"},
+                {"human_gate_pending": True},
+            ),
+        )
+
+    def test_blocked_or_halted_reads_advisory(self) -> None:
+        self.assertTrue(
+            self._derive(
+                {"active_when": "blocked_or_halted"},
+                {"blocked_or_halted": True},
+            ),
+        )
+
+    def test_unknown_rule_refuses_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            self._derive({"active_when": "invented_rule"}, {})
+
+
+class Phase10AIViewBuilderGraphShapeTests(unittest.TestCase):
+    """Regression pin that the view builder actually materialises
+    the node/edge/icon graph model (not just a flat text dump).
+    Would fail if a future refactor drops the edges list, drops
+    the per-node status_icon field, or drops the closed
+    gate_categories block from the view header.
+    """
+
+    def _build(self, status="awaiting_claude_implementation"):
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td), status=status)
+            return (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+
+    def test_view_includes_edges_list(self) -> None:
+        view = self._build()
+        self.assertIn("edges", view)
+        self.assertEqual(
+            len(view["edges"]),
+            len(agent_loop.PHASE_10AI_EDGE_REGISTRY),
+        )
+
+    def test_view_includes_gate_categories(self) -> None:
+        view = self._build()
+        self.assertEqual(
+            view["gate_categories"],
+            list(agent_loop.PHASE_10AI_GATE_CATEGORIES),
+        )
+
+    def test_view_carries_top_level_status_icon_and_color(
+        self,
+    ) -> None:
+        view = self._build()
+        self.assertIn(
+            view["status_icon"],
+            agent_loop.PHASE_10AI_STATUS_ICON_MAP.values(),
+        )
+        self.assertTrue(view["status_color"].startswith("#"))
+
+    def test_every_node_has_status_icon_color_and_layout(
+        self,
+    ) -> None:
+        view = self._build()
+        for node in view["nodes"]:
+            self.assertIn("status_icon", node, node["id"])
+            self.assertIn("status_color", node, node["id"])
+            self.assertIn("layout_xy", node, node["id"])
+            self.assertEqual(len(node["layout_xy"]), 2)
+
+    def test_every_edge_has_full_shape(self) -> None:
+        view = self._build()
+        for edge in view["edges"]:
+            for field in (
+                "id", "from_node", "to_node",
+                "transition_id", "gate_category",
+                "edge_source_category", "active",
+                "from_xy", "to_xy",
+            ):
+                self.assertIn(field, edge, field)
+            self.assertEqual(
+                edge["edge_source_category"],
+                "canonical_mirror",
+            )
+            self.assertIsInstance(edge["active"], bool)
+
+    def test_edges_active_flag_reflects_halted_state(
+        self,
+    ) -> None:
+        view = self._build(status="halted_overlap_unsafe_context")
+        edges_by_id = {e["id"]: e for e in view["edges"]}
+        self.assertTrue(
+            edges_by_id[
+                "loop_state_status_to_blocked_or_halted"
+            ]["active"],
+        )
+
+    def test_edges_active_flag_reflects_review_branch(
+        self,
+    ) -> None:
+        view = self._build(status="awaiting_codex_review")
+        edges_by_id = {e["id"]: e for e in view["edges"]}
+        self.assertTrue(
+            edges_by_id[
+                "loop_state_status_to_review_branch"
+            ]["active"],
+        )
+        self.assertFalse(
+            edges_by_id[
+                "loop_state_status_to_fix_branch"
+            ]["active"],
+        )
+
+    def test_view_carries_canvas_dimensions(self) -> None:
+        view = self._build()
+        self.assertEqual(
+            view["canvas_width"],
+            agent_loop.PHASE_10AI_CANVAS_WIDTH,
+        )
+        self.assertEqual(
+            view["canvas_height"],
+            agent_loop.PHASE_10AI_CANVAS_HEIGHT,
+        )
+        self.assertEqual(
+            view["node_box_width"],
+            agent_loop.PHASE_10AI_NODE_BOX_WIDTH,
+        )
+        self.assertEqual(
+            view["node_box_height"],
+            agent_loop.PHASE_10AI_NODE_BOX_HEIGHT,
+        )
+
+    def test_loop_state_status_node_uses_active_status_icon(
+        self,
+    ) -> None:
+        # The node identifying the current loop-state status
+        # carries the active status_icon; other nodes carry the
+        # neutral in_progress icon. That is how the graph shows
+        # which node the shipped runtime is focused on.
+        view = self._build(status="halted_overlap_unsafe_context")
+        nodes_by_id = {n["id"]: n for n in view["nodes"]}
+        self.assertEqual(
+            nodes_by_id["loop_state_status"]["status_icon"],
+            agent_loop.PHASE_10AI_STATUS_ICON_MAP["halted"],
+        )
+        self.assertEqual(
+            nodes_by_id["phase"]["status_icon"],
+            agent_loop.PHASE_10AI_STATUS_ICON_MAP["in_progress"],
+        )
+
+
+class Phase10AITextRendererGraphShapeTests(unittest.TestCase):
+    """Regression pin that the text renderer emits at least one
+    line per node PLUS one line per edge (not just node lines).
+    Every edge line MUST carry the `[graph-edge]` attribution
+    tag and its gate_category so a future review can
+    grep-verify the shipped graph is materialised.
+    """
+
+    def _render(self):
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td))
+            view = (
+                agent_loop
+                .build_desktop_orchestration_visualization_view(
+                    controller,
+                )
+            )
+        return view, (
+            agent_loop
+            .render_desktop_orchestration_visualization_text(
+                view,
+            )
+        )
+
+    def test_lines_count_equals_header_plus_nodes_plus_edges(
+        self,
+    ) -> None:
+        view, lines = self._render()
+        self.assertEqual(
+            len(lines),
+            1 + len(view["nodes"]) + len(view["edges"]),
+        )
+
+    def test_header_line_carries_status_icon(self) -> None:
+        view, lines = self._render()
+        self.assertIn(view["status_icon"], lines[0])
+
+    def test_every_node_line_carries_a_status_icon(self) -> None:
+        _view, lines = self._render()
+        icons = list(
+            agent_loop.PHASE_10AI_STATUS_ICON_MAP.values()
+        )
+        # Lines 1 through 15 are node lines.
+        for body_line in lines[1:16]:
+            self.assertTrue(
+                any(icon in body_line for icon in icons),
+                body_line,
+            )
+
+    def test_every_edge_line_carries_graph_edge_tag_and_gate(
+        self,
+    ) -> None:
+        view, lines = self._render()
+        gates = agent_loop.PHASE_10AI_GATE_CATEGORIES
+        edge_lines = lines[1 + len(view["nodes"]):]
+        self.assertEqual(len(edge_lines), len(view["edges"]))
+        for edge_line in edge_lines:
+            self.assertIn("[graph-edge]", edge_line)
+            self.assertIn("->", edge_line)
+            self.assertTrue(
+                any(gate in edge_line for gate in gates),
+                edge_line,
+            )
+
+
+class Phase10AITkCanvasGraphWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the graph
+    materialisation added in the Phase 10AI fix cycle. Would
+    fail if a future refactor regressed the runtime back to a
+    flat `tk.Text` value dump.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_orchestration_panel_uses_tk_canvas(self) -> None:
+        self.assertIn(
+            "orchestration_visualization_canvas", self._source,
+        )
+        self.assertIn("tk.Canvas", self._source)
+
+    def test_orchestration_panel_draws_node_rectangles(
+        self,
+    ) -> None:
+        self.assertIn(
+            ".create_rectangle(", self._source,
+        )
+
+    def test_orchestration_panel_draws_edge_lines_with_arrows(
+        self,
+    ) -> None:
+        self.assertIn(".create_line(", self._source)
+        self.assertIn("arrow=tk.LAST", self._source)
+
+    def test_orchestration_panel_labels_nodes_with_icons(
+        self,
+    ) -> None:
+        self.assertIn(".create_text(", self._source)
+        self.assertIn("status_icon", self._source)
+
+    def test_orchestration_panel_reads_view_edges_list(
+        self,
+    ) -> None:
+        # A regression pin: the callback body must actually
+        # iterate the shipped view["edges"] list to draw the
+        # graph. Without this the runtime falls back to a
+        # value-only dump.
+        self.assertIn('view["edges"]', self._source)
+        self.assertIn('view["nodes"]', self._source)
+
+    def test_orchestration_panel_does_not_use_flat_tk_text_body(
+        self,
+    ) -> None:
+        # The pre-fix implementation packed a single tk.Text
+        # widget into the orchestration frame and inserted the
+        # rendered lines into it. Regressing back to that shape
+        # would mean the graph model is not visible in the
+        # runtime. This pin blocks that specific regression.
+        self.assertNotIn(
+            "orchestration_visualization_body = tk.Text(",
+            self._source,
+        )
+        self.assertNotIn(
+            "orchestration_visualization_body.insert(",
+            self._source,
+        )
 
 
 if __name__ == "__main__":
