@@ -24,7 +24,7 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Active Sub-Phase
 
-Fix Phase C1 - First-Run Setup Contract
+Fix Phase C2 - Project Folder Picker And Classification Surface
 
 ## Phase Status
 
@@ -32,36 +32,35 @@ Active and ready for implementation.
 
 ## Active Task
 
-Define the non-technical desktop UX contract for selecting a project folder,
-loading a PRD, choosing run behavior, starting/stopping the agent, and
-understanding plain-English progress without terminal knowledge.
+Add the guided desktop folder picker and classify the selected folder as an
+existing project, empty folder, partial target, or malformed target with
+plain-English next-step messaging.
 
 ## Phase Outcome Required Now
 
 - `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify `Fix Phase C1` as the active
+  `.agent-loop/loop-state.json` identify `Fix Phase C2` as the active
   sub-phase
 - `.agent-loop/phase-plan.md` records the Fix Phase C track and the concrete
   `Fix Phase C1` through `Fix Phase C8` slices
 - `.agent-loop/claude-prompt.md` contains a scoped implementation prompt for
-  the `Fix Phase C1` contract slice
+  the `Fix Phase C2` folder-picker and classification slice
 
 ## Next-Phase Gate
 
 Do not mark this phase complete until:
 
-- the repository defines a clear desktop UX contract for the single-user
-  "pick a folder, load a PRD, choose run behavior, and run" workflow
-- the contract defines the required setup, ready, running, waiting, blocked,
-  and complete states in plain English
-- the contract defines what technical details are hidden by default versus what
-  is available under advanced views
-- the contract is concrete enough that later Fix Phase C runtime slices can
-  implement it without relying on chat context
+- the desktop app lets the operator choose a project folder without terminal
+  path entry
+- the selected folder is classified using the shipped target inspection
+  helpers as `existing_project`, `empty_folder`, `partial_target`, or
+  `malformed_target`
+- each classification has plain-English next-step guidance
+- no UI-only target-state cache or parallel target inspection logic is added
 
 ## Out Of Scope For Current Phase
 
-- runtime implementation of the folder picker, PRD picker, or run console
+- PRD selection, run-mode selection, Start/Stop controls, or run-console work
 - any automatic next-phase activation behavior that bypasses or rewrites the
   shipped Phase 4 planner / activation separation
 - rewriting contracts in `AGENTS.md` or `CLAUDE.md`

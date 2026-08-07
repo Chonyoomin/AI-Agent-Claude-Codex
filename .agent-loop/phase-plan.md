@@ -3333,7 +3333,7 @@ capabilities, or alternate sources of truth.
 
 ### Status
 
-Active.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3370,7 +3370,7 @@ understanding plain-English progress without terminal knowledge.
 
 ### Status
 
-Queued for later implementation after Fix Phase C1.
+Active.
 
 ### Objective
 

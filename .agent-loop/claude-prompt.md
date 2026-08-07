@@ -1,73 +1,69 @@
 # Claude Code Task
 
 ## Phase
-Fix Phase C1 - First-Run Setup Contract
+Fix Phase C2 - Project Folder Picker And Classification Surface
 
 ## Objective
-Define the non-technical desktop UX contract for selecting a project folder,
-loading a PRD, choosing run behavior, starting/stopping the agent, and
-understanding plain-English progress without terminal knowledge.
+Implement the first guided desktop setup step: let a non-technical operator
+choose a project folder and show a plain-English classification and next action
+for the selected folder.
 
 ## Context
-`Fix Phase C1` is now the active remediation slice. The goal is to define the
-desktop UX contract for a single local operator who dislikes terminals and
-wants the shortest path to "choose a folder, load a PRD, choose run behavior,
-and run". This slice is contract-first: it should define the bounded UX,
-plain-English states, section layout, and advanced-detail hiding rules before
-later Fix Phase C runtime slices implement the actual desktop behavior.
-
-The implementation must stay bounded. This slice should define the product
-surface clearly, but it must not widen into a second controller, hidden UI-only
-state store, background watcher, alternate orchestration path, or canonical
-write surface.
-
-Work against the actual repo state. Do not rely on prior chat context.
+Fix Phase C1 is complete and approved for human review. Its contract is at
+`docs/desktop-first-run-setup-contract.md`; read it before editing. C2 is the
+first runtime slice under that contract. Work against the actual repo state and
+do not rely on prior chat context.
 
 ## Required work
-- define the bounded desktop UX contract for the guided single-user workflow:
-  choose folder -> choose PRD -> choose run mode -> start agent -> monitor
-  progress
-- define the default top-level sections of the app at minimum as `Project`,
-  `PRD`, `Run Mode`, `Run`, and `Progress`
-- define the required plain-English states for setup, ready, running, waiting,
-  blocked, approval-required, and complete
-- define what technical details are hidden by default versus what appears in an
-  optional advanced-details surface
-- preserve the canonical-artifact-first model and explicitly refuse any second
-  UI-only state plane
-- add or update focused tests or documentation-consistency coverage for the new
-  contract surface
-- update `README.md` if the current implementation focus or shipped operator
-  behavior changes
+- add an OS-native folder-picker action to the shipped desktop app surface so
+  the operator does not need to type a terminal path
+- route the selected folder through the shipped target inspection / attach
+  helpers; do not duplicate target classification logic in the UI
+- surface the closed classifications in plain English:
+  `existing_project`, `empty_folder`, `partial_target`, and
+  `malformed_target`
+- provide a clear next action for every classification:
+  attach the existing project, offer the later bootstrap path for an empty
+  folder, or explain how to recover from a partial or malformed target
+- preserve the C1 default surface: `Project` remains the first setup section,
+  technical runtime vocabulary remains behind the existing Advanced surface,
+  and no raw CLI refusal becomes the primary user-facing message
+- preserve canonical-artifact-first behavior and the shipped desktop polling
+  cadence; do not create a UI-only target-state cache or second controller
+- add focused tests for picker wiring, classification mapping, plain-English
+  next-step messaging, and fail-closed partial/malformed handling
+- update `README.md` and `.agent-loop/claude-summary.md` with the shipped
+  behavior and validation performed
 
 ## Constraints
 - Follow `CLAUDE.md`.
-- Do not modify `AGENTS.md`.
-- Do not modify `CLAUDE.md`.
-- Do not invent a hidden UI-only state store, progress cache, or second
-  controller.
-- Do not implement the runtime folder picker, PRD picker, or run console in
-  this contract slice.
-- Do not bypass canonical artifact ownership, approval gates, audit boundaries,
-  or poll-cadence rules.
-- Prefer small, testable, reversible changes.
+- Do not modify `AGENTS.md` or `CLAUDE.md`.
+- Do not add PRD selection, run-mode selection, Start/Stop controls, or the
+  run console; those belong to Fix Phase C3-C8.
+- Do not invent a hidden UI-only JSON, SQLite, MessagePack, or in-memory
+  persistence plane that survives a refresh/session.
+- Do not silently bootstrap a new project from folder selection alone; expose
+  the classification and defer bootstrap dispatch to the shipped bootstrap
+  surface / later bounded slice.
+- Do not weaken refusal behavior for partial or malformed targets.
+- Do not add Git automation, background watchers, or network endpoints.
 
 ## Important guardrails
-- The desktop app must remain canonical-artifact-first and fail-closed on
-  boundary violations.
-- The default experience should optimize for one non-technical local operator,
-  not for a developer dashboard.
-- Internal CLI/runtime terms should be hidden by default and exposed only in
-  advanced views where necessary.
+- The desktop app is a control/reporting surface over shipped runtime helpers,
+  not a second source of truth.
+- Explicit operator gestures are required; selecting a folder must not
+  auto-advance into PRD intake or agent execution.
+- Keep technical details available only through the existing Advanced toggle.
+- Prefer small, testable, reversible changes.
 
 ## Likely files
-- `.agent-loop/phase-plan.md`
-- `ROADMAP.md`
+- `scripts/agent_loop.py`
+- `tests/test_desktop_app.py`
+- `tests/test_external_workspace.py`
 - `README.md`
-- `TASK.md`
-- `.agent-loop/current-task.md`
-- `.agent-loop/current-phase.md`
+- `docs/desktop-first-run-setup-contract.md`
 
 ## Required output
-After implementation, write `.agent-loop/claude-summary.md` using the required
-Claude Implementation Summary format and include the validation you ran.
+After implementation, write `.agent-loop/claude-summary.md` using the
+required Claude Implementation Summary format and include the validation you
+ran.
