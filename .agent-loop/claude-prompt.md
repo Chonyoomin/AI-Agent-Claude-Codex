@@ -1,40 +1,42 @@
 # Claude Code Task
 
 ## Phase
-Phase 10AI - Orchestration Graph And Performance View Initial Slice
+Fix Phase C1 - First-Run Setup Contract
 
 ## Objective
-Implement the first bounded desktop orchestration graph and performance view so
-the operator can see where the loop currently is, what just completed, what is
-waiting next, and where the run is blocked or halted.
+Define the non-technical desktop UX contract for selecting a project folder,
+loading a PRD, choosing run behavior, starting/stopping the agent, and
+understanding plain-English progress without terminal knowledge.
 
 ## Context
-`Phase 10AI` is now the active mainline slice. `Phase 10AH` defined the
-contract for a bounded desktop orchestration-visualization surface: closed
-visualization vocabulary, canonical-mirror-vs-advisory rules, closed node/edge/
-status model, refusal boundaries, poll-cadence limits, and source-of-truth
-preservation. This slice is the first runtime that materializes that contract
-inside the shipped desktop app.
+`Fix Phase C1` is now the active remediation slice. The goal is to define the
+desktop UX contract for a single local operator who dislikes terminals and
+wants the shortest path to "choose a folder, load a PRD, choose run behavior,
+and run". This slice is contract-first: it should define the bounded UX,
+plain-English states, section layout, and advanced-detail hiding rules before
+later Fix Phase C runtime slices implement the actual desktop behavior.
 
-The implementation must stay bounded. It should give the operator a real visual
-or icon-based orchestration view, but it must not widen into a second
-controller, hidden state store, background watcher, autonomous progression path,
-or canonical write surface.
+The implementation must stay bounded. This slice should define the product
+surface clearly, but it must not widen into a second controller, hidden UI-only
+state store, background watcher, alternate orchestration path, or canonical
+write surface.
 
 Work against the actual repo state. Do not rely on prior chat context.
 
 ## Required work
-- implement the first bounded desktop orchestration graph/performance view in
-  the shipped desktop app
-- surface at least the closed Phase 10AH visualization vocabulary in a runtime
-  form that makes current phase/sub-phase/task, loop-state status, review/fix
-  branch, blocked/halted state, and progress legible to the operator
-- preserve the canonical mirror vs advisory derived-state distinction from the
-  Phase 10AH contract
-- preserve the shipped Phase 10L/10M polling cadence and do not introduce a
-  background watcher, separate timer loop, or hidden cache/store
-- keep the Phase 10I library-callable control cap intact
-- add or update focused tests for the new runtime surface
+- define the bounded desktop UX contract for the guided single-user workflow:
+  choose folder -> choose PRD -> choose run mode -> start agent -> monitor
+  progress
+- define the default top-level sections of the app at minimum as `Project`,
+  `PRD`, `Run Mode`, `Run`, and `Progress`
+- define the required plain-English states for setup, ready, running, waiting,
+  blocked, approval-required, and complete
+- define what technical details are hidden by default versus what appears in an
+  optional advanced-details surface
+- preserve the canonical-artifact-first model and explicitly refuse any second
+  UI-only state plane
+- add or update focused tests or documentation-consistency coverage for the new
+  contract surface
 - update `README.md` if the current implementation focus or shipped operator
   behavior changes
 
@@ -42,28 +44,29 @@ Work against the actual repo state. Do not rely on prior chat context.
 - Follow `CLAUDE.md`.
 - Do not modify `AGENTS.md`.
 - Do not modify `CLAUDE.md`.
-- Do not invent a hidden UI-only graph state store, progress cache, layout
-  cache, animation-state store, or second controller.
-- Do not implement automatic phase progression or downstream action dispatch
-  from the graph view.
+- Do not invent a hidden UI-only state store, progress cache, or second
+  controller.
+- Do not implement the runtime folder picker, PRD picker, or run console in
+  this contract slice.
 - Do not bypass canonical artifact ownership, approval gates, audit boundaries,
   or poll-cadence rules.
 - Prefer small, testable, reversible changes.
 
 ## Important guardrails
-- The visualization runtime is a reporting layer over shipped artifacts, not a
-  control plane.
-- Every displayed value must remain either a canonical mirror or advisory
-  derived state.
 - The desktop app must remain canonical-artifact-first and fail-closed on
   boundary violations.
+- The default experience should optimize for one non-technical local operator,
+  not for a developer dashboard.
+- Internal CLI/runtime terms should be hidden by default and exposed only in
+  advanced views where necessary.
 
 ## Likely files
-- `scripts/agent_loop.py`
-- `tests/test_desktop_app.py`
-- `tests/test_documentation_consistency.py`
+- `.agent-loop/phase-plan.md`
+- `ROADMAP.md`
 - `README.md`
-- `docs/desktop-orchestration-visualization-contract.md`
+- `TASK.md`
+- `.agent-loop/current-task.md`
+- `.agent-loop/current-phase.md`
 
 ## Required output
 After implementation, write `.agent-loop/claude-summary.md` using the required

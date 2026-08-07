@@ -794,3 +794,98 @@ Success:
 Notes:
 
 - future ideas are preserved without expanding the MVP scope
+
+### Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
+
+Close the gap between the shipped desktop/runtime surfaces and the actual
+single-user experience desired for this product: "pick a folder, load a PRD,
+choose how much approval I want, and run" without needing terminal knowledge.
+This fix phase is explicitly optimized for one local operator who dislikes
+terminals and is not highly technical; the desktop app should feel like a
+guided launcher and run console, not a terminal wrapper.
+
+This fix phase should be implemented in eight small slices:
+
+- Fix Phase C1 - First-Run Setup Contract: define the non-technical desktop
+  UX contract for folder selection, PRD selection, run-mode selection,
+  start/stop behavior, plain-English progress states, advanced-detail hiding,
+  and the rule that the UI answers "what does the app know, what does it need
+  next, what should I do now?"
+- Fix Phase C2 - Project Folder Picker And Classification Surface: add the
+  guided folder-picker flow and classify the selected folder as
+  `existing_project`, `empty_folder`, `partial_target`, or `malformed_target`
+  with plain-English next-step messaging rather than raw CLI refusal copy
+- Fix Phase C3 - PRD Intake UX: add the desktop PRD file picker / selection
+  flow, plain-English missing-invalid-ready states, and a bounded preview of
+  which PRD is currently selected for the run
+- Fix Phase C4 - Run Mode Selector: replace internal approval/runtime jargon
+  with plain-English operator choices such as `Guided`, `Review Each Phase`,
+  and `More Autonomous`, mapped back to the shipped runtime modes without
+  creating hidden UI-only settings
+- Fix Phase C5 - Start / Stop Agent Control Surface: add one primary
+  `Start Agent` button that flips to `Stop Agent` while active, with
+  prerequisite checks, disabled-state guidance, and refusal copy that explains
+  why the agent cannot start yet
+- Fix Phase C6 - Plain-English Run Console: surface current phase, current
+  task, run status, latest activity, next expected step, and blocked/waiting
+  reasons in human language instead of artifact-centric or terminal-centric
+  wording
+- Fix Phase C7 - Review And Approval Surface: add the first desktop-side
+  human-gate response surface so approval-required pauses can be understood and
+  acted on from the app through explicit buttons and optional advanced detail
+  panels rather than by manually inspecting repo artifacts
+- Fix Phase C8 - Completion And Handoff Summary: add the end-of-run summary
+  surface so the app can explain what finished, what remains blocked, whether
+  next-phase planning is possible, and what the recommended next action is
+
+Build:
+
+- a desktop-first "PRD to run" workflow where the primary operator path is:
+  choose project folder -> choose PRD -> choose run mode -> start agent ->
+  monitor progress
+- one-window guided navigation that prioritizes `Project`, `PRD`, `Run Mode`,
+  `Run`, and `Progress` over technical artifact views
+- plain-English state labels such as `Ready to run`, `Working`, `Reviewing`,
+  `Waiting for approval`, `Blocked`, and `Complete`
+- folder-picker and PRD-picker flows so the operator does not need to learn
+  command-line flags like `--controller-root`, `attach-external-target`, or
+  `--bootstrap`
+- a strong default of hiding CLI terminology and repo-artifact jargon behind
+  an optional advanced-details panel
+- a single primary call to action for starting the agent, with an equally
+  explicit stop/pause affordance while work is active
+- a run-progress surface that answers, at minimum: where the agent is, what it
+  just did, what it is waiting on, and what the operator should do next
+- a completion surface that makes the next handoff legible even when the run
+  cannot automatically continue (for example, planner-side missing-template
+  blocks)
+
+Design rules:
+
+- this fix phase must preserve the canonical-artifact-first model; the desktop
+  UI is a control/reporting surface, not a second source of truth
+- the default UI must optimize for one non-technical local operator rather
+  than for a multi-user admin console or a developer dashboard
+- internal CLI/runtime terms such as `controller-root`,
+  `attach-external-target`, `bootstrap`, `loop-state`, and prompt-artifact
+  names should be hidden by default and surfaced only in advanced views
+- the UI must reuse shipped attach/bootstrap/run/review/runtime helpers rather
+  than inventing parallel desktop-only orchestration logic
+- the UI must not silently auto-fill operator-identity fields or other
+  approval-bearing inputs
+- refusal states must be translated into plain English that explains both the
+  problem and the next likely fix
+- no Git automation is introduced
+
+Success:
+
+- the operator can open the desktop app, choose a folder, choose a PRD, choose
+  a run mode, and start the system without needing terminal commands
+- the app clearly distinguishes existing-project attach from brand-new project
+  bootstrap/new-project flows
+- progress is understandable from the UI alone without requiring artifact or
+  terminal inspection for normal use
+- approval-required pauses and completion states are understandable and
+  actionable from the UI
+- advanced technical detail remains available for debugging without becoming
+  the primary operator experience

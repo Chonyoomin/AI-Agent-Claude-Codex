@@ -1,3 +1,3 @@
 # Current Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AI - Orchestration Graph And Performance View Initial Slice)
+Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C1 - First-Run Setup Contract)
