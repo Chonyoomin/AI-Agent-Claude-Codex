@@ -6176,7 +6176,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
     still advertised its own phase as active.
     """
 
-    CANONICAL_ACTIVE_PHASE = "Phase 10AI"
+    CANONICAL_ACTIVE_PHASE = "Fix Phase C1"
     # Matches the README per-phase paragraph header form
     # `Phase 10X (Slice Name, active|complete) ...` at the start of
     # a line. The phase id grammar matches the shipped sub-phase
@@ -6241,6 +6241,7 @@ class ReadmeActivePhaseClaimsAreInternallyConsistentTests(
         # status-line summary but forgets to flip the per-phase
         # paragraph header.
         completed_sentinels = (
+            "Phase 10AI",
             "Phase 10AH",
             "Phase 10AG",
             "Phase 10AF",
@@ -6362,7 +6363,7 @@ class PhasePlanCanonicalHistoryTests(unittest.TestCase):
         # canonical active phase. Bounded, deterministic: only
         # the first non-blank line after a "### Status" header
         # is inspected.
-        canonical_active = "Phase 10AI"  # tracked by the file
+        canonical_active = "Fix Phase C1"  # tracked by the file
         lines = self.text.splitlines()
         offending = []
         current_section = None
@@ -6827,6 +6828,200 @@ class Phase10AHOrchestrationVisualizationContractTests(
             "canonical value as a summary / sentence / verbatim "
             "string so a future runtime slice does not attempt "
             "to re-derive a task-id token",
+        )
+
+
+class FixPhaseC1FirstRunSetupContractTests(unittest.TestCase):
+    """Anchor test: the Fix Phase C1 contract file exists, is
+    well-formed, pins the closed ordered top-level section
+    vocabulary + closed plain-English state vocabulary + closed
+    refusal vocabulary + the advanced-detail hiding rules, and
+    is linked from README + phase-plan.md. The runtime is
+    explicitly deferred to Fix Phase C2 through C8; the contract
+    MUST say so.
+    """
+
+    _CONTRACT_PATH = (
+        REPO_ROOT / "docs"
+        / "desktop-first-run-setup-contract.md"
+    )
+
+    def setUp(self) -> None:
+        self.text = _read(self._CONTRACT_PATH)
+        self.readme_text = _read(REPO_ROOT / "README.md")
+        self.phase_plan_text = _read(
+            REPO_ROOT / ".agent-loop" / "phase-plan.md",
+        )
+
+    def test_contract_file_exists_and_non_empty(self) -> None:
+        self.assertTrue(
+            self._CONTRACT_PATH.exists(),
+            f"{self._CONTRACT_PATH!r} MUST exist",
+        )
+        self.assertGreater(len(self.text.strip()), 100)
+
+    def test_contract_carries_required_section_headers(
+        self,
+    ) -> None:
+        for section in (
+            "## Status",
+            "## Scope",
+            "## Distinction From Shipped Artifacts And Surfaces",
+            "## Top-Level Section Vocabulary",
+            "## Plain-English State Vocabulary",
+            "## Guided Single-User Workflow",
+            "## Advanced Detail Hiding Rules",
+            "## Refusal Behavior",
+            "## Approval Gates",
+            "## Audit Expectations",
+            "## Source-Of-Truth Preservation (No Hidden UI Store)",
+            "## Ownership Boundary Preservation",
+            "## Dependencies On Fix Phase C2 Through C8 (Runtime Implementation)",
+            "## Out Of Scope For Fix Phase C1",
+        ):
+            self.assertIn(section, self.text, section)
+
+    def test_contract_pins_closed_ordered_section_vocabulary(
+        self,
+    ) -> None:
+        # The five shipped sections MUST all appear, and MUST
+        # appear in the ordered sequence Project -> PRD ->
+        # Run Mode -> Run -> Progress. A future refactor that
+        # re-orders these breaks the guided flow.
+        for section in (
+            "`Project`", "`PRD`", "`Run Mode`",
+            "`Run`", "`Progress`",
+        ):
+            self.assertIn(section, self.text, section)
+        idx_project = self.text.index("`Project`")
+        idx_prd = self.text.index("`PRD`")
+        idx_run_mode = self.text.index("`Run Mode`")
+        idx_run = self.text.index("`Run`")
+        idx_progress = self.text.index("`Progress`")
+        self.assertLess(idx_project, idx_prd)
+        self.assertLess(idx_prd, idx_run_mode)
+        self.assertLess(idx_run_mode, idx_run)
+        self.assertLess(idx_run, idx_progress)
+
+    def test_contract_pins_closed_plain_english_state_vocabulary(
+        self,
+    ) -> None:
+        for state in (
+            "`setup`", "`ready`", "`running`", "`waiting`",
+            "`blocked`", "`approval_required`", "`complete`",
+        ):
+            self.assertIn(state, self.text, state)
+
+    def test_contract_pins_closed_refusal_vocabulary(self) -> None:
+        for category in (
+            "refused_section_outside_closed_vocabulary",
+            "refused_state_outside_closed_vocabulary",
+            "refused_run_mode_outside_shipped_enum",
+            "refused_canonical_write_from_first_run_setup",
+            "refused_auto_advance_from_first_run_setup",
+            "refused_auto_fill_operator_identity",
+            "refused_ui_only_state_persistence",
+            "refused_technical_detail_in_default_surface",
+            "refused_background_watcher_beyond_cadence",
+        ):
+            self.assertIn(category, self.text, category)
+
+    def test_contract_pins_advanced_detail_hiding_rules(
+        self,
+    ) -> None:
+        # The Advanced-detail section MUST enumerate at least
+        # the shipped runtime vocabularies that the default
+        # surface hides. A regression that surfaces raw
+        # `halted_*` names or raw CLI subcommand names in the
+        # default view fails this pin.
+        advanced_body = self.text.split(
+            "## Advanced Detail Hiding Rules", 1,
+        )[1]
+        advanced_body = advanced_body.split("\n## ", 1)[0]
+        for anchor in (
+            "loop-state.json",
+            "halted_*",
+            "awaiting_human_for",
+            "APPROVED_FOR_HUMAN_REVIEW",
+            "attach-external-target",
+            "Phase 10AG",
+            "Phase 10AI",
+        ):
+            self.assertIn(
+                anchor, advanced_body,
+                f"Advanced-hiding rules MUST cite {anchor!r}",
+            )
+
+    def test_contract_pins_shipped_boundary_anchors(self) -> None:
+        for anchor in (
+            "docs/desktop-app-contract.md",
+            "docs/desktop-orchestration-visualization-contract.md",
+            "docs/desktop-codex-conversation-contract.md",
+            "docs/controlled-concurrency-contract.md",
+            "Phase 3A",
+            "Phase 4C",
+            "Phase 5A",
+            "Phase 5F",
+            "Phase 9G",
+            "Phase 10AB",
+            "Phase 10AG",
+            "Phase 10AH",
+            "Phase 10AI",
+            "Fix Phase B1",
+            "Fix Phase B2",
+            "Fix Phase B3",
+            "APPROVED_FOR_ACTIVATION",
+        ):
+            self.assertIn(anchor, self.text, anchor)
+
+    def test_contract_defers_runtime_to_fix_phase_c2_through_c8(
+        self,
+    ) -> None:
+        self.assertIn("deferred to", self.text)
+        for slice_name in (
+            "Fix Phase C2", "Fix Phase C3", "Fix Phase C4",
+            "Fix Phase C5", "Fix Phase C6", "Fix Phase C7",
+            "Fix Phase C8",
+        ):
+            self.assertIn(slice_name, self.text, slice_name)
+        # No claim that any first-run runtime ships in C1.
+        self.assertNotIn(
+            "ships a folder picker", self.text,
+        )
+        self.assertNotIn(
+            "ships a run console", self.text,
+        )
+
+    def test_default_run_mode_is_review(self) -> None:
+        # A regression pin: the default run mode MUST be the
+        # safest shipped enum value (`review`), not `strict` or
+        # `autonomous`. If the contract widens the default, this
+        # fails.
+        workflow_body = self.text.split(
+            "## Guided Single-User Workflow", 1,
+        )[1]
+        workflow_body = workflow_body.split("\n## ", 1)[0]
+        self.assertIn("Default MUST be `review`", workflow_body)
+
+    def test_readme_links_the_contract_and_names_fix_phase_c1(
+        self,
+    ) -> None:
+        self.assertIn(
+            "docs/desktop-first-run-setup-contract.md",
+            self.readme_text,
+            "README MUST link the Fix Phase C1 contract file",
+        )
+        self.assertIn(
+            "Fix Phase C1",
+            self.readme_text,
+            "README MUST name Fix Phase C1",
+        )
+
+    def test_phase_plan_pins_fix_phase_c1_active(self) -> None:
+        self.assertIn(
+            "## Fix Phase C1 - First-Run Setup Contract",
+            self.phase_plan_text,
+            "phase-plan.md MUST name Fix Phase C1",
         )
 
 
