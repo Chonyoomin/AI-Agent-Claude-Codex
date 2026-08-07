@@ -4107,5 +4107,596 @@ class Phase10AITkCanvasGraphWiringTests(unittest.TestCase):
         )
 
 
+class FixPhaseC2ConstantsTests(unittest.TestCase):
+    """Pin the shipped Fix Phase C2 closed vocabularies. Any
+    widening or contraction is a contract break and MUST fail
+    here loudly.
+    """
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_SIGNAL_VERSION,
+            "fix-phase-c2-v1",
+        )
+
+    def test_four_classification_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_CLASSIFICATION_IDS,
+            (
+                "existing_project", "empty_folder",
+                "partial_target", "malformed_target",
+            ),
+        )
+
+    def test_ux_mode_bridge_covers_every_shipped_ux_mode(
+        self,
+    ) -> None:
+        # Every shipped Fix Phase B1 UX mode MUST bridge to
+        # exactly one Fix Phase C1 classification id.
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP
+                .keys()
+            ),
+            set(agent_loop.PRIMARY_DESKTOP_FOLDER_UX_MODES),
+        )
+        for classification in (
+            agent_loop
+            .FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP
+            .values()
+        ):
+            self.assertIn(
+                classification,
+                agent_loop.FIX_PHASE_C2_CLASSIFICATION_IDS,
+            )
+
+    def test_display_map_covers_every_classification_id(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+                .keys()
+            ),
+            set(
+                agent_loop.FIX_PHASE_C2_CLASSIFICATION_IDS
+            ),
+        )
+        required_fields = (
+            "display_label", "plain_english_summary",
+            "next_action_label", "next_action_help",
+            "ready_to_run",
+        )
+        for cid, entry in (
+            agent_loop
+            .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP.items()
+        ):
+            for field in required_fields:
+                self.assertIn(field, entry, f"{cid}.{field}")
+
+    def test_only_existing_project_is_ready_to_run(self) -> None:
+        # A regression pin per the shipped Fix Phase C1 contract:
+        # only an existing (already-set-up) project is ready to
+        # run; every other classification requires an explicit
+        # setup / cleanup / repair gesture first.
+        display_map = (
+            agent_loop
+            .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+        )
+        for cid, entry in display_map.items():
+            if cid == "existing_project":
+                self.assertTrue(entry["ready_to_run"], cid)
+            else:
+                self.assertFalse(entry["ready_to_run"], cid)
+
+    def test_three_refusal_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.FIX_PHASE_C2_REFUSAL_CATEGORIES),
+            3,
+        )
+        for category in (
+            "refused_invalid_folder_path",
+            "refused_unknown_shipped_ux_mode",
+            "refused_missing_plain_english_display_entry",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.FIX_PHASE_C2_REFUSAL_CATEGORIES,
+            )
+
+    def test_empty_state_payload_shape(self) -> None:
+        payload = agent_loop.FIX_PHASE_C2_EMPTY_STATE_PAYLOAD
+        self.assertIsNone(payload["classification_id"])
+        self.assertIsNone(payload["target_path"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[project-classification]",
+        )
+        for field in (
+            "display_label", "plain_english_summary",
+            "next_action_label", "next_action_help",
+        ):
+            self.assertIsInstance(
+                payload[field], str, field,
+            )
+            self.assertGreater(
+                len(payload[field]), 0, field,
+            )
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_ATTRIBUTION,
+            "[project-classification]",
+        )
+
+
+class FixPhaseC2ClassificationBridgeTests(unittest.TestCase):
+    """Cover
+    `_fix_phase_c2_derive_classification_from_ux_mode(...)`
+    the pure Tk-free bridge from shipped Fix Phase B1 UX mode ->
+    Fix Phase C1 plain-English classification id.
+    """
+
+    def test_bridges_every_shipped_ux_mode(self) -> None:
+        expected = {
+            "attach_existing_project": "existing_project",
+            "bootstrap_new_project": "empty_folder",
+            "refused_partial_target": "partial_target",
+            "refused_malformed_target": "malformed_target",
+        }
+        for ux_mode, cid in expected.items():
+            self.assertEqual(
+                (
+                    agent_loop
+                    ._fix_phase_c2_derive_classification_from_ux_mode(
+                        ux_mode,
+                    )
+                ),
+                cid,
+                ux_mode,
+            )
+
+    def test_refuses_unknown_ux_mode_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_derive_classification_from_ux_mode(
+                    "invented_ux_mode",
+                )
+            )
+
+
+class FixPhaseC2NoFolderPayloadTests(unittest.TestCase):
+
+    def test_returns_a_fresh_dict_copy(self) -> None:
+        p1 = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        p2 = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        self.assertIsNot(p1, p2)
+        p1["display_label"] = "MUTATED"
+        # Mutating the returned copy MUST NOT leak into the
+        # shipped constant (that would be a source-of-truth
+        # leak).
+        p3 = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        self.assertNotEqual(p3["display_label"], "MUTATED")
+
+    def test_carries_empty_state_fields(self) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        self.assertIsNone(payload["classification_id"])
+        self.assertIsNone(payload["target_path"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[project-classification]",
+        )
+
+
+class FixPhaseC2FolderDisplayPayloadTests(unittest.TestCase):
+    """Cover the pure Tk-free payload formatter against real
+    filesystem folder classifications. Uses TemporaryDirectory
+    to stage each of the four shipped Fix Phase B1 target
+    states.
+    """
+
+    def _write_full_target(self, td: Path) -> None:
+        # Stage all five shipped canonical artifacts so the
+        # shipped `classify_pre_bootstrap_target_state(...)`
+        # returns `full_target`. `_make_controller` alone does
+        # NOT satisfy that classification because Fix Phase C2
+        # is about pre-attach state; the classifier looks at the
+        # closed EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS
+        # tuple.
+        _make_controller(td)
+        for rel in (
+            ".agent-loop/current-task.md",
+            ".agent-loop/current-phase.md",
+            ".agent-loop/phase-plan.md",
+        ):
+            path = td / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("test\n", encoding="utf-8")
+
+    def test_existing_project_returns_ready_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td)
+            self._write_full_target(controller)
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=str(controller),
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "existing_project",
+        )
+        self.assertTrue(payload["ready_to_run"])
+        self.assertEqual(
+            payload["display_label"], "Existing project",
+        )
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[project-classification]",
+        )
+
+    def test_empty_folder_returns_bootstrap_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=td,
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "empty_folder",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["display_label"], "Empty folder",
+        )
+        self.assertIn(
+            "set up a new project",
+            payload["next_action_label"].lower(),
+        )
+
+    def test_partial_target_returns_cleanup_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td)
+            (controller / ".agent-loop").mkdir()
+            # A partial target has some but not all of the
+            # canonical set. Write just the loop-state.json to
+            # trigger the shipped `partial_target` branch.
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).write_text("{}", encoding="utf-8")
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=str(controller),
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "partial_target",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        # Regression pin: the plain-English label MUST NOT
+        # leak the raw `partial_target` shipped-runtime term
+        # into the default surface.
+        self.assertNotIn(
+            "partial_target", payload["display_label"],
+        )
+
+    def test_malformed_target_returns_repair_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td)
+            self._write_full_target(controller)
+            # Corrupt loop-state.json so the shipped Phase 3A
+            # schema validator refuses it.
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).write_text(
+                "this is not valid json",
+                encoding="utf-8",
+            )
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=str(controller),
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "malformed_target",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        self.assertNotIn(
+            "malformed_target", payload["display_label"],
+        )
+
+    def test_none_path_refuses_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=None,
+                )
+            )
+
+    def test_empty_path_refuses_fail_closed(self) -> None:
+        for bad in ("", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c2_format_folder_display_payload(
+                        target_path=bad,
+                    )
+                )
+
+    def test_nonexistent_path_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            missing = str(
+                Path(td) / "does_not_exist_at_all_ever",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c2_format_folder_display_payload(
+                        target_path=missing,
+                    )
+                )
+
+    def test_payload_never_leaks_raw_cli_terms_in_display(
+        self,
+    ) -> None:
+        # Regression pin per the shipped Fix Phase C1 contract's
+        # `## Advanced Detail Hiding Rules`: the default surface
+        # MUST NOT expose raw CLI subcommand names. Iterate every
+        # display entry and pin that the display strings do not
+        # leak raw runtime terms.
+        forbidden_substrings = (
+            "attach-external-target",
+            "loop-state.json",
+            "halted_",
+            "awaiting_",
+            "APPROVED_FOR_",
+            "NEEDS_FIXES",
+        )
+        display_map = (
+            agent_loop
+            .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+        )
+        for cid, entry in display_map.items():
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{cid}.{field}: raw runtime token "
+                        f"{token!r} leaked into plain-English "
+                        f"display",
+                    )
+
+
+class FixPhaseC2AuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c2_format_audit_line(
+                classification_id="existing_project",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[desktop-first-run-project]", line)
+        self.assertIn(
+            "signal_version='fix-phase-c2-v1'", line,
+        )
+        self.assertIn(
+            "classification_id='existing_project'", line,
+        )
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c2_format_audit_line(
+                classification_id=None,
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_invalid_folder_path"
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_invalid_folder_path'",
+            line,
+        )
+        self.assertIn(
+            "classification_id=None", line,
+        )
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_audit_line(
+                    classification_id=None,
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_unknown_classification_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_audit_line(
+                    classification_id="invented_classification",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_audit_line(
+                    classification_id="existing_project",
+                    epoch_seconds="not int",
+                )
+            )
+
+
+class FixPhaseC2TkWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the Fix Phase C2
+    Project section wired into `_launch_desktop_app_window(...)`.
+    Would fail loudly if a future refactor:
+      - drops the Project section entirely
+      - hides the section behind the Advanced toggle
+      - reintroduces raw CLI vocabulary in the default surface
+      - drops the audit-line emit
+      - starts a background thread / timer / watcher
+      - caches the selected folder path across sessions
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_project_section_labelframe_is_visible_by_default(
+        self,
+    ) -> None:
+        # The Project section MUST be a top-level LabelFrame
+        # packed directly under control_frame (not appended to
+        # advanced_frames_holder). If a future refactor pushes
+        # it behind Advanced, this pin fails.
+        self.assertIn(
+            'fix_phase_c2_project_frame = tk.LabelFrame(',
+            self._source,
+        )
+        self.assertIn(
+            'text="Project"', self._source,
+        )
+        # Regression pin: MUST NOT be appended to
+        # advanced_frames_holder (that would hide it behind
+        # the Advanced toggle).
+        self.assertNotIn(
+            "advanced_frames_holder.append("
+            "fix_phase_c2_project_frame",
+            self._source,
+        )
+
+    def test_project_section_calls_shipped_folder_picker(
+        self,
+    ) -> None:
+        self.assertIn(
+            '_filedialog.askdirectory(', self._source,
+        )
+        self.assertIn(
+            '_primary_desktop_normalize_selected_folder(',
+            self._source,
+        )
+
+    def test_project_section_calls_c2_payload_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c2_format_folder_display_payload(",
+            self._source,
+        )
+
+    def test_project_section_calls_c2_audit_line_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c2_format_audit_line(", self._source,
+        )
+
+    def test_project_section_writes_audit_via_shipped_log_note(
+        self,
+    ) -> None:
+        # Regression pin: the audit line MUST route through the
+        # shipped `_log_note(...)` writer. A parallel audit file
+        # would violate the Fix Phase C1 source-of-truth rule.
+        self.assertIn("_log_note(", self._source)
+
+    def test_project_section_does_not_persist_selected_folder(
+        self,
+    ) -> None:
+        # Regression pin: the Fix Phase C1 contract forbids a
+        # cross-session cache of the picked folder. Blocking
+        # obvious persistence attempts:
+        for forbidden in (
+            "write_text(chosen",
+            "with open(chosen",
+            "json.dump(",  # would only be OK for non-picker paths
+        ):
+            # Bounded assertion: the picker callback MUST NOT
+            # write the picked path anywhere. This exact
+            # substring set is not exhaustive, but it catches
+            # the obvious regression shapes.
+            self.assertNotIn(
+                f"{forbidden}",
+                (
+                    self._source.split(
+                        "def _fix_phase_c2_choose_folder_click",
+                        1,
+                    )[1].split("def ", 1)[0]
+                    if "_fix_phase_c2_choose_folder_click"
+                    in self._source
+                    else ""
+                ),
+                forbidden,
+            )
+
+    def test_project_section_does_not_start_background_thread(
+        self,
+    ) -> None:
+        # The Fix Phase C1 contract forbids a background watcher
+        # beyond the shipped Phase 10L / 10M poll cadence, and
+        # the C2 section specifically refreshes only on the
+        # operator's explicit Choose-Folder gesture. Blocking
+        # any background thread / timer / asyncio pattern.
+        project_body = self._source.split(
+            "fix_phase_c2_project_frame = tk.LabelFrame(", 1,
+        )[1].split(
+            "# Advanced panels toggle.", 1,
+        )[0]
+        for forbidden in (
+            "threading.Thread", "Timer(",
+            "threading.Timer", "asyncio.",
+            "root.after(",
+        ):
+            self.assertNotIn(
+                forbidden, project_body, forbidden,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

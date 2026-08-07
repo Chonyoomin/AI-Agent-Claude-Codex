@@ -15375,6 +15375,355 @@ def _primary_desktop_classify_folder_for_ux(
     return classify_pre_bootstrap_target_state(resolved)
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase C2: Project Folder Picker And Classification Surface.
+#
+# First bounded runtime slice under the shipped Fix Phase C1
+# `docs/desktop-first-run-setup-contract.md` contract. Adds the
+# guided single-user `Project` section that lets a non-technical
+# local operator pick a project folder and see the shipped Fix
+# Phase B1 folder classification surfaced as plain-English
+# labels + a plain-English next-action hint.
+#
+# NON-goals for this initial slice (per the Fix Phase C1 contract's
+# Out Of Scope + the Fix Phase C2 prompt's Constraints):
+#   - no PRD selection, no run-mode selector, no Start/Stop, no
+#     run console (deferred to Fix Phase C3 through C8)
+#   - no silent bootstrap dispatch on folder selection (the shipped
+#     Fix Phase B3 bootstrap dispatcher remains the sole path)
+#   - no UI-only cache of the selected folder path across sessions
+#   - no auto-fill of the folder path from OS state
+#   - no new library-callable control (Phase 10I three-control cap
+#     preserved)
+#   - no new canonical artifact
+#   - no background watcher; the panel refreshes ONLY on the
+#     explicit operator Choose-Folder gesture
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C2_SIGNAL_VERSION = "fix-phase-c2-v1"
+
+# Closed four-classification vocabulary matching the Fix Phase C1
+# contract's `## Top-Level Section Vocabulary` `Project` section
+# verbatim. Each id maps to a shipped Fix Phase B1
+# `PRIMARY_DESKTOP_FOLDER_UX_MODES` value via
+# `FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP` below.
+FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT = (
+    "existing_project"
+)
+FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER = "empty_folder"
+FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET = "partial_target"
+FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET = (
+    "malformed_target"
+)
+FIX_PHASE_C2_CLASSIFICATION_IDS = (
+    FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT,
+    FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER,
+    FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET,
+    FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET,
+)
+
+# Bridge from the shipped Fix Phase B1
+# `PRIMARY_DESKTOP_FOLDER_UX_MODES` closed vocabulary into the
+# plain-English Fix Phase C1 classification vocabulary. The
+# desktop UI MUST NOT duplicate the shipped classification
+# logic; every branch routes through this map.
+FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP = {
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_ATTACH_EXISTING: (
+        FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT
+    ),
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_BOOTSTRAP_NEW: (
+        FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER
+    ),
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_PARTIAL: (
+        FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET
+    ),
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_MALFORMED: (
+        FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET
+    ),
+}
+
+# Per-classification plain-English display map. The desktop UI
+# renders these fields verbatim; NO raw shipped runtime
+# vocabulary is exposed in the default (non-Advanced) surface
+# per the Fix Phase C1 contract's `## Advanced Detail Hiding
+# Rules` section. Adding a classification to
+# `FIX_PHASE_C2_CLASSIFICATION_IDS` above also requires an
+# entry here or the shipped payload formatter refuses fail-
+# closed.
+FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP = {
+    FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT: {
+        "display_label": "Existing project",
+        "plain_english_summary": (
+            "This folder already has a project set up. "
+            "You can attach it to run the agent."
+        ),
+        "next_action_label": "Attach this project",
+        "next_action_help": (
+            "Use the shipped attach command to record this "
+            "folder as the active project. This step is "
+            "guided and does not modify the folder."
+        ),
+        "ready_to_run": True,
+    },
+    FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER: {
+        "display_label": "Empty folder",
+        "plain_english_summary": (
+            "This folder is empty. You can set it up as a "
+            "brand-new project."
+        ),
+        "next_action_label": "Set up a new project here",
+        "next_action_help": (
+            "The guided setup form will ask for your name, "
+            "your project objective, and your run preferences "
+            "before creating a new project in this folder."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET: {
+        "display_label": "Partial setup detected",
+        "plain_english_summary": (
+            "This folder has some project setup files but "
+            "not all of them. It is not safe to attach or "
+            "set up until it is cleaned up."
+        ),
+        "next_action_label": "Clean up before continuing",
+        "next_action_help": (
+            "Either finish the setup by hand, delete the "
+            "partial setup files so the folder is empty, or "
+            "choose a different folder."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET: {
+        "display_label": "Setup file needs repair",
+        "plain_english_summary": (
+            "This folder has a setup file that does not "
+            "match the expected shape. It is not safe to "
+            "attach or set up until the file is repaired."
+        ),
+        "next_action_label": "Repair the setup file",
+        "next_action_help": (
+            "Repair the setup file by hand or delete it so "
+            "the folder is empty, then reopen this section."
+        ),
+        "ready_to_run": False,
+    },
+}
+
+# Empty-state payload shown when the operator has not yet
+# picked a folder (session start; per the Fix Phase C1
+# contract's source-of-truth preservation rule, there is NO
+# cross-session cache of the last-picked folder).
+FIX_PHASE_C2_EMPTY_STATE_PAYLOAD = {
+    "classification_id": None,
+    "display_label": "No folder selected",
+    "plain_english_summary": (
+        "Pick a folder to see whether it is ready to attach, "
+        "ready to set up as a new project, or needs cleanup "
+        "first."
+    ),
+    "next_action_label": "Choose folder",
+    "next_action_help": (
+        "The picker opens your operating system's native "
+        "folder browser. You do not need to type a path."
+    ),
+    "target_path": None,
+    "ready_to_run": False,
+    "attribution_tag": "[project-classification]",
+}
+
+# Closed refusal vocabulary for the Fix Phase C2 folder-picker
+# surface. Every refusal MUST route through one of these
+# categories so the desktop UI can show a plain-English refusal
+# message that names the shipped rule that was violated. The
+# categories align with the Fix Phase C1 contract's `## Refusal
+# Behavior` section.
+FIX_PHASE_C2_REFUSAL_INVALID_PATH = "refused_invalid_folder_path"
+FIX_PHASE_C2_REFUSAL_UNKNOWN_UX_MODE = (
+    "refused_unknown_shipped_ux_mode"
+)
+FIX_PHASE_C2_REFUSAL_MISSING_DISPLAY_ENTRY = (
+    "refused_missing_plain_english_display_entry"
+)
+FIX_PHASE_C2_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C2_REFUSAL_INVALID_PATH,
+    FIX_PHASE_C2_REFUSAL_UNKNOWN_UX_MODE,
+    FIX_PHASE_C2_REFUSAL_MISSING_DISPLAY_ENTRY,
+)
+
+# Attribution tag matching the Fix Phase C1 contract's
+# `[project-classification]` display convention. Every
+# displayed line in the Project section MUST carry this tag in
+# the shipped audit log.
+FIX_PHASE_C2_ATTRIBUTION = "[project-classification]"
+
+
+def _fix_phase_c2_derive_classification_from_ux_mode(
+    ux_mode: str,
+) -> str:
+    """Pure Tk-free bridge: map a shipped Fix Phase B1
+    `PRIMARY_DESKTOP_FOLDER_UX_MODES` value into the closed Fix
+    Phase C1 plain-English classification vocabulary. Refuses
+    fail-closed via HaltError on any ux_mode outside the shipped
+    closed set so a future Fix Phase B1 vocabulary widening
+    surfaces here instead of silently producing a payload with
+    no plain-English text.
+    """
+    mapping = FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP
+    if ux_mode not in mapping:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop project folder picker refused: "
+                f"shipped Fix Phase B1 UX mode {ux_mode!r} is "
+                f"not in the shipped closed vocabulary "
+                f"{PRIMARY_DESKTOP_FOLDER_UX_MODES!r}"
+            ),
+        )
+    return mapping[ux_mode]
+
+
+def _fix_phase_c2_format_no_folder_display_payload() -> dict:
+    """Return the plain-English empty-state payload the desktop
+    Project section shows on session start (no folder selected
+    yet). Returns a fresh dict copy each call so callers cannot
+    mutate the shipped constant.
+    """
+    return dict(FIX_PHASE_C2_EMPTY_STATE_PAYLOAD)
+
+
+def _fix_phase_c2_format_folder_display_payload(
+    *,
+    target_path,
+) -> dict:
+    """Pure Tk-free plain-English payload formatter for the Fix
+    Phase C2 Project section. Takes a folder path, routes it
+    through the shipped Fix Phase B1
+    `_primary_desktop_classify_folder_for_ux(...)` classifier,
+    bridges the returned shipped UX mode into the closed Fix
+    Phase C1 classification vocabulary, and returns a bounded
+    dict shaped for the desktop UI:
+
+      {
+        "classification_id": <one of FIX_PHASE_C2_CLASSIFICATION_IDS>,
+        "display_label": <plain-English label>,
+        "plain_english_summary": <plain-English 1-2 sentence>,
+        "next_action_label": <plain-English action label>,
+        "next_action_help": <plain-English action hint>,
+        "target_path": <the resolved folder path>,
+        "ready_to_run": <bool; True only for existing_project>,
+        "attribution_tag": "[project-classification]",
+      }
+
+    Refuses fail-closed via HaltError on missing / non-string /
+    empty / non-directory path with a plain-English reason the
+    desktop UI can show verbatim. Also refuses fail-closed if
+    the shipped classifier returns a UX mode outside the
+    bridge map or if the classification display map is missing
+    an entry for the derived id (both are contract-widening
+    regressions).
+    """
+    pre_bootstrap_state = (
+        _primary_desktop_classify_folder_for_ux(target_path)
+    )
+    ux_mode = _primary_desktop_derive_folder_ux_mode(
+        pre_bootstrap_state,
+    )
+    classification_id = (
+        _fix_phase_c2_derive_classification_from_ux_mode(
+            ux_mode,
+        )
+    )
+    display_map = FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+    if classification_id not in display_map:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop project folder picker refused: "
+                f"classification id {classification_id!r} is "
+                f"missing a plain-English display entry"
+            ),
+        )
+    entry = display_map[classification_id]
+    return {
+        "classification_id": classification_id,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "target_path": str(Path(target_path.strip()).resolve()),
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C2_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c2_format_audit_line(
+    *,
+    classification_id,
+    epoch_seconds,
+    refusal_category=None,
+) -> str:
+    """Pure Tk-free audit-line formatter matching the shipped
+    Phase 10AG / Phase 10AI audit-line convention. The Tk
+    callback appends the returned line via the shipped
+    `_log_note(...)` writer to `.agent-loop/orchestrator.log`;
+    NEVER writes a parallel first-run-history file per the Fix
+    Phase C1 Source-Of-Truth Preservation rule.
+
+    Line shape:
+      `[desktop-first-run-project] signal_version=<version>
+       classification_id=<id|None>
+       refusal_category=<cat|None> epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in FIX_PHASE_C2_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop project folder audit refused: "
+                    f"refusal_category {refusal_category!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C2 refusal vocabulary "
+                    f"{FIX_PHASE_C2_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if classification_id is not None:
+        if (
+            classification_id
+            not in FIX_PHASE_C2_CLASSIFICATION_IDS
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop project folder audit refused: "
+                    f"classification_id {classification_id!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C1 classification vocabulary "
+                    f"{FIX_PHASE_C2_CLASSIFICATION_IDS!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop project folder audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-first-run-project] signal_version="
+        f"{FIX_PHASE_C2_SIGNAL_VERSION!r} classification_id="
+        f"{classification_id!r} refusal_category="
+        f"{refusal_category!r} epoch_seconds={epoch_seconds!r}"
+    )
+
+
 def _primary_desktop_validate_bootstrap_form(
     fields,
 ) -> None:
@@ -16304,6 +16653,183 @@ def _launch_desktop_app_window(
 
     approval_mode_combo.bind(
         "<<ComboboxSelected>>", _on_approval_mode_changed,
+    )
+
+    # Fix Phase C2: bounded guided Project section (visible by
+    # default per the shipped Fix Phase C1 contract's ordered
+    # top-level section vocabulary: Project appears first). Adds
+    # a "Choose Folder" button that opens the OS-native folder
+    # picker + a plain-English classification display + a plain-
+    # English next-action hint. NO raw shipped runtime vocabulary
+    # is surfaced here; every displayed line is from the Fix
+    # Phase C2 plain-English display map. The panel refreshes
+    # ONLY on the explicit Choose-Folder gesture (no poll-tick
+    # refresh, no cross-session cache; per the Fix Phase C1
+    # source-of-truth preservation rule).
+    fix_phase_c2_project_frame = tk.LabelFrame(
+        control_frame,
+        text="Project",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c2_project_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(8, 4),
+    )
+    fix_phase_c2_choose_button = tk.Button(
+        fix_phase_c2_project_frame,
+        text="Choose Folder",
+    )
+    fix_phase_c2_choose_button.pack(
+        fill=tk.X, padx=4, pady=(4, 2),
+    )
+    fix_phase_c2_folder_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text="No folder selected",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9),
+        fg="#666666",
+    )
+    fix_phase_c2_folder_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c2_classification_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            FIX_PHASE_C2_EMPTY_STATE_PAYLOAD["display_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c2_classification_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c2_summary_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            FIX_PHASE_C2_EMPTY_STATE_PAYLOAD[
+                "plain_english_summary"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c2_summary_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c2_next_action_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            "Next: "
+            + FIX_PHASE_C2_EMPTY_STATE_PAYLOAD[
+                "next_action_label"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c2_next_action_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c2_next_action_help_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            FIX_PHASE_C2_EMPTY_STATE_PAYLOAD["next_action_help"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c2_next_action_help_label.pack(
+        fill=tk.X, padx=4, pady=(2, 4),
+    )
+    fix_phase_c2_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+
+    def _fix_phase_c2_render_payload(payload: dict) -> None:
+        folder_text = payload.get("target_path")
+        fix_phase_c2_folder_label.config(
+            text=(
+                f"Folder: {folder_text}"
+                if folder_text
+                else "No folder selected"
+            ),
+        )
+        fix_phase_c2_classification_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c2_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c2_next_action_label.config(
+            text=f"Next: {payload['next_action_label']}",
+        )
+        fix_phase_c2_next_action_help_label.config(
+            text=payload["next_action_help"],
+        )
+
+    def _fix_phase_c2_emit_audit(
+        *, classification_id, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c2_format_audit_line(
+                classification_id=classification_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c2_audit_log_path, line)
+
+    def _fix_phase_c2_choose_folder_click() -> None:
+        chosen = _primary_desktop_normalize_selected_folder(
+            _filedialog.askdirectory(
+                title="Choose project folder",
+                mustexist=True,
+            ),
+        )
+        if chosen is None:
+            # Operator cancelled the picker; leave the current
+            # payload untouched. No audit emit because no
+            # classification was resolved.
+            return
+        try:
+            payload = (
+                _fix_phase_c2_format_folder_display_payload(
+                    target_path=chosen,
+                )
+            )
+        except HaltError as halt:
+            refusal_payload = (
+                _fix_phase_c2_format_no_folder_display_payload()
+            )
+            refusal_payload["display_label"] = (
+                "Could not read this folder"
+            )
+            refusal_payload["plain_english_summary"] = halt.reason
+            refusal_payload["next_action_label"] = (
+                "Choose a different folder"
+            )
+            refusal_payload["next_action_help"] = (
+                "The picker opens your operating system's "
+                "native folder browser. You do not need to "
+                "type a path."
+            )
+            refusal_payload["target_path"] = chosen
+            _fix_phase_c2_render_payload(refusal_payload)
+            _fix_phase_c2_emit_audit(
+                classification_id=None,
+                refusal_category=(
+                    FIX_PHASE_C2_REFUSAL_INVALID_PATH
+                ),
+            )
+            return
+        _fix_phase_c2_render_payload(payload)
+        _fix_phase_c2_emit_audit(
+            classification_id=payload["classification_id"],
+        )
+
+    fix_phase_c2_choose_button.config(
+        command=_fix_phase_c2_choose_folder_click,
     )
 
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames are
