@@ -16618,15 +16618,17 @@ def _launch_desktop_app_window(
     orchestration_visualization_status_label.pack(
         fill=tk.X, padx=4, pady=(0, 4),
     )
-    orchestration_visualization_body = tk.Text(
+    orchestration_visualization_canvas = tk.Canvas(
         orchestration_visualization_frame,
-        height=10,
-        wrap=tk.WORD,
+        width=PHASE_10AI_CANVAS_WIDTH,
+        height=PHASE_10AI_CANVAS_HEIGHT,
+        bg="#ffffff",
+        highlightthickness=1,
+        highlightbackground="#cccccc",
     )
-    orchestration_visualization_body.pack(
-        fill=tk.X, padx=4, pady=(0, 4),
+    orchestration_visualization_canvas.pack(
+        padx=4, pady=(0, 4),
     )
-    orchestration_visualization_body.configure(state=tk.DISABLED)
     orchestration_visualization_audit_log_path = (
         controller_root
         / ".agent-loop"
@@ -16650,22 +16652,70 @@ def _launch_desktop_app_window(
         status_category = view.get("status_category") or "unknown"
         orchestration_visualization_status_label.config(
             text=(
-                f"Status: {status_category} "
-                f"(source: "
+                f"Status: {view['status_icon']} "
+                f"{status_category} (source: "
                 f"{view['status_category_source_mirror']})"
             ),
         )
-        lines = (
-            render_desktop_orchestration_visualization_text(view)
-        )
-        orchestration_visualization_body.configure(state=tk.NORMAL)
-        orchestration_visualization_body.delete("1.0", tk.END)
-        orchestration_visualization_body.insert(
-            "1.0", "\n".join(lines) + "\n",
-        )
-        orchestration_visualization_body.configure(
-            state=tk.DISABLED,
-        )
+        # Phase 10AI: re-draw the shipped orchestration graph on
+        # the Tk Canvas. Every poll tick clears the canvas and
+        # re-renders the fifteen nodes + closed edge set from
+        # the freshly-assembled view. There is NO cross-tick
+        # layout cache, NO positional cache, NO animation state
+        # store; the shipped layout constants + advisory-derived
+        # edge_active flags fully describe every draw.
+        cv = orchestration_visualization_canvas
+        cv.delete("all")
+        node_box_width = view["node_box_width"]
+        node_box_height = view["node_box_height"]
+        for edge in view["edges"]:
+            from_x, from_y = edge["from_xy"]
+            to_x, to_y = edge["to_xy"]
+            # Anchor arrows to node-box centers so the closed
+            # layout constants + fixed box size determine every
+            # edge draw.
+            fx = from_x + node_box_width / 2
+            fy = from_y + node_box_height / 2
+            tx = to_x + node_box_width / 2
+            ty = to_y + node_box_height / 2
+            edge_color = (
+                "#333333" if edge["active"] else "#bbbbbb"
+            )
+            edge_dash = (
+                None if edge["active"] else (2, 4)
+            )
+            cv.create_line(
+                fx, fy, tx, ty,
+                fill=edge_color, width=(2 if edge["active"] else 1),
+                arrow=tk.LAST,
+                dash=edge_dash,
+            )
+        for node in view["nodes"]:
+            x, y = node["layout_xy"]
+            cv.create_rectangle(
+                x, y, x + node_box_width, y + node_box_height,
+                fill=node["status_color"],
+                outline="#333333",
+            )
+            display_value = str(node["current_value"])
+            if len(display_value) > 24:
+                display_value = display_value[:21] + "..."
+            cv.create_text(
+                x + node_box_width / 2,
+                y + node_box_height / 2 - 8,
+                text=(
+                    f"{node['status_icon']} {node['id']}"
+                ),
+                fill="#ffffff",
+                font=("TkDefaultFont", 8, "bold"),
+            )
+            cv.create_text(
+                x + node_box_width / 2,
+                y + node_box_height / 2 + 8,
+                text=display_value,
+                fill="#ffffff",
+                font=("TkDefaultFont", 7),
+            )
         try:
             line = (
                 _desktop_orchestration_visualization_format_audit_line(
@@ -36708,6 +36758,224 @@ PHASE_10AI_STATUS_CATEGORIES = (
     PHASE_10AI_STATUS_CATEGORY_COMPLETE,
 )
 
+# Closed seven-category edge gate vocabulary matching the Phase
+# 10AH contract's `## Node / Edge / Status Model` section
+# verbatim. The edge registry below tags every closed edge with
+# exactly one of these categories.
+PHASE_10AI_GATE_CATEGORY_NO_GATE = "no_gate"
+PHASE_10AI_GATE_CATEGORY_APPROVAL = "approval_gate"
+PHASE_10AI_GATE_CATEGORY_EVIDENCE = "evidence_gate"
+PHASE_10AI_GATE_CATEGORY_OVERLAP_SAFE = "overlap_safe_gate"
+PHASE_10AI_GATE_CATEGORY_STRICT_MODE = "strict_mode_gate"
+PHASE_10AI_GATE_CATEGORY_HUMAN_ACCEPTANCE = (
+    "human_acceptance_gate"
+)
+PHASE_10AI_GATE_CATEGORY_TOKEN_EXHAUSTION = (
+    "token_exhaustion_gate"
+)
+PHASE_10AI_GATE_CATEGORIES = (
+    PHASE_10AI_GATE_CATEGORY_NO_GATE,
+    PHASE_10AI_GATE_CATEGORY_APPROVAL,
+    PHASE_10AI_GATE_CATEGORY_EVIDENCE,
+    PHASE_10AI_GATE_CATEGORY_OVERLAP_SAFE,
+    PHASE_10AI_GATE_CATEGORY_STRICT_MODE,
+    PHASE_10AI_GATE_CATEGORY_HUMAN_ACCEPTANCE,
+    PHASE_10AI_GATE_CATEGORY_TOKEN_EXHAUSTION,
+)
+
+# Closed per-status-category icon glyph. ASCII-safe so headless
+# text rendering, contract-file matching, and Tk Canvas draw all
+# read identically. The Tk Canvas renderer additionally maps the
+# status category to a fill color (see
+# PHASE_10AI_STATUS_CATEGORY_COLOR_MAP below).
+PHASE_10AI_STATUS_ICON_MAP = {
+    PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS: "[>]",
+    PHASE_10AI_STATUS_CATEGORY_AWAITING_REVIEW: "[?]",
+    PHASE_10AI_STATUS_CATEGORY_AWAITING_HUMAN: "[H]",
+    PHASE_10AI_STATUS_CATEGORY_HALTED: "[!]",
+    PHASE_10AI_STATUS_CATEGORY_COMPLETE: "[o]",
+}
+PHASE_10AI_STATUS_CATEGORY_COLOR_MAP = {
+    PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS: "#4a7ab8",
+    PHASE_10AI_STATUS_CATEGORY_AWAITING_REVIEW: "#8888aa",
+    PHASE_10AI_STATUS_CATEGORY_AWAITING_HUMAN: "#c9a227",
+    PHASE_10AI_STATUS_CATEGORY_HALTED: "#a94442",
+    PHASE_10AI_STATUS_CATEGORY_COMPLETE: "#5cb85c",
+}
+
+# Closed edge registry materialising the Phase 10AH `Node / Edge
+# / Status Model` section. Each edge names two vocabulary keys
+# (from_node, to_node), the shipped transition it represents,
+# and the gate_category the shipped contract enforces on that
+# transition. edge_source_category is fixed at `canonical_mirror`
+# per the Phase 10AH contract (every transition is defined by a
+# shipped contract, so the edge set itself is a canonical
+# mirror). The `active_when` field names the per-tick derivation
+# rule the view builder uses to compute whether the shipped
+# runtime is currently traversing the edge; the closed rule
+# vocabulary is a subset of the shipped node-value predicates
+# already computed by the advisory-derivation helper.
+PHASE_10AI_EDGE_REGISTRY = (
+    {
+        "id": "phase_to_sub_phase",
+        "from_node": "phase",
+        "to_node": "sub_phase",
+        "transition_id": "phase_to_active_sub_phase",
+        "gate_category": PHASE_10AI_GATE_CATEGORY_NO_GATE,
+        "active_when": "always",
+    },
+    {
+        "id": "sub_phase_to_task",
+        "from_node": "sub_phase",
+        "to_node": "task",
+        "transition_id": "sub_phase_to_active_task",
+        "gate_category": PHASE_10AI_GATE_CATEGORY_NO_GATE,
+        "active_when": "always",
+    },
+    {
+        "id": "task_to_loop_state_status",
+        "from_node": "task",
+        "to_node": "loop_state_status",
+        "transition_id": "task_to_current_loop_state_status",
+        "gate_category": PHASE_10AI_GATE_CATEGORY_NO_GATE,
+        "active_when": "always",
+    },
+    {
+        "id": "loop_state_status_to_approval_mode",
+        "from_node": "loop_state_status",
+        "to_node": "approval_mode",
+        "transition_id": (
+            "loop_state_status_gated_by_approval_mode"
+        ),
+        "gate_category": PHASE_10AI_GATE_CATEGORY_APPROVAL,
+        "active_when": "always",
+    },
+    {
+        "id": "loop_state_status_to_cycle_count",
+        "from_node": "loop_state_status",
+        "to_node": "cycle_count",
+        "transition_id": "cycle_progress_reporting",
+        "gate_category": PHASE_10AI_GATE_CATEGORY_NO_GATE,
+        "active_when": "always",
+    },
+    {
+        "id": "cycle_count_to_max_cycles",
+        "from_node": "cycle_count",
+        "to_node": "max_cycles",
+        "transition_id": "cycle_budget_reporting",
+        "gate_category": PHASE_10AI_GATE_CATEGORY_NO_GATE,
+        "active_when": "always",
+    },
+    {
+        "id": "loop_state_status_to_review_branch",
+        "from_node": "loop_state_status",
+        "to_node": "review_branch_active",
+        "transition_id": (
+            "loop_state_status_advances_review_branch"
+        ),
+        "gate_category": PHASE_10AI_GATE_CATEGORY_EVIDENCE,
+        "active_when": "review_branch_active",
+    },
+    {
+        "id": "loop_state_status_to_fix_branch",
+        "from_node": "loop_state_status",
+        "to_node": "fix_branch_active",
+        "transition_id": (
+            "loop_state_status_advances_fix_branch"
+        ),
+        "gate_category": PHASE_10AI_GATE_CATEGORY_EVIDENCE,
+        "active_when": "fix_branch_active",
+    },
+    {
+        "id": "review_branch_to_last_verdict",
+        "from_node": "review_branch_active",
+        "to_node": "last_verdict",
+        "transition_id": (
+            "review_branch_yields_last_verdict"
+        ),
+        "gate_category": PHASE_10AI_GATE_CATEGORY_EVIDENCE,
+        "active_when": "review_branch_active",
+    },
+    {
+        "id": "last_verdict_to_last_verdict_phase",
+        "from_node": "last_verdict",
+        "to_node": "last_verdict_phase",
+        "transition_id": "verdict_phase_reporting",
+        "gate_category": PHASE_10AI_GATE_CATEGORY_NO_GATE,
+        "active_when": "always",
+    },
+    {
+        "id": "loop_state_status_to_awaiting_human_for",
+        "from_node": "loop_state_status",
+        "to_node": "awaiting_human_for",
+        "transition_id": (
+            "loop_state_status_gated_by_strict_mode"
+        ),
+        "gate_category": PHASE_10AI_GATE_CATEGORY_STRICT_MODE,
+        "active_when": "human_gate_pending",
+    },
+    {
+        "id": "awaiting_human_for_to_human_gate_pending",
+        "from_node": "awaiting_human_for",
+        "to_node": "human_gate_pending",
+        "transition_id": "human_acceptance_gate_pending",
+        "gate_category": (
+            PHASE_10AI_GATE_CATEGORY_HUMAN_ACCEPTANCE
+        ),
+        "active_when": "human_gate_pending",
+    },
+    {
+        "id": "loop_state_status_to_blocked_or_halted",
+        "from_node": "loop_state_status",
+        "to_node": "blocked_or_halted",
+        "transition_id": (
+            "loop_state_status_gated_by_overlap_safe"
+        ),
+        "gate_category": PHASE_10AI_GATE_CATEGORY_OVERLAP_SAFE,
+        "active_when": "blocked_or_halted",
+    },
+    {
+        "id": "loop_state_status_to_artifact_backed_progress",
+        "from_node": "loop_state_status",
+        "to_node": "artifact_backed_progress",
+        "transition_id": (
+            "shipped_evidence_gates_report"
+        ),
+        "gate_category": (
+            PHASE_10AI_GATE_CATEGORY_TOKEN_EXHAUSTION
+        ),
+        "active_when": "always",
+    },
+)
+
+# Closed graph layout (per-node canvas coordinates). Bounded to a
+# fixed 640x360 canvas so no cross-tick layout cache is required;
+# every poll tick re-reads this constant. Coordinates are chosen
+# so the shipped orchestration flow reads left-to-right + top-to-
+# bottom without overlapping edges beyond the natural crossings
+# a bounded orchestration graph produces.
+PHASE_10AI_NODE_LAYOUT = {
+    "phase":                       (60, 40),
+    "sub_phase":                   (220, 40),
+    "task":                        (380, 40),
+    "loop_state_status":           (380, 130),
+    "approval_mode":               (60, 130),
+    "cycle_count":                 (60, 220),
+    "max_cycles":                  (220, 220),
+    "awaiting_human_for":          (540, 130),
+    "human_gate_pending":          (540, 220),
+    "last_verdict":                (540, 310),
+    "last_verdict_phase":          (380, 310),
+    "review_branch_active":        (220, 310),
+    "fix_branch_active":           (60, 310),
+    "blocked_or_halted":           (380, 220),
+    "artifact_backed_progress":    (220, 130),
+}
+PHASE_10AI_CANVAS_WIDTH = 700
+PHASE_10AI_CANVAS_HEIGHT = 400
+PHASE_10AI_NODE_BOX_WIDTH = 140
+PHASE_10AI_NODE_BOX_HEIGHT = 42
+
 # Closed nine-category refusal vocabulary matching the Phase
 # 10AH contract's `## Refusal Behavior` section verbatim.
 PHASE_10AI_REFUSAL_VALUE_OUTSIDE_VOCAB = (
@@ -37084,6 +37352,39 @@ def _desktop_orchestration_visualization_stat_artifact_backed_progress(
     return entries
 
 
+def _desktop_orchestration_visualization_derive_edge_active(
+    *,
+    edge,
+    advisory_state,
+) -> bool:
+    """Pure Tk-free per-edge active-flag derivation. The `edge`
+    dict comes from `PHASE_10AI_EDGE_REGISTRY`; the
+    `advisory_state` dict comes from the shipped Phase 10AI
+    advisory-derivation helper. Returns `True` when the shipped
+    runtime is currently traversing the edge, `False` otherwise.
+    Refuses fail-closed on unknown `active_when` rule so the
+    edge registry cannot silently widen.
+    """
+    rule = edge.get("active_when")
+    if rule == "always":
+        return True
+    if rule in (
+        "review_branch_active",
+        "fix_branch_active",
+        "human_gate_pending",
+        "blocked_or_halted",
+    ):
+        return bool(advisory_state.get(rule, False))
+    raise HaltError(
+        "halted_input_missing",
+        (
+            f"desktop orchestration visualization edge "
+            f"refused: active_when rule {rule!r} is not in the "
+            f"shipped closed rule vocabulary"
+        ),
+    )
+
+
 def build_desktop_orchestration_visualization_view(
     controller_root,
 ) -> dict:
@@ -37167,6 +37468,16 @@ def build_desktop_orchestration_visualization_view(
         "last_verdict": loop_state.get("last_verdict"),
         "last_verdict_phase": loop_state.get("last_verdict_phase"),
     }
+    status_category = (
+        _desktop_orchestration_visualization_classify_status_category(
+            loop_state=loop_state,
+            overlap_state=overlap_state,
+        )
+    )
+    status_icon = PHASE_10AI_STATUS_ICON_MAP[status_category]
+    status_color = (
+        PHASE_10AI_STATUS_CATEGORY_COLOR_MAP[status_category]
+    )
     nodes: list = []
     for key in PHASE_10AI_VISUALIZATION_VOCABULARY:
         source_category = PHASE_10AI_KEY_SOURCE_CATEGORY_MAP[key]
@@ -37184,19 +37495,59 @@ def build_desktop_orchestration_visualization_view(
         else:
             current_value = advisory[key]
             attribution_tag = PHASE_10AI_ATTRIBUTION_ADVISORY
+        node_x, node_y = PHASE_10AI_NODE_LAYOUT[key]
+        # Per-node status icon: the current run's active status
+        # icon is applied to the node identifying the current
+        # loop-state status; every other node renders the
+        # neutral `in_progress` icon so the operator sees which
+        # node the shipped runtime is focused on at a glance.
+        # This is a per-tick derivation from the classified
+        # status category; there is no cross-tick cache.
+        if key == "loop_state_status":
+            node_status_icon = status_icon
+            node_status_color = status_color
+        else:
+            node_status_icon = PHASE_10AI_STATUS_ICON_MAP[
+                PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS
+            ]
+            node_status_color = (
+                PHASE_10AI_STATUS_CATEGORY_COLOR_MAP[
+                    PHASE_10AI_STATUS_CATEGORY_IN_PROGRESS
+                ]
+            )
         nodes.append({
             "id": key,
             "source_category": source_category,
             "source_artifacts": source_artifacts,
             "current_value": current_value,
             "attribution_tag": attribution_tag,
+            "status_icon": node_status_icon,
+            "status_color": node_status_color,
+            "layout_xy": (node_x, node_y),
         })
-    status_category = (
-        _desktop_orchestration_visualization_classify_status_category(
-            loop_state=loop_state,
-            overlap_state=overlap_state,
+    edges: list = []
+    for spec in PHASE_10AI_EDGE_REGISTRY:
+        active = (
+            _desktop_orchestration_visualization_derive_edge_active(
+                edge=spec,
+                advisory_state=advisory,
+            )
         )
-    )
+        from_xy = PHASE_10AI_NODE_LAYOUT[spec["from_node"]]
+        to_xy = PHASE_10AI_NODE_LAYOUT[spec["to_node"]]
+        edges.append({
+            "id": spec["id"],
+            "from_node": spec["from_node"],
+            "to_node": spec["to_node"],
+            "transition_id": spec["transition_id"],
+            "gate_category": spec["gate_category"],
+            "edge_source_category": (
+                PHASE_10AI_SOURCE_CATEGORY_CANONICAL_MIRROR
+            ),
+            "active": active,
+            "from_xy": from_xy,
+            "to_xy": to_xy,
+        })
     return {
         "signal_version": (
             PHASE_10AI_VISUALIZATION_SIGNAL_VERSION
@@ -37213,14 +37564,24 @@ def build_desktop_orchestration_visualization_view(
         "status_categories": list(
             PHASE_10AI_STATUS_CATEGORIES
         ),
+        "gate_categories": list(
+            PHASE_10AI_GATE_CATEGORIES
+        ),
         "refusal_categories": list(
             PHASE_10AI_REFUSAL_CATEGORIES
         ),
         "nodes": nodes,
+        "edges": edges,
         "status_category": status_category,
+        "status_icon": status_icon,
+        "status_color": status_color,
         "status_category_source_mirror": (
             ".agent-loop/loop-state.json"
         ),
+        "canvas_width": PHASE_10AI_CANVAS_WIDTH,
+        "canvas_height": PHASE_10AI_CANVAS_HEIGHT,
+        "node_box_width": PHASE_10AI_NODE_BOX_WIDTH,
+        "node_box_height": PHASE_10AI_NODE_BOX_HEIGHT,
         "overlap_state": overlap_state,
     }
 
@@ -37230,25 +37591,38 @@ def render_desktop_orchestration_visualization_text(
 ) -> list:
     """Phase 10AI: format the assembled view as text lines. Per-
     line attribution tags (`[canonical mirror]` /
-    `[visualization-advisory]`) match the shipped Phase 10AH
-    contract convention. Every node MUST carry exactly one of the
-    two attribution tags; the header line names the current
-    status category and the source mirror it was classified from.
+    `[visualization-advisory]` on nodes; `[graph-edge]` on
+    edges) match the shipped Phase 10AH contract convention.
+    Every node MUST carry exactly one of the two node
+    attribution tags plus its status_icon; every edge MUST carry
+    `[graph-edge]` plus its `gate_category` and `active` flag.
+    The header line names the current status category, the
+    source mirror it was classified from, and the shipped
+    status_icon glyph.
     """
     lines: list = []
     lines.append(
         f"[desktop-orchestration-visualization] view "
         f"(signal_version={view['signal_version']!r} "
         f"status_category={view['status_category']!r} "
+        f"status_icon={view['status_icon']!r} "
         f"source_mirror="
         f"{view['status_category_source_mirror']!r})"
     )
     for node in view["nodes"]:
         lines.append(
-            f"  {node['attribution_tag']} {node['id']}="
-            f"{node['current_value']!r} source_category="
-            f"{node['source_category']!r} source_artifacts="
-            f"{node['source_artifacts']!r}"
+            f"  {node['attribution_tag']} {node['status_icon']} "
+            f"{node['id']}={node['current_value']!r} "
+            f"source_category={node['source_category']!r} "
+            f"source_artifacts={node['source_artifacts']!r}"
+        )
+    for edge in view["edges"]:
+        lines.append(
+            f"  [graph-edge] {edge['from_node']} -> "
+            f"{edge['to_node']} transition_id="
+            f"{edge['transition_id']!r} gate_category="
+            f"{edge['gate_category']!r} active="
+            f"{edge['active']!r}"
         )
     return lines
 

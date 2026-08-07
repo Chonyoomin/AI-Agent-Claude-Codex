@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Phase 10 - Future Product Features (sub-phase: Phase 10AI - Orchestration Graph And Performance View Initial Slice)
+Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C1 - First-Run Setup Contract)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3329,6 +3329,223 @@ capabilities, or alternate sources of truth.
 - no change to `scripts/run_checks.sh`
 - no Git automation
 
+## Fix Phase C1 - First-Run Setup Contract
+
+### Status
+
+Active.
+
+### Objective
+
+Define the non-technical desktop UX contract for selecting a project folder,
+loading a PRD, choosing run behavior, starting/stopping the agent, and
+understanding plain-English progress without terminal knowledge.
+
+### Done Criteria
+
+- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
+  `.agent-loop/loop-state.json` identify `Fix Phase C1` as the active
+  sub-phase
+- the repository defines a bounded desktop UX contract for the single-user
+  "pick a folder, load a PRD, choose run behavior, and run" workflow
+- the contract defines the default top-level sections of the app at minimum as
+  `Project`, `PRD`, `Run Mode`, `Run`, and `Progress`
+- the contract defines the required plain-English states for setup, ready,
+  running, waiting, blocked, approval-required, and complete
+- the contract defines which technical details are hidden by default and which
+  are available through advanced views
+- focused validation or doc-consistency coverage proves later runtime slices
+  can implement the contract from repo state alone
+
+### Exclusions
+
+- no runtime implementation of the folder picker, PRD picker, or run console
+- no hidden UI-only state store or second orchestration plane
+- no automatic next-phase activation behavior that bypasses or rewrites the
+  shipped Phase 4 planner / activation separation
+- no contract rewrites in `AGENTS.md` or `CLAUDE.md`
+- no Git automation
+
+## Fix Phase C2 - Project Folder Picker And Classification Surface
+
+### Status
+
+Queued for later implementation after Fix Phase C1.
+
+### Objective
+
+Add the guided folder-picker flow and classify the selected folder as
+`existing_project`, `empty_folder`, `partial_target`, or `malformed_target`
+with plain-English next-step messaging instead of raw CLI refusal copy.
+
+### Done Criteria
+
+- the desktop app lets the operator choose a project folder without typing a
+  path in the terminal
+- the UI clearly distinguishes an existing managed project, an empty folder, a
+  partial target, and a malformed target
+- every classification surfaces a plain-English next action
+- the flow reuses shipped target inspection/runtime helpers instead of
+  inventing desktop-only target-state logic
+
+### Exclusions
+
+- no PRD selection surface yet
+- no run button yet
+- no hidden target-state cache
+- no Git automation
+
+## Fix Phase C3 - PRD Intake UX
+
+### Status
+
+Queued for later implementation after Fix Phase C2.
+
+### Objective
+
+Add the desktop PRD file-picker/selection flow, plain-English
+missing/invalid/ready states, and a bounded preview of which PRD is currently
+selected for the run.
+
+### Done Criteria
+
+- the operator can choose a PRD from the desktop app
+- the UI clearly distinguishes "project ready, PRD missing" from "ready to
+  run"
+- the selected PRD is visible from the setup surface in bounded form
+- refusal and invalid-file messaging is plain English and actionable
+
+### Exclusions
+
+- no redesigned PRD decomposition runtime
+- no hidden PRD cache beyond shipped artifact rules
+- no Git automation
+
+## Fix Phase C4 - Run Mode Selector
+
+### Status
+
+Queued for later implementation after Fix Phase C3.
+
+### Objective
+
+Replace internal approval/runtime jargon with plain-English operator choices
+such as `Guided`, `Review Each Phase`, and `More Autonomous`, mapped back to
+the shipped runtime modes without creating hidden UI-only settings.
+
+### Done Criteria
+
+- the operator can choose run behavior without knowing internal mode names
+- each mode has a one-sentence explanation visible in the app
+- the chosen mode maps back to shipped canonical runtime state rather than a
+  second desktop-only settings plane
+
+### Exclusions
+
+- no new approval semantics
+- no autonomy widening beyond shipped behavior
+- no Git automation
+
+## Fix Phase C5 - Start / Stop Agent Control Surface
+
+### Status
+
+Queued for later implementation after Fix Phase C4.
+
+### Objective
+
+Add one primary `Start Agent` action that flips to `Stop Agent` while active,
+with prerequisite checks, disabled-state guidance, and refusal copy explaining
+why the agent cannot start yet.
+
+### Done Criteria
+
+- the app has a clear primary start action
+- the start action is disabled with explicit guidance when prerequisites are
+  missing
+- an in-flight run visibly flips the primary control into a stop/pause surface
+- normal operators do not need terminal commands to start the workflow
+
+### Exclusions
+
+- no hidden background automation beyond shipped runtime rules
+- no bypass of approval gates
+- no Git automation
+
+## Fix Phase C6 - Plain-English Run Console
+
+### Status
+
+Queued for later implementation after Fix Phase C5.
+
+### Objective
+
+Surface current phase, current task, run status, latest activity, next
+expected step, and blocked/waiting reasons in human language instead of
+artifact-centric or terminal-centric wording.
+
+### Done Criteria
+
+- the operator can understand current run status without reading repo files
+- progress updates are plain English first and technical details second
+- the console answers where the agent is, what it just did, what it is waiting
+  on, and what the operator should do next
+
+### Exclusions
+
+- no hidden progress store
+- no alternate orchestrator
+- no Git automation
+
+## Fix Phase C7 - Review And Approval Surface
+
+### Status
+
+Queued for later implementation after Fix Phase C6.
+
+### Objective
+
+Add the first desktop-side human-gate response surface so approval-required
+pauses can be understood and acted on from the app through explicit buttons and
+optional advanced-detail panels rather than manual artifact inspection.
+
+### Done Criteria
+
+- the app explains why approval is needed in plain English
+- the operator can respond to approval-required pauses from the desktop UI
+- advanced technical details remain available but are not the default view
+
+### Exclusions
+
+- no weakening of shipped human-gate rules
+- no auto-approval behavior
+- no Git automation
+
+## Fix Phase C8 - Completion And Handoff Summary
+
+### Status
+
+Queued for later implementation after Fix Phase C7.
+
+### Objective
+
+Add the end-of-run summary surface so the app can explain what finished, what
+remains blocked, whether next-phase planning is possible, and what the
+recommended next action is.
+
+### Done Criteria
+
+- the operator can tell whether the run is complete, blocked, or awaiting the
+  next planning step
+- the completion surface names the recommended next action in plain English
+- the handoff summary remains consistent with the shipped canonical artifacts
+
+### Exclusions
+
+- no new planner behavior by itself
+- no hidden completion ledger beyond shipped artifact/state rules
+- no Git automation
+
 ## Phase 8B - Safety, Approval, And Operational Playbooks
 
 ### Status
@@ -5944,7 +6161,12 @@ inventing UI-only truth or bypassing canonical artifact ownership.
 
 ### Status
 
-Active.
+Complete. Codex review reached terminal verdict `APPROVED_FOR_HUMAN_REVIEW`
+for Phase 10AI after the bounded Canvas-based orchestration graph runtime, the
+closed node/edge/status model materialization, the README alignment, and the
+focused regression coverage were verified in the current repo state. Next-phase
+activation is still blocked because the planner has no concrete successor
+template registered after Phase 10AI.
 
 ### Objective
 

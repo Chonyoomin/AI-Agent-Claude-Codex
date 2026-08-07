@@ -1,25 +1,26 @@
 # Current Task
 
 ## Phase
-Phase 10 - Future Product Features
+Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Sub-Phase
-Phase 10AI - Orchestration Graph And Performance View Initial Slice
+Fix Phase C1 - First-Run Setup Contract
 
 ## Status
 Active and ready for implementation.
 
 ## Task
-Implement the first bounded desktop orchestration graph and performance view so
-the operator can see where the loop currently is, what just completed, what is
-waiting next, and where the run is blocked or halted.
+Define the non-technical desktop UX contract for selecting a project folder,
+loading a PRD, choosing run behavior, starting/stopping the agent, and
+understanding plain-English progress without terminal knowledge.
 
 ## Notes
 
-- this is the first runtime slice for the desktop orchestration visualization
-  surface inside the desktop app
-- the shipped desktop app must remain canonical-artifact-first; this phase must
-  not invent a hidden UI-only graph/progress state plane
-- preserve the existing phase/task/loop-state ownership, approval, audit, poll-
-  cadence, and canonical/advisory attribution boundaries while implementing the
-  visualization surface
+- this slice is contract-first; it defines the single-user non-technical
+  desktop flow before later runtime slices implement the UI
+- the default experience should optimize for one local operator who dislikes
+  terminals and wants "choose folder, load PRD, run"
+- the shipped desktop app must remain canonical-artifact-first and must not
+  invent a second UI-only orchestration plane
+- technical CLI/runtime language should be hidden by default and exposed only
+  in advanced views where necessary
