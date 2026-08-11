@@ -15545,10 +15545,19 @@ FIX_PHASE_C2_REFUSAL_UNKNOWN_UX_MODE = (
 FIX_PHASE_C2_REFUSAL_MISSING_DISPLAY_ENTRY = (
     "refused_missing_plain_english_display_entry"
 )
+# Fix Phase C2 fix cycle Issue 2: cancellation is not a refusal
+# but is still an auditable operator gesture per the Fix Phase C1
+# contract. The `cancelled_folder_picker` category lets the
+# shipped `_fix_phase_c2_format_audit_line(...)` emit an audit
+# line whenever the operator closes the native picker without
+# choosing a folder, while preserving the current classification
+# payload unchanged.
+FIX_PHASE_C2_CANCELLATION_PICKER = "cancelled_folder_picker"
 FIX_PHASE_C2_REFUSAL_CATEGORIES = (
     FIX_PHASE_C2_REFUSAL_INVALID_PATH,
     FIX_PHASE_C2_REFUSAL_UNKNOWN_UX_MODE,
     FIX_PHASE_C2_REFUSAL_MISSING_DISPLAY_ENTRY,
+    FIX_PHASE_C2_CANCELLATION_PICKER,
 )
 
 # Attribution tag matching the Fix Phase C1 contract's
@@ -16172,6 +16181,17 @@ def _launch_desktop_app_window(
 
     primary_controls_frame = tk.Frame(control_frame)
     primary_controls_frame.pack(side=tk.TOP, fill=tk.X)
+    # Advanced frames holder: hoisted up so the Fix Phase C2 fix
+    # cycle can register the legacy `Select Project Folder` +
+    # `attached_target_label` widgets behind the Advanced toggle
+    # (Issue 1 of the fix prompt: the C2 Project section must be
+    # the single default folder flow; the legacy path with raw
+    # `full_target` copy must move behind Advanced).
+    advanced_visible_holder: list = [False]
+    advanced_frames_holder: list = []
+    legacy_folder_frame = tk.Frame(control_frame)
+    # NOT packed here: `_toggle_advanced_click` packs it on demand.
+    advanced_frames_holder.append(legacy_folder_frame)
     tk.Label(
         primary_controls_frame,
         text="Primary Controls",
@@ -16274,8 +16294,18 @@ def _launch_desktop_app_window(
     # detaches (via the CLI) also propagate to the desktop.
     from tkinter import filedialog as _filedialog
 
+    # Fix Phase C2 fix cycle Issue 1: parented on the
+    # `legacy_folder_frame` so the legacy attach + raw-CLI-guidance
+    # flow is hidden behind the Advanced toggle and does not
+    # compete with the C2 Project section as the default folder
+    # surface.
+    tk.Label(
+        legacy_folder_frame,
+        text="Legacy folder tools",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
     attached_target_label = tk.Label(
-        primary_controls_frame,
+        legacy_folder_frame,
         text=_primary_desktop_format_attached_target_label(
             _primary_desktop_read_attached_target_path(
                 controller_root,
@@ -16620,9 +16650,13 @@ def _launch_desktop_app_window(
         )
         _refresh_attached_label()
 
+    # Fix Phase C2 fix cycle Issue 1: parented on the
+    # `legacy_folder_frame` (advanced-only) so the legacy attach
+    # flow with raw `full_target` copy no longer competes with the
+    # C2 Project section as the default folder surface.
     select_project_button = tk.Button(
-        primary_controls_frame,
-        text="Select Project Folder",
+        legacy_folder_frame,
+        text="Select Project Folder (legacy)",
         command=_select_project_folder_click,
     )
     select_project_button.pack(fill=tk.X, padx=4, pady=(0, 4))
@@ -16788,9 +16822,21 @@ def _launch_desktop_app_window(
             ),
         )
         if chosen is None:
-            # Operator cancelled the picker; leave the current
-            # payload untouched. No audit emit because no
-            # classification was resolved.
+            # Fix Phase C2 fix cycle Issue 2: operator cancelled
+            # the native picker. Emit the shipped
+            # `cancelled_folder_picker` audit line so every
+            # first-run operator gesture is auditable through
+            # `.agent-loop/orchestrator.log` per the Fix Phase C1
+            # contract. The current classification / folder
+            # payload is intentionally left untouched: no re-
+            # render, no re-classification, and no
+            # attach / bootstrap / run dispatch.
+            _fix_phase_c2_emit_audit(
+                classification_id=None,
+                refusal_category=(
+                    FIX_PHASE_C2_CANCELLATION_PICKER
+                ),
+            )
             return
         try:
             payload = (
@@ -16832,12 +16878,15 @@ def _launch_desktop_app_window(
         command=_fix_phase_c2_choose_folder_click,
     )
 
-    # Advanced panels toggle. The Phase 10Q-10AE sub-view frames are
-    # tracked so the toggle can hide/show them as a group. The
-    # simplified UI hides them by default so the main window is no
-    # longer dominated by a scrolling stack of copy-paste buttons.
-    advanced_visible_holder: list = [False]
-    advanced_frames_holder: list = []
+    # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
+    # (registered above and below) are tracked so the toggle can
+    # hide/show them as a group. The simplified UI hides them by
+    # default so the main window is no longer dominated by a
+    # scrolling stack of copy-paste buttons. `advanced_visible_
+    # holder` and `advanced_frames_holder` were hoisted earlier
+    # in this function so the Fix Phase C2 fix cycle can
+    # register the legacy `Select Project Folder` +
+    # `attached_target_label` widgets behind this same toggle.
 
     def _toggle_advanced_click() -> None:
         show = not advanced_visible_holder[0]

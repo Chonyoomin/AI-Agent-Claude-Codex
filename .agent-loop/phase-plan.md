@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C1 - First-Run Setup Contract)
+Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C2 - Project Folder Picker And Classification Surface)
 
 ## Phase 0 - Instruction Foundation
 

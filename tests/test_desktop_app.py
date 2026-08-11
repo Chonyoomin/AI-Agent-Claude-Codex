@@ -4191,20 +4191,33 @@ class FixPhaseC2ConstantsTests(unittest.TestCase):
             else:
                 self.assertFalse(entry["ready_to_run"], cid)
 
-    def test_three_refusal_categories(self) -> None:
+    def test_four_refusal_categories(self) -> None:
+        # Fix Phase C2 fix cycle Issue 2: the closed vocabulary
+        # gained a fourth entry (`cancelled_folder_picker`) so
+        # the picker-cancel gesture is auditable per the Fix
+        # Phase C1 contract.
         self.assertEqual(
             len(agent_loop.FIX_PHASE_C2_REFUSAL_CATEGORIES),
-            3,
+            4,
         )
         for category in (
             "refused_invalid_folder_path",
             "refused_unknown_shipped_ux_mode",
             "refused_missing_plain_english_display_entry",
+            "cancelled_folder_picker",
         ):
             self.assertIn(
                 category,
                 agent_loop.FIX_PHASE_C2_REFUSAL_CATEGORIES,
             )
+
+    def test_cancellation_category_constant_exposed(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_CANCELLATION_PICKER,
+            "cancelled_folder_picker",
+        )
 
     def test_empty_state_payload_shape(self) -> None:
         payload = agent_loop.FIX_PHASE_C2_EMPTY_STATE_PAYLOAD
@@ -4570,6 +4583,29 @@ class FixPhaseC2AuditLineTests(unittest.TestCase):
                 )
             )
 
+    def test_cancellation_category_accepted_by_formatter(
+        self,
+    ) -> None:
+        # Regression pin for Fix Phase C2 fix cycle Issue 2:
+        # the audit-line formatter MUST accept the closed
+        # cancellation category so the picker-cancel gesture
+        # can emit an audit line.
+        line = (
+            agent_loop
+            ._fix_phase_c2_format_audit_line(
+                classification_id=None,
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    agent_loop.FIX_PHASE_C2_CANCELLATION_PICKER
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category='cancelled_folder_picker'",
+            line,
+        )
+        self.assertIn("classification_id=None", line)
+
 
 class FixPhaseC2TkWiringTests(unittest.TestCase):
     """Source-inspection regression pin for the Fix Phase C2
@@ -4696,6 +4732,122 @@ class FixPhaseC2TkWiringTests(unittest.TestCase):
             self.assertNotIn(
                 forbidden, project_body, forbidden,
             )
+
+    def test_picker_cancel_emits_cancellation_audit(
+        self,
+    ) -> None:
+        # Regression pin for Fix Phase C2 fix cycle Issue 2: the
+        # `chosen is None` branch of the picker callback MUST
+        # emit the audit line via
+        # `_fix_phase_c2_emit_audit(..., refusal_category=
+        # FIX_PHASE_C2_CANCELLATION_PICKER)` rather than
+        # returning silently.
+        callback_body = self._source.split(
+            "def _fix_phase_c2_choose_folder_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if chosen is None:", 1,
+        )[1].split("try:", 1)[0]
+        self.assertIn(
+            "_fix_phase_c2_emit_audit(", cancel_branch,
+        )
+        self.assertIn(
+            "FIX_PHASE_C2_CANCELLATION_PICKER", cancel_branch,
+        )
+
+    def test_picker_cancel_preserves_current_payload(
+        self,
+    ) -> None:
+        # Regression pin for Fix Phase C2 fix cycle Issue 2:
+        # the picker-cancel branch MUST NOT re-render the
+        # payload, re-classify, or clear the current display.
+        # Blocking known regression shapes.
+        callback_body = self._source.split(
+            "def _fix_phase_c2_choose_folder_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if chosen is None:", 1,
+        )[1].split("try:", 1)[0]
+        for forbidden in (
+            "_fix_phase_c2_render_payload(",
+            "_fix_phase_c2_format_folder_display_payload(",
+            "_fix_phase_c2_format_no_folder_display_payload(",
+        ):
+            self.assertNotIn(
+                forbidden, cancel_branch, forbidden,
+            )
+
+
+class FixPhaseC2LegacyFolderFrameTests(unittest.TestCase):
+    """Regression pin for Fix Phase C2 fix cycle Issue 1: the
+    legacy `Select Project Folder` button + `attached_target_
+    label` MUST live behind the Advanced toggle so the C2
+    Project section is the single default folder flow.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_legacy_folder_frame_is_registered_behind_advanced(
+        self,
+    ) -> None:
+        # The legacy widgets must be parented on
+        # `legacy_folder_frame`, and that frame must be
+        # registered in `advanced_frames_holder` so the toggle
+        # hides it by default.
+        self.assertIn(
+            "legacy_folder_frame = tk.Frame(control_frame)",
+            self._source,
+        )
+        self.assertIn(
+            "advanced_frames_holder.append("
+            "legacy_folder_frame)",
+            self._source,
+        )
+
+    def test_legacy_select_button_is_parented_on_legacy_frame(
+        self,
+    ) -> None:
+        # Locate the `select_project_button = tk.Button(...)`
+        # site and confirm it is parented on
+        # `legacy_folder_frame`, not on `primary_controls_frame`
+        # (the pre-fix default surface).
+        button_site = self._source.split(
+            "select_project_button = tk.Button(", 1,
+        )[1].split(")", 1)[0]
+        self.assertIn(
+            "legacy_folder_frame", button_site,
+        )
+        self.assertNotIn(
+            "primary_controls_frame", button_site,
+        )
+
+    def test_legacy_attached_target_label_is_parented_on_legacy(
+        self,
+    ) -> None:
+        label_site = self._source.split(
+            "attached_target_label = tk.Label(", 1,
+        )[1].split(")", 1)[0]
+        self.assertIn(
+            "legacy_folder_frame", label_site,
+        )
+        self.assertNotIn(
+            "primary_controls_frame", label_site,
+        )
+
+    def test_legacy_folder_frame_not_packed_top_level_by_default(
+        self,
+    ) -> None:
+        # Regression pin: the `legacy_folder_frame` MUST NOT be
+        # packed directly under `control_frame` at construction
+        # time; that would leave it visible by default and
+        # defeat the Advanced-hiding.
+        self.assertNotIn(
+            "legacy_folder_frame.pack(", self._source,
+        )
 
 
 if __name__ == "__main__":
