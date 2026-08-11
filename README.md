@@ -67,13 +67,7 @@ New operators on a clean clone should start with the shipped operator docs under
 
 The shipped CLI surface (`python scripts/agent_loop.py --help`) is the canonical authority on subcommand availability; the operator docs describe how to drive each subcommand and how to recover from each persisted halt status. Future capabilities tracked in `ROADMAP.md` (Phase 9 Fully Autonomous PRD-To-Product Mode, Phase 10 Future Product Features, MCP support, external UI) are explicitly roadmap-only and are not part of the current shipped behavior.
 
-Current implementation focus: Fix Phase C2,
-`Project Folder Picker And Classification Surface`, is the active desktop UX
-runtime slice. It implements the first guided step from the completed C1
-contract: choosing a project folder and showing plain-English classification
-and next-step guidance while preserving the shipped target-inspection boundary.
-PRD intake, run controls, and the plain-English progress console remain queued
-for later Fix Phase C slices.
+Current implementation focus: Fix Phase C3, PRD Intake UX, is the active desktop UX runtime slice. It adds the guided PRD selection and bounded preview step on top of the completed C2 folder surface. Run-mode selection, run controls, and the plain-English progress console remain queued for later Fix Phase C slices.
 
 ## Repository Files
 

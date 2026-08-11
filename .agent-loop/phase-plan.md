@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C2 - Project Folder Picker And Classification Surface)
+Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C3 - PRD Intake UX)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3370,7 +3370,7 @@ understanding plain-English progress without terminal knowledge.
 
 ### Status
 
-Active.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3399,7 +3399,7 @@ with plain-English next-step messaging instead of raw CLI refusal copy.
 
 ### Status
 
-Queued for later implementation after Fix Phase C2.
+Active.
 
 ### Objective
 
