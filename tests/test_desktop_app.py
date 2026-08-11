@@ -4850,5 +4850,604 @@ class FixPhaseC2LegacyFolderFrameTests(unittest.TestCase):
         )
 
 
+class FixPhaseC3ConstantsTests(unittest.TestCase):
+    """Pin the shipped Fix Phase C3 closed vocabularies."""
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_SIGNAL_VERSION,
+            "fix-phase-c3-v1",
+        )
+
+    def test_four_state_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_STATE_IDS,
+            (
+                "no_prd_selected",
+                "prd_missing_after_project",
+                "prd_invalid",
+                "prd_ready",
+            ),
+        )
+
+    def test_state_display_map_covers_every_state(self) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C3_STATE_DISPLAY_MAP.keys()
+            ),
+            set(agent_loop.FIX_PHASE_C3_STATE_IDS),
+        )
+        for sid, entry in (
+            agent_loop
+            .FIX_PHASE_C3_STATE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+                "ready_to_run",
+            ):
+                self.assertIn(field, entry, f"{sid}.{field}")
+
+    def test_only_prd_ready_is_ready_to_run(self) -> None:
+        display_map = (
+            agent_loop.FIX_PHASE_C3_STATE_DISPLAY_MAP
+        )
+        for sid, entry in display_map.items():
+            if sid == "prd_ready":
+                self.assertTrue(entry["ready_to_run"], sid)
+            else:
+                self.assertFalse(entry["ready_to_run"], sid)
+
+    def test_three_refusal_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.FIX_PHASE_C3_REFUSAL_CATEGORIES),
+            3,
+        )
+        for category in (
+            "refused_invalid_prd_path",
+            "refused_invalid_prd_content",
+            "cancelled_prd_picker",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.FIX_PHASE_C3_REFUSAL_CATEGORIES,
+            )
+
+    def test_cancellation_category_constant_exposed(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_CANCELLATION_PICKER,
+            "cancelled_prd_picker",
+        )
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_ATTRIBUTION,
+            "[prd-intake]",
+        )
+
+    def test_empty_state_payload_shape(self) -> None:
+        payload = agent_loop.FIX_PHASE_C3_EMPTY_STATE_PAYLOAD
+        self.assertEqual(
+            payload["state_id"], "no_prd_selected",
+        )
+        self.assertIsNone(payload["prd_path"])
+        self.assertIsNone(payload["prd_title"])
+        self.assertIsNone(payload["prd_summary_preview"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"], "[prd-intake]",
+        )
+
+    def test_summary_preview_max_chars_bounded(self) -> None:
+        self.assertLessEqual(
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+            400,
+            "Preview MUST be bounded so the default surface "
+            "does not dump the full PRD body",
+        )
+        self.assertGreater(
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+            0,
+        )
+
+
+class FixPhaseC3StaticPayloadFormattersTests(unittest.TestCase):
+
+    def test_no_prd_payload_returns_fresh_copy(self) -> None:
+        p1 = (
+            agent_loop
+            ._fix_phase_c3_format_no_prd_display_payload()
+        )
+        p2 = (
+            agent_loop
+            ._fix_phase_c3_format_no_prd_display_payload()
+        )
+        self.assertIsNot(p1, p2)
+        p1["display_label"] = "MUTATED"
+        p3 = (
+            agent_loop
+            ._fix_phase_c3_format_no_prd_display_payload()
+        )
+        self.assertNotEqual(p3["display_label"], "MUTATED")
+
+    def test_missing_after_project_payload_shape(self) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c3_format_missing_after_project_payload()
+        )
+        self.assertEqual(
+            payload["state_id"], "prd_missing_after_project",
+        )
+        self.assertIsNone(payload["prd_path"])
+        self.assertIsNone(payload["prd_title"])
+        self.assertIsNone(payload["prd_summary_preview"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"], "[prd-intake]",
+        )
+
+    def test_invalid_payload_surfaces_reason_verbatim(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop._fix_phase_c3_format_invalid_payload(
+                prd_path="/nowhere/bad.json",
+                plain_english_reason=(
+                    "prd intake source missing or empty "
+                    "'title'; got None"
+                ),
+            )
+        )
+        self.assertEqual(
+            payload["state_id"], "prd_invalid",
+        )
+        self.assertIn(
+            "'title'",
+            payload["plain_english_summary"],
+        )
+        self.assertEqual(
+            payload["prd_path"], "/nowhere/bad.json",
+        )
+        self.assertFalse(payload["ready_to_run"])
+
+    def test_preview_bounder_returns_short_string_unchanged(
+        self,
+    ) -> None:
+        short = "A short summary."
+        self.assertEqual(
+            (
+                agent_loop
+                ._fix_phase_c3_bound_summary_preview(short)
+            ),
+            short,
+        )
+
+    def test_preview_bounder_truncates_long_strings_with_ellipsis(
+        self,
+    ) -> None:
+        long_summary = "x" * 500
+        bounded = (
+            agent_loop
+            ._fix_phase_c3_bound_summary_preview(long_summary)
+        )
+        self.assertLessEqual(
+            len(bounded),
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+        )
+        self.assertTrue(bounded.endswith("..."))
+
+
+class FixPhaseC3PrdDisplayPayloadTests(unittest.TestCase):
+    """Cover the pure payload formatter against real
+    TemporaryDirectory PRD files. Every branch routes through
+    the shipped Phase 9B `_load_prd_intake_input(...)` +
+    `_validate_prd_intake_common(...)` primitives.
+    """
+
+    def _write_prd(
+        self, td: Path, *,
+        prd_kind="product_brief",
+        title="Test Project",
+        summary="Test summary.",
+    ) -> Path:
+        prd_path = td / "prd.json"
+        prd_path.write_text(
+            json.dumps({
+                "prd_kind": prd_kind,
+                "title": title,
+                "summary": summary,
+            }),
+            encoding="utf-8",
+        )
+        return prd_path
+
+    def test_valid_prd_returns_ready_payload(self) -> None:
+        with TemporaryDirectory() as td:
+            prd_path = self._write_prd(Path(td))
+            payload = (
+                agent_loop
+                ._fix_phase_c3_format_prd_display_payload(
+                    prd_path=str(prd_path),
+                )
+            )
+        self.assertEqual(payload["state_id"], "prd_ready")
+        self.assertTrue(payload["ready_to_run"])
+        self.assertEqual(
+            payload["prd_title"], "Test Project",
+        )
+        self.assertEqual(
+            payload["prd_summary_preview"], "Test summary.",
+        )
+        self.assertEqual(
+            payload["attribution_tag"], "[prd-intake]",
+        )
+
+    def test_valid_prd_bounds_preview_when_summary_long(
+        self,
+    ) -> None:
+        long_summary = "y" * 500
+        with TemporaryDirectory() as td:
+            prd_path = self._write_prd(
+                Path(td), summary=long_summary,
+            )
+            payload = (
+                agent_loop
+                ._fix_phase_c3_format_prd_display_payload(
+                    prd_path=str(prd_path),
+                )
+            )
+        self.assertLessEqual(
+            len(payload["prd_summary_preview"]),
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+        )
+        self.assertNotEqual(
+            payload["prd_summary_preview"], long_summary,
+        )
+
+    def test_none_path_refuses_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_prd_display_payload(
+                    prd_path=None,
+                )
+            )
+
+    def test_empty_path_refuses_fail_closed(self) -> None:
+        for bad in ("", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=bad,
+                    )
+                )
+
+    def test_nonexistent_path_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            missing = str(Path(td) / "missing.json")
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=missing,
+                    )
+                )
+
+    def test_non_json_file_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            bad = Path(td) / "not-json.json"
+            bad.write_text(
+                "this is not valid JSON",
+                encoding="utf-8",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=str(bad),
+                    )
+                )
+
+    def test_missing_prd_kind_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            bad = Path(td) / "no-kind.json"
+            bad.write_text(
+                json.dumps({
+                    "title": "T", "summary": "S",
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=str(bad),
+                    )
+                )
+
+    def test_missing_title_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            bad = Path(td) / "no-title.json"
+            bad.write_text(
+                json.dumps({
+                    "prd_kind": "product_brief",
+                    "summary": "S",
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=str(bad),
+                    )
+                )
+
+    def test_directory_path_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=td,
+                    )
+                )
+
+
+class FixPhaseC3AuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c3_format_audit_line(
+                state_id="prd_ready",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[desktop-first-run-prd]", line)
+        self.assertIn(
+            "signal_version='fix-phase-c3-v1'", line,
+        )
+        self.assertIn("state_id='prd_ready'", line)
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal_invalid_content(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c3_format_audit_line(
+                state_id="prd_invalid",
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_invalid_prd_content"
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_invalid_prd_content'",
+            line,
+        )
+
+    def test_line_shape_cancellation(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c3_format_audit_line(
+                state_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="cancelled_prd_picker",
+            )
+        )
+        self.assertIn(
+            "refusal_category='cancelled_prd_picker'", line,
+        )
+        self.assertIn("state_id=None", line)
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_audit_line(
+                    state_id=None,
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_unknown_state_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_audit_line(
+                    state_id="invented_state",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_audit_line(
+                    state_id="prd_ready",
+                    epoch_seconds="not int",
+                )
+            )
+
+
+class FixPhaseC3TkWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the Fix Phase C3
+    PRD section wired into `_launch_desktop_app_window(...)`.
+    Would fail loudly if a future refactor:
+      - drops the PRD section entirely
+      - hides the section behind the Advanced toggle
+      - reintroduces raw CLI/parser vocabulary in the default
+        surface
+      - drops the audit-line emit on success, refusal, or
+        cancellation
+      - starts a background thread / timer / watcher
+      - persists the picked PRD path across sessions
+      - dumps the full PRD body into the default surface
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_prd_section_labelframe_is_visible_by_default(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c3_prd_frame = tk.LabelFrame(",
+            self._source,
+        )
+        self.assertIn('text="PRD"', self._source)
+        # Regression pin: MUST NOT be appended to
+        # advanced_frames_holder (that would hide it behind
+        # the Advanced toggle and defeat the C1 ordered
+        # section vocabulary).
+        self.assertNotIn(
+            "advanced_frames_holder.append("
+            "fix_phase_c3_prd_frame",
+            self._source,
+        )
+
+    def test_prd_section_calls_shipped_file_picker(self) -> None:
+        self.assertIn(
+            "_filedialog.askopenfilename(", self._source,
+        )
+
+    def test_prd_section_calls_c3_payload_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_format_prd_display_payload(",
+            self._source,
+        )
+
+    def test_prd_section_calls_c3_audit_line_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_format_audit_line(", self._source,
+        )
+
+    def test_prd_section_writes_audit_via_shipped_log_note(
+        self,
+    ) -> None:
+        self.assertIn("_log_note(", self._source)
+
+    def test_picker_cancel_emits_cancellation_audit(
+        self,
+    ) -> None:
+        # Regression pin: the `not chosen:` branch of the PRD
+        # picker callback MUST emit the closed cancellation
+        # audit line.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if not chosen:", 1,
+        )[1].split("try:", 1)[0]
+        self.assertIn(
+            "_fix_phase_c3_emit_audit(", cancel_branch,
+        )
+        self.assertIn(
+            "FIX_PHASE_C3_CANCELLATION_PICKER", cancel_branch,
+        )
+
+    def test_picker_cancel_preserves_current_payload(
+        self,
+    ) -> None:
+        # Regression pin: cancellation MUST NOT re-render the
+        # payload, re-classify, or clear the current display.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if not chosen:", 1,
+        )[1].split("try:", 1)[0]
+        for forbidden in (
+            "_fix_phase_c3_render_payload(",
+            "_fix_phase_c3_format_prd_display_payload(",
+            "_fix_phase_c3_format_no_prd_display_payload(",
+            "_fix_phase_c3_format_invalid_payload(",
+        ):
+            self.assertNotIn(
+                forbidden, cancel_branch, forbidden,
+            )
+
+    def test_prd_section_does_not_start_background_thread(
+        self,
+    ) -> None:
+        prd_body = self._source.split(
+            "fix_phase_c3_prd_frame = tk.LabelFrame(", 1,
+        )[1].split(
+            "# Advanced panels toggle.", 1,
+        )[0]
+        for forbidden in (
+            "threading.Thread", "Timer(",
+            "threading.Timer", "asyncio.",
+            "root.after(",
+        ):
+            self.assertNotIn(
+                forbidden, prd_body, forbidden,
+            )
+
+    def test_prd_section_does_not_persist_chosen_prd_path(
+        self,
+    ) -> None:
+        # Regression pin: the Fix Phase C1 contract forbids a
+        # cross-session cache. The PRD callback MUST NOT write
+        # the picked path or the loaded PRD content anywhere.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        for forbidden in (
+            "write_text(chosen",
+            "with open(chosen",
+        ):
+            self.assertNotIn(
+                forbidden, callback_body, forbidden,
+            )
+
+    def test_display_map_never_leaks_raw_runtime_tokens(
+        self,
+    ) -> None:
+        # Regression pin per the shipped Fix Phase C1 contract's
+        # `## Advanced Detail Hiding Rules`: the default surface
+        # MUST NOT expose raw CLI subcommand names, canonical
+        # paths, parser tokens, or refusal-token vocabulary.
+        forbidden_substrings = (
+            "attach-external-target", "loop-state.json",
+            "halted_", "awaiting_",
+            "APPROVED_FOR_", "NEEDS_FIXES",
+            "_load_prd_intake_input",
+            "_validate_prd_intake_common",
+            "prd_kind", "PRD_INTAKE_KIND",
+        )
+        display_map = (
+            agent_loop.FIX_PHASE_C3_STATE_DISPLAY_MAP
+        )
+        for sid, entry in display_map.items():
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{sid}.{field}: raw runtime token "
+                        f"{token!r} leaked into plain-English "
+                        f"display",
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

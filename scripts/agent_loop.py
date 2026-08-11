@@ -15733,6 +15733,394 @@ def _fix_phase_c2_format_audit_line(
     )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase C3: PRD Intake UX.
+#
+# Second bounded runtime slice under the shipped Fix Phase C1
+# `docs/desktop-first-run-setup-contract.md` contract. Adds the
+# guided `PRD` section (second in the closed ordered top-level
+# section vocabulary) that lets a non-technical operator pick a
+# PRD file and see plain-English missing / invalid / ready
+# state + a BOUNDED preview (title + short summary excerpt)
+# without dumping the full PRD body into the default surface.
+#
+# Every classification routes through the shipped Phase 9B
+# `_load_prd_intake_input(...)` + `_validate_prd_intake_common(
+# ...)` primitives; no PRD parsing is duplicated in the UI.
+#
+# NON-goals for this slice (per the Fix Phase C1 contract's Out
+# Of Scope + the C3 prompt's Constraints):
+#   - no run-mode selection, Start / Stop, run console (C4-C8)
+#   - no PRD decomposition redesign, no re-shape of the shipped
+#     Phase 9B canonical intake path
+#   - no hidden PRD cache, staging file, or recent-file list
+#   - no UI-only settings / state plane; every visible value is
+#     derived per-gesture from the on-disk PRD file
+#   - no auto-attach / auto-bootstrap / auto-advance on PRD
+#     selection
+#   - no background watcher; refreshes ONLY on the explicit
+#     Choose-PRD or Choose-Folder gesture
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C3_SIGNAL_VERSION = "fix-phase-c3-v1"
+
+# Closed four-state vocabulary matching the C3 prompt's required
+# plain-English states verbatim: `no_prd_selected`,
+# `prd_missing_after_project`, `prd_invalid`, `prd_ready`.
+FIX_PHASE_C3_STATE_NO_PRD_SELECTED = "no_prd_selected"
+FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT = (
+    "prd_missing_after_project"
+)
+FIX_PHASE_C3_STATE_PRD_INVALID = "prd_invalid"
+FIX_PHASE_C3_STATE_PRD_READY = "prd_ready"
+FIX_PHASE_C3_STATE_IDS = (
+    FIX_PHASE_C3_STATE_NO_PRD_SELECTED,
+    FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT,
+    FIX_PHASE_C3_STATE_PRD_INVALID,
+    FIX_PHASE_C3_STATE_PRD_READY,
+)
+
+# Per-state plain-English display map. The desktop UI renders
+# these fields verbatim; NO raw shipped runtime vocabulary is
+# exposed in the default (non-Advanced) surface per the shipped
+# Fix Phase C1 contract's `## Advanced Detail Hiding Rules`
+# section. Adding a state to `FIX_PHASE_C3_STATE_IDS` above
+# also requires an entry here or the shipped payload formatter
+# refuses fail-closed.
+FIX_PHASE_C3_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C3_STATE_NO_PRD_SELECTED: {
+        "display_label": "No PRD selected",
+        "plain_english_summary": (
+            "Pick a PRD file so the agent knows what to build. "
+            "The PRD is a JSON file that describes the project "
+            "objective and requirements."
+        ),
+        "next_action_label": "Choose PRD file",
+        "next_action_help": (
+            "The picker opens your operating system's native "
+            "file browser. You do not need to type a path."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT: {
+        "display_label": "PRD required before running",
+        "plain_english_summary": (
+            "You picked a project folder, but the agent needs "
+            "a PRD before it can start. Pick a PRD file to "
+            "continue."
+        ),
+        "next_action_label": "Choose PRD file",
+        "next_action_help": (
+            "The picker opens your operating system's native "
+            "file browser. You do not need to type a path."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C3_STATE_PRD_INVALID: {
+        "display_label": "PRD file could not be read",
+        "plain_english_summary": (
+            "The picked file does not look like a valid PRD. "
+            "Fix the file or choose a different one."
+        ),
+        "next_action_label": "Choose a different PRD file",
+        "next_action_help": (
+            "A valid PRD is a small JSON file with a project "
+            "title and summary. Repair the file or pick a "
+            "different one."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C3_STATE_PRD_READY: {
+        "display_label": "PRD ready",
+        "plain_english_summary": (
+            "The PRD looks valid. You can continue to the next "
+            "setup step."
+        ),
+        "next_action_label": "Continue to run mode",
+        "next_action_help": (
+            "The next step is picking how the agent runs "
+            "(review, strict, or autonomous)."
+        ),
+        "ready_to_run": True,
+    },
+}
+
+# Empty-state payload for a session that has not yet picked a
+# PRD. Fresh dict copy per call so callers cannot mutate the
+# shipped constant.
+FIX_PHASE_C3_EMPTY_STATE_PAYLOAD = {
+    "state_id": FIX_PHASE_C3_STATE_NO_PRD_SELECTED,
+    "display_label": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["display_label"],
+    "plain_english_summary": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["plain_english_summary"],
+    "next_action_label": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["next_action_label"],
+    "next_action_help": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["next_action_help"],
+    "prd_path": None,
+    "prd_title": None,
+    "prd_summary_preview": None,
+    "ready_to_run": False,
+    "attribution_tag": "[prd-intake]",
+}
+
+# Closed refusal + cancellation vocabulary matching the Fix Phase
+# C1 contract's `## Refusal Behavior` section. The
+# `cancelled_prd_picker` category mirrors the Fix Phase C2
+# `cancelled_folder_picker` cancellation-audit convention so
+# every first-run operator gesture stays auditable through
+# `.agent-loop/orchestrator.log`.
+FIX_PHASE_C3_REFUSAL_INVALID_PATH = (
+    "refused_invalid_prd_path"
+)
+FIX_PHASE_C3_REFUSAL_INVALID_CONTENT = (
+    "refused_invalid_prd_content"
+)
+FIX_PHASE_C3_CANCELLATION_PICKER = "cancelled_prd_picker"
+FIX_PHASE_C3_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C3_REFUSAL_INVALID_PATH,
+    FIX_PHASE_C3_REFUSAL_INVALID_CONTENT,
+    FIX_PHASE_C3_CANCELLATION_PICKER,
+)
+
+# Attribution tag matching the Fix Phase C1 contract's
+# `[prd-intake]` display convention. Every displayed line in the
+# PRD section MUST carry this tag in the shipped audit log.
+FIX_PHASE_C3_ATTRIBUTION = "[prd-intake]"
+
+# Bounded preview limits so the default surface never dumps the
+# full PRD body. The preview always identifies the PRD by its
+# `title` (unbounded from the shipped intake, but PRD titles are
+# small by construction) plus a truncated excerpt of the
+# `summary` field.
+FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS = 200
+
+
+def _fix_phase_c3_format_no_prd_display_payload() -> dict:
+    """Return the plain-English empty-state payload the desktop
+    PRD section shows on session start (no PRD selected yet).
+    Returns a fresh dict copy per call so callers cannot mutate
+    the shipped constant.
+    """
+    return dict(FIX_PHASE_C3_EMPTY_STATE_PAYLOAD)
+
+
+def _fix_phase_c3_format_missing_after_project_payload() -> dict:
+    """Return the plain-English payload the desktop PRD section
+    shows once the operator has picked a project folder but has
+    not yet picked a PRD. This is the "you're not ready yet"
+    prompt, distinct from the session-start empty state so a
+    reader can see which step the operator is stuck on.
+    """
+    entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT
+    ]
+    return {
+        "state_id": FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "prd_path": None,
+        "prd_title": None,
+        "prd_summary_preview": None,
+        "ready_to_run": False,
+        "attribution_tag": FIX_PHASE_C3_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c3_format_invalid_payload(
+    *, prd_path, plain_english_reason,
+) -> dict:
+    """Return the plain-English `prd_invalid` payload. Called
+    from the Tk callback when the shipped intake helpers refuse
+    the picked file; the `plain_english_reason` argument
+    surfaces the reason verbatim in the summary Label so the
+    operator sees WHY the file was refused (typically a plain-
+    English HaltError.reason from the shipped Phase 9B
+    validator).
+    """
+    entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_PRD_INVALID
+    ]
+    return {
+        "state_id": FIX_PHASE_C3_STATE_PRD_INVALID,
+        "display_label": entry["display_label"],
+        "plain_english_summary": (
+            f"{entry['plain_english_summary']} "
+            f"Reason: {plain_english_reason}"
+        ),
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "prd_path": prd_path,
+        "prd_title": None,
+        "prd_summary_preview": None,
+        "ready_to_run": False,
+        "attribution_tag": FIX_PHASE_C3_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c3_bound_summary_preview(summary: str) -> str:
+    """Truncate a PRD `summary` to the bounded preview budget so
+    the default desktop surface never dumps the full PRD body.
+    Adds a single trailing ellipsis marker when truncated.
+    """
+    if not isinstance(summary, str):
+        return ""
+    if len(summary) <= FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS:
+        return summary
+    return (
+        summary[: FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS - 3]
+        + "..."
+    )
+
+
+def _fix_phase_c3_format_prd_display_payload(
+    *, prd_path,
+) -> dict:
+    """Pure Tk-free plain-English payload formatter for a
+    successful PRD pick. Takes a PRD file path, routes it
+    through the shipped Phase 9B `_load_prd_intake_input(...)`
+    + `_validate_prd_intake_common(...)` primitives (NO
+    duplicated parsing), and returns the bounded ready payload
+    shaped for the desktop UI:
+
+      {
+        "state_id": "prd_ready",
+        "display_label": <plain-English label>,
+        "plain_english_summary": <plain-English 1-2 sentence>,
+        "next_action_label": <plain-English action label>,
+        "next_action_help": <plain-English action hint>,
+        "prd_path": <resolved absolute path str>,
+        "prd_title": <PRD title verbatim>,
+        "prd_summary_preview": <bounded 200-char excerpt of
+          the PRD summary>,
+        "ready_to_run": True,
+        "attribution_tag": "[prd-intake]",
+      }
+
+    Refuses fail-closed via HaltError on missing / non-string /
+    empty / non-file path OR on any shipped-intake refusal so
+    the caller can render the `prd_invalid` payload with the
+    HaltError reason surfaced verbatim.
+    """
+    if prd_path is None or not isinstance(prd_path, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop PRD picker refused: prd_path must be "
+                f"a non-empty str, got {prd_path!r}"
+            ),
+        )
+    stripped = prd_path.strip()
+    if not stripped:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop PRD picker refused: prd_path is "
+                "empty / whitespace-only"
+            ),
+        )
+    resolved = Path(stripped).resolve()
+    if not resolved.exists() or not resolved.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop PRD picker refused: prd_path "
+                f"{stripped!r} is not an existing file"
+            ),
+        )
+    loaded = _load_prd_intake_input(resolved)
+    _kind, title, summary = _validate_prd_intake_common(loaded)
+    entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_PRD_READY
+    ]
+    return {
+        "state_id": FIX_PHASE_C3_STATE_PRD_READY,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "prd_path": str(resolved),
+        "prd_title": title,
+        "prd_summary_preview": (
+            _fix_phase_c3_bound_summary_preview(summary)
+        ),
+        "ready_to_run": True,
+        "attribution_tag": FIX_PHASE_C3_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c3_format_audit_line(
+    *,
+    state_id,
+    epoch_seconds,
+    refusal_category=None,
+) -> str:
+    """Pure Tk-free audit-line formatter matching the shipped
+    Phase 10AG / Phase 10AI / Fix Phase C2 audit-line convention.
+    The Tk callback appends the returned line via the shipped
+    `_log_note(...)` writer to `.agent-loop/orchestrator.log`;
+    NEVER writes a parallel first-run-history file per the Fix
+    Phase C1 Source-Of-Truth Preservation rule.
+
+    Line shape:
+      `[desktop-first-run-prd] signal_version=<version>
+       state_id=<id|None>
+       refusal_category=<cat|None> epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in FIX_PHASE_C3_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop PRD picker audit refused: "
+                    f"refusal_category {refusal_category!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C3 refusal vocabulary "
+                    f"{FIX_PHASE_C3_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if state_id is not None:
+        if state_id not in FIX_PHASE_C3_STATE_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop PRD picker audit refused: "
+                    f"state_id {state_id!r} is not in the "
+                    f"shipped closed Fix Phase C3 state "
+                    f"vocabulary {FIX_PHASE_C3_STATE_IDS!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop PRD picker audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-first-run-prd] signal_version="
+        f"{FIX_PHASE_C3_SIGNAL_VERSION!r} state_id="
+        f"{state_id!r} refusal_category="
+        f"{refusal_category!r} epoch_seconds={epoch_seconds!r}"
+    )
+
+
 def _primary_desktop_validate_bootstrap_form(
     fields,
 ) -> None:
@@ -16876,6 +17264,206 @@ def _launch_desktop_app_window(
 
     fix_phase_c2_choose_button.config(
         command=_fix_phase_c2_choose_folder_click,
+    )
+
+    # Fix Phase C3: bounded guided PRD section (visible by
+    # default per the shipped Fix Phase C1 contract's ordered
+    # top-level section vocabulary: `PRD` appears second, right
+    # after `Project`). Adds a "Choose PRD file" button that
+    # opens the OS-native file picker + a plain-English state
+    # label (no PRD / PRD missing after project / PRD invalid /
+    # PRD ready) + a BOUNDED preview (PRD title + short summary
+    # excerpt) + a plain-English next-action hint. NO raw
+    # shipped runtime vocabulary and NO full PRD body dump is
+    # surfaced here; every displayed line is from the Fix Phase
+    # C3 plain-English display map. The panel refreshes ONLY on
+    # the explicit Choose-PRD gesture and on Choose-Folder
+    # transitions (no poll-tick refresh, no cross-session cache;
+    # per the Fix Phase C1 source-of-truth preservation rule).
+    fix_phase_c3_prd_frame = tk.LabelFrame(
+        control_frame,
+        text="PRD",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c3_prd_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c3_choose_button = tk.Button(
+        fix_phase_c3_prd_frame,
+        text="Choose PRD file",
+    )
+    fix_phase_c3_choose_button.pack(
+        fill=tk.X, padx=4, pady=(4, 2),
+    )
+    fix_phase_c3_path_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text="No PRD file selected",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9),
+        fg="#666666",
+    )
+    fix_phase_c3_path_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_state_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            FIX_PHASE_C3_EMPTY_STATE_PAYLOAD["display_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c3_state_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_summary_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            FIX_PHASE_C3_EMPTY_STATE_PAYLOAD[
+                "plain_english_summary"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c3_summary_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_preview_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c3_preview_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_next_action_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            "Next: "
+            + FIX_PHASE_C3_EMPTY_STATE_PAYLOAD[
+                "next_action_label"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c3_next_action_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c3_next_action_help_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            FIX_PHASE_C3_EMPTY_STATE_PAYLOAD["next_action_help"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c3_next_action_help_label.pack(
+        fill=tk.X, padx=4, pady=(2, 4),
+    )
+    fix_phase_c3_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+
+    def _fix_phase_c3_render_payload(payload: dict) -> None:
+        prd_path = payload.get("prd_path")
+        fix_phase_c3_path_label.config(
+            text=(
+                f"PRD file: {prd_path}"
+                if prd_path
+                else "No PRD file selected"
+            ),
+        )
+        fix_phase_c3_state_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c3_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        title = payload.get("prd_title")
+        preview = payload.get("prd_summary_preview")
+        if title and preview:
+            fix_phase_c3_preview_label.config(
+                text=f"Title: {title}\nSummary: {preview}",
+            )
+        elif title:
+            fix_phase_c3_preview_label.config(
+                text=f"Title: {title}",
+            )
+        else:
+            fix_phase_c3_preview_label.config(text="")
+        fix_phase_c3_next_action_label.config(
+            text=f"Next: {payload['next_action_label']}",
+        )
+        fix_phase_c3_next_action_help_label.config(
+            text=payload["next_action_help"],
+        )
+
+    def _fix_phase_c3_emit_audit(
+        *, state_id, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c3_format_audit_line(
+                state_id=state_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c3_audit_log_path, line)
+
+    def _fix_phase_c3_choose_prd_click() -> None:
+        chosen = _filedialog.askopenfilename(
+            title="Choose PRD file",
+        )
+        if not chosen:
+            # Fix Phase C1 contract auditability: emit the
+            # `cancelled_prd_picker` line so cancellation is
+            # visible in `.agent-loop/orchestrator.log`. Do NOT
+            # touch the current display Labels (mirrors the Fix
+            # Phase C2 cancellation-preserves-payload invariant).
+            _fix_phase_c3_emit_audit(
+                state_id=None,
+                refusal_category=(
+                    FIX_PHASE_C3_CANCELLATION_PICKER
+                ),
+            )
+            return
+        try:
+            payload = (
+                _fix_phase_c3_format_prd_display_payload(
+                    prd_path=chosen,
+                )
+            )
+        except HaltError as halt:
+            payload = _fix_phase_c3_format_invalid_payload(
+                prd_path=chosen,
+                plain_english_reason=halt.reason,
+            )
+            _fix_phase_c3_render_payload(payload)
+            # Distinguish invalid-path vs invalid-content
+            # refusal category by whether the file exists.
+            if not Path(chosen).is_file():
+                refusal = FIX_PHASE_C3_REFUSAL_INVALID_PATH
+            else:
+                refusal = (
+                    FIX_PHASE_C3_REFUSAL_INVALID_CONTENT
+                )
+            _fix_phase_c3_emit_audit(
+                state_id=(
+                    FIX_PHASE_C3_STATE_PRD_INVALID
+                ),
+                refusal_category=refusal,
+            )
+            return
+        _fix_phase_c3_render_payload(payload)
+        _fix_phase_c3_emit_audit(state_id=payload["state_id"])
+
+    fix_phase_c3_choose_button.config(
+        command=_fix_phase_c3_choose_prd_click,
     )
 
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
