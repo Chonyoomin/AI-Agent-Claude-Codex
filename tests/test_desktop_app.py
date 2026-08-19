@@ -4989,29 +4989,107 @@ class FixPhaseC3StaticPayloadFormattersTests(unittest.TestCase):
             payload["attribution_tag"], "[prd-intake]",
         )
 
-    def test_invalid_payload_surfaces_reason_verbatim(
+    def test_invalid_payload_uses_bounded_category_copy(
         self,
     ) -> None:
+        # Fix Phase C3 fix cycle Issue 2: payload MUST use the
+        # shipped bounded plain-English copy from
+        # `FIX_PHASE_C3_INVALID_REASON_COPY_MAP`, NOT a raw
+        # Phase 9B `HaltError.reason`.
         payload = (
             agent_loop._fix_phase_c3_format_invalid_payload(
                 prd_path="/nowhere/bad.json",
-                plain_english_reason=(
-                    "prd intake source missing or empty "
-                    "'title'; got None"
+                reason_category=(
+                    "refused_invalid_prd_content"
                 ),
             )
         )
         self.assertEqual(
             payload["state_id"], "prd_invalid",
         )
+        expected_copy = (
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_COPY_MAP[
+                "refused_invalid_prd_content"
+            ]
+        )
         self.assertIn(
-            "'title'",
+            expected_copy,
             payload["plain_english_summary"],
         )
+        # The full absolute path is retained in the payload
+        # dict (for audit / Advanced later) but the default
+        # renderer converts it to filename-only.
         self.assertEqual(
             payload["prd_path"], "/nowhere/bad.json",
         )
         self.assertFalse(payload["ready_to_run"])
+
+    def test_invalid_payload_never_leaks_raw_diagnostics(
+        self,
+    ) -> None:
+        # Fix Phase C3 fix cycle Issue 2: the invalid-payload
+        # plain-English summary MUST NOT expose parser tokens,
+        # raw shipped halt-status names, or the caller-supplied
+        # absolute path.
+        payload = (
+            agent_loop._fix_phase_c3_format_invalid_payload(
+                prd_path="/some/absolute/path/bad.json",
+                reason_category=(
+                    "refused_invalid_prd_content"
+                ),
+            )
+        )
+        summary = payload["plain_english_summary"]
+        for forbidden in (
+            "/some/absolute/path/bad.json",
+            "HaltError", "halted_",
+            "prd_kind", "PRD_INTAKE_KIND",
+            "_load_prd_intake_input",
+            "_validate_prd_intake_common",
+        ):
+            self.assertNotIn(
+                forbidden, summary, forbidden,
+            )
+
+    def test_invalid_payload_path_category_maps_to_path_copy(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop._fix_phase_c3_format_invalid_payload(
+                prd_path="/gone.json",
+                reason_category="refused_invalid_prd_path",
+            )
+        )
+        expected_copy = (
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_COPY_MAP[
+                "refused_invalid_prd_path"
+            ]
+        )
+        self.assertIn(
+            expected_copy,
+            payload["plain_english_summary"],
+        )
+
+    def test_invalid_payload_unknown_category_falls_back(
+        self,
+    ) -> None:
+        # An unknown / None `reason_category` must still yield a
+        # bounded plain-English summary; the formatter MUST NOT
+        # blow up and MUST NOT surface raw diagnostics.
+        for category in (None, "not_a_shipped_category"):
+            payload = (
+                agent_loop._fix_phase_c3_format_invalid_payload(
+                    prd_path="/x.json",
+                    reason_category=category,
+                )
+            )
+            self.assertIn(
+                agent_loop
+                .FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY,
+                payload["plain_english_summary"],
+            )
 
     def test_preview_bounder_returns_short_string_unchanged(
         self,
@@ -5447,6 +5525,214 @@ class FixPhaseC3TkWiringTests(unittest.TestCase):
                         f"{token!r} leaked into plain-English "
                         f"display",
                     )
+
+
+class FixPhaseC3FixCycleIssue1TransitionTests(unittest.TestCase):
+    """Regression pin for the Fix Phase C3 fix cycle Issue 1:
+    a successful Fix Phase C2 folder-selection MUST transition
+    the C3 PRD panel to `prd_missing_after_project` when the
+    current PRD state is `no_prd_selected`, and MUST preserve a
+    `prd_ready` state if the operator already picked a valid
+    PRD earlier in the session. Source-inspection pin: the
+    behavior lives inside a Tk-closure so pure execution here
+    would require a full Tk root.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        # Slice out the shipped Fix Phase C2 callback body so
+        # assertions target only the C2 success path (not the
+        # C3 callback that also calls the missing-payload
+        # formatter conditionally).
+        c2_body = self._source.split(
+            "def _fix_phase_c2_choose_folder_click", 1,
+        )[1].split("def ", 1)[0]
+        # The successful branch is everything AFTER the last
+        # `_fix_phase_c2_render_payload(payload)` call in the
+        # C2 callback body.
+        self._c2_success_branch = c2_body.rsplit(
+            "_fix_phase_c2_render_payload(payload)", 1,
+        )[1]
+
+    def test_state_holder_is_declared_and_initialized(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c3_current_state_holder = [",
+            self._source,
+        )
+        self.assertIn(
+            "FIX_PHASE_C3_STATE_NO_PRD_SELECTED",
+            self._source,
+        )
+
+    def test_c2_success_path_reads_c3_state_holder(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c3_current_state_holder[0]",
+            self._c2_success_branch,
+        )
+        self.assertIn(
+            "FIX_PHASE_C3_STATE_NO_PRD_SELECTED",
+            self._c2_success_branch,
+        )
+
+    def test_c2_success_path_calls_missing_after_project(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_format_missing_after_project_payload"
+            "(",
+            self._c2_success_branch,
+        )
+
+    def test_c2_success_path_renders_and_audits_c3_transition(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_render_payload(",
+            self._c2_success_branch,
+        )
+        self.assertIn(
+            "_fix_phase_c3_emit_audit(",
+            self._c2_success_branch,
+        )
+
+    def test_c2_success_path_does_not_auto_start(
+        self,
+    ) -> None:
+        # Fix Phase C1 no-auto-advance rule: the transition MUST
+        # NOT auto-attach, bootstrap, start, or advance the
+        # agent.
+        for forbidden in (
+            "attach_external_target(",
+            "bootstrap=True",
+            "start_agent(",
+            "run(",
+        ):
+            self.assertNotIn(
+                forbidden, self._c2_success_branch, forbidden,
+            )
+
+    def test_render_updates_state_holder(self) -> None:
+        # The render callback MUST update the state holder so a
+        # later C2 gesture sees the latest C3 state.
+        render_body = self._source.split(
+            "def _fix_phase_c3_render_payload", 1,
+        )[1].split("def ", 1)[0]
+        self.assertIn(
+            "fix_phase_c3_current_state_holder[0] "
+            "= payload[\"state_id\"]",
+            render_body,
+        )
+
+
+class FixPhaseC3FixCycleIssue2DefaultSurfaceTests(
+    unittest.TestCase,
+):
+    """Regression pin for the Fix Phase C3 fix cycle Issue 2:
+    the default rendered PRD surface MUST NOT expose the
+    resolved absolute path, raw parser tokens, or raw shipped
+    Phase 9B validator reasons. Absolute paths and technical
+    diagnostics remain reachable ONLY through the shipped audit
+    evidence path (`.agent-loop/orchestrator.log`).
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._render_body = self._source.split(
+            "def _fix_phase_c3_render_payload", 1,
+        )[1].split("def ", 1)[0]
+
+    def test_render_uses_filename_only(self) -> None:
+        # The default path Label MUST derive its text from
+        # `Path(prd_path).name` (or an equivalent filename-only
+        # selector), NOT from the resolved absolute path.
+        self.assertIn("Path(prd_path).name", self._render_body)
+
+    def test_render_does_not_display_raw_prd_file_prefix(
+        self,
+    ) -> None:
+        # Regression pin: the shipped "PRD file: {prd_path}"
+        # template that leaked the absolute path is gone.
+        self.assertNotIn(
+            'f"PRD file: {prd_path}"', self._render_body,
+        )
+        self.assertNotIn(
+            "PRD file: {prd_path}", self._render_body,
+        )
+
+    def test_callback_passes_reason_category_not_raw_reason(
+        self,
+    ) -> None:
+        # Regression pin: the PRD picker's HaltError branch
+        # MUST pass `reason_category=` to the invalid-payload
+        # formatter, NOT the raw `halt.reason`.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        halt_branch = callback_body.split(
+            "except HaltError", 1,
+        )[1]
+        self.assertIn(
+            "reason_category=", halt_branch,
+        )
+        self.assertNotIn(
+            "plain_english_reason=halt.reason", halt_branch,
+        )
+        self.assertNotIn(
+            "plain_english_reason=halt", halt_branch,
+        )
+
+    def test_invalid_reason_copy_map_covers_both_refusal_categories(
+        self,
+    ) -> None:
+        copy_map = (
+            agent_loop.FIX_PHASE_C3_INVALID_REASON_COPY_MAP
+        )
+        for category in (
+            "refused_invalid_prd_path",
+            "refused_invalid_prd_content",
+        ):
+            self.assertIn(category, copy_map, category)
+            self.assertIsInstance(copy_map[category], str)
+            self.assertTrue(copy_map[category].strip(), category)
+
+    def test_default_copy_never_leaks_raw_diagnostics(
+        self,
+    ) -> None:
+        # The shipped bounded-copy map and default copy MUST NOT
+        # contain parser tokens or path-shaped tokens.
+        strings = list(
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_COPY_MAP.values()
+        )
+        strings.append(
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY
+        )
+        for text in strings:
+            for forbidden in (
+                "HaltError", "halted_",
+                "prd_kind", "PRD_INTAKE_KIND",
+                "_load_prd_intake_input",
+                "_validate_prd_intake_common",
+                ".json",
+                "/",
+                "\\",
+            ):
+                self.assertNotIn(
+                    forbidden, text,
+                    f"raw diagnostic token {forbidden!r} "
+                    f"leaked into bounded copy: {text!r}",
+                )
 
 
 if __name__ == "__main__":

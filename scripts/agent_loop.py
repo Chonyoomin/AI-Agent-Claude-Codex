@@ -15900,6 +15900,31 @@ FIX_PHASE_C3_ATTRIBUTION = "[prd-intake]"
 # `summary` field.
 FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS = 200
 
+# Fix Phase C3 fix cycle Issue 2: bounded actionable copy per
+# refusal category. The default PRD surface MUST NOT expose the
+# raw Phase 9B `HaltError.reason` (which can contain absolute
+# paths, parser tokens, and other implementation-level text per
+# the shipped Fix Phase C1 `## Advanced Detail Hiding Rules`).
+# Instead, the invalid-state payload maps a refusal category to
+# a bounded, plain-English "what to do next" message. Raw
+# diagnostics remain available ONLY through the shipped audit
+# evidence path (`.agent-loop/orchestrator.log`) or a future
+# Advanced surface.
+FIX_PHASE_C3_INVALID_REASON_COPY_MAP = {
+    FIX_PHASE_C3_REFUSAL_INVALID_PATH: (
+        "The chosen file could not be opened. It may have been "
+        "moved, deleted, or renamed. Pick the file again."
+    ),
+    FIX_PHASE_C3_REFUSAL_INVALID_CONTENT: (
+        "The chosen file is not a valid PRD. A valid PRD is a "
+        "small JSON file with a project title and summary."
+    ),
+}
+FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY = (
+    "The chosen file is not a valid PRD. A valid PRD is a "
+    "small JSON file with a project title and summary."
+)
+
 
 def _fix_phase_c3_format_no_prd_display_payload() -> dict:
     """Return the plain-English empty-state payload the desktop
@@ -15937,25 +15962,34 @@ def _fix_phase_c3_format_missing_after_project_payload() -> dict:
 
 
 def _fix_phase_c3_format_invalid_payload(
-    *, prd_path, plain_english_reason,
+    *, prd_path, reason_category=None,
 ) -> dict:
     """Return the plain-English `prd_invalid` payload. Called
     from the Tk callback when the shipped intake helpers refuse
-    the picked file; the `plain_english_reason` argument
-    surfaces the reason verbatim in the summary Label so the
-    operator sees WHY the file was refused (typically a plain-
-    English HaltError.reason from the shipped Phase 9B
-    validator).
+    the picked file. Per the Fix Phase C3 fix cycle Issue 2,
+    the payload NO LONGER surfaces the raw Phase 9B
+    `HaltError.reason` (which can contain absolute paths, JSON
+    parser tokens, and other technical detail). Instead, the
+    `reason_category` argument (one of the shipped closed
+    refusal categories) selects a bounded, plain-English "what
+    to do next" copy from `FIX_PHASE_C3_INVALID_REASON_COPY_MAP`.
+    Raw diagnostics remain available ONLY through the shipped
+    `.agent-loop/orchestrator.log` audit evidence path.
     """
     entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
         FIX_PHASE_C3_STATE_PRD_INVALID
     ]
+    bounded_copy = (
+        FIX_PHASE_C3_INVALID_REASON_COPY_MAP.get(
+            reason_category,
+            FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY,
+        )
+    )
     return {
         "state_id": FIX_PHASE_C3_STATE_PRD_INVALID,
         "display_label": entry["display_label"],
         "plain_english_summary": (
-            f"{entry['plain_english_summary']} "
-            f"Reason: {plain_english_reason}"
+            f"{entry['plain_english_summary']} {bounded_copy}"
         ),
         "next_action_label": entry["next_action_label"],
         "next_action_help": entry["next_action_help"],
@@ -17261,6 +17295,28 @@ def _launch_desktop_app_window(
         _fix_phase_c2_emit_audit(
             classification_id=payload["classification_id"],
         )
+        # Fix Phase C3 fix cycle Issue 1: after the operator
+        # successfully picks a project folder, transition the C3
+        # PRD panel from `no_prd_selected` to
+        # `prd_missing_after_project` so the UI clearly signals
+        # that a PRD is still required before the agent can run.
+        # Preserves a `prd_ready` selection (do NOT clobber a
+        # valid PRD the operator already picked earlier in the
+        # session). Explicit operator gesture only: this does NOT
+        # auto-attach, bootstrap, start, or advance the agent
+        # per the shipped Fix Phase C1 contract's `## No Auto
+        # Advance` rule.
+        if (
+            fix_phase_c3_current_state_holder[0]
+            == FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+        ):
+            missing_payload = (
+                _fix_phase_c3_format_missing_after_project_payload()
+            )
+            _fix_phase_c3_render_payload(missing_payload)
+            _fix_phase_c3_emit_audit(
+                state_id=missing_payload["state_id"],
+            )
 
     fix_phase_c2_choose_button.config(
         command=_fix_phase_c2_choose_folder_click,
@@ -17367,19 +17423,41 @@ def _launch_desktop_app_window(
         / ".agent-loop"
         / "orchestrator.log"
     )
+    # Fix Phase C3 fix cycle Issue 1: mutable single-element
+    # holder that tracks the currently-rendered C3 state_id so
+    # the Fix Phase C2 folder-selection callback can transition
+    # `no_prd_selected` -> `prd_missing_after_project` without
+    # clobbering a `prd_ready` selection. Session-scoped only;
+    # never persisted (no cross-session cache per the Fix Phase
+    # C1 source-of-truth preservation rule).
+    fix_phase_c3_current_state_holder = [
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED,
+    ]
 
     def _fix_phase_c3_render_payload(payload: dict) -> None:
+        # Fix Phase C3 fix cycle Issue 2: default surface MUST NOT
+        # expose the resolved absolute PRD path per the shipped
+        # Fix Phase C1 `## Advanced Detail Hiding Rules` (raw
+        # canonical / absolute paths belong behind Advanced or in
+        # the audit evidence path). Render the operator-facing
+        # label using the filename component only.
         prd_path = payload.get("prd_path")
-        fix_phase_c3_path_label.config(
-            text=(
-                f"PRD file: {prd_path}"
-                if prd_path
-                else "No PRD file selected"
-            ),
-        )
+        if prd_path:
+            filename_only = Path(prd_path).name or prd_path
+            path_label_text = f"File: {filename_only}"
+        else:
+            path_label_text = "No PRD file selected"
+        fix_phase_c3_path_label.config(text=path_label_text)
         fix_phase_c3_state_label.config(
             text=payload["display_label"],
         )
+        # Fix Phase C3 fix cycle Issue 1: remember the current
+        # rendered C3 state so a subsequent Fix Phase C2
+        # folder-selection gesture can decide whether to
+        # transition the PRD panel to `prd_missing_after_project`
+        # (from `no_prd_selected`) or preserve an already-ready
+        # PRD selection.
+        fix_phase_c3_current_state_holder[0] = payload["state_id"]
         fix_phase_c3_summary_label.config(
             text=payload["plain_english_summary"],
         )
@@ -17438,20 +17516,28 @@ def _launch_desktop_app_window(
                     prd_path=chosen,
                 )
             )
-        except HaltError as halt:
-            payload = _fix_phase_c3_format_invalid_payload(
-                prd_path=chosen,
-                plain_english_reason=halt.reason,
-            )
-            _fix_phase_c3_render_payload(payload)
-            # Distinguish invalid-path vs invalid-content
-            # refusal category by whether the file exists.
+        except HaltError:
+            # Fix Phase C3 fix cycle Issue 2: swallow the raw
+            # Phase 9B HaltError.reason (it can contain absolute
+            # paths and parser vocabulary). Classify path-vs-
+            # content refusal category ONCE and let the payload
+            # formatter select bounded plain-English copy. The
+            # raw reason remains attached to the underlying
+            # HaltError object and available via any shipped
+            # traceback / debugging surface if operators enable
+            # verbose logging separately; the desktop default
+            # surface never renders it.
             if not Path(chosen).is_file():
                 refusal = FIX_PHASE_C3_REFUSAL_INVALID_PATH
             else:
                 refusal = (
                     FIX_PHASE_C3_REFUSAL_INVALID_CONTENT
                 )
+            payload = _fix_phase_c3_format_invalid_payload(
+                prd_path=chosen,
+                reason_category=refusal,
+            )
+            _fix_phase_c3_render_payload(payload)
             _fix_phase_c3_emit_audit(
                 state_id=(
                     FIX_PHASE_C3_STATE_PRD_INVALID
