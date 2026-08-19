@@ -5,15 +5,15 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Sub-Phase
 
-Fix Phase C3 - PRD Intake UX
+Fix Phase C4 - Run Mode Selector
 
 ## Status
 
-Implementation complete; approved for human review.
+Active and ready for implementation.
 
 ## Task
 
-Add the desktop PRD file-picker and selection flow, plain-English missing/invalid/ready states, and a bounded preview of the selected PRD.
+Add the desktop run-mode selector with plain-English choices mapped to existing shipped runtime modes.
 
 ## Notes
 
@@ -21,6 +21,7 @@ Add the desktop PRD file-picker and selection flow, plain-English missing/invali
 - the default experience should optimize for one local operator who dislikes terminals
 - the shipped desktop app must remain canonical-artifact-first and must not invent a second UI-only orchestration plane
 - run-mode selection, Start/Stop controls, and run-console behavior remain deferred to C4 through C8
+
 
 
 

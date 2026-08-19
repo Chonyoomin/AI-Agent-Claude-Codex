@@ -1,48 +1,54 @@
 # Claude Code Task
 
 ## Phase
-Fix Phase C3 - PRD Intake UX
+Fix Phase C4 - Run Mode Selector
 
 ## Objective
-Implement the guided desktop PRD intake step: let a non-technical operator
-choose a PRD file, show clear missing/invalid/ready states, and preview the
-selected PRD in a bounded plain-English setup surface.
+Add a plain-English desktop run-mode selector that lets a non-technical
+operator choose among the already-shipped runtime approval modes without
+exposing internal jargon or creating a second UI-only settings plane.
 
 ## Context
-Fix Phase C1 established the first-run contract and Fix Phase C2 delivered
-the Project folder-picker/classification surface. Read
-docs/desktop-first-run-setup-contract.md and inspect the actual repository
-state before editing. Do not rely on prior chat context.
+Fix Phase C1 defines the guided desktop section order:
+Project, PRD, Run Mode, Run, Progress. Fix Phase C2 delivered the Project
+folder surface and C3 delivered the PRD picker, state mapping, and bounded
+preview. Read docs/desktop-first-run-setup-contract.md, inspect the actual
+repository state, and follow the shipped Phase 5A approval-mode contract and
+Phase 10Q run-profile behavior. Do not rely on prior chat context.
 
 ## Required work
-- add an OS-native PRD file-picker action to the default desktop setup flow
-- reuse the shipped PRD intake validation/helpers and canonical artifact
-  boundaries; do not duplicate PRD parsing or invent a second intake runtime
-- surface plain-English states for:
-  no PRD selected, project selected but PRD missing, invalid/empty PRD,
-  and PRD ready
-- show a bounded preview that identifies the selected PRD without dumping the
-  entire file into the default surface
-- provide actionable copy for missing, invalid, and ready states
-- preserve the C1 section order: Project, PRD, Run Mode, Run, Progress
-- keep raw CLI names, canonical paths, parser/refusal tokens, and full raw PRD
-  contents behind the existing Advanced surface
-- add focused tests for picker wiring, validation mapping, bounded preview,
-  refusal behavior, and source-of-truth invariants
+- add the visible default Run Mode section after PRD and before Run
+- present plain-English choices such as Guided, Review Each Phase, and More
+  Autonomous, with one-sentence explanations
+- map each choice to the existing shipped runtime mode/profile values
+- preserve canonical artifact ownership and existing approval gates
+- make the selected mode observable through the existing canonical runtime
+  configuration/state path rather than a UI-only settings file
+- define clear initial, selected, and unavailable/refused states
+- preserve cancellation and invalid-selection behavior without changing runtime
+  semantics
+- keep raw approval-mode names, CLI commands, canonical paths, and raw state
+  vocabulary behind the existing Advanced surface
+- add focused tests for section order, option copy, mapping, persistence/source
+  of truth, refusal behavior, and no-automation invariants
 - update README.md and .agent-loop/claude-summary.md with the shipped behavior
   and validation performed
 
 ## Constraints
 - Follow CLAUDE.md.
 - Do not modify AGENTS.md or CLAUDE.md.
-- Do not add run-mode selection, Start/Stop controls, run-console behavior,
-  automatic execution, or PRD decomposition redesign; those belong to C4-C8.
-- Do not persist a hidden PRD cache, staging file, recent-file list, or
-  UI-only settings/state plane.
-- Selecting a PRD must not auto-start, attach, bootstrap, or advance the agent.
-- Preserve explicit operator gestures and shipped polling/audit cadence.
-- Do not add Git automation, background watchers, or network endpoints.
+- Do not invent new approval semantics or widen autonomy.
+- Do not add Start/Stop controls, run-console behavior, automatic execution,
+  or progress rendering; those belong to C5-C8.
+- Do not create a UI-only settings file, preference cache, recent-mode list,
+  hidden session state, background watcher, or second orchestration plane.
+- Selecting a mode must not auto-start, attach, bootstrap, advance, or dispatch
+  the agent.
+- Preserve explicit operator gestures, shipped polling/audit cadence, and
+  existing human approval gates.
+- Do not add Git automation, network endpoints, or unrelated refactors.
 
 ## Required output
 After implementation, write .agent-loop/claude-summary.md using the required
 Claude Implementation Summary format and include the validation you ran.
+

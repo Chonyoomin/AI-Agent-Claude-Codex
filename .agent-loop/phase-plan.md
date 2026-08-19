@@ -3425,7 +3425,7 @@ selected for the run.
 
 ### Status
 
-Queued for later implementation after Fix Phase C3.
+Active.
 
 ### Objective
 
@@ -6350,4 +6350,5 @@ state plane.
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
 - no Git automation
+
 

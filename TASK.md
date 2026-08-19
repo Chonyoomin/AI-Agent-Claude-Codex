@@ -24,15 +24,15 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Active Sub-Phase
 
-Fix Phase C3 - PRD Intake UX
+Fix Phase C4 - Run Mode Selector
 
 ## Phase Status
 
-Implementation complete; approved for human review.
+Active and ready for implementation.
 
 ## Active Task
 
-Add the desktop PRD file-picker and selection flow, plain-English missing/invalid/ready states, and a bounded preview of the selected PRD.
+Add the desktop run-mode selector with plain-English choices mapped to existing shipped runtime modes.
 
 ## Phase Outcome Required Now
 
@@ -56,6 +56,7 @@ Add the desktop PRD file-picker and selection flow, plain-English missing/invali
 - introducing a hidden UI-only state store or second orchestration plane
 - fabrication of .agent-loop/codex-review.md content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
+
 
 
 
