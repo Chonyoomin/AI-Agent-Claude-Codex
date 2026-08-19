@@ -16155,6 +16155,500 @@ def _fix_phase_c3_format_audit_line(
     )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase C4: Run Mode Selector.
+#
+# Bounded plain-English selector for the Run Mode section of the guided
+# first-run desktop UI (the third section per the shipped Fix Phase C1
+# ordered top-level vocabulary: Project -> PRD -> Run Mode -> Run ->
+# Progress). Presents three plain-English choices that map onto the
+# shipped Phase 5A approval-mode contract values (`review` / `strict` /
+# `autonomous`) via a bounded bridge. Does NOT introduce a new
+# persistence plane: the current mode is READ from the canonical
+# `.agent-loop/loop-state.json` via the shipped Phase 10Q
+# `build_desktop_run_profiles_view(...)` view, and the operator applies
+# a selection by copying the shipped Phase 10Q affordance's clipboard
+# payload (the same `plan -> proposed-phase.md edit -> activate`
+# recipe the Advanced surface already exposes). No auto-attach /
+# bootstrap / start / advance, no UI-only settings file / preference
+# cache / recent-mode list / hidden session state / background
+# watcher / second orchestration plane.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C4_SIGNAL_VERSION = "fix-phase-c4-v1"
+
+# Closed plain-English choice vocabulary. Ordered from most human
+# oversight to most autonomous so the desktop UI can render the
+# radio buttons in the same top-to-bottom order.
+FIX_PHASE_C4_CHOICE_GUIDED = "guided"
+FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE = "review_each_phase"
+FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS = "more_autonomous"
+FIX_PHASE_C4_CHOICE_IDS = (
+    FIX_PHASE_C4_CHOICE_GUIDED,
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE,
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS,
+)
+
+# Bounded bridge: each plain-English choice maps to exactly one
+# shipped Phase 5A approval mode. The C4 selector NEVER invents a
+# new approval semantic; the C4 vocabulary is a display-only
+# rename over the shipped closed enumeration `ALLOWED_APPROVAL_MODES`.
+# Guided = strict (most human touchpoints, halts at every Phase 5C
+# pause); Review Each Phase = review (default; halts at phase
+# complete only); More Autonomous = autonomous (fewest halts).
+FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP = {
+    FIX_PHASE_C4_CHOICE_GUIDED: APPROVAL_MODE_STRICT,
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE: APPROVAL_MODE_REVIEW,
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS: APPROVAL_MODE_AUTONOMOUS,
+}
+
+# Bounded bridge: each plain-English choice maps to the shipped
+# Phase 10Q affordance id whose clipboard payload persists the
+# selection through the shipped `plan -> proposed-phase.md edit
+# -> activate` recipe. The C4 selector NEVER writes canonical
+# artifacts directly; it copies the shipped affordance's
+# clipboard payload verbatim.
+FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP = {
+    FIX_PHASE_C4_CHOICE_GUIDED: "select_approval_mode_strict",
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE: (
+        "select_approval_mode_review"
+    ),
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS: (
+        "select_approval_mode_autonomous"
+    ),
+}
+
+# Per-choice plain-English display map. The desktop UI renders
+# these fields verbatim; NO raw shipped approval-mode names
+# (`review` / `strict` / `autonomous`) and NO shipped CLI
+# subcommand names appear in the default surface per the shipped
+# Fix Phase C1 `## Advanced Detail Hiding Rules`. Adding a choice
+# to `FIX_PHASE_C4_CHOICE_IDS` above also requires an entry here
+# or the shipped payload formatter refuses fail-closed.
+FIX_PHASE_C4_CHOICE_DISPLAY_MAP = {
+    FIX_PHASE_C4_CHOICE_GUIDED: {
+        "display_label": "Guided (recommended)",
+        "plain_english_summary": (
+            "The agent pauses for your approval at every step. "
+            "Best when you are new to the tool or want to review "
+            "each part of the work before it continues."
+        ),
+    },
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE: {
+        "display_label": "Review Each Phase",
+        "plain_english_summary": (
+            "The agent runs a whole phase, then pauses for your "
+            "approval before starting the next phase. Good when "
+            "you trust the plan but want a phase-level check-in."
+        ),
+    },
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS: {
+        "display_label": "More Autonomous",
+        "plain_english_summary": (
+            "The agent keeps running with the fewest possible "
+            "pauses. Use when you want the agent to make more "
+            "progress without waiting on you at every step."
+        ),
+    },
+}
+
+# Closed state vocabulary. `initial_no_selection` = session start,
+# no operator click yet; `mode_selected` = operator clicked a
+# choice (setup steps copied to clipboard); `canonical_source_
+# unavailable` = the shipped Phase 10Q view could not read the
+# canonical loop-state (e.g., no controller root, missing /
+# malformed `.agent-loop/loop-state.json`).
+FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION = "initial_no_selection"
+FIX_PHASE_C4_STATE_MODE_SELECTED = "mode_selected"
+FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE = (
+    "canonical_source_unavailable"
+)
+FIX_PHASE_C4_STATE_IDS = (
+    FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION,
+    FIX_PHASE_C4_STATE_MODE_SELECTED,
+    FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE,
+)
+
+# Per-state plain-English display map (label + summary + next-
+# action label + next-action help). Only `mode_selected` is
+# `ready_to_run` (in the "operator has expressed a choice" sense;
+# the actual runtime activation still requires the operator to
+# paste + run the shipped affordance CLI recipe).
+FIX_PHASE_C4_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION: {
+        "display_label": "Pick a run mode",
+        "plain_english_summary": (
+            "Choose how much the agent pauses for your input. "
+            "This choice does not start the agent."
+        ),
+        "next_action_label": "Pick a run mode",
+        "next_action_help": (
+            "Click one of the run-mode buttons above. Nothing "
+            "runs until you paste the copied setup steps into "
+            "your terminal."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C4_STATE_MODE_SELECTED: {
+        "display_label": "Run mode selected",
+        "plain_english_summary": (
+            "The setup steps for your choice were copied to the "
+            "clipboard. Paste them into your terminal to apply "
+            "the change. This selection does not start the "
+            "agent."
+        ),
+        "next_action_label": "Paste the setup steps",
+        "next_action_help": (
+            "Open your terminal and paste. The steps prepare "
+            "the next phase; you decide when to start it."
+        ),
+        "ready_to_run": True,
+    },
+    FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE: {
+        "display_label": "Run mode is unavailable",
+        "plain_english_summary": (
+            "The current run mode could not be read. Finish the "
+            "Project and PRD steps above, then reopen this "
+            "window."
+        ),
+        "next_action_label": "Finish the Project step",
+        "next_action_help": (
+            "The run mode is stored in the project. Pick a "
+            "project folder in the Project section above."
+        ),
+        "ready_to_run": False,
+    },
+}
+
+# Closed refusal + cancellation vocabulary matching the shipped
+# Fix Phase C1 contract's `## Refusal Behavior` section. Same
+# `cancelled_*` prefix convention as Fix Phase C2 / C3.
+FIX_PHASE_C4_REFUSAL_INVALID_CHOICE = "refused_invalid_choice"
+FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE = (
+    "refused_canonical_source_unreadable"
+)
+FIX_PHASE_C4_CANCELLATION_MODE_SELECTION = (
+    "cancelled_mode_selection"
+)
+FIX_PHASE_C4_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C4_REFUSAL_INVALID_CHOICE,
+    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE,
+    FIX_PHASE_C4_CANCELLATION_MODE_SELECTION,
+)
+
+# Attribution tag for `.agent-loop/orchestrator.log` audit lines
+# emitted by the C4 selector. Mirrors the Fix Phase C1 attribution
+# convention (`[project-classification]`, `[prd-intake]`, ...).
+FIX_PHASE_C4_ATTRIBUTION = "[run-mode-intake]"
+
+
+def _fix_phase_c4_map_choice_to_approval_mode(choice_id):
+    """Return the shipped Phase 5A approval-mode name for a C4
+    choice_id. Refuses fail-closed on any choice_id outside the
+    shipped closed C4 vocabulary so the caller cannot smuggle in
+    an unmapped selection.
+    """
+    if choice_id not in FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: choice_id "
+                f"{choice_id!r} is not in the shipped closed "
+                f"Fix Phase C4 vocabulary "
+                f"{FIX_PHASE_C4_CHOICE_IDS!r}"
+            ),
+        )
+    return FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP[choice_id]
+
+
+def _fix_phase_c4_map_choice_to_affordance_id(choice_id):
+    """Return the shipped Phase 10Q affordance id whose clipboard
+    payload persists a C4 choice through the shipped `plan ->
+    proposed-phase.md edit -> activate` recipe. Refuses fail-
+    closed on any unmapped choice_id.
+    """
+    if (
+        choice_id
+        not in FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: choice_id "
+                f"{choice_id!r} does not map to a shipped "
+                f"Phase 10Q affordance"
+            ),
+        )
+    return FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP[choice_id]
+
+
+def _fix_phase_c4_derive_plain_english_current_mode(
+    canonical_approval_mode,
+):
+    """Translate the shipped canonical approval-mode value (from
+    `.agent-loop/loop-state.json` via the Phase 10Q mirror) into
+    a plain-English label for the default surface. Returns
+    `"Not set"` when the canonical value is None (fresh
+    controller root). Refuses fail-closed on an approval-mode
+    value outside the shipped Phase 5A enumeration to preserve
+    the display-map / shipped-vocabulary lockstep.
+    """
+    if canonical_approval_mode is None:
+        return "Not set"
+    if canonical_approval_mode not in ALLOWED_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: canonical "
+                f"approval_mode {canonical_approval_mode!r} is "
+                f"not in the shipped Phase 5A vocabulary "
+                f"{sorted(ALLOWED_APPROVAL_MODES)!r}"
+            ),
+        )
+    reverse_map = {
+        value: choice_id
+        for choice_id, value in (
+            FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP.items()
+        )
+    }
+    plain_choice_id = reverse_map[canonical_approval_mode]
+    return (
+        FIX_PHASE_C4_CHOICE_DISPLAY_MAP[plain_choice_id][
+            "display_label"
+        ]
+    )
+
+
+def _fix_phase_c4_format_initial_payload(
+    *, current_canonical_mode,
+):
+    """Return the plain-English payload for the C4 selector at
+    session start (no operator click yet). Renders whichever
+    shipped canonical approval-mode is currently persisted so the
+    operator can see the current state even before touching the
+    selector.
+    """
+    entry = FIX_PHASE_C4_STATE_DISPLAY_MAP[
+        FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+    ]
+    return {
+        "state_id": FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "selected_choice_id": None,
+        "selected_display_label": None,
+        "current_canonical_mode_display": (
+            _fix_phase_c4_derive_plain_english_current_mode(
+                current_canonical_mode,
+            )
+        ),
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C4_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c4_format_selected_payload(
+    *, choice_id, current_canonical_mode,
+):
+    """Return the plain-English payload for a fresh operator
+    selection. `choice_id` MUST be in `FIX_PHASE_C4_CHOICE_IDS`
+    (fail-closed via `_fix_phase_c4_map_choice_to_approval_mode`).
+    The `current_canonical_mode` argument mirrors the shipped
+    `.agent-loop/loop-state.json` value at rendering time; the
+    operator hasn't yet pasted the affordance recipe so the
+    canonical value has NOT yet changed.
+    """
+    # Fail-closed on any choice_id outside the shipped vocabulary
+    # BEFORE reading the display map so an invented choice_id
+    # cannot smuggle stale display copy through the formatter.
+    _fix_phase_c4_map_choice_to_approval_mode(choice_id)
+    entry = FIX_PHASE_C4_STATE_DISPLAY_MAP[
+        FIX_PHASE_C4_STATE_MODE_SELECTED
+    ]
+    choice_entry = FIX_PHASE_C4_CHOICE_DISPLAY_MAP[choice_id]
+    return {
+        "state_id": FIX_PHASE_C4_STATE_MODE_SELECTED,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "selected_choice_id": choice_id,
+        "selected_display_label": choice_entry[
+            "display_label"
+        ],
+        "current_canonical_mode_display": (
+            _fix_phase_c4_derive_plain_english_current_mode(
+                current_canonical_mode,
+            )
+        ),
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C4_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c4_format_canonical_source_unavailable_payload():
+    """Return the plain-English payload the C4 selector renders
+    when the shipped Phase 10Q view cannot read the canonical
+    loop-state.json (missing / malformed / no controller root).
+    """
+    entry = FIX_PHASE_C4_STATE_DISPLAY_MAP[
+        FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE
+    ]
+    return {
+        "state_id": (
+            FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE
+        ),
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "selected_choice_id": None,
+        "selected_display_label": None,
+        "current_canonical_mode_display": "Not available",
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C4_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c4_derive_clipboard_payload_from_view(
+    *, choice_id, run_profiles_view,
+):
+    """Look up the shipped Phase 10Q clipboard payload for a C4
+    choice from a shipped Phase 10Q view dict. Refuses fail-
+    closed on any missing / malformed view or missing affordance
+    so the caller can render the unavailable-payload branch
+    instead of silently emitting an empty clipboard.
+    """
+    affordance_id = _fix_phase_c4_map_choice_to_affordance_id(
+        choice_id,
+    )
+    if not isinstance(run_profiles_view, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop run-mode selector refused: shipped "
+                "Phase 10Q view is not a dict"
+            ),
+        )
+    affordances = run_profiles_view.get("affordances")
+    if not isinstance(affordances, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop run-mode selector refused: shipped "
+                "Phase 10Q view is missing an `affordances` list"
+            ),
+        )
+    for descriptor in affordances:
+        if (
+            isinstance(descriptor, dict)
+            and descriptor.get("id") == affordance_id
+        ):
+            payload = descriptor.get("clipboard_payload")
+            if not isinstance(payload, str) or not payload:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"desktop run-mode selector refused: "
+                        f"shipped Phase 10Q affordance "
+                        f"{affordance_id!r} has no clipboard "
+                        f"payload"
+                    ),
+                )
+            return payload
+    raise HaltError(
+        "halted_input_missing",
+        (
+            f"desktop run-mode selector refused: shipped Phase "
+            f"10Q view does not include affordance id "
+            f"{affordance_id!r}"
+        ),
+    )
+
+
+def _fix_phase_c4_format_audit_line(
+    *,
+    state_id,
+    choice_id,
+    epoch_seconds,
+    refusal_category=None,
+):
+    """Pure Tk-free audit-line formatter matching the shipped
+    Phase 10AG / Phase 10AI / Fix Phase C2 / Fix Phase C3 audit-
+    line convention. The Tk callback appends the returned line
+    via the shipped `_log_note(...)` writer to
+    `.agent-loop/orchestrator.log`; NEVER writes a parallel
+    settings file per the Fix Phase C1 source-of-truth
+    preservation rule.
+
+    Line shape:
+      `[run-mode-intake] signal_version=<version>
+       state_id=<id|None> choice_id=<id|None>
+       refusal_category=<cat|None> epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in FIX_PHASE_C4_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-mode selector audit refused: "
+                    f"refusal_category {refusal_category!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C4 refusal vocabulary "
+                    f"{FIX_PHASE_C4_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if state_id is not None:
+        if state_id not in FIX_PHASE_C4_STATE_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-mode selector audit refused: "
+                    f"state_id {state_id!r} is not in the "
+                    f"shipped closed Fix Phase C4 state "
+                    f"vocabulary {FIX_PHASE_C4_STATE_IDS!r}"
+                ),
+            )
+    if choice_id is not None:
+        if choice_id not in FIX_PHASE_C4_CHOICE_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-mode selector audit refused: "
+                    f"choice_id {choice_id!r} is not in the "
+                    f"shipped closed Fix Phase C4 choice "
+                    f"vocabulary {FIX_PHASE_C4_CHOICE_IDS!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[run-mode-intake] signal_version="
+        f"{FIX_PHASE_C4_SIGNAL_VERSION!r} state_id="
+        f"{state_id!r} choice_id={choice_id!r} "
+        f"refusal_category={refusal_category!r} "
+        f"epoch_seconds={epoch_seconds!r}"
+    )
+
+
 def _primary_desktop_validate_bootstrap_form(
     fields,
 ) -> None:
@@ -17551,6 +18045,297 @@ def _launch_desktop_app_window(
     fix_phase_c3_choose_button.config(
         command=_fix_phase_c3_choose_prd_click,
     )
+
+    # Fix Phase C4: bounded guided Run Mode section (visible by
+    # default per the shipped Fix Phase C1 ordered top-level
+    # section vocabulary: `Run Mode` appears third, after
+    # `Project` and `PRD` and before `Run`). Presents three
+    # plain-English radio buttons that map onto the shipped
+    # Phase 5A approval-mode contract values via the closed
+    # `FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP`. Selecting a
+    # choice copies the shipped Phase 10Q affordance's clipboard
+    # payload (the shipped `plan -> proposed-phase.md edit ->
+    # activate` recipe) so the operator applies the change
+    # through the existing canonical persistence path
+    # (`.agent-loop/loop-state.json`); the selector NEVER writes
+    # canonical artifacts directly, NEVER starts a background
+    # thread, NEVER polls, and NEVER auto-attaches, bootstraps,
+    # starts, or advances the agent. Raw approval-mode names
+    # (`review` / `strict` / `autonomous`) and raw shipped CLI
+    # subcommand names remain hidden here and reachable ONLY
+    # through the shipped Phase 10Q Advanced surface per the
+    # shipped Fix Phase C1 `## Advanced Detail Hiding Rules`.
+    fix_phase_c4_run_mode_frame = tk.LabelFrame(
+        control_frame,
+        text="Run Mode",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c4_run_mode_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c4_current_mode_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text="Currently active: Not available",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9),
+        fg="#666666",
+    )
+    fix_phase_c4_current_mode_label.pack(
+        fill=tk.X, padx=4, pady=(4, 2),
+    )
+    fix_phase_c4_choice_var = tk.StringVar(value="")
+    fix_phase_c4_choice_buttons: list = []
+    fix_phase_c4_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+
+    def _fix_phase_c4_read_current_canonical_mode():
+        # Read the shipped canonical approval-mode from the
+        # shipped Phase 10Q view (which itself reads
+        # `.agent-loop/loop-state.json`). Soft-fails to
+        # (None, None) if the view is unavailable so the
+        # unavailable-payload branch can render fresh copy.
+        try:
+            view = build_desktop_run_profiles_view(
+                controller_root,
+            )
+        except Exception:  # noqa: BLE001 - defensive soft-fail
+            return None, None
+        if not isinstance(view, dict):
+            return None, None
+        mirror = view.get("mirror")
+        if not isinstance(mirror, dict):
+            return view, None
+        canonical = mirror.get("approval_mode")
+        if canonical is None:
+            return view, None
+        if canonical not in ALLOWED_APPROVAL_MODES:
+            return view, None
+        return view, canonical
+
+    def _fix_phase_c4_render_payload(payload: dict) -> None:
+        # Renders the current-canonical + state labels. Raw
+        # shipped approval-mode names never leak: the
+        # canonical-mode label carries the shipped C4 plain-
+        # English display name via
+        # `_fix_phase_c4_derive_plain_english_current_mode`.
+        current_display = payload.get(
+            "current_canonical_mode_display",
+        )
+        if current_display is None:
+            current_display = "Not available"
+        fix_phase_c4_current_mode_label.config(
+            text=f"Currently active: {current_display}",
+        )
+        fix_phase_c4_state_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c4_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c4_next_action_label.config(
+            text=f"Next: {payload['next_action_label']}",
+        )
+        fix_phase_c4_next_action_help_label.config(
+            text=payload["next_action_help"],
+        )
+        selected_choice = payload.get("selected_choice_id")
+        if selected_choice is None:
+            fix_phase_c4_choice_var.set("")
+        else:
+            fix_phase_c4_choice_var.set(selected_choice)
+
+    def _fix_phase_c4_emit_audit(
+        *, state_id, choice_id=None, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c4_format_audit_line(
+                state_id=state_id,
+                choice_id=choice_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c4_audit_log_path, line)
+
+    def _fix_phase_c4_on_choice_click(choice_id: str) -> None:
+        # Fail-closed on any choice_id outside the shipped
+        # closed C4 vocabulary. Session-scoped only: nothing
+        # here writes a canonical artifact, spawns a
+        # subprocess, opens a socket, or advances loop-state.
+        if choice_id not in FIX_PHASE_C4_CHOICE_IDS:
+            _fix_phase_c4_emit_audit(
+                state_id=None,
+                choice_id=None,
+                refusal_category=(
+                    FIX_PHASE_C4_REFUSAL_INVALID_CHOICE
+                ),
+            )
+            return
+        view, canonical = (
+            _fix_phase_c4_read_current_canonical_mode()
+        )
+        if view is None:
+            unavailable_payload = (
+                _fix_phase_c4_format_canonical_source_unavailable_payload()
+            )
+            _fix_phase_c4_render_payload(unavailable_payload)
+            _fix_phase_c4_emit_audit(
+                state_id=unavailable_payload["state_id"],
+                choice_id=choice_id,
+                refusal_category=(
+                    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE
+                ),
+            )
+            return
+        try:
+            clipboard_payload = (
+                _fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id=choice_id,
+                    run_profiles_view=view,
+                )
+            )
+        except HaltError:
+            unavailable_payload = (
+                _fix_phase_c4_format_canonical_source_unavailable_payload()
+            )
+            _fix_phase_c4_render_payload(unavailable_payload)
+            _fix_phase_c4_emit_audit(
+                state_id=unavailable_payload["state_id"],
+                choice_id=choice_id,
+                refusal_category=(
+                    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE
+                ),
+            )
+            return
+        # Copy the shipped clipboard payload verbatim. This
+        # matches the shipped Phase 10Q `copy_paste` dispatch
+        # convention: the desktop shell NEVER executes the
+        # payload as a subprocess and NEVER opens a network
+        # socket. The operator pastes into their terminal to
+        # apply the change through the shipped CLI recipe.
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(clipboard_payload)
+        except Exception:  # noqa: BLE001 - clipboard is
+            # best-effort; the audit line still fires so the
+            # operator sees the selection in the log.
+            pass
+        selected_payload = (
+            _fix_phase_c4_format_selected_payload(
+                choice_id=choice_id,
+                current_canonical_mode=canonical,
+            )
+        )
+        _fix_phase_c4_render_payload(selected_payload)
+        _fix_phase_c4_emit_audit(
+            state_id=selected_payload["state_id"],
+            choice_id=choice_id,
+        )
+
+    for _c4_choice_id in FIX_PHASE_C4_CHOICE_IDS:
+        _c4_entry = FIX_PHASE_C4_CHOICE_DISPLAY_MAP[
+            _c4_choice_id
+        ]
+        _c4_button_frame = tk.Frame(
+            fix_phase_c4_run_mode_frame,
+        )
+        _c4_button_frame.pack(
+            fill=tk.X, padx=4, pady=(2, 0),
+        )
+        _c4_radio = tk.Radiobutton(
+            _c4_button_frame,
+            text=_c4_entry["display_label"],
+            variable=fix_phase_c4_choice_var,
+            value=_c4_choice_id,
+            command=(
+                lambda cid=_c4_choice_id: (
+                    _fix_phase_c4_on_choice_click(cid)
+                )
+            ),
+            anchor=tk.W,
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        _c4_radio.pack(fill=tk.X)
+        _c4_help = tk.Label(
+            _c4_button_frame,
+            text=_c4_entry["plain_english_summary"],
+            anchor=tk.W, justify=tk.LEFT, wraplength=320,
+            fg="#333333",
+        )
+        _c4_help.pack(fill=tk.X, padx=(24, 0), pady=(0, 2))
+        fix_phase_c4_choice_buttons.append(_c4_radio)
+    fix_phase_c4_state_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["display_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c4_state_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c4_summary_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["plain_english_summary"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c4_summary_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c4_next_action_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            "Next: "
+            + FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["next_action_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c4_next_action_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c4_next_action_help_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["next_action_help"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c4_next_action_help_label.pack(
+        fill=tk.X, padx=4, pady=(2, 4),
+    )
+    # Render the initial payload once at panel construction
+    # time so the current-canonical-mode label reflects the
+    # actual canonical value even before any operator click.
+    _c4_view, _c4_canonical = (
+        _fix_phase_c4_read_current_canonical_mode()
+    )
+    if _c4_view is None:
+        _fix_phase_c4_render_payload(
+            _fix_phase_c4_format_canonical_source_unavailable_payload()
+        )
+    else:
+        _fix_phase_c4_render_payload(
+            _fix_phase_c4_format_initial_payload(
+                current_canonical_mode=_c4_canonical,
+            )
+        )
 
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
     # (registered above and below) are tracked so the toggle can

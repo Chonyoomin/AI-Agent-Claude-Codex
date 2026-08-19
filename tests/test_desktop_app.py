@@ -5735,5 +5735,769 @@ class FixPhaseC3FixCycleIssue2DefaultSurfaceTests(
                 )
 
 
+class FixPhaseC4ConstantsTests(unittest.TestCase):
+    """Pin the shipped Fix Phase C4 closed vocabularies."""
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_SIGNAL_VERSION,
+            "fix-phase-c4-v1",
+        )
+
+    def test_three_choice_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_CHOICE_IDS,
+            (
+                "guided",
+                "review_each_phase",
+                "more_autonomous",
+            ),
+        )
+
+    def test_choice_display_map_covers_every_choice(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C4_CHOICE_DISPLAY_MAP.keys()
+            ),
+            set(agent_loop.FIX_PHASE_C4_CHOICE_IDS),
+        )
+        for cid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+            ):
+                self.assertIn(field, entry, f"{cid}.{field}")
+
+    def test_three_state_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_STATE_IDS,
+            (
+                "initial_no_selection",
+                "mode_selected",
+                "canonical_source_unavailable",
+            ),
+        )
+
+    def test_state_display_map_covers_every_state(self) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C4_STATE_DISPLAY_MAP.keys()
+            ),
+            set(agent_loop.FIX_PHASE_C4_STATE_IDS),
+        )
+        for sid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_STATE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+                "ready_to_run",
+            ):
+                self.assertIn(field, entry, f"{sid}.{field}")
+
+    def test_only_mode_selected_is_ready_to_run(self) -> None:
+        display_map = (
+            agent_loop.FIX_PHASE_C4_STATE_DISPLAY_MAP
+        )
+        for sid, entry in display_map.items():
+            if sid == "mode_selected":
+                self.assertTrue(entry["ready_to_run"], sid)
+            else:
+                self.assertFalse(entry["ready_to_run"], sid)
+
+    def test_three_refusal_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.FIX_PHASE_C4_REFUSAL_CATEGORIES),
+            3,
+        )
+        for category in (
+            "refused_invalid_choice",
+            "refused_canonical_source_unreadable",
+            "cancelled_mode_selection",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.FIX_PHASE_C4_REFUSAL_CATEGORIES,
+            )
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_ATTRIBUTION,
+            "[run-mode-intake]",
+        )
+
+
+class FixPhaseC4BridgeMappingTests(unittest.TestCase):
+    """Pin the bounded bridge from C4 plain-English choices to
+    shipped Phase 5A approval modes and shipped Phase 10Q
+    affordance ids. The bridge exists SO the C4 selector never
+    invents a new approval semantic and never persists a mode
+    outside the shipped canonical loop-state.json path.
+    """
+
+    def test_choice_to_approval_mode_map_covers_every_choice(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP
+                .keys()
+            ),
+            set(agent_loop.FIX_PHASE_C4_CHOICE_IDS),
+        )
+
+    def test_choice_to_approval_mode_values_are_shipped_modes(
+        self,
+    ) -> None:
+        # Every mapped approval-mode MUST be in the shipped
+        # Phase 5A closed enumeration; the C4 selector NEVER
+        # invents a new semantic.
+        for value in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP.values()
+        ):
+            self.assertIn(
+                value, agent_loop.ALLOWED_APPROVAL_MODES,
+            )
+
+    def test_choice_to_approval_mode_bridge_is_specific(
+        self,
+    ) -> None:
+        # Pin exact plain-English -> shipped-mode mapping so a
+        # future refactor cannot silently redirect "Guided" to
+        # `autonomous` (or any other autonomy-widening move).
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_approval_mode(
+                "guided",
+            ),
+            agent_loop.APPROVAL_MODE_STRICT,
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_approval_mode(
+                "review_each_phase",
+            ),
+            agent_loop.APPROVAL_MODE_REVIEW,
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_approval_mode(
+                "more_autonomous",
+            ),
+            agent_loop.APPROVAL_MODE_AUTONOMOUS,
+        )
+
+    def test_choice_to_affordance_id_bridge_is_specific(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_affordance_id(
+                "guided",
+            ),
+            "select_approval_mode_strict",
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_affordance_id(
+                "review_each_phase",
+            ),
+            "select_approval_mode_review",
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_affordance_id(
+                "more_autonomous",
+            ),
+            "select_approval_mode_autonomous",
+        )
+
+    def test_choice_to_affordance_ids_are_shipped(
+        self,
+    ) -> None:
+        for affordance_id in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP.values()
+        ):
+            self.assertIn(
+                affordance_id,
+                agent_loop.DESKTOP_RUN_PROFILE_AFFORDANCE_IDS,
+            )
+
+    def test_map_refuses_invented_choice_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c4_map_choice_to_approval_mode(
+                "invented",
+            )
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_map_choice_to_affordance_id(
+                    "invented",
+                )
+            )
+
+
+class FixPhaseC4PayloadFormattersTests(unittest.TestCase):
+
+    def test_initial_payload_shape_with_no_canonical_mode(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_initial_payload(
+                current_canonical_mode=None,
+            )
+        )
+        self.assertEqual(
+            payload["state_id"], "initial_no_selection",
+        )
+        self.assertIsNone(payload["selected_choice_id"])
+        self.assertEqual(
+            payload["current_canonical_mode_display"],
+            "Not set",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"], "[run-mode-intake]",
+        )
+
+    def test_initial_payload_shape_with_shipped_canonical_mode(
+        self,
+    ) -> None:
+        # The canonical value flows through the shipped Phase
+        # 5A -> C4 bridge and yields a plain-English label
+        # (never the raw shipped mode name).
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_initial_payload(
+                current_canonical_mode=(
+                    agent_loop.APPROVAL_MODE_STRICT
+                ),
+            )
+        )
+        self.assertEqual(
+            payload["current_canonical_mode_display"],
+            "Guided (recommended)",
+        )
+        # No raw shipped mode name leaks into the plain-English
+        # rendering of the current canonical mode.
+        for token in ("strict", "review", "autonomous"):
+            self.assertNotIn(
+                token,
+                payload[
+                    "current_canonical_mode_display"
+                ].lower().split("(", 1)[0],
+                token,
+            )
+
+    def test_selected_payload_shape(self) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_selected_payload(
+                choice_id="review_each_phase",
+                current_canonical_mode=(
+                    agent_loop.APPROVAL_MODE_REVIEW
+                ),
+            )
+        )
+        self.assertEqual(
+            payload["state_id"], "mode_selected",
+        )
+        self.assertEqual(
+            payload["selected_choice_id"],
+            "review_each_phase",
+        )
+        self.assertEqual(
+            payload["selected_display_label"],
+            "Review Each Phase",
+        )
+        self.assertTrue(payload["ready_to_run"])
+
+    def test_selected_payload_refuses_invalid_choice(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_selected_payload(
+                    choice_id="invented",
+                    current_canonical_mode=None,
+                )
+            )
+
+    def test_canonical_source_unavailable_payload_shape(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_canonical_source_unavailable_payload()
+        )
+        self.assertEqual(
+            payload["state_id"],
+            "canonical_source_unavailable",
+        )
+        self.assertIsNone(payload["selected_choice_id"])
+        self.assertEqual(
+            payload["current_canonical_mode_display"],
+            "Not available",
+        )
+        self.assertFalse(payload["ready_to_run"])
+
+    def test_derive_plain_english_current_mode_refuses_unknown(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_plain_english_current_mode(
+                    "not_a_shipped_mode",
+                )
+            )
+
+    def test_display_map_never_leaks_raw_runtime_tokens(
+        self,
+    ) -> None:
+        # Fix Phase C1 Advanced-detail hiding: the default
+        # surface MUST NOT expose raw shipped CLI subcommand
+        # names, raw canonical artifact paths, raw shipped
+        # halt-status names, or raw shipped identifier tokens.
+        # (The plain-English words "review" / "guided" /
+        # "autonomous" appearing as natural English inside
+        # sentences are permitted; the shipped mode NAMES like
+        # `approval_mode: strict` are what the C1 rules forbid.)
+        forbidden_substrings = (
+            "loop-state.json", "proposed-phase.md",
+            "attach-external-target",
+            "halted_", "awaiting_",
+            "APPROVED_FOR_", "NEEDS_FIXES",
+            "approval_mode",
+            "python scripts/agent_loop.py",
+        )
+        for cid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{cid}.{field}: raw runtime token "
+                        f"{token!r} leaked",
+                    )
+        for sid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_STATE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{sid}.{field}: raw runtime token "
+                        f"{token!r} leaked",
+                    )
+
+
+class FixPhaseC4ClipboardPayloadDerivationTests(
+    unittest.TestCase,
+):
+    """Pin the wiring from a C4 choice + a shipped Phase 10Q
+    view to the shipped affordance's clipboard payload. The C4
+    selector NEVER duplicates the shipped clipboard payload; it
+    looks it up by affordance id from the shipped view.
+    """
+
+    def _real_view(self, td):
+        (Path(td) / ".agent-loop").mkdir()
+        return agent_loop.build_desktop_run_profiles_view(
+            Path(td),
+        )
+
+    def test_derives_clipboard_payload_from_shipped_view(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            view = self._real_view(td)
+        payload = (
+            agent_loop
+            ._fix_phase_c4_derive_clipboard_payload_from_view(
+                choice_id="guided",
+                run_profiles_view=view,
+            )
+        )
+        self.assertIn("plan", payload)
+        self.assertIn("activate", payload)
+        # The clipboard payload for guided points to the
+        # shipped strict affordance (per the C4 bridge).
+        self.assertIn("strict", payload)
+
+    def test_refuses_non_dict_view(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="guided",
+                    run_profiles_view=None,
+                )
+            )
+
+    def test_refuses_view_missing_affordances(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="guided",
+                    run_profiles_view={"affordances": None},
+                )
+            )
+
+    def test_refuses_view_missing_target_affordance(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="guided",
+                    run_profiles_view={"affordances": []},
+                )
+            )
+
+    def test_refuses_invalid_choice_id(self) -> None:
+        with TemporaryDirectory() as td:
+            view = self._real_view(td)
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="invented",
+                    run_profiles_view=view,
+                )
+            )
+
+
+class FixPhaseC4AuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id="mode_selected",
+                choice_id="guided",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[run-mode-intake]", line)
+        self.assertIn(
+            "signal_version='fix-phase-c4-v1'", line,
+        )
+        self.assertIn("state_id='mode_selected'", line)
+        self.assertIn("choice_id='guided'", line)
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal_invalid_choice(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id=None,
+                choice_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="refused_invalid_choice",
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_invalid_choice'", line,
+        )
+
+    def test_line_shape_canonical_source_unavailable(
+        self,
+    ) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id="canonical_source_unavailable",
+                choice_id="guided",
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_canonical_source_unreadable"
+                ),
+            )
+        )
+        self.assertIn(
+            "state_id='canonical_source_unavailable'", line,
+        )
+        self.assertIn(
+            "refusal_category='refused_canonical_source_"
+            "unreadable'",
+            line,
+        )
+
+    def test_line_shape_cancellation(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id=None,
+                choice_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="cancelled_mode_selection",
+            )
+        )
+        self.assertIn(
+            "refusal_category='cancelled_mode_selection'",
+            line,
+        )
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id=None,
+                    choice_id=None,
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_unknown_state_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id="invented_state",
+                    choice_id="guided",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_unknown_choice_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id="mode_selected",
+                    choice_id="invented",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id=None,
+                    choice_id=None,
+                    epoch_seconds="not int",
+                )
+            )
+
+
+class FixPhaseC4TkWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the Fix Phase C4
+    Run Mode panel wired into `_launch_desktop_app_window(...)`.
+    Would fail loudly if a future refactor:
+      - drops the Run Mode section entirely
+      - hides the section behind the Advanced toggle
+      - reintroduces raw approval-mode names in the default
+        surface
+      - drops the audit-line emit on success or refusal
+      - starts a background thread / timer / watcher
+      - persists the selection to a UI-only settings file
+      - directly writes the canonical loop-state.json
+      - auto-attaches / bootstraps / starts / advances the agent
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._c4_section = self._source.split(
+            "# Fix Phase C4: bounded guided Run Mode section",
+            1,
+        )[1].split(
+            "# Advanced panels toggle.", 1,
+        )[0]
+
+    def test_run_mode_labelframe_is_visible_by_default(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+            self._c4_section,
+        )
+        self.assertIn('text="Run Mode"', self._c4_section)
+        # Regression pin: MUST NOT be appended to
+        # advanced_frames_holder.
+        self.assertNotIn(
+            "advanced_frames_holder.append("
+            "fix_phase_c4_run_mode_frame",
+            self._source,
+        )
+
+    def test_run_mode_calls_c4_payload_formatters(
+        self,
+    ) -> None:
+        for formatter in (
+            "_fix_phase_c4_format_initial_payload(",
+            "_fix_phase_c4_format_selected_payload(",
+            (
+                "_fix_phase_c4_format_canonical_source_"
+                "unavailable_payload("
+            ),
+        ):
+            self.assertIn(formatter, self._c4_section, formatter)
+
+    def test_run_mode_calls_c4_audit_line_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c4_format_audit_line(",
+            self._c4_section,
+        )
+
+    def test_run_mode_reads_shipped_run_profiles_view(
+        self,
+    ) -> None:
+        # Regression pin per the fix-prompt "make the selected
+        # mode observable through the existing canonical
+        # runtime configuration/state path" requirement: the
+        # C4 section MUST route through the shipped Phase 10Q
+        # view (which itself reads `.agent-loop/loop-state.
+        # json`), NOT a UI-only settings file.
+        self.assertIn(
+            "build_desktop_run_profiles_view(",
+            self._c4_section,
+        )
+
+    def test_run_mode_writes_audit_via_shipped_log_note(
+        self,
+    ) -> None:
+        self.assertIn("_log_note(", self._c4_section)
+
+    def test_run_mode_does_not_start_background_thread(
+        self,
+    ) -> None:
+        for forbidden in (
+            "threading.Thread", "Timer(",
+            "threading.Timer", "asyncio.",
+            "root.after(",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+    def test_run_mode_does_not_directly_write_canonical(
+        self,
+    ) -> None:
+        # Regression pin: the C4 selector MUST NOT write
+        # `.agent-loop/loop-state.json` or
+        # `.agent-loop/proposed-phase.md` directly. The
+        # operator applies the change through the shipped
+        # affordance recipe.
+        for forbidden in (
+            "write_loop_state(",
+            "write_text(loop_state",
+            'open(".agent-loop/loop-state.json"',
+            'open(".agent-loop/proposed-phase.md"',
+            "attach_external_target(",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+    def test_run_mode_does_not_auto_start_or_advance(
+        self,
+    ) -> None:
+        # Fix Phase C1 no-auto-advance rule: selecting a mode
+        # MUST NOT auto-attach, bootstrap, start, or advance
+        # the agent.
+        for forbidden in (
+            "bootstrap=True",
+            "_run_normal_cycle_from_increment(",
+            "subprocess.",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+    def test_run_mode_does_not_persist_selection_in_ui_only_file(
+        self,
+    ) -> None:
+        # Regression pin: no UI-only settings file / preference
+        # cache / recent-mode list per the prompt's explicit
+        # forbid list.
+        for forbidden in (
+            "settings.json",
+            "preferences.json",
+            "run-mode-cache",
+            "recent_modes",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+
+class FixPhaseC4RunModeSectionOrderTests(unittest.TestCase):
+    """Regression pin for the shipped Fix Phase C1 ordered top-
+    level section vocabulary (Project -> PRD -> Run Mode -> Run
+    -> Progress). The Run Mode LabelFrame MUST be constructed
+    AFTER the PRD LabelFrame and BEFORE the Advanced toggle.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_project_prd_runmode_are_in_order(self) -> None:
+        idx_project = self._source.find(
+            "fix_phase_c2_project_frame = tk.LabelFrame(",
+        )
+        idx_prd = self._source.find(
+            "fix_phase_c3_prd_frame = tk.LabelFrame(",
+        )
+        idx_run_mode = self._source.find(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+        )
+        self.assertGreater(idx_project, -1, "Project frame")
+        self.assertGreater(idx_prd, -1, "PRD frame")
+        self.assertGreater(idx_run_mode, -1, "Run Mode frame")
+        self.assertLess(idx_project, idx_prd)
+        self.assertLess(idx_prd, idx_run_mode)
+
+    def test_run_mode_frame_precedes_advanced_toggle(
+        self,
+    ) -> None:
+        idx_run_mode = self._source.find(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+        )
+        idx_advanced = self._source.find(
+            "# Advanced panels toggle.",
+        )
+        self.assertGreater(idx_run_mode, -1)
+        self.assertGreater(idx_advanced, -1)
+        self.assertLess(idx_run_mode, idx_advanced)
+
+
 if __name__ == "__main__":
     unittest.main()
