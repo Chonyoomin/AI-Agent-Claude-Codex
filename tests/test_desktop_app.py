@@ -4107,5 +4107,2397 @@ class Phase10AITkCanvasGraphWiringTests(unittest.TestCase):
         )
 
 
+class FixPhaseC2ConstantsTests(unittest.TestCase):
+    """Pin the shipped Fix Phase C2 closed vocabularies. Any
+    widening or contraction is a contract break and MUST fail
+    here loudly.
+    """
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_SIGNAL_VERSION,
+            "fix-phase-c2-v1",
+        )
+
+    def test_four_classification_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_CLASSIFICATION_IDS,
+            (
+                "existing_project", "empty_folder",
+                "partial_target", "malformed_target",
+            ),
+        )
+
+    def test_ux_mode_bridge_covers_every_shipped_ux_mode(
+        self,
+    ) -> None:
+        # Every shipped Fix Phase B1 UX mode MUST bridge to
+        # exactly one Fix Phase C1 classification id.
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP
+                .keys()
+            ),
+            set(agent_loop.PRIMARY_DESKTOP_FOLDER_UX_MODES),
+        )
+        for classification in (
+            agent_loop
+            .FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP
+            .values()
+        ):
+            self.assertIn(
+                classification,
+                agent_loop.FIX_PHASE_C2_CLASSIFICATION_IDS,
+            )
+
+    def test_display_map_covers_every_classification_id(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+                .keys()
+            ),
+            set(
+                agent_loop.FIX_PHASE_C2_CLASSIFICATION_IDS
+            ),
+        )
+        required_fields = (
+            "display_label", "plain_english_summary",
+            "next_action_label", "next_action_help",
+            "ready_to_run",
+        )
+        for cid, entry in (
+            agent_loop
+            .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP.items()
+        ):
+            for field in required_fields:
+                self.assertIn(field, entry, f"{cid}.{field}")
+
+    def test_only_existing_project_is_ready_to_run(self) -> None:
+        # A regression pin per the shipped Fix Phase C1 contract:
+        # only an existing (already-set-up) project is ready to
+        # run; every other classification requires an explicit
+        # setup / cleanup / repair gesture first.
+        display_map = (
+            agent_loop
+            .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+        )
+        for cid, entry in display_map.items():
+            if cid == "existing_project":
+                self.assertTrue(entry["ready_to_run"], cid)
+            else:
+                self.assertFalse(entry["ready_to_run"], cid)
+
+    def test_four_refusal_categories(self) -> None:
+        # Fix Phase C2 fix cycle Issue 2: the closed vocabulary
+        # gained a fourth entry (`cancelled_folder_picker`) so
+        # the picker-cancel gesture is auditable per the Fix
+        # Phase C1 contract.
+        self.assertEqual(
+            len(agent_loop.FIX_PHASE_C2_REFUSAL_CATEGORIES),
+            4,
+        )
+        for category in (
+            "refused_invalid_folder_path",
+            "refused_unknown_shipped_ux_mode",
+            "refused_missing_plain_english_display_entry",
+            "cancelled_folder_picker",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.FIX_PHASE_C2_REFUSAL_CATEGORIES,
+            )
+
+    def test_cancellation_category_constant_exposed(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_CANCELLATION_PICKER,
+            "cancelled_folder_picker",
+        )
+
+    def test_empty_state_payload_shape(self) -> None:
+        payload = agent_loop.FIX_PHASE_C2_EMPTY_STATE_PAYLOAD
+        self.assertIsNone(payload["classification_id"])
+        self.assertIsNone(payload["target_path"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[project-classification]",
+        )
+        for field in (
+            "display_label", "plain_english_summary",
+            "next_action_label", "next_action_help",
+        ):
+            self.assertIsInstance(
+                payload[field], str, field,
+            )
+            self.assertGreater(
+                len(payload[field]), 0, field,
+            )
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C2_ATTRIBUTION,
+            "[project-classification]",
+        )
+
+
+class FixPhaseC2ClassificationBridgeTests(unittest.TestCase):
+    """Cover
+    `_fix_phase_c2_derive_classification_from_ux_mode(...)`
+    the pure Tk-free bridge from shipped Fix Phase B1 UX mode ->
+    Fix Phase C1 plain-English classification id.
+    """
+
+    def test_bridges_every_shipped_ux_mode(self) -> None:
+        expected = {
+            "attach_existing_project": "existing_project",
+            "bootstrap_new_project": "empty_folder",
+            "refused_partial_target": "partial_target",
+            "refused_malformed_target": "malformed_target",
+        }
+        for ux_mode, cid in expected.items():
+            self.assertEqual(
+                (
+                    agent_loop
+                    ._fix_phase_c2_derive_classification_from_ux_mode(
+                        ux_mode,
+                    )
+                ),
+                cid,
+                ux_mode,
+            )
+
+    def test_refuses_unknown_ux_mode_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_derive_classification_from_ux_mode(
+                    "invented_ux_mode",
+                )
+            )
+
+
+class FixPhaseC2NoFolderPayloadTests(unittest.TestCase):
+
+    def test_returns_a_fresh_dict_copy(self) -> None:
+        p1 = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        p2 = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        self.assertIsNot(p1, p2)
+        p1["display_label"] = "MUTATED"
+        # Mutating the returned copy MUST NOT leak into the
+        # shipped constant (that would be a source-of-truth
+        # leak).
+        p3 = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        self.assertNotEqual(p3["display_label"], "MUTATED")
+
+    def test_carries_empty_state_fields(self) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c2_format_no_folder_display_payload()
+        )
+        self.assertIsNone(payload["classification_id"])
+        self.assertIsNone(payload["target_path"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[project-classification]",
+        )
+
+
+class FixPhaseC2FolderDisplayPayloadTests(unittest.TestCase):
+    """Cover the pure Tk-free payload formatter against real
+    filesystem folder classifications. Uses TemporaryDirectory
+    to stage each of the four shipped Fix Phase B1 target
+    states.
+    """
+
+    def _write_full_target(self, td: Path) -> None:
+        # Stage all five shipped canonical artifacts so the
+        # shipped `classify_pre_bootstrap_target_state(...)`
+        # returns `full_target`. `_make_controller` alone does
+        # NOT satisfy that classification because Fix Phase C2
+        # is about pre-attach state; the classifier looks at the
+        # closed EXTERNAL_TARGET_CANONICAL_ARTIFACT_RELPATHS
+        # tuple.
+        _make_controller(td)
+        for rel in (
+            ".agent-loop/current-task.md",
+            ".agent-loop/current-phase.md",
+            ".agent-loop/phase-plan.md",
+        ):
+            path = td / rel
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("test\n", encoding="utf-8")
+
+    def test_existing_project_returns_ready_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td)
+            self._write_full_target(controller)
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=str(controller),
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "existing_project",
+        )
+        self.assertTrue(payload["ready_to_run"])
+        self.assertEqual(
+            payload["display_label"], "Existing project",
+        )
+        self.assertEqual(
+            payload["attribution_tag"],
+            "[project-classification]",
+        )
+
+    def test_empty_folder_returns_bootstrap_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=td,
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "empty_folder",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["display_label"], "Empty folder",
+        )
+        self.assertIn(
+            "set up a new project",
+            payload["next_action_label"].lower(),
+        )
+
+    def test_partial_target_returns_cleanup_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td)
+            (controller / ".agent-loop").mkdir()
+            # A partial target has some but not all of the
+            # canonical set. Write just the loop-state.json to
+            # trigger the shipped `partial_target` branch.
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).write_text("{}", encoding="utf-8")
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=str(controller),
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "partial_target",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        # Regression pin: the plain-English label MUST NOT
+        # leak the raw `partial_target` shipped-runtime term
+        # into the default surface.
+        self.assertNotIn(
+            "partial_target", payload["display_label"],
+        )
+
+    def test_malformed_target_returns_repair_payload(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td)
+            self._write_full_target(controller)
+            # Corrupt loop-state.json so the shipped Phase 3A
+            # schema validator refuses it.
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).write_text(
+                "this is not valid json",
+                encoding="utf-8",
+            )
+            payload = (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=str(controller),
+                )
+            )
+        self.assertEqual(
+            payload["classification_id"], "malformed_target",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        self.assertNotIn(
+            "malformed_target", payload["display_label"],
+        )
+
+    def test_none_path_refuses_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_folder_display_payload(
+                    target_path=None,
+                )
+            )
+
+    def test_empty_path_refuses_fail_closed(self) -> None:
+        for bad in ("", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c2_format_folder_display_payload(
+                        target_path=bad,
+                    )
+                )
+
+    def test_nonexistent_path_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            missing = str(
+                Path(td) / "does_not_exist_at_all_ever",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c2_format_folder_display_payload(
+                        target_path=missing,
+                    )
+                )
+
+    def test_payload_never_leaks_raw_cli_terms_in_display(
+        self,
+    ) -> None:
+        # Regression pin per the shipped Fix Phase C1 contract's
+        # `## Advanced Detail Hiding Rules`: the default surface
+        # MUST NOT expose raw CLI subcommand names. Iterate every
+        # display entry and pin that the display strings do not
+        # leak raw runtime terms.
+        forbidden_substrings = (
+            "attach-external-target",
+            "loop-state.json",
+            "halted_",
+            "awaiting_",
+            "APPROVED_FOR_",
+            "NEEDS_FIXES",
+        )
+        display_map = (
+            agent_loop
+            .FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+        )
+        for cid, entry in display_map.items():
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{cid}.{field}: raw runtime token "
+                        f"{token!r} leaked into plain-English "
+                        f"display",
+                    )
+
+
+class FixPhaseC2AuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c2_format_audit_line(
+                classification_id="existing_project",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[desktop-first-run-project]", line)
+        self.assertIn(
+            "signal_version='fix-phase-c2-v1'", line,
+        )
+        self.assertIn(
+            "classification_id='existing_project'", line,
+        )
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c2_format_audit_line(
+                classification_id=None,
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_invalid_folder_path"
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_invalid_folder_path'",
+            line,
+        )
+        self.assertIn(
+            "classification_id=None", line,
+        )
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_audit_line(
+                    classification_id=None,
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_unknown_classification_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_audit_line(
+                    classification_id="invented_classification",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c2_format_audit_line(
+                    classification_id="existing_project",
+                    epoch_seconds="not int",
+                )
+            )
+
+    def test_cancellation_category_accepted_by_formatter(
+        self,
+    ) -> None:
+        # Regression pin for Fix Phase C2 fix cycle Issue 2:
+        # the audit-line formatter MUST accept the closed
+        # cancellation category so the picker-cancel gesture
+        # can emit an audit line.
+        line = (
+            agent_loop
+            ._fix_phase_c2_format_audit_line(
+                classification_id=None,
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    agent_loop.FIX_PHASE_C2_CANCELLATION_PICKER
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category='cancelled_folder_picker'",
+            line,
+        )
+        self.assertIn("classification_id=None", line)
+
+
+class FixPhaseC2TkWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the Fix Phase C2
+    Project section wired into `_launch_desktop_app_window(...)`.
+    Would fail loudly if a future refactor:
+      - drops the Project section entirely
+      - hides the section behind the Advanced toggle
+      - reintroduces raw CLI vocabulary in the default surface
+      - drops the audit-line emit
+      - starts a background thread / timer / watcher
+      - caches the selected folder path across sessions
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_project_section_labelframe_is_visible_by_default(
+        self,
+    ) -> None:
+        # The Project section MUST be a top-level LabelFrame
+        # packed directly under control_frame (not appended to
+        # advanced_frames_holder). If a future refactor pushes
+        # it behind Advanced, this pin fails.
+        self.assertIn(
+            'fix_phase_c2_project_frame = tk.LabelFrame(',
+            self._source,
+        )
+        self.assertIn(
+            'text="Project"', self._source,
+        )
+        # Regression pin: MUST NOT be appended to
+        # advanced_frames_holder (that would hide it behind
+        # the Advanced toggle).
+        self.assertNotIn(
+            "advanced_frames_holder.append("
+            "fix_phase_c2_project_frame",
+            self._source,
+        )
+
+    def test_project_section_calls_shipped_folder_picker(
+        self,
+    ) -> None:
+        self.assertIn(
+            '_filedialog.askdirectory(', self._source,
+        )
+        self.assertIn(
+            '_primary_desktop_normalize_selected_folder(',
+            self._source,
+        )
+
+    def test_project_section_calls_c2_payload_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c2_format_folder_display_payload(",
+            self._source,
+        )
+
+    def test_project_section_calls_c2_audit_line_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c2_format_audit_line(", self._source,
+        )
+
+    def test_project_section_writes_audit_via_shipped_log_note(
+        self,
+    ) -> None:
+        # Regression pin: the audit line MUST route through the
+        # shipped `_log_note(...)` writer. A parallel audit file
+        # would violate the Fix Phase C1 source-of-truth rule.
+        self.assertIn("_log_note(", self._source)
+
+    def test_project_section_does_not_persist_selected_folder(
+        self,
+    ) -> None:
+        # Regression pin: the Fix Phase C1 contract forbids a
+        # cross-session cache of the picked folder. Blocking
+        # obvious persistence attempts:
+        for forbidden in (
+            "write_text(chosen",
+            "with open(chosen",
+            "json.dump(",  # would only be OK for non-picker paths
+        ):
+            # Bounded assertion: the picker callback MUST NOT
+            # write the picked path anywhere. This exact
+            # substring set is not exhaustive, but it catches
+            # the obvious regression shapes.
+            self.assertNotIn(
+                f"{forbidden}",
+                (
+                    self._source.split(
+                        "def _fix_phase_c2_choose_folder_click",
+                        1,
+                    )[1].split("def ", 1)[0]
+                    if "_fix_phase_c2_choose_folder_click"
+                    in self._source
+                    else ""
+                ),
+                forbidden,
+            )
+
+    def test_project_section_does_not_start_background_thread(
+        self,
+    ) -> None:
+        # The Fix Phase C1 contract forbids a background watcher
+        # beyond the shipped Phase 10L / 10M poll cadence, and
+        # the C2 section specifically refreshes only on the
+        # operator's explicit Choose-Folder gesture. Blocking
+        # any background thread / timer / asyncio pattern.
+        project_body = self._source.split(
+            "fix_phase_c2_project_frame = tk.LabelFrame(", 1,
+        )[1].split(
+            "# Advanced panels toggle.", 1,
+        )[0]
+        for forbidden in (
+            "threading.Thread", "Timer(",
+            "threading.Timer", "asyncio.",
+            "root.after(",
+        ):
+            self.assertNotIn(
+                forbidden, project_body, forbidden,
+            )
+
+    def test_picker_cancel_emits_cancellation_audit(
+        self,
+    ) -> None:
+        # Regression pin for Fix Phase C2 fix cycle Issue 2: the
+        # `chosen is None` branch of the picker callback MUST
+        # emit the audit line via
+        # `_fix_phase_c2_emit_audit(..., refusal_category=
+        # FIX_PHASE_C2_CANCELLATION_PICKER)` rather than
+        # returning silently.
+        callback_body = self._source.split(
+            "def _fix_phase_c2_choose_folder_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if chosen is None:", 1,
+        )[1].split("try:", 1)[0]
+        self.assertIn(
+            "_fix_phase_c2_emit_audit(", cancel_branch,
+        )
+        self.assertIn(
+            "FIX_PHASE_C2_CANCELLATION_PICKER", cancel_branch,
+        )
+
+    def test_picker_cancel_preserves_current_payload(
+        self,
+    ) -> None:
+        # Regression pin for Fix Phase C2 fix cycle Issue 2:
+        # the picker-cancel branch MUST NOT re-render the
+        # payload, re-classify, or clear the current display.
+        # Blocking known regression shapes.
+        callback_body = self._source.split(
+            "def _fix_phase_c2_choose_folder_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if chosen is None:", 1,
+        )[1].split("try:", 1)[0]
+        for forbidden in (
+            "_fix_phase_c2_render_payload(",
+            "_fix_phase_c2_format_folder_display_payload(",
+            "_fix_phase_c2_format_no_folder_display_payload(",
+        ):
+            self.assertNotIn(
+                forbidden, cancel_branch, forbidden,
+            )
+
+
+class FixPhaseC2LegacyFolderFrameTests(unittest.TestCase):
+    """Regression pin for Fix Phase C2 fix cycle Issue 1: the
+    legacy `Select Project Folder` button + `attached_target_
+    label` MUST live behind the Advanced toggle so the C2
+    Project section is the single default folder flow.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_legacy_folder_frame_is_registered_behind_advanced(
+        self,
+    ) -> None:
+        # The legacy widgets must be parented on
+        # `legacy_folder_frame`, and that frame must be
+        # registered in `advanced_frames_holder` so the toggle
+        # hides it by default.
+        self.assertIn(
+            "legacy_folder_frame = tk.Frame(control_frame)",
+            self._source,
+        )
+        self.assertIn(
+            "advanced_frames_holder.append("
+            "legacy_folder_frame)",
+            self._source,
+        )
+
+    def test_legacy_select_button_is_parented_on_legacy_frame(
+        self,
+    ) -> None:
+        # Locate the `select_project_button = tk.Button(...)`
+        # site and confirm it is parented on
+        # `legacy_folder_frame`, not on `primary_controls_frame`
+        # (the pre-fix default surface).
+        button_site = self._source.split(
+            "select_project_button = tk.Button(", 1,
+        )[1].split(")", 1)[0]
+        self.assertIn(
+            "legacy_folder_frame", button_site,
+        )
+        self.assertNotIn(
+            "primary_controls_frame", button_site,
+        )
+
+    def test_legacy_attached_target_label_is_parented_on_legacy(
+        self,
+    ) -> None:
+        label_site = self._source.split(
+            "attached_target_label = tk.Label(", 1,
+        )[1].split(")", 1)[0]
+        self.assertIn(
+            "legacy_folder_frame", label_site,
+        )
+        self.assertNotIn(
+            "primary_controls_frame", label_site,
+        )
+
+    def test_legacy_folder_frame_not_packed_top_level_by_default(
+        self,
+    ) -> None:
+        # Regression pin: the `legacy_folder_frame` MUST NOT be
+        # packed directly under `control_frame` at construction
+        # time; that would leave it visible by default and
+        # defeat the Advanced-hiding.
+        self.assertNotIn(
+            "legacy_folder_frame.pack(", self._source,
+        )
+
+
+class FixPhaseC3ConstantsTests(unittest.TestCase):
+    """Pin the shipped Fix Phase C3 closed vocabularies."""
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_SIGNAL_VERSION,
+            "fix-phase-c3-v1",
+        )
+
+    def test_four_state_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_STATE_IDS,
+            (
+                "no_prd_selected",
+                "prd_missing_after_project",
+                "prd_invalid",
+                "prd_ready",
+            ),
+        )
+
+    def test_state_display_map_covers_every_state(self) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C3_STATE_DISPLAY_MAP.keys()
+            ),
+            set(agent_loop.FIX_PHASE_C3_STATE_IDS),
+        )
+        for sid, entry in (
+            agent_loop
+            .FIX_PHASE_C3_STATE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+                "ready_to_run",
+            ):
+                self.assertIn(field, entry, f"{sid}.{field}")
+
+    def test_only_prd_ready_is_ready_to_run(self) -> None:
+        display_map = (
+            agent_loop.FIX_PHASE_C3_STATE_DISPLAY_MAP
+        )
+        for sid, entry in display_map.items():
+            if sid == "prd_ready":
+                self.assertTrue(entry["ready_to_run"], sid)
+            else:
+                self.assertFalse(entry["ready_to_run"], sid)
+
+    def test_three_refusal_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.FIX_PHASE_C3_REFUSAL_CATEGORIES),
+            3,
+        )
+        for category in (
+            "refused_invalid_prd_path",
+            "refused_invalid_prd_content",
+            "cancelled_prd_picker",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.FIX_PHASE_C3_REFUSAL_CATEGORIES,
+            )
+
+    def test_cancellation_category_constant_exposed(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_CANCELLATION_PICKER,
+            "cancelled_prd_picker",
+        )
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C3_ATTRIBUTION,
+            "[prd-intake]",
+        )
+
+    def test_empty_state_payload_shape(self) -> None:
+        payload = agent_loop.FIX_PHASE_C3_EMPTY_STATE_PAYLOAD
+        self.assertEqual(
+            payload["state_id"], "no_prd_selected",
+        )
+        self.assertIsNone(payload["prd_path"])
+        self.assertIsNone(payload["prd_title"])
+        self.assertIsNone(payload["prd_summary_preview"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"], "[prd-intake]",
+        )
+
+    def test_summary_preview_max_chars_bounded(self) -> None:
+        self.assertLessEqual(
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+            400,
+            "Preview MUST be bounded so the default surface "
+            "does not dump the full PRD body",
+        )
+        self.assertGreater(
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+            0,
+        )
+
+
+class FixPhaseC3StaticPayloadFormattersTests(unittest.TestCase):
+
+    def test_no_prd_payload_returns_fresh_copy(self) -> None:
+        p1 = (
+            agent_loop
+            ._fix_phase_c3_format_no_prd_display_payload()
+        )
+        p2 = (
+            agent_loop
+            ._fix_phase_c3_format_no_prd_display_payload()
+        )
+        self.assertIsNot(p1, p2)
+        p1["display_label"] = "MUTATED"
+        p3 = (
+            agent_loop
+            ._fix_phase_c3_format_no_prd_display_payload()
+        )
+        self.assertNotEqual(p3["display_label"], "MUTATED")
+
+    def test_missing_after_project_payload_shape(self) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c3_format_missing_after_project_payload()
+        )
+        self.assertEqual(
+            payload["state_id"], "prd_missing_after_project",
+        )
+        self.assertIsNone(payload["prd_path"])
+        self.assertIsNone(payload["prd_title"])
+        self.assertIsNone(payload["prd_summary_preview"])
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"], "[prd-intake]",
+        )
+
+    def test_invalid_payload_uses_bounded_category_copy(
+        self,
+    ) -> None:
+        # Fix Phase C3 fix cycle Issue 2: payload MUST use the
+        # shipped bounded plain-English copy from
+        # `FIX_PHASE_C3_INVALID_REASON_COPY_MAP`, NOT a raw
+        # Phase 9B `HaltError.reason`.
+        payload = (
+            agent_loop._fix_phase_c3_format_invalid_payload(
+                prd_path="/nowhere/bad.json",
+                reason_category=(
+                    "refused_invalid_prd_content"
+                ),
+            )
+        )
+        self.assertEqual(
+            payload["state_id"], "prd_invalid",
+        )
+        expected_copy = (
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_COPY_MAP[
+                "refused_invalid_prd_content"
+            ]
+        )
+        self.assertIn(
+            expected_copy,
+            payload["plain_english_summary"],
+        )
+        # The full absolute path is retained in the payload
+        # dict (for audit / Advanced later) but the default
+        # renderer converts it to filename-only.
+        self.assertEqual(
+            payload["prd_path"], "/nowhere/bad.json",
+        )
+        self.assertFalse(payload["ready_to_run"])
+
+    def test_invalid_payload_never_leaks_raw_diagnostics(
+        self,
+    ) -> None:
+        # Fix Phase C3 fix cycle Issue 2: the invalid-payload
+        # plain-English summary MUST NOT expose parser tokens,
+        # raw shipped halt-status names, or the caller-supplied
+        # absolute path.
+        payload = (
+            agent_loop._fix_phase_c3_format_invalid_payload(
+                prd_path="/some/absolute/path/bad.json",
+                reason_category=(
+                    "refused_invalid_prd_content"
+                ),
+            )
+        )
+        summary = payload["plain_english_summary"]
+        for forbidden in (
+            "/some/absolute/path/bad.json",
+            "HaltError", "halted_",
+            "prd_kind", "PRD_INTAKE_KIND",
+            "_load_prd_intake_input",
+            "_validate_prd_intake_common",
+        ):
+            self.assertNotIn(
+                forbidden, summary, forbidden,
+            )
+
+    def test_invalid_payload_path_category_maps_to_path_copy(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop._fix_phase_c3_format_invalid_payload(
+                prd_path="/gone.json",
+                reason_category="refused_invalid_prd_path",
+            )
+        )
+        expected_copy = (
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_COPY_MAP[
+                "refused_invalid_prd_path"
+            ]
+        )
+        self.assertIn(
+            expected_copy,
+            payload["plain_english_summary"],
+        )
+
+    def test_invalid_payload_unknown_category_falls_back(
+        self,
+    ) -> None:
+        # An unknown / None `reason_category` must still yield a
+        # bounded plain-English summary; the formatter MUST NOT
+        # blow up and MUST NOT surface raw diagnostics.
+        for category in (None, "not_a_shipped_category"):
+            payload = (
+                agent_loop._fix_phase_c3_format_invalid_payload(
+                    prd_path="/x.json",
+                    reason_category=category,
+                )
+            )
+            self.assertIn(
+                agent_loop
+                .FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY,
+                payload["plain_english_summary"],
+            )
+
+    def test_preview_bounder_returns_short_string_unchanged(
+        self,
+    ) -> None:
+        short = "A short summary."
+        self.assertEqual(
+            (
+                agent_loop
+                ._fix_phase_c3_bound_summary_preview(short)
+            ),
+            short,
+        )
+
+    def test_preview_bounder_truncates_long_strings_with_ellipsis(
+        self,
+    ) -> None:
+        long_summary = "x" * 500
+        bounded = (
+            agent_loop
+            ._fix_phase_c3_bound_summary_preview(long_summary)
+        )
+        self.assertLessEqual(
+            len(bounded),
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+        )
+        self.assertTrue(bounded.endswith("..."))
+
+
+class FixPhaseC3PrdDisplayPayloadTests(unittest.TestCase):
+    """Cover the pure payload formatter against real
+    TemporaryDirectory PRD files. Every branch routes through
+    the shipped Phase 9B `_load_prd_intake_input(...)` +
+    `_validate_prd_intake_common(...)` primitives.
+    """
+
+    def _write_prd(
+        self, td: Path, *,
+        prd_kind="product_brief",
+        title="Test Project",
+        summary="Test summary.",
+    ) -> Path:
+        prd_path = td / "prd.json"
+        prd_path.write_text(
+            json.dumps({
+                "prd_kind": prd_kind,
+                "title": title,
+                "summary": summary,
+            }),
+            encoding="utf-8",
+        )
+        return prd_path
+
+    def test_valid_prd_returns_ready_payload(self) -> None:
+        with TemporaryDirectory() as td:
+            prd_path = self._write_prd(Path(td))
+            payload = (
+                agent_loop
+                ._fix_phase_c3_format_prd_display_payload(
+                    prd_path=str(prd_path),
+                )
+            )
+        self.assertEqual(payload["state_id"], "prd_ready")
+        self.assertTrue(payload["ready_to_run"])
+        self.assertEqual(
+            payload["prd_title"], "Test Project",
+        )
+        self.assertEqual(
+            payload["prd_summary_preview"], "Test summary.",
+        )
+        self.assertEqual(
+            payload["attribution_tag"], "[prd-intake]",
+        )
+
+    def test_valid_prd_bounds_preview_when_summary_long(
+        self,
+    ) -> None:
+        long_summary = "y" * 500
+        with TemporaryDirectory() as td:
+            prd_path = self._write_prd(
+                Path(td), summary=long_summary,
+            )
+            payload = (
+                agent_loop
+                ._fix_phase_c3_format_prd_display_payload(
+                    prd_path=str(prd_path),
+                )
+            )
+        self.assertLessEqual(
+            len(payload["prd_summary_preview"]),
+            agent_loop.FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS,
+        )
+        self.assertNotEqual(
+            payload["prd_summary_preview"], long_summary,
+        )
+
+    def test_none_path_refuses_fail_closed(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_prd_display_payload(
+                    prd_path=None,
+                )
+            )
+
+    def test_empty_path_refuses_fail_closed(self) -> None:
+        for bad in ("", "   "):
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=bad,
+                    )
+                )
+
+    def test_nonexistent_path_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            missing = str(Path(td) / "missing.json")
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=missing,
+                    )
+                )
+
+    def test_non_json_file_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            bad = Path(td) / "not-json.json"
+            bad.write_text(
+                "this is not valid JSON",
+                encoding="utf-8",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=str(bad),
+                    )
+                )
+
+    def test_missing_prd_kind_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            bad = Path(td) / "no-kind.json"
+            bad.write_text(
+                json.dumps({
+                    "title": "T", "summary": "S",
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=str(bad),
+                    )
+                )
+
+    def test_missing_title_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            bad = Path(td) / "no-title.json"
+            bad.write_text(
+                json.dumps({
+                    "prd_kind": "product_brief",
+                    "summary": "S",
+                }),
+                encoding="utf-8",
+            )
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=str(bad),
+                    )
+                )
+
+    def test_directory_path_refuses_fail_closed(self) -> None:
+        with TemporaryDirectory() as td:
+            with self.assertRaises(agent_loop.HaltError):
+                (
+                    agent_loop
+                    ._fix_phase_c3_format_prd_display_payload(
+                        prd_path=td,
+                    )
+                )
+
+
+class FixPhaseC3AuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c3_format_audit_line(
+                state_id="prd_ready",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[desktop-first-run-prd]", line)
+        self.assertIn(
+            "signal_version='fix-phase-c3-v1'", line,
+        )
+        self.assertIn("state_id='prd_ready'", line)
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal_invalid_content(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c3_format_audit_line(
+                state_id="prd_invalid",
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_invalid_prd_content"
+                ),
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_invalid_prd_content'",
+            line,
+        )
+
+    def test_line_shape_cancellation(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c3_format_audit_line(
+                state_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="cancelled_prd_picker",
+            )
+        )
+        self.assertIn(
+            "refusal_category='cancelled_prd_picker'", line,
+        )
+        self.assertIn("state_id=None", line)
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_audit_line(
+                    state_id=None,
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_unknown_state_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_audit_line(
+                    state_id="invented_state",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c3_format_audit_line(
+                    state_id="prd_ready",
+                    epoch_seconds="not int",
+                )
+            )
+
+
+class FixPhaseC3TkWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the Fix Phase C3
+    PRD section wired into `_launch_desktop_app_window(...)`.
+    Would fail loudly if a future refactor:
+      - drops the PRD section entirely
+      - hides the section behind the Advanced toggle
+      - reintroduces raw CLI/parser vocabulary in the default
+        surface
+      - drops the audit-line emit on success, refusal, or
+        cancellation
+      - starts a background thread / timer / watcher
+      - persists the picked PRD path across sessions
+      - dumps the full PRD body into the default surface
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_prd_section_labelframe_is_visible_by_default(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c3_prd_frame = tk.LabelFrame(",
+            self._source,
+        )
+        self.assertIn('text="PRD"', self._source)
+        # Regression pin: MUST NOT be appended to
+        # advanced_frames_holder (that would hide it behind
+        # the Advanced toggle and defeat the C1 ordered
+        # section vocabulary).
+        self.assertNotIn(
+            "advanced_frames_holder.append("
+            "fix_phase_c3_prd_frame",
+            self._source,
+        )
+
+    def test_prd_section_calls_shipped_file_picker(self) -> None:
+        self.assertIn(
+            "_filedialog.askopenfilename(", self._source,
+        )
+
+    def test_prd_section_calls_c3_payload_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_format_prd_display_payload(",
+            self._source,
+        )
+
+    def test_prd_section_calls_c3_audit_line_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_format_audit_line(", self._source,
+        )
+
+    def test_prd_section_writes_audit_via_shipped_log_note(
+        self,
+    ) -> None:
+        self.assertIn("_log_note(", self._source)
+
+    def test_picker_cancel_emits_cancellation_audit(
+        self,
+    ) -> None:
+        # Regression pin: the `not chosen:` branch of the PRD
+        # picker callback MUST emit the closed cancellation
+        # audit line.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if not chosen:", 1,
+        )[1].split("try:", 1)[0]
+        self.assertIn(
+            "_fix_phase_c3_emit_audit(", cancel_branch,
+        )
+        self.assertIn(
+            "FIX_PHASE_C3_CANCELLATION_PICKER", cancel_branch,
+        )
+
+    def test_picker_cancel_preserves_current_payload(
+        self,
+    ) -> None:
+        # Regression pin: cancellation MUST NOT re-render the
+        # payload, re-classify, or clear the current display.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        cancel_branch = callback_body.split(
+            "if not chosen:", 1,
+        )[1].split("try:", 1)[0]
+        for forbidden in (
+            "_fix_phase_c3_render_payload(",
+            "_fix_phase_c3_format_prd_display_payload(",
+            "_fix_phase_c3_format_no_prd_display_payload(",
+            "_fix_phase_c3_format_invalid_payload(",
+        ):
+            self.assertNotIn(
+                forbidden, cancel_branch, forbidden,
+            )
+
+    def test_prd_section_does_not_start_background_thread(
+        self,
+    ) -> None:
+        prd_body = self._source.split(
+            "fix_phase_c3_prd_frame = tk.LabelFrame(", 1,
+        )[1].split(
+            "# Advanced panels toggle.", 1,
+        )[0]
+        for forbidden in (
+            "threading.Thread", "Timer(",
+            "threading.Timer", "asyncio.",
+            "root.after(",
+        ):
+            self.assertNotIn(
+                forbidden, prd_body, forbidden,
+            )
+
+    def test_prd_section_does_not_persist_chosen_prd_path(
+        self,
+    ) -> None:
+        # Regression pin: the Fix Phase C1 contract forbids a
+        # cross-session cache. The PRD callback MUST NOT write
+        # the picked path or the loaded PRD content anywhere.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        for forbidden in (
+            "write_text(chosen",
+            "with open(chosen",
+        ):
+            self.assertNotIn(
+                forbidden, callback_body, forbidden,
+            )
+
+    def test_display_map_never_leaks_raw_runtime_tokens(
+        self,
+    ) -> None:
+        # Regression pin per the shipped Fix Phase C1 contract's
+        # `## Advanced Detail Hiding Rules`: the default surface
+        # MUST NOT expose raw CLI subcommand names, canonical
+        # paths, parser tokens, or refusal-token vocabulary.
+        forbidden_substrings = (
+            "attach-external-target", "loop-state.json",
+            "halted_", "awaiting_",
+            "APPROVED_FOR_", "NEEDS_FIXES",
+            "_load_prd_intake_input",
+            "_validate_prd_intake_common",
+            "prd_kind", "PRD_INTAKE_KIND",
+        )
+        display_map = (
+            agent_loop.FIX_PHASE_C3_STATE_DISPLAY_MAP
+        )
+        for sid, entry in display_map.items():
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{sid}.{field}: raw runtime token "
+                        f"{token!r} leaked into plain-English "
+                        f"display",
+                    )
+
+
+class FixPhaseC3FixCycleIssue1TransitionTests(unittest.TestCase):
+    """Regression pin for the Fix Phase C3 fix cycle Issue 1:
+    a successful Fix Phase C2 folder-selection MUST transition
+    the C3 PRD panel to `prd_missing_after_project` when the
+    current PRD state is `no_prd_selected`, and MUST preserve a
+    `prd_ready` state if the operator already picked a valid
+    PRD earlier in the session. Source-inspection pin: the
+    behavior lives inside a Tk-closure so pure execution here
+    would require a full Tk root.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        # Slice out the shipped Fix Phase C2 callback body so
+        # assertions target only the C2 success path (not the
+        # C3 callback that also calls the missing-payload
+        # formatter conditionally).
+        c2_body = self._source.split(
+            "def _fix_phase_c2_choose_folder_click", 1,
+        )[1].split("def ", 1)[0]
+        # The successful branch is everything AFTER the last
+        # `_fix_phase_c2_render_payload(payload)` call in the
+        # C2 callback body.
+        self._c2_success_branch = c2_body.rsplit(
+            "_fix_phase_c2_render_payload(payload)", 1,
+        )[1]
+
+    def test_state_holder_is_declared_and_initialized(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c3_current_state_holder = [",
+            self._source,
+        )
+        self.assertIn(
+            "FIX_PHASE_C3_STATE_NO_PRD_SELECTED",
+            self._source,
+        )
+
+    def test_c2_success_path_reads_c3_state_holder(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c3_current_state_holder[0]",
+            self._c2_success_branch,
+        )
+        self.assertIn(
+            "FIX_PHASE_C3_STATE_NO_PRD_SELECTED",
+            self._c2_success_branch,
+        )
+
+    def test_c2_success_path_calls_missing_after_project(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_format_missing_after_project_payload"
+            "(",
+            self._c2_success_branch,
+        )
+
+    def test_c2_success_path_renders_and_audits_c3_transition(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c3_render_payload(",
+            self._c2_success_branch,
+        )
+        self.assertIn(
+            "_fix_phase_c3_emit_audit(",
+            self._c2_success_branch,
+        )
+
+    def test_c2_success_path_does_not_auto_start(
+        self,
+    ) -> None:
+        # Fix Phase C1 no-auto-advance rule: the transition MUST
+        # NOT auto-attach, bootstrap, start, or advance the
+        # agent.
+        for forbidden in (
+            "attach_external_target(",
+            "bootstrap=True",
+            "start_agent(",
+            "run(",
+        ):
+            self.assertNotIn(
+                forbidden, self._c2_success_branch, forbidden,
+            )
+
+    def test_render_updates_state_holder(self) -> None:
+        # The render callback MUST update the state holder so a
+        # later C2 gesture sees the latest C3 state.
+        render_body = self._source.split(
+            "def _fix_phase_c3_render_payload", 1,
+        )[1].split("def ", 1)[0]
+        self.assertIn(
+            "fix_phase_c3_current_state_holder[0] "
+            "= payload[\"state_id\"]",
+            render_body,
+        )
+
+
+class FixPhaseC3FixCycleIssue2DefaultSurfaceTests(
+    unittest.TestCase,
+):
+    """Regression pin for the Fix Phase C3 fix cycle Issue 2:
+    the default rendered PRD surface MUST NOT expose the
+    resolved absolute path, raw parser tokens, or raw shipped
+    Phase 9B validator reasons. Absolute paths and technical
+    diagnostics remain reachable ONLY through the shipped audit
+    evidence path (`.agent-loop/orchestrator.log`).
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._render_body = self._source.split(
+            "def _fix_phase_c3_render_payload", 1,
+        )[1].split("def ", 1)[0]
+
+    def test_render_uses_filename_only(self) -> None:
+        # The default path Label MUST derive its text from
+        # `Path(prd_path).name` (or an equivalent filename-only
+        # selector), NOT from the resolved absolute path.
+        self.assertIn("Path(prd_path).name", self._render_body)
+
+    def test_render_does_not_display_raw_prd_file_prefix(
+        self,
+    ) -> None:
+        # Regression pin: the shipped "PRD file: {prd_path}"
+        # template that leaked the absolute path is gone.
+        self.assertNotIn(
+            'f"PRD file: {prd_path}"', self._render_body,
+        )
+        self.assertNotIn(
+            "PRD file: {prd_path}", self._render_body,
+        )
+
+    def test_callback_passes_reason_category_not_raw_reason(
+        self,
+    ) -> None:
+        # Regression pin: the PRD picker's HaltError branch
+        # MUST pass `reason_category=` to the invalid-payload
+        # formatter, NOT the raw `halt.reason`.
+        callback_body = self._source.split(
+            "def _fix_phase_c3_choose_prd_click", 1,
+        )[1].split("def ", 1)[0]
+        halt_branch = callback_body.split(
+            "except HaltError", 1,
+        )[1]
+        self.assertIn(
+            "reason_category=", halt_branch,
+        )
+        self.assertNotIn(
+            "plain_english_reason=halt.reason", halt_branch,
+        )
+        self.assertNotIn(
+            "plain_english_reason=halt", halt_branch,
+        )
+
+    def test_invalid_reason_copy_map_covers_both_refusal_categories(
+        self,
+    ) -> None:
+        copy_map = (
+            agent_loop.FIX_PHASE_C3_INVALID_REASON_COPY_MAP
+        )
+        for category in (
+            "refused_invalid_prd_path",
+            "refused_invalid_prd_content",
+        ):
+            self.assertIn(category, copy_map, category)
+            self.assertIsInstance(copy_map[category], str)
+            self.assertTrue(copy_map[category].strip(), category)
+
+    def test_default_copy_never_leaks_raw_diagnostics(
+        self,
+    ) -> None:
+        # The shipped bounded-copy map and default copy MUST NOT
+        # contain parser tokens or path-shaped tokens.
+        strings = list(
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_COPY_MAP.values()
+        )
+        strings.append(
+            agent_loop
+            .FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY
+        )
+        for text in strings:
+            for forbidden in (
+                "HaltError", "halted_",
+                "prd_kind", "PRD_INTAKE_KIND",
+                "_load_prd_intake_input",
+                "_validate_prd_intake_common",
+                ".json",
+                "/",
+                "\\",
+            ):
+                self.assertNotIn(
+                    forbidden, text,
+                    f"raw diagnostic token {forbidden!r} "
+                    f"leaked into bounded copy: {text!r}",
+                )
+
+
+class FixPhaseC4ConstantsTests(unittest.TestCase):
+    """Pin the shipped Fix Phase C4 closed vocabularies."""
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_SIGNAL_VERSION,
+            "fix-phase-c4-v1",
+        )
+
+    def test_three_choice_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_CHOICE_IDS,
+            (
+                "guided",
+                "review_each_phase",
+                "more_autonomous",
+            ),
+        )
+
+    def test_choice_display_map_covers_every_choice(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C4_CHOICE_DISPLAY_MAP.keys()
+            ),
+            set(agent_loop.FIX_PHASE_C4_CHOICE_IDS),
+        )
+        for cid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+            ):
+                self.assertIn(field, entry, f"{cid}.{field}")
+
+    def test_three_state_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_STATE_IDS,
+            (
+                "initial_no_selection",
+                "mode_selected",
+                "canonical_source_unavailable",
+            ),
+        )
+
+    def test_state_display_map_covers_every_state(self) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C4_STATE_DISPLAY_MAP.keys()
+            ),
+            set(agent_loop.FIX_PHASE_C4_STATE_IDS),
+        )
+        for sid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_STATE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+                "ready_to_run",
+            ):
+                self.assertIn(field, entry, f"{sid}.{field}")
+
+    def test_only_mode_selected_is_ready_to_run(self) -> None:
+        display_map = (
+            agent_loop.FIX_PHASE_C4_STATE_DISPLAY_MAP
+        )
+        for sid, entry in display_map.items():
+            if sid == "mode_selected":
+                self.assertTrue(entry["ready_to_run"], sid)
+            else:
+                self.assertFalse(entry["ready_to_run"], sid)
+
+    def test_three_refusal_categories(self) -> None:
+        self.assertEqual(
+            len(agent_loop.FIX_PHASE_C4_REFUSAL_CATEGORIES),
+            3,
+        )
+        for category in (
+            "refused_invalid_choice",
+            "refused_canonical_source_unreadable",
+            "cancelled_mode_selection",
+        ):
+            self.assertIn(
+                category,
+                agent_loop.FIX_PHASE_C4_REFUSAL_CATEGORIES,
+            )
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C4_ATTRIBUTION,
+            "[run-mode-intake]",
+        )
+
+
+class FixPhaseC4BridgeMappingTests(unittest.TestCase):
+    """Pin the bounded bridge from C4 plain-English choices to
+    shipped Phase 5A approval modes and shipped Phase 10Q
+    affordance ids. The bridge exists SO the C4 selector never
+    invents a new approval semantic and never persists a mode
+    outside the shipped canonical loop-state.json path.
+    """
+
+    def test_choice_to_approval_mode_map_covers_every_choice(
+        self,
+    ) -> None:
+        self.assertEqual(
+            set(
+                agent_loop
+                .FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP
+                .keys()
+            ),
+            set(agent_loop.FIX_PHASE_C4_CHOICE_IDS),
+        )
+
+    def test_choice_to_approval_mode_values_are_shipped_modes(
+        self,
+    ) -> None:
+        # Every mapped approval-mode MUST be in the shipped
+        # Phase 5A closed enumeration; the C4 selector NEVER
+        # invents a new semantic.
+        for value in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP.values()
+        ):
+            self.assertIn(
+                value, agent_loop.ALLOWED_APPROVAL_MODES,
+            )
+
+    def test_choice_to_approval_mode_bridge_is_specific(
+        self,
+    ) -> None:
+        # Pin exact plain-English -> shipped-mode mapping so a
+        # future refactor cannot silently redirect "Guided" to
+        # `autonomous` (or any other autonomy-widening move).
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_approval_mode(
+                "guided",
+            ),
+            agent_loop.APPROVAL_MODE_STRICT,
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_approval_mode(
+                "review_each_phase",
+            ),
+            agent_loop.APPROVAL_MODE_REVIEW,
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_approval_mode(
+                "more_autonomous",
+            ),
+            agent_loop.APPROVAL_MODE_AUTONOMOUS,
+        )
+
+    def test_choice_to_affordance_id_bridge_is_specific(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_affordance_id(
+                "guided",
+            ),
+            "select_approval_mode_strict",
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_affordance_id(
+                "review_each_phase",
+            ),
+            "select_approval_mode_review",
+        )
+        self.assertEqual(
+            agent_loop
+            ._fix_phase_c4_map_choice_to_affordance_id(
+                "more_autonomous",
+            ),
+            "select_approval_mode_autonomous",
+        )
+
+    def test_choice_to_affordance_ids_are_shipped(
+        self,
+    ) -> None:
+        for affordance_id in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP.values()
+        ):
+            self.assertIn(
+                affordance_id,
+                agent_loop.DESKTOP_RUN_PROFILE_AFFORDANCE_IDS,
+            )
+
+    def test_map_refuses_invented_choice_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c4_map_choice_to_approval_mode(
+                "invented",
+            )
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_map_choice_to_affordance_id(
+                    "invented",
+                )
+            )
+
+
+class FixPhaseC4PayloadFormattersTests(unittest.TestCase):
+
+    def test_initial_payload_shape_with_no_canonical_mode(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_initial_payload(
+                current_canonical_mode=None,
+            )
+        )
+        self.assertEqual(
+            payload["state_id"], "initial_no_selection",
+        )
+        self.assertIsNone(payload["selected_choice_id"])
+        self.assertEqual(
+            payload["current_canonical_mode_display"],
+            "Not set",
+        )
+        self.assertFalse(payload["ready_to_run"])
+        self.assertEqual(
+            payload["attribution_tag"], "[run-mode-intake]",
+        )
+
+    def test_initial_payload_shape_with_shipped_canonical_mode(
+        self,
+    ) -> None:
+        # The canonical value flows through the shipped Phase
+        # 5A -> C4 bridge and yields a plain-English label
+        # (never the raw shipped mode name).
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_initial_payload(
+                current_canonical_mode=(
+                    agent_loop.APPROVAL_MODE_STRICT
+                ),
+            )
+        )
+        self.assertEqual(
+            payload["current_canonical_mode_display"],
+            "Guided (recommended)",
+        )
+        # No raw shipped mode name leaks into the plain-English
+        # rendering of the current canonical mode.
+        for token in ("strict", "review", "autonomous"):
+            self.assertNotIn(
+                token,
+                payload[
+                    "current_canonical_mode_display"
+                ].lower().split("(", 1)[0],
+                token,
+            )
+
+    def test_selected_payload_shape(self) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_selected_payload(
+                choice_id="review_each_phase",
+                current_canonical_mode=(
+                    agent_loop.APPROVAL_MODE_REVIEW
+                ),
+            )
+        )
+        self.assertEqual(
+            payload["state_id"], "mode_selected",
+        )
+        self.assertEqual(
+            payload["selected_choice_id"],
+            "review_each_phase",
+        )
+        self.assertEqual(
+            payload["selected_display_label"],
+            "Review Each Phase",
+        )
+        self.assertTrue(payload["ready_to_run"])
+
+    def test_selected_payload_refuses_invalid_choice(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_selected_payload(
+                    choice_id="invented",
+                    current_canonical_mode=None,
+                )
+            )
+
+    def test_canonical_source_unavailable_payload_shape(
+        self,
+    ) -> None:
+        payload = (
+            agent_loop
+            ._fix_phase_c4_format_canonical_source_unavailable_payload()
+        )
+        self.assertEqual(
+            payload["state_id"],
+            "canonical_source_unavailable",
+        )
+        self.assertIsNone(payload["selected_choice_id"])
+        self.assertEqual(
+            payload["current_canonical_mode_display"],
+            "Not available",
+        )
+        self.assertFalse(payload["ready_to_run"])
+
+    def test_derive_plain_english_current_mode_refuses_unknown(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_plain_english_current_mode(
+                    "not_a_shipped_mode",
+                )
+            )
+
+    def test_display_map_never_leaks_raw_runtime_tokens(
+        self,
+    ) -> None:
+        # Fix Phase C1 Advanced-detail hiding: the default
+        # surface MUST NOT expose raw shipped CLI subcommand
+        # names, raw canonical artifact paths, raw shipped
+        # halt-status names, or raw shipped identifier tokens.
+        # (The plain-English words "review" / "guided" /
+        # "autonomous" appearing as natural English inside
+        # sentences are permitted; the shipped mode NAMES like
+        # `approval_mode: strict` are what the C1 rules forbid.)
+        forbidden_substrings = (
+            "loop-state.json", "proposed-phase.md",
+            "attach-external-target",
+            "halted_", "awaiting_",
+            "APPROVED_FOR_", "NEEDS_FIXES",
+            "approval_mode",
+            "python scripts/agent_loop.py",
+        )
+        for cid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_CHOICE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{cid}.{field}: raw runtime token "
+                        f"{token!r} leaked",
+                    )
+        for sid, entry in (
+            agent_loop
+            .FIX_PHASE_C4_STATE_DISPLAY_MAP.items()
+        ):
+            for field in (
+                "display_label", "plain_english_summary",
+                "next_action_label", "next_action_help",
+            ):
+                text = entry[field]
+                for token in forbidden_substrings:
+                    self.assertNotIn(
+                        token, text,
+                        f"{sid}.{field}: raw runtime token "
+                        f"{token!r} leaked",
+                    )
+
+
+class FixPhaseC4ClipboardPayloadDerivationTests(
+    unittest.TestCase,
+):
+    """Pin the wiring from a C4 choice + a shipped Phase 10Q
+    view to the shipped affordance's clipboard payload. The C4
+    selector NEVER duplicates the shipped clipboard payload; it
+    looks it up by affordance id from the shipped view.
+    """
+
+    def _real_view(self, td):
+        (Path(td) / ".agent-loop").mkdir()
+        return agent_loop.build_desktop_run_profiles_view(
+            Path(td),
+        )
+
+    def test_derives_clipboard_payload_from_shipped_view(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            view = self._real_view(td)
+        payload = (
+            agent_loop
+            ._fix_phase_c4_derive_clipboard_payload_from_view(
+                choice_id="guided",
+                run_profiles_view=view,
+            )
+        )
+        self.assertIn("plan", payload)
+        self.assertIn("activate", payload)
+        # The clipboard payload for guided points to the
+        # shipped strict affordance (per the C4 bridge).
+        self.assertIn("strict", payload)
+
+    def test_refuses_non_dict_view(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="guided",
+                    run_profiles_view=None,
+                )
+            )
+
+    def test_refuses_view_missing_affordances(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="guided",
+                    run_profiles_view={"affordances": None},
+                )
+            )
+
+    def test_refuses_view_missing_target_affordance(
+        self,
+    ) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="guided",
+                    run_profiles_view={"affordances": []},
+                )
+            )
+
+    def test_refuses_invalid_choice_id(self) -> None:
+        with TemporaryDirectory() as td:
+            view = self._real_view(td)
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id="invented",
+                    run_profiles_view=view,
+                )
+            )
+
+
+class FixPhaseC4AuditLineTests(unittest.TestCase):
+
+    def test_line_shape_success(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id="mode_selected",
+                choice_id="guided",
+                epoch_seconds=1700000000,
+            )
+        )
+        self.assertIn("[run-mode-intake]", line)
+        self.assertIn(
+            "signal_version='fix-phase-c4-v1'", line,
+        )
+        self.assertIn("state_id='mode_selected'", line)
+        self.assertIn("choice_id='guided'", line)
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_line_shape_refusal_invalid_choice(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id=None,
+                choice_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="refused_invalid_choice",
+            )
+        )
+        self.assertIn(
+            "refusal_category='refused_invalid_choice'", line,
+        )
+
+    def test_line_shape_canonical_source_unavailable(
+        self,
+    ) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id="canonical_source_unavailable",
+                choice_id="guided",
+                epoch_seconds=1700000000,
+                refusal_category=(
+                    "refused_canonical_source_unreadable"
+                ),
+            )
+        )
+        self.assertIn(
+            "state_id='canonical_source_unavailable'", line,
+        )
+        self.assertIn(
+            "refusal_category='refused_canonical_source_"
+            "unreadable'",
+            line,
+        )
+
+    def test_line_shape_cancellation(self) -> None:
+        line = (
+            agent_loop
+            ._fix_phase_c4_format_audit_line(
+                state_id=None,
+                choice_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="cancelled_mode_selection",
+            )
+        )
+        self.assertIn(
+            "refusal_category='cancelled_mode_selection'",
+            line,
+        )
+
+    def test_refuses_unknown_refusal_category(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id=None,
+                    choice_id=None,
+                    epoch_seconds=1700000000,
+                    refusal_category="invented",
+                )
+            )
+
+    def test_refuses_unknown_state_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id="invented_state",
+                    choice_id="guided",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_unknown_choice_id(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id="mode_selected",
+                    choice_id="invented",
+                    epoch_seconds=1700000000,
+                )
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            (
+                agent_loop
+                ._fix_phase_c4_format_audit_line(
+                    state_id=None,
+                    choice_id=None,
+                    epoch_seconds="not int",
+                )
+            )
+
+
+class FixPhaseC4TkWiringTests(unittest.TestCase):
+    """Source-inspection regression pin for the Fix Phase C4
+    Run Mode panel wired into `_launch_desktop_app_window(...)`.
+    Would fail loudly if a future refactor:
+      - drops the Run Mode section entirely
+      - hides the section behind the Advanced toggle
+      - reintroduces raw approval-mode names in the default
+        surface
+      - drops the audit-line emit on success or refusal
+      - starts a background thread / timer / watcher
+      - persists the selection to a UI-only settings file
+      - directly writes the canonical loop-state.json
+      - auto-attaches / bootstraps / starts / advances the agent
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._c4_section = self._source.split(
+            "# Fix Phase C4: bounded guided Run Mode section",
+            1,
+        )[1].split(
+            "# Advanced panels toggle.", 1,
+        )[0]
+
+    def test_run_mode_labelframe_is_visible_by_default(
+        self,
+    ) -> None:
+        self.assertIn(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+            self._c4_section,
+        )
+        self.assertIn('text="Run Mode"', self._c4_section)
+        # Regression pin: MUST NOT be appended to
+        # advanced_frames_holder.
+        self.assertNotIn(
+            "advanced_frames_holder.append("
+            "fix_phase_c4_run_mode_frame",
+            self._source,
+        )
+
+    def test_run_mode_calls_c4_payload_formatters(
+        self,
+    ) -> None:
+        for formatter in (
+            "_fix_phase_c4_format_initial_payload(",
+            "_fix_phase_c4_format_selected_payload(",
+            (
+                "_fix_phase_c4_format_canonical_source_"
+                "unavailable_payload("
+            ),
+        ):
+            self.assertIn(formatter, self._c4_section, formatter)
+
+    def test_run_mode_calls_c4_audit_line_formatter(
+        self,
+    ) -> None:
+        self.assertIn(
+            "_fix_phase_c4_format_audit_line(",
+            self._c4_section,
+        )
+
+    def test_run_mode_reads_shipped_run_profiles_view(
+        self,
+    ) -> None:
+        # Regression pin per the fix-prompt "make the selected
+        # mode observable through the existing canonical
+        # runtime configuration/state path" requirement: the
+        # C4 section MUST route through the shipped Phase 10Q
+        # view (which itself reads `.agent-loop/loop-state.
+        # json`), NOT a UI-only settings file.
+        self.assertIn(
+            "build_desktop_run_profiles_view(",
+            self._c4_section,
+        )
+
+    def test_run_mode_writes_audit_via_shipped_log_note(
+        self,
+    ) -> None:
+        self.assertIn("_log_note(", self._c4_section)
+
+    def test_run_mode_does_not_start_background_thread(
+        self,
+    ) -> None:
+        for forbidden in (
+            "threading.Thread", "Timer(",
+            "threading.Timer", "asyncio.",
+            "root.after(",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+    def test_run_mode_does_not_directly_write_canonical(
+        self,
+    ) -> None:
+        # Regression pin: the C4 selector MUST NOT write
+        # `.agent-loop/loop-state.json` or
+        # `.agent-loop/proposed-phase.md` directly. The
+        # operator applies the change through the shipped
+        # affordance recipe.
+        for forbidden in (
+            "write_loop_state(",
+            "write_text(loop_state",
+            'open(".agent-loop/loop-state.json"',
+            'open(".agent-loop/proposed-phase.md"',
+            "attach_external_target(",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+    def test_run_mode_does_not_auto_start_or_advance(
+        self,
+    ) -> None:
+        # Fix Phase C1 no-auto-advance rule: selecting a mode
+        # MUST NOT auto-attach, bootstrap, start, or advance
+        # the agent.
+        for forbidden in (
+            "bootstrap=True",
+            "_run_normal_cycle_from_increment(",
+            "subprocess.",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+    def test_run_mode_does_not_persist_selection_in_ui_only_file(
+        self,
+    ) -> None:
+        # Regression pin: no UI-only settings file / preference
+        # cache / recent-mode list per the prompt's explicit
+        # forbid list.
+        for forbidden in (
+            "settings.json",
+            "preferences.json",
+            "run-mode-cache",
+            "recent_modes",
+        ):
+            self.assertNotIn(
+                forbidden, self._c4_section, forbidden,
+            )
+
+
+class FixPhaseC4RunModeSectionOrderTests(unittest.TestCase):
+    """Regression pin for the shipped Fix Phase C1 ordered top-
+    level section vocabulary (Project -> PRD -> Run Mode -> Run
+    -> Progress). The Run Mode LabelFrame MUST be constructed
+    AFTER the PRD LabelFrame and BEFORE the Advanced toggle.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+
+    def test_project_prd_runmode_are_in_order(self) -> None:
+        idx_project = self._source.find(
+            "fix_phase_c2_project_frame = tk.LabelFrame(",
+        )
+        idx_prd = self._source.find(
+            "fix_phase_c3_prd_frame = tk.LabelFrame(",
+        )
+        idx_run_mode = self._source.find(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+        )
+        self.assertGreater(idx_project, -1, "Project frame")
+        self.assertGreater(idx_prd, -1, "PRD frame")
+        self.assertGreater(idx_run_mode, -1, "Run Mode frame")
+        self.assertLess(idx_project, idx_prd)
+        self.assertLess(idx_prd, idx_run_mode)
+
+    def test_run_mode_frame_precedes_advanced_toggle(
+        self,
+    ) -> None:
+        idx_run_mode = self._source.find(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+        )
+        idx_advanced = self._source.find(
+            "# Advanced panels toggle.",
+        )
+        self.assertGreater(idx_run_mode, -1)
+        self.assertGreater(idx_advanced, -1)
+        self.assertLess(idx_run_mode, idx_advanced)
+
+
 if __name__ == "__main__":
     unittest.main()

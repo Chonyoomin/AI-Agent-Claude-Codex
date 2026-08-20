@@ -15375,6 +15375,1280 @@ def _primary_desktop_classify_folder_for_ux(
     return classify_pre_bootstrap_target_state(resolved)
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase C2: Project Folder Picker And Classification Surface.
+#
+# First bounded runtime slice under the shipped Fix Phase C1
+# `docs/desktop-first-run-setup-contract.md` contract. Adds the
+# guided single-user `Project` section that lets a non-technical
+# local operator pick a project folder and see the shipped Fix
+# Phase B1 folder classification surfaced as plain-English
+# labels + a plain-English next-action hint.
+#
+# NON-goals for this initial slice (per the Fix Phase C1 contract's
+# Out Of Scope + the Fix Phase C2 prompt's Constraints):
+#   - no PRD selection, no run-mode selector, no Start/Stop, no
+#     run console (deferred to Fix Phase C3 through C8)
+#   - no silent bootstrap dispatch on folder selection (the shipped
+#     Fix Phase B3 bootstrap dispatcher remains the sole path)
+#   - no UI-only cache of the selected folder path across sessions
+#   - no auto-fill of the folder path from OS state
+#   - no new library-callable control (Phase 10I three-control cap
+#     preserved)
+#   - no new canonical artifact
+#   - no background watcher; the panel refreshes ONLY on the
+#     explicit operator Choose-Folder gesture
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C2_SIGNAL_VERSION = "fix-phase-c2-v1"
+
+# Closed four-classification vocabulary matching the Fix Phase C1
+# contract's `## Top-Level Section Vocabulary` `Project` section
+# verbatim. Each id maps to a shipped Fix Phase B1
+# `PRIMARY_DESKTOP_FOLDER_UX_MODES` value via
+# `FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP` below.
+FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT = (
+    "existing_project"
+)
+FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER = "empty_folder"
+FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET = "partial_target"
+FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET = (
+    "malformed_target"
+)
+FIX_PHASE_C2_CLASSIFICATION_IDS = (
+    FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT,
+    FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER,
+    FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET,
+    FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET,
+)
+
+# Bridge from the shipped Fix Phase B1
+# `PRIMARY_DESKTOP_FOLDER_UX_MODES` closed vocabulary into the
+# plain-English Fix Phase C1 classification vocabulary. The
+# desktop UI MUST NOT duplicate the shipped classification
+# logic; every branch routes through this map.
+FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP = {
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_ATTACH_EXISTING: (
+        FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT
+    ),
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_BOOTSTRAP_NEW: (
+        FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER
+    ),
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_PARTIAL: (
+        FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET
+    ),
+    PRIMARY_DESKTOP_FOLDER_UX_MODE_REFUSED_MALFORMED: (
+        FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET
+    ),
+}
+
+# Per-classification plain-English display map. The desktop UI
+# renders these fields verbatim; NO raw shipped runtime
+# vocabulary is exposed in the default (non-Advanced) surface
+# per the Fix Phase C1 contract's `## Advanced Detail Hiding
+# Rules` section. Adding a classification to
+# `FIX_PHASE_C2_CLASSIFICATION_IDS` above also requires an
+# entry here or the shipped payload formatter refuses fail-
+# closed.
+FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP = {
+    FIX_PHASE_C2_CLASSIFICATION_EXISTING_PROJECT: {
+        "display_label": "Existing project",
+        "plain_english_summary": (
+            "This folder already has a project set up. "
+            "You can attach it to run the agent."
+        ),
+        "next_action_label": "Attach this project",
+        "next_action_help": (
+            "Use the shipped attach command to record this "
+            "folder as the active project. This step is "
+            "guided and does not modify the folder."
+        ),
+        "ready_to_run": True,
+    },
+    FIX_PHASE_C2_CLASSIFICATION_EMPTY_FOLDER: {
+        "display_label": "Empty folder",
+        "plain_english_summary": (
+            "This folder is empty. You can set it up as a "
+            "brand-new project."
+        ),
+        "next_action_label": "Set up a new project here",
+        "next_action_help": (
+            "The guided setup form will ask for your name, "
+            "your project objective, and your run preferences "
+            "before creating a new project in this folder."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C2_CLASSIFICATION_PARTIAL_TARGET: {
+        "display_label": "Partial setup detected",
+        "plain_english_summary": (
+            "This folder has some project setup files but "
+            "not all of them. It is not safe to attach or "
+            "set up until it is cleaned up."
+        ),
+        "next_action_label": "Clean up before continuing",
+        "next_action_help": (
+            "Either finish the setup by hand, delete the "
+            "partial setup files so the folder is empty, or "
+            "choose a different folder."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C2_CLASSIFICATION_MALFORMED_TARGET: {
+        "display_label": "Setup file needs repair",
+        "plain_english_summary": (
+            "This folder has a setup file that does not "
+            "match the expected shape. It is not safe to "
+            "attach or set up until the file is repaired."
+        ),
+        "next_action_label": "Repair the setup file",
+        "next_action_help": (
+            "Repair the setup file by hand or delete it so "
+            "the folder is empty, then reopen this section."
+        ),
+        "ready_to_run": False,
+    },
+}
+
+# Empty-state payload shown when the operator has not yet
+# picked a folder (session start; per the Fix Phase C1
+# contract's source-of-truth preservation rule, there is NO
+# cross-session cache of the last-picked folder).
+FIX_PHASE_C2_EMPTY_STATE_PAYLOAD = {
+    "classification_id": None,
+    "display_label": "No folder selected",
+    "plain_english_summary": (
+        "Pick a folder to see whether it is ready to attach, "
+        "ready to set up as a new project, or needs cleanup "
+        "first."
+    ),
+    "next_action_label": "Choose folder",
+    "next_action_help": (
+        "The picker opens your operating system's native "
+        "folder browser. You do not need to type a path."
+    ),
+    "target_path": None,
+    "ready_to_run": False,
+    "attribution_tag": "[project-classification]",
+}
+
+# Closed refusal vocabulary for the Fix Phase C2 folder-picker
+# surface. Every refusal MUST route through one of these
+# categories so the desktop UI can show a plain-English refusal
+# message that names the shipped rule that was violated. The
+# categories align with the Fix Phase C1 contract's `## Refusal
+# Behavior` section.
+FIX_PHASE_C2_REFUSAL_INVALID_PATH = "refused_invalid_folder_path"
+FIX_PHASE_C2_REFUSAL_UNKNOWN_UX_MODE = (
+    "refused_unknown_shipped_ux_mode"
+)
+FIX_PHASE_C2_REFUSAL_MISSING_DISPLAY_ENTRY = (
+    "refused_missing_plain_english_display_entry"
+)
+# Fix Phase C2 fix cycle Issue 2: cancellation is not a refusal
+# but is still an auditable operator gesture per the Fix Phase C1
+# contract. The `cancelled_folder_picker` category lets the
+# shipped `_fix_phase_c2_format_audit_line(...)` emit an audit
+# line whenever the operator closes the native picker without
+# choosing a folder, while preserving the current classification
+# payload unchanged.
+FIX_PHASE_C2_CANCELLATION_PICKER = "cancelled_folder_picker"
+FIX_PHASE_C2_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C2_REFUSAL_INVALID_PATH,
+    FIX_PHASE_C2_REFUSAL_UNKNOWN_UX_MODE,
+    FIX_PHASE_C2_REFUSAL_MISSING_DISPLAY_ENTRY,
+    FIX_PHASE_C2_CANCELLATION_PICKER,
+)
+
+# Attribution tag matching the Fix Phase C1 contract's
+# `[project-classification]` display convention. Every
+# displayed line in the Project section MUST carry this tag in
+# the shipped audit log.
+FIX_PHASE_C2_ATTRIBUTION = "[project-classification]"
+
+
+def _fix_phase_c2_derive_classification_from_ux_mode(
+    ux_mode: str,
+) -> str:
+    """Pure Tk-free bridge: map a shipped Fix Phase B1
+    `PRIMARY_DESKTOP_FOLDER_UX_MODES` value into the closed Fix
+    Phase C1 plain-English classification vocabulary. Refuses
+    fail-closed via HaltError on any ux_mode outside the shipped
+    closed set so a future Fix Phase B1 vocabulary widening
+    surfaces here instead of silently producing a payload with
+    no plain-English text.
+    """
+    mapping = FIX_PHASE_C2_UX_MODE_TO_CLASSIFICATION_MAP
+    if ux_mode not in mapping:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop project folder picker refused: "
+                f"shipped Fix Phase B1 UX mode {ux_mode!r} is "
+                f"not in the shipped closed vocabulary "
+                f"{PRIMARY_DESKTOP_FOLDER_UX_MODES!r}"
+            ),
+        )
+    return mapping[ux_mode]
+
+
+def _fix_phase_c2_format_no_folder_display_payload() -> dict:
+    """Return the plain-English empty-state payload the desktop
+    Project section shows on session start (no folder selected
+    yet). Returns a fresh dict copy each call so callers cannot
+    mutate the shipped constant.
+    """
+    return dict(FIX_PHASE_C2_EMPTY_STATE_PAYLOAD)
+
+
+def _fix_phase_c2_format_folder_display_payload(
+    *,
+    target_path,
+) -> dict:
+    """Pure Tk-free plain-English payload formatter for the Fix
+    Phase C2 Project section. Takes a folder path, routes it
+    through the shipped Fix Phase B1
+    `_primary_desktop_classify_folder_for_ux(...)` classifier,
+    bridges the returned shipped UX mode into the closed Fix
+    Phase C1 classification vocabulary, and returns a bounded
+    dict shaped for the desktop UI:
+
+      {
+        "classification_id": <one of FIX_PHASE_C2_CLASSIFICATION_IDS>,
+        "display_label": <plain-English label>,
+        "plain_english_summary": <plain-English 1-2 sentence>,
+        "next_action_label": <plain-English action label>,
+        "next_action_help": <plain-English action hint>,
+        "target_path": <the resolved folder path>,
+        "ready_to_run": <bool; True only for existing_project>,
+        "attribution_tag": "[project-classification]",
+      }
+
+    Refuses fail-closed via HaltError on missing / non-string /
+    empty / non-directory path with a plain-English reason the
+    desktop UI can show verbatim. Also refuses fail-closed if
+    the shipped classifier returns a UX mode outside the
+    bridge map or if the classification display map is missing
+    an entry for the derived id (both are contract-widening
+    regressions).
+    """
+    pre_bootstrap_state = (
+        _primary_desktop_classify_folder_for_ux(target_path)
+    )
+    ux_mode = _primary_desktop_derive_folder_ux_mode(
+        pre_bootstrap_state,
+    )
+    classification_id = (
+        _fix_phase_c2_derive_classification_from_ux_mode(
+            ux_mode,
+        )
+    )
+    display_map = FIX_PHASE_C2_CLASSIFICATION_DISPLAY_MAP
+    if classification_id not in display_map:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop project folder picker refused: "
+                f"classification id {classification_id!r} is "
+                f"missing a plain-English display entry"
+            ),
+        )
+    entry = display_map[classification_id]
+    return {
+        "classification_id": classification_id,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "target_path": str(Path(target_path.strip()).resolve()),
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C2_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c2_format_audit_line(
+    *,
+    classification_id,
+    epoch_seconds,
+    refusal_category=None,
+) -> str:
+    """Pure Tk-free audit-line formatter matching the shipped
+    Phase 10AG / Phase 10AI audit-line convention. The Tk
+    callback appends the returned line via the shipped
+    `_log_note(...)` writer to `.agent-loop/orchestrator.log`;
+    NEVER writes a parallel first-run-history file per the Fix
+    Phase C1 Source-Of-Truth Preservation rule.
+
+    Line shape:
+      `[desktop-first-run-project] signal_version=<version>
+       classification_id=<id|None>
+       refusal_category=<cat|None> epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in FIX_PHASE_C2_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop project folder audit refused: "
+                    f"refusal_category {refusal_category!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C2 refusal vocabulary "
+                    f"{FIX_PHASE_C2_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if classification_id is not None:
+        if (
+            classification_id
+            not in FIX_PHASE_C2_CLASSIFICATION_IDS
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop project folder audit refused: "
+                    f"classification_id {classification_id!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C1 classification vocabulary "
+                    f"{FIX_PHASE_C2_CLASSIFICATION_IDS!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop project folder audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-first-run-project] signal_version="
+        f"{FIX_PHASE_C2_SIGNAL_VERSION!r} classification_id="
+        f"{classification_id!r} refusal_category="
+        f"{refusal_category!r} epoch_seconds={epoch_seconds!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C3: PRD Intake UX.
+#
+# Second bounded runtime slice under the shipped Fix Phase C1
+# `docs/desktop-first-run-setup-contract.md` contract. Adds the
+# guided `PRD` section (second in the closed ordered top-level
+# section vocabulary) that lets a non-technical operator pick a
+# PRD file and see plain-English missing / invalid / ready
+# state + a BOUNDED preview (title + short summary excerpt)
+# without dumping the full PRD body into the default surface.
+#
+# Every classification routes through the shipped Phase 9B
+# `_load_prd_intake_input(...)` + `_validate_prd_intake_common(
+# ...)` primitives; no PRD parsing is duplicated in the UI.
+#
+# NON-goals for this slice (per the Fix Phase C1 contract's Out
+# Of Scope + the C3 prompt's Constraints):
+#   - no run-mode selection, Start / Stop, run console (C4-C8)
+#   - no PRD decomposition redesign, no re-shape of the shipped
+#     Phase 9B canonical intake path
+#   - no hidden PRD cache, staging file, or recent-file list
+#   - no UI-only settings / state plane; every visible value is
+#     derived per-gesture from the on-disk PRD file
+#   - no auto-attach / auto-bootstrap / auto-advance on PRD
+#     selection
+#   - no background watcher; refreshes ONLY on the explicit
+#     Choose-PRD or Choose-Folder gesture
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C3_SIGNAL_VERSION = "fix-phase-c3-v1"
+
+# Closed four-state vocabulary matching the C3 prompt's required
+# plain-English states verbatim: `no_prd_selected`,
+# `prd_missing_after_project`, `prd_invalid`, `prd_ready`.
+FIX_PHASE_C3_STATE_NO_PRD_SELECTED = "no_prd_selected"
+FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT = (
+    "prd_missing_after_project"
+)
+FIX_PHASE_C3_STATE_PRD_INVALID = "prd_invalid"
+FIX_PHASE_C3_STATE_PRD_READY = "prd_ready"
+FIX_PHASE_C3_STATE_IDS = (
+    FIX_PHASE_C3_STATE_NO_PRD_SELECTED,
+    FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT,
+    FIX_PHASE_C3_STATE_PRD_INVALID,
+    FIX_PHASE_C3_STATE_PRD_READY,
+)
+
+# Per-state plain-English display map. The desktop UI renders
+# these fields verbatim; NO raw shipped runtime vocabulary is
+# exposed in the default (non-Advanced) surface per the shipped
+# Fix Phase C1 contract's `## Advanced Detail Hiding Rules`
+# section. Adding a state to `FIX_PHASE_C3_STATE_IDS` above
+# also requires an entry here or the shipped payload formatter
+# refuses fail-closed.
+FIX_PHASE_C3_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C3_STATE_NO_PRD_SELECTED: {
+        "display_label": "No PRD selected",
+        "plain_english_summary": (
+            "Pick a PRD file so the agent knows what to build. "
+            "The PRD is a JSON file that describes the project "
+            "objective and requirements."
+        ),
+        "next_action_label": "Choose PRD file",
+        "next_action_help": (
+            "The picker opens your operating system's native "
+            "file browser. You do not need to type a path."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT: {
+        "display_label": "PRD required before running",
+        "plain_english_summary": (
+            "You picked a project folder, but the agent needs "
+            "a PRD before it can start. Pick a PRD file to "
+            "continue."
+        ),
+        "next_action_label": "Choose PRD file",
+        "next_action_help": (
+            "The picker opens your operating system's native "
+            "file browser. You do not need to type a path."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C3_STATE_PRD_INVALID: {
+        "display_label": "PRD file could not be read",
+        "plain_english_summary": (
+            "The picked file does not look like a valid PRD. "
+            "Fix the file or choose a different one."
+        ),
+        "next_action_label": "Choose a different PRD file",
+        "next_action_help": (
+            "A valid PRD is a small JSON file with a project "
+            "title and summary. Repair the file or pick a "
+            "different one."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C3_STATE_PRD_READY: {
+        "display_label": "PRD ready",
+        "plain_english_summary": (
+            "The PRD looks valid. You can continue to the next "
+            "setup step."
+        ),
+        "next_action_label": "Continue to run mode",
+        "next_action_help": (
+            "The next step is picking how the agent runs "
+            "(review, strict, or autonomous)."
+        ),
+        "ready_to_run": True,
+    },
+}
+
+# Empty-state payload for a session that has not yet picked a
+# PRD. Fresh dict copy per call so callers cannot mutate the
+# shipped constant.
+FIX_PHASE_C3_EMPTY_STATE_PAYLOAD = {
+    "state_id": FIX_PHASE_C3_STATE_NO_PRD_SELECTED,
+    "display_label": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["display_label"],
+    "plain_english_summary": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["plain_english_summary"],
+    "next_action_label": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["next_action_label"],
+    "next_action_help": FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+    ]["next_action_help"],
+    "prd_path": None,
+    "prd_title": None,
+    "prd_summary_preview": None,
+    "ready_to_run": False,
+    "attribution_tag": "[prd-intake]",
+}
+
+# Closed refusal + cancellation vocabulary matching the Fix Phase
+# C1 contract's `## Refusal Behavior` section. The
+# `cancelled_prd_picker` category mirrors the Fix Phase C2
+# `cancelled_folder_picker` cancellation-audit convention so
+# every first-run operator gesture stays auditable through
+# `.agent-loop/orchestrator.log`.
+FIX_PHASE_C3_REFUSAL_INVALID_PATH = (
+    "refused_invalid_prd_path"
+)
+FIX_PHASE_C3_REFUSAL_INVALID_CONTENT = (
+    "refused_invalid_prd_content"
+)
+FIX_PHASE_C3_CANCELLATION_PICKER = "cancelled_prd_picker"
+FIX_PHASE_C3_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C3_REFUSAL_INVALID_PATH,
+    FIX_PHASE_C3_REFUSAL_INVALID_CONTENT,
+    FIX_PHASE_C3_CANCELLATION_PICKER,
+)
+
+# Attribution tag matching the Fix Phase C1 contract's
+# `[prd-intake]` display convention. Every displayed line in the
+# PRD section MUST carry this tag in the shipped audit log.
+FIX_PHASE_C3_ATTRIBUTION = "[prd-intake]"
+
+# Bounded preview limits so the default surface never dumps the
+# full PRD body. The preview always identifies the PRD by its
+# `title` (unbounded from the shipped intake, but PRD titles are
+# small by construction) plus a truncated excerpt of the
+# `summary` field.
+FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS = 200
+
+# Fix Phase C3 fix cycle Issue 2: bounded actionable copy per
+# refusal category. The default PRD surface MUST NOT expose the
+# raw Phase 9B `HaltError.reason` (which can contain absolute
+# paths, parser tokens, and other implementation-level text per
+# the shipped Fix Phase C1 `## Advanced Detail Hiding Rules`).
+# Instead, the invalid-state payload maps a refusal category to
+# a bounded, plain-English "what to do next" message. Raw
+# diagnostics remain available ONLY through the shipped audit
+# evidence path (`.agent-loop/orchestrator.log`) or a future
+# Advanced surface.
+FIX_PHASE_C3_INVALID_REASON_COPY_MAP = {
+    FIX_PHASE_C3_REFUSAL_INVALID_PATH: (
+        "The chosen file could not be opened. It may have been "
+        "moved, deleted, or renamed. Pick the file again."
+    ),
+    FIX_PHASE_C3_REFUSAL_INVALID_CONTENT: (
+        "The chosen file is not a valid PRD. A valid PRD is a "
+        "small JSON file with a project title and summary."
+    ),
+}
+FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY = (
+    "The chosen file is not a valid PRD. A valid PRD is a "
+    "small JSON file with a project title and summary."
+)
+
+
+def _fix_phase_c3_format_no_prd_display_payload() -> dict:
+    """Return the plain-English empty-state payload the desktop
+    PRD section shows on session start (no PRD selected yet).
+    Returns a fresh dict copy per call so callers cannot mutate
+    the shipped constant.
+    """
+    return dict(FIX_PHASE_C3_EMPTY_STATE_PAYLOAD)
+
+
+def _fix_phase_c3_format_missing_after_project_payload() -> dict:
+    """Return the plain-English payload the desktop PRD section
+    shows once the operator has picked a project folder but has
+    not yet picked a PRD. This is the "you're not ready yet"
+    prompt, distinct from the session-start empty state so a
+    reader can see which step the operator is stuck on.
+    """
+    entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT
+    ]
+    return {
+        "state_id": FIX_PHASE_C3_STATE_PRD_MISSING_AFTER_PROJECT,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "prd_path": None,
+        "prd_title": None,
+        "prd_summary_preview": None,
+        "ready_to_run": False,
+        "attribution_tag": FIX_PHASE_C3_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c3_format_invalid_payload(
+    *, prd_path, reason_category=None,
+) -> dict:
+    """Return the plain-English `prd_invalid` payload. Called
+    from the Tk callback when the shipped intake helpers refuse
+    the picked file. Per the Fix Phase C3 fix cycle Issue 2,
+    the payload NO LONGER surfaces the raw Phase 9B
+    `HaltError.reason` (which can contain absolute paths, JSON
+    parser tokens, and other technical detail). Instead, the
+    `reason_category` argument (one of the shipped closed
+    refusal categories) selects a bounded, plain-English "what
+    to do next" copy from `FIX_PHASE_C3_INVALID_REASON_COPY_MAP`.
+    Raw diagnostics remain available ONLY through the shipped
+    `.agent-loop/orchestrator.log` audit evidence path.
+    """
+    entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_PRD_INVALID
+    ]
+    bounded_copy = (
+        FIX_PHASE_C3_INVALID_REASON_COPY_MAP.get(
+            reason_category,
+            FIX_PHASE_C3_INVALID_REASON_DEFAULT_COPY,
+        )
+    )
+    return {
+        "state_id": FIX_PHASE_C3_STATE_PRD_INVALID,
+        "display_label": entry["display_label"],
+        "plain_english_summary": (
+            f"{entry['plain_english_summary']} {bounded_copy}"
+        ),
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "prd_path": prd_path,
+        "prd_title": None,
+        "prd_summary_preview": None,
+        "ready_to_run": False,
+        "attribution_tag": FIX_PHASE_C3_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c3_bound_summary_preview(summary: str) -> str:
+    """Truncate a PRD `summary` to the bounded preview budget so
+    the default desktop surface never dumps the full PRD body.
+    Adds a single trailing ellipsis marker when truncated.
+    """
+    if not isinstance(summary, str):
+        return ""
+    if len(summary) <= FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS:
+        return summary
+    return (
+        summary[: FIX_PHASE_C3_SUMMARY_PREVIEW_MAX_CHARS - 3]
+        + "..."
+    )
+
+
+def _fix_phase_c3_format_prd_display_payload(
+    *, prd_path,
+) -> dict:
+    """Pure Tk-free plain-English payload formatter for a
+    successful PRD pick. Takes a PRD file path, routes it
+    through the shipped Phase 9B `_load_prd_intake_input(...)`
+    + `_validate_prd_intake_common(...)` primitives (NO
+    duplicated parsing), and returns the bounded ready payload
+    shaped for the desktop UI:
+
+      {
+        "state_id": "prd_ready",
+        "display_label": <plain-English label>,
+        "plain_english_summary": <plain-English 1-2 sentence>,
+        "next_action_label": <plain-English action label>,
+        "next_action_help": <plain-English action hint>,
+        "prd_path": <resolved absolute path str>,
+        "prd_title": <PRD title verbatim>,
+        "prd_summary_preview": <bounded 200-char excerpt of
+          the PRD summary>,
+        "ready_to_run": True,
+        "attribution_tag": "[prd-intake]",
+      }
+
+    Refuses fail-closed via HaltError on missing / non-string /
+    empty / non-file path OR on any shipped-intake refusal so
+    the caller can render the `prd_invalid` payload with the
+    HaltError reason surfaced verbatim.
+    """
+    if prd_path is None or not isinstance(prd_path, str):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop PRD picker refused: prd_path must be "
+                f"a non-empty str, got {prd_path!r}"
+            ),
+        )
+    stripped = prd_path.strip()
+    if not stripped:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop PRD picker refused: prd_path is "
+                "empty / whitespace-only"
+            ),
+        )
+    resolved = Path(stripped).resolve()
+    if not resolved.exists() or not resolved.is_file():
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop PRD picker refused: prd_path "
+                f"{stripped!r} is not an existing file"
+            ),
+        )
+    loaded = _load_prd_intake_input(resolved)
+    _kind, title, summary = _validate_prd_intake_common(loaded)
+    entry = FIX_PHASE_C3_STATE_DISPLAY_MAP[
+        FIX_PHASE_C3_STATE_PRD_READY
+    ]
+    return {
+        "state_id": FIX_PHASE_C3_STATE_PRD_READY,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "prd_path": str(resolved),
+        "prd_title": title,
+        "prd_summary_preview": (
+            _fix_phase_c3_bound_summary_preview(summary)
+        ),
+        "ready_to_run": True,
+        "attribution_tag": FIX_PHASE_C3_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c3_format_audit_line(
+    *,
+    state_id,
+    epoch_seconds,
+    refusal_category=None,
+) -> str:
+    """Pure Tk-free audit-line formatter matching the shipped
+    Phase 10AG / Phase 10AI / Fix Phase C2 audit-line convention.
+    The Tk callback appends the returned line via the shipped
+    `_log_note(...)` writer to `.agent-loop/orchestrator.log`;
+    NEVER writes a parallel first-run-history file per the Fix
+    Phase C1 Source-Of-Truth Preservation rule.
+
+    Line shape:
+      `[desktop-first-run-prd] signal_version=<version>
+       state_id=<id|None>
+       refusal_category=<cat|None> epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in FIX_PHASE_C3_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop PRD picker audit refused: "
+                    f"refusal_category {refusal_category!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C3 refusal vocabulary "
+                    f"{FIX_PHASE_C3_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if state_id is not None:
+        if state_id not in FIX_PHASE_C3_STATE_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop PRD picker audit refused: "
+                    f"state_id {state_id!r} is not in the "
+                    f"shipped closed Fix Phase C3 state "
+                    f"vocabulary {FIX_PHASE_C3_STATE_IDS!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop PRD picker audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-first-run-prd] signal_version="
+        f"{FIX_PHASE_C3_SIGNAL_VERSION!r} state_id="
+        f"{state_id!r} refusal_category="
+        f"{refusal_category!r} epoch_seconds={epoch_seconds!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C4: Run Mode Selector.
+#
+# Bounded plain-English selector for the Run Mode section of the guided
+# first-run desktop UI (the third section per the shipped Fix Phase C1
+# ordered top-level vocabulary: Project -> PRD -> Run Mode -> Run ->
+# Progress). Presents three plain-English choices that map onto the
+# shipped Phase 5A approval-mode contract values (`review` / `strict` /
+# `autonomous`) via a bounded bridge. Does NOT introduce a new
+# persistence plane: the current mode is READ from the canonical
+# `.agent-loop/loop-state.json` via the shipped Phase 10Q
+# `build_desktop_run_profiles_view(...)` view, and the operator applies
+# a selection by copying the shipped Phase 10Q affordance's clipboard
+# payload (the same `plan -> proposed-phase.md edit -> activate`
+# recipe the Advanced surface already exposes). No auto-attach /
+# bootstrap / start / advance, no UI-only settings file / preference
+# cache / recent-mode list / hidden session state / background
+# watcher / second orchestration plane.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C4_SIGNAL_VERSION = "fix-phase-c4-v1"
+
+# Closed plain-English choice vocabulary. Ordered from most human
+# oversight to most autonomous so the desktop UI can render the
+# radio buttons in the same top-to-bottom order.
+FIX_PHASE_C4_CHOICE_GUIDED = "guided"
+FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE = "review_each_phase"
+FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS = "more_autonomous"
+FIX_PHASE_C4_CHOICE_IDS = (
+    FIX_PHASE_C4_CHOICE_GUIDED,
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE,
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS,
+)
+
+# Bounded bridge: each plain-English choice maps to exactly one
+# shipped Phase 5A approval mode. The C4 selector NEVER invents a
+# new approval semantic; the C4 vocabulary is a display-only
+# rename over the shipped closed enumeration `ALLOWED_APPROVAL_MODES`.
+# Guided = strict (most human touchpoints, halts at every Phase 5C
+# pause); Review Each Phase = review (default; halts at phase
+# complete only); More Autonomous = autonomous (fewest halts).
+FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP = {
+    FIX_PHASE_C4_CHOICE_GUIDED: APPROVAL_MODE_STRICT,
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE: APPROVAL_MODE_REVIEW,
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS: APPROVAL_MODE_AUTONOMOUS,
+}
+
+# Bounded bridge: each plain-English choice maps to the shipped
+# Phase 10Q affordance id whose clipboard payload persists the
+# selection through the shipped `plan -> proposed-phase.md edit
+# -> activate` recipe. The C4 selector NEVER writes canonical
+# artifacts directly; it copies the shipped affordance's
+# clipboard payload verbatim.
+FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP = {
+    FIX_PHASE_C4_CHOICE_GUIDED: "select_approval_mode_strict",
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE: (
+        "select_approval_mode_review"
+    ),
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS: (
+        "select_approval_mode_autonomous"
+    ),
+}
+
+# Per-choice plain-English display map. The desktop UI renders
+# these fields verbatim; NO raw shipped approval-mode names
+# (`review` / `strict` / `autonomous`) and NO shipped CLI
+# subcommand names appear in the default surface per the shipped
+# Fix Phase C1 `## Advanced Detail Hiding Rules`. Adding a choice
+# to `FIX_PHASE_C4_CHOICE_IDS` above also requires an entry here
+# or the shipped payload formatter refuses fail-closed.
+FIX_PHASE_C4_CHOICE_DISPLAY_MAP = {
+    FIX_PHASE_C4_CHOICE_GUIDED: {
+        "display_label": "Guided (recommended)",
+        "plain_english_summary": (
+            "The agent pauses for your approval at every step. "
+            "Best when you are new to the tool or want to review "
+            "each part of the work before it continues."
+        ),
+    },
+    FIX_PHASE_C4_CHOICE_REVIEW_EACH_PHASE: {
+        "display_label": "Review Each Phase",
+        "plain_english_summary": (
+            "The agent runs a whole phase, then pauses for your "
+            "approval before starting the next phase. Good when "
+            "you trust the plan but want a phase-level check-in."
+        ),
+    },
+    FIX_PHASE_C4_CHOICE_MORE_AUTONOMOUS: {
+        "display_label": "More Autonomous",
+        "plain_english_summary": (
+            "The agent keeps running with the fewest possible "
+            "pauses. Use when you want the agent to make more "
+            "progress without waiting on you at every step."
+        ),
+    },
+}
+
+# Closed state vocabulary. `initial_no_selection` = session start,
+# no operator click yet; `mode_selected` = operator clicked a
+# choice (setup steps copied to clipboard); `canonical_source_
+# unavailable` = the shipped Phase 10Q view could not read the
+# canonical loop-state (e.g., no controller root, missing /
+# malformed `.agent-loop/loop-state.json`).
+FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION = "initial_no_selection"
+FIX_PHASE_C4_STATE_MODE_SELECTED = "mode_selected"
+FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE = (
+    "canonical_source_unavailable"
+)
+FIX_PHASE_C4_STATE_IDS = (
+    FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION,
+    FIX_PHASE_C4_STATE_MODE_SELECTED,
+    FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE,
+)
+
+# Per-state plain-English display map (label + summary + next-
+# action label + next-action help). Only `mode_selected` is
+# `ready_to_run` (in the "operator has expressed a choice" sense;
+# the actual runtime activation still requires the operator to
+# paste + run the shipped affordance CLI recipe).
+FIX_PHASE_C4_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION: {
+        "display_label": "Pick a run mode",
+        "plain_english_summary": (
+            "Choose how much the agent pauses for your input. "
+            "This choice does not start the agent."
+        ),
+        "next_action_label": "Pick a run mode",
+        "next_action_help": (
+            "Click one of the run-mode buttons above. Nothing "
+            "runs until you paste the copied setup steps into "
+            "your terminal."
+        ),
+        "ready_to_run": False,
+    },
+    FIX_PHASE_C4_STATE_MODE_SELECTED: {
+        "display_label": "Run mode selected",
+        "plain_english_summary": (
+            "The setup steps for your choice were copied to the "
+            "clipboard. Paste them into your terminal to apply "
+            "the change. This selection does not start the "
+            "agent."
+        ),
+        "next_action_label": "Paste the setup steps",
+        "next_action_help": (
+            "Open your terminal and paste. The steps prepare "
+            "the next phase; you decide when to start it."
+        ),
+        "ready_to_run": True,
+    },
+    FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE: {
+        "display_label": "Run mode is unavailable",
+        "plain_english_summary": (
+            "The current run mode could not be read. Finish the "
+            "Project and PRD steps above, then reopen this "
+            "window."
+        ),
+        "next_action_label": "Finish the Project step",
+        "next_action_help": (
+            "The run mode is stored in the project. Pick a "
+            "project folder in the Project section above."
+        ),
+        "ready_to_run": False,
+    },
+}
+
+# Closed refusal + cancellation vocabulary matching the shipped
+# Fix Phase C1 contract's `## Refusal Behavior` section. Same
+# `cancelled_*` prefix convention as Fix Phase C2 / C3.
+FIX_PHASE_C4_REFUSAL_INVALID_CHOICE = "refused_invalid_choice"
+FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE = (
+    "refused_canonical_source_unreadable"
+)
+FIX_PHASE_C4_CANCELLATION_MODE_SELECTION = (
+    "cancelled_mode_selection"
+)
+FIX_PHASE_C4_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C4_REFUSAL_INVALID_CHOICE,
+    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE,
+    FIX_PHASE_C4_CANCELLATION_MODE_SELECTION,
+)
+
+# Attribution tag for `.agent-loop/orchestrator.log` audit lines
+# emitted by the C4 selector. Mirrors the Fix Phase C1 attribution
+# convention (`[project-classification]`, `[prd-intake]`, ...).
+FIX_PHASE_C4_ATTRIBUTION = "[run-mode-intake]"
+
+
+def _fix_phase_c4_map_choice_to_approval_mode(choice_id):
+    """Return the shipped Phase 5A approval-mode name for a C4
+    choice_id. Refuses fail-closed on any choice_id outside the
+    shipped closed C4 vocabulary so the caller cannot smuggle in
+    an unmapped selection.
+    """
+    if choice_id not in FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: choice_id "
+                f"{choice_id!r} is not in the shipped closed "
+                f"Fix Phase C4 vocabulary "
+                f"{FIX_PHASE_C4_CHOICE_IDS!r}"
+            ),
+        )
+    return FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP[choice_id]
+
+
+def _fix_phase_c4_map_choice_to_affordance_id(choice_id):
+    """Return the shipped Phase 10Q affordance id whose clipboard
+    payload persists a C4 choice through the shipped `plan ->
+    proposed-phase.md edit -> activate` recipe. Refuses fail-
+    closed on any unmapped choice_id.
+    """
+    if (
+        choice_id
+        not in FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: choice_id "
+                f"{choice_id!r} does not map to a shipped "
+                f"Phase 10Q affordance"
+            ),
+        )
+    return FIX_PHASE_C4_CHOICE_TO_AFFORDANCE_ID_MAP[choice_id]
+
+
+def _fix_phase_c4_derive_plain_english_current_mode(
+    canonical_approval_mode,
+):
+    """Translate the shipped canonical approval-mode value (from
+    `.agent-loop/loop-state.json` via the Phase 10Q mirror) into
+    a plain-English label for the default surface. Returns
+    `"Not set"` when the canonical value is None (fresh
+    controller root). Refuses fail-closed on an approval-mode
+    value outside the shipped Phase 5A enumeration to preserve
+    the display-map / shipped-vocabulary lockstep.
+    """
+    if canonical_approval_mode is None:
+        return "Not set"
+    if canonical_approval_mode not in ALLOWED_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: canonical "
+                f"approval_mode {canonical_approval_mode!r} is "
+                f"not in the shipped Phase 5A vocabulary "
+                f"{sorted(ALLOWED_APPROVAL_MODES)!r}"
+            ),
+        )
+    reverse_map = {
+        value: choice_id
+        for choice_id, value in (
+            FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP.items()
+        )
+    }
+    plain_choice_id = reverse_map[canonical_approval_mode]
+    return (
+        FIX_PHASE_C4_CHOICE_DISPLAY_MAP[plain_choice_id][
+            "display_label"
+        ]
+    )
+
+
+def _fix_phase_c4_format_initial_payload(
+    *, current_canonical_mode,
+):
+    """Return the plain-English payload for the C4 selector at
+    session start (no operator click yet). Renders whichever
+    shipped canonical approval-mode is currently persisted so the
+    operator can see the current state even before touching the
+    selector.
+    """
+    entry = FIX_PHASE_C4_STATE_DISPLAY_MAP[
+        FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+    ]
+    return {
+        "state_id": FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "selected_choice_id": None,
+        "selected_display_label": None,
+        "current_canonical_mode_display": (
+            _fix_phase_c4_derive_plain_english_current_mode(
+                current_canonical_mode,
+            )
+        ),
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C4_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c4_format_selected_payload(
+    *, choice_id, current_canonical_mode,
+):
+    """Return the plain-English payload for a fresh operator
+    selection. `choice_id` MUST be in `FIX_PHASE_C4_CHOICE_IDS`
+    (fail-closed via `_fix_phase_c4_map_choice_to_approval_mode`).
+    The `current_canonical_mode` argument mirrors the shipped
+    `.agent-loop/loop-state.json` value at rendering time; the
+    operator hasn't yet pasted the affordance recipe so the
+    canonical value has NOT yet changed.
+    """
+    # Fail-closed on any choice_id outside the shipped vocabulary
+    # BEFORE reading the display map so an invented choice_id
+    # cannot smuggle stale display copy through the formatter.
+    _fix_phase_c4_map_choice_to_approval_mode(choice_id)
+    entry = FIX_PHASE_C4_STATE_DISPLAY_MAP[
+        FIX_PHASE_C4_STATE_MODE_SELECTED
+    ]
+    choice_entry = FIX_PHASE_C4_CHOICE_DISPLAY_MAP[choice_id]
+    return {
+        "state_id": FIX_PHASE_C4_STATE_MODE_SELECTED,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "selected_choice_id": choice_id,
+        "selected_display_label": choice_entry[
+            "display_label"
+        ],
+        "current_canonical_mode_display": (
+            _fix_phase_c4_derive_plain_english_current_mode(
+                current_canonical_mode,
+            )
+        ),
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C4_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c4_format_canonical_source_unavailable_payload():
+    """Return the plain-English payload the C4 selector renders
+    when the shipped Phase 10Q view cannot read the canonical
+    loop-state.json (missing / malformed / no controller root).
+    """
+    entry = FIX_PHASE_C4_STATE_DISPLAY_MAP[
+        FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE
+    ]
+    return {
+        "state_id": (
+            FIX_PHASE_C4_STATE_CANONICAL_SOURCE_UNAVAILABLE
+        ),
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry[
+            "plain_english_summary"
+        ],
+        "next_action_label": entry["next_action_label"],
+        "next_action_help": entry["next_action_help"],
+        "selected_choice_id": None,
+        "selected_display_label": None,
+        "current_canonical_mode_display": "Not available",
+        "ready_to_run": entry["ready_to_run"],
+        "attribution_tag": FIX_PHASE_C4_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c4_derive_clipboard_payload_from_view(
+    *, choice_id, run_profiles_view,
+):
+    """Look up the shipped Phase 10Q clipboard payload for a C4
+    choice from a shipped Phase 10Q view dict. Refuses fail-
+    closed on any missing / malformed view or missing affordance
+    so the caller can render the unavailable-payload branch
+    instead of silently emitting an empty clipboard.
+    """
+    affordance_id = _fix_phase_c4_map_choice_to_affordance_id(
+        choice_id,
+    )
+    if not isinstance(run_profiles_view, dict):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop run-mode selector refused: shipped "
+                "Phase 10Q view is not a dict"
+            ),
+        )
+    affordances = run_profiles_view.get("affordances")
+    if not isinstance(affordances, list):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                "desktop run-mode selector refused: shipped "
+                "Phase 10Q view is missing an `affordances` list"
+            ),
+        )
+    for descriptor in affordances:
+        if (
+            isinstance(descriptor, dict)
+            and descriptor.get("id") == affordance_id
+        ):
+            payload = descriptor.get("clipboard_payload")
+            if not isinstance(payload, str) or not payload:
+                raise HaltError(
+                    "halted_input_missing",
+                    (
+                        f"desktop run-mode selector refused: "
+                        f"shipped Phase 10Q affordance "
+                        f"{affordance_id!r} has no clipboard "
+                        f"payload"
+                    ),
+                )
+            return payload
+    raise HaltError(
+        "halted_input_missing",
+        (
+            f"desktop run-mode selector refused: shipped Phase "
+            f"10Q view does not include affordance id "
+            f"{affordance_id!r}"
+        ),
+    )
+
+
+def _fix_phase_c4_format_audit_line(
+    *,
+    state_id,
+    choice_id,
+    epoch_seconds,
+    refusal_category=None,
+):
+    """Pure Tk-free audit-line formatter matching the shipped
+    Phase 10AG / Phase 10AI / Fix Phase C2 / Fix Phase C3 audit-
+    line convention. The Tk callback appends the returned line
+    via the shipped `_log_note(...)` writer to
+    `.agent-loop/orchestrator.log`; NEVER writes a parallel
+    settings file per the Fix Phase C1 source-of-truth
+    preservation rule.
+
+    Line shape:
+      `[run-mode-intake] signal_version=<version>
+       state_id=<id|None> choice_id=<id|None>
+       refusal_category=<cat|None> epoch_seconds=<int>`
+    """
+    if refusal_category is not None:
+        if (
+            refusal_category
+            not in FIX_PHASE_C4_REFUSAL_CATEGORIES
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-mode selector audit refused: "
+                    f"refusal_category {refusal_category!r} "
+                    f"is not in the shipped closed Fix Phase "
+                    f"C4 refusal vocabulary "
+                    f"{FIX_PHASE_C4_REFUSAL_CATEGORIES!r}"
+                ),
+            )
+    if state_id is not None:
+        if state_id not in FIX_PHASE_C4_STATE_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-mode selector audit refused: "
+                    f"state_id {state_id!r} is not in the "
+                    f"shipped closed Fix Phase C4 state "
+                    f"vocabulary {FIX_PHASE_C4_STATE_IDS!r}"
+                ),
+            )
+    if choice_id is not None:
+        if choice_id not in FIX_PHASE_C4_CHOICE_IDS:
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-mode selector audit refused: "
+                    f"choice_id {choice_id!r} is not in the "
+                    f"shipped closed Fix Phase C4 choice "
+                    f"vocabulary {FIX_PHASE_C4_CHOICE_IDS!r}"
+                ),
+            )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[run-mode-intake] signal_version="
+        f"{FIX_PHASE_C4_SIGNAL_VERSION!r} state_id="
+        f"{state_id!r} choice_id={choice_id!r} "
+        f"refusal_category={refusal_category!r} "
+        f"epoch_seconds={epoch_seconds!r}"
+    )
+
+
 def _primary_desktop_validate_bootstrap_form(
     fields,
 ) -> None:
@@ -15823,6 +17097,17 @@ def _launch_desktop_app_window(
 
     primary_controls_frame = tk.Frame(control_frame)
     primary_controls_frame.pack(side=tk.TOP, fill=tk.X)
+    # Advanced frames holder: hoisted up so the Fix Phase C2 fix
+    # cycle can register the legacy `Select Project Folder` +
+    # `attached_target_label` widgets behind the Advanced toggle
+    # (Issue 1 of the fix prompt: the C2 Project section must be
+    # the single default folder flow; the legacy path with raw
+    # `full_target` copy must move behind Advanced).
+    advanced_visible_holder: list = [False]
+    advanced_frames_holder: list = []
+    legacy_folder_frame = tk.Frame(control_frame)
+    # NOT packed here: `_toggle_advanced_click` packs it on demand.
+    advanced_frames_holder.append(legacy_folder_frame)
     tk.Label(
         primary_controls_frame,
         text="Primary Controls",
@@ -15925,8 +17210,18 @@ def _launch_desktop_app_window(
     # detaches (via the CLI) also propagate to the desktop.
     from tkinter import filedialog as _filedialog
 
+    # Fix Phase C2 fix cycle Issue 1: parented on the
+    # `legacy_folder_frame` so the legacy attach + raw-CLI-guidance
+    # flow is hidden behind the Advanced toggle and does not
+    # compete with the C2 Project section as the default folder
+    # surface.
+    tk.Label(
+        legacy_folder_frame,
+        text="Legacy folder tools",
+        font=("TkDefaultFont", 10, "bold"),
+    ).pack(anchor=tk.NW, padx=4, pady=(4, 2))
     attached_target_label = tk.Label(
-        primary_controls_frame,
+        legacy_folder_frame,
         text=_primary_desktop_format_attached_target_label(
             _primary_desktop_read_attached_target_path(
                 controller_root,
@@ -16271,9 +17566,13 @@ def _launch_desktop_app_window(
         )
         _refresh_attached_label()
 
+    # Fix Phase C2 fix cycle Issue 1: parented on the
+    # `legacy_folder_frame` (advanced-only) so the legacy attach
+    # flow with raw `full_target` copy no longer competes with the
+    # C2 Project section as the default folder surface.
     select_project_button = tk.Button(
-        primary_controls_frame,
-        text="Select Project Folder",
+        legacy_folder_frame,
+        text="Select Project Folder (legacy)",
         command=_select_project_folder_click,
     )
     select_project_button.pack(fill=tk.X, padx=4, pady=(0, 4))
@@ -16306,12 +17605,747 @@ def _launch_desktop_app_window(
         "<<ComboboxSelected>>", _on_approval_mode_changed,
     )
 
-    # Advanced panels toggle. The Phase 10Q-10AE sub-view frames are
-    # tracked so the toggle can hide/show them as a group. The
-    # simplified UI hides them by default so the main window is no
-    # longer dominated by a scrolling stack of copy-paste buttons.
-    advanced_visible_holder: list = [False]
-    advanced_frames_holder: list = []
+    # Fix Phase C2: bounded guided Project section (visible by
+    # default per the shipped Fix Phase C1 contract's ordered
+    # top-level section vocabulary: Project appears first). Adds
+    # a "Choose Folder" button that opens the OS-native folder
+    # picker + a plain-English classification display + a plain-
+    # English next-action hint. NO raw shipped runtime vocabulary
+    # is surfaced here; every displayed line is from the Fix
+    # Phase C2 plain-English display map. The panel refreshes
+    # ONLY on the explicit Choose-Folder gesture (no poll-tick
+    # refresh, no cross-session cache; per the Fix Phase C1
+    # source-of-truth preservation rule).
+    fix_phase_c2_project_frame = tk.LabelFrame(
+        control_frame,
+        text="Project",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c2_project_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(8, 4),
+    )
+    fix_phase_c2_choose_button = tk.Button(
+        fix_phase_c2_project_frame,
+        text="Choose Folder",
+    )
+    fix_phase_c2_choose_button.pack(
+        fill=tk.X, padx=4, pady=(4, 2),
+    )
+    fix_phase_c2_folder_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text="No folder selected",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9),
+        fg="#666666",
+    )
+    fix_phase_c2_folder_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c2_classification_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            FIX_PHASE_C2_EMPTY_STATE_PAYLOAD["display_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c2_classification_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c2_summary_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            FIX_PHASE_C2_EMPTY_STATE_PAYLOAD[
+                "plain_english_summary"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c2_summary_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c2_next_action_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            "Next: "
+            + FIX_PHASE_C2_EMPTY_STATE_PAYLOAD[
+                "next_action_label"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c2_next_action_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c2_next_action_help_label = tk.Label(
+        fix_phase_c2_project_frame,
+        text=(
+            FIX_PHASE_C2_EMPTY_STATE_PAYLOAD["next_action_help"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c2_next_action_help_label.pack(
+        fill=tk.X, padx=4, pady=(2, 4),
+    )
+    fix_phase_c2_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+
+    def _fix_phase_c2_render_payload(payload: dict) -> None:
+        folder_text = payload.get("target_path")
+        fix_phase_c2_folder_label.config(
+            text=(
+                f"Folder: {folder_text}"
+                if folder_text
+                else "No folder selected"
+            ),
+        )
+        fix_phase_c2_classification_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c2_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c2_next_action_label.config(
+            text=f"Next: {payload['next_action_label']}",
+        )
+        fix_phase_c2_next_action_help_label.config(
+            text=payload["next_action_help"],
+        )
+
+    def _fix_phase_c2_emit_audit(
+        *, classification_id, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c2_format_audit_line(
+                classification_id=classification_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c2_audit_log_path, line)
+
+    def _fix_phase_c2_choose_folder_click() -> None:
+        chosen = _primary_desktop_normalize_selected_folder(
+            _filedialog.askdirectory(
+                title="Choose project folder",
+                mustexist=True,
+            ),
+        )
+        if chosen is None:
+            # Fix Phase C2 fix cycle Issue 2: operator cancelled
+            # the native picker. Emit the shipped
+            # `cancelled_folder_picker` audit line so every
+            # first-run operator gesture is auditable through
+            # `.agent-loop/orchestrator.log` per the Fix Phase C1
+            # contract. The current classification / folder
+            # payload is intentionally left untouched: no re-
+            # render, no re-classification, and no
+            # attach / bootstrap / run dispatch.
+            _fix_phase_c2_emit_audit(
+                classification_id=None,
+                refusal_category=(
+                    FIX_PHASE_C2_CANCELLATION_PICKER
+                ),
+            )
+            return
+        try:
+            payload = (
+                _fix_phase_c2_format_folder_display_payload(
+                    target_path=chosen,
+                )
+            )
+        except HaltError as halt:
+            refusal_payload = (
+                _fix_phase_c2_format_no_folder_display_payload()
+            )
+            refusal_payload["display_label"] = (
+                "Could not read this folder"
+            )
+            refusal_payload["plain_english_summary"] = halt.reason
+            refusal_payload["next_action_label"] = (
+                "Choose a different folder"
+            )
+            refusal_payload["next_action_help"] = (
+                "The picker opens your operating system's "
+                "native folder browser. You do not need to "
+                "type a path."
+            )
+            refusal_payload["target_path"] = chosen
+            _fix_phase_c2_render_payload(refusal_payload)
+            _fix_phase_c2_emit_audit(
+                classification_id=None,
+                refusal_category=(
+                    FIX_PHASE_C2_REFUSAL_INVALID_PATH
+                ),
+            )
+            return
+        _fix_phase_c2_render_payload(payload)
+        _fix_phase_c2_emit_audit(
+            classification_id=payload["classification_id"],
+        )
+        # Fix Phase C3 fix cycle Issue 1: after the operator
+        # successfully picks a project folder, transition the C3
+        # PRD panel from `no_prd_selected` to
+        # `prd_missing_after_project` so the UI clearly signals
+        # that a PRD is still required before the agent can run.
+        # Preserves a `prd_ready` selection (do NOT clobber a
+        # valid PRD the operator already picked earlier in the
+        # session). Explicit operator gesture only: this does NOT
+        # auto-attach, bootstrap, start, or advance the agent
+        # per the shipped Fix Phase C1 contract's `## No Auto
+        # Advance` rule.
+        if (
+            fix_phase_c3_current_state_holder[0]
+            == FIX_PHASE_C3_STATE_NO_PRD_SELECTED
+        ):
+            missing_payload = (
+                _fix_phase_c3_format_missing_after_project_payload()
+            )
+            _fix_phase_c3_render_payload(missing_payload)
+            _fix_phase_c3_emit_audit(
+                state_id=missing_payload["state_id"],
+            )
+
+    fix_phase_c2_choose_button.config(
+        command=_fix_phase_c2_choose_folder_click,
+    )
+
+    # Fix Phase C3: bounded guided PRD section (visible by
+    # default per the shipped Fix Phase C1 contract's ordered
+    # top-level section vocabulary: `PRD` appears second, right
+    # after `Project`). Adds a "Choose PRD file" button that
+    # opens the OS-native file picker + a plain-English state
+    # label (no PRD / PRD missing after project / PRD invalid /
+    # PRD ready) + a BOUNDED preview (PRD title + short summary
+    # excerpt) + a plain-English next-action hint. NO raw
+    # shipped runtime vocabulary and NO full PRD body dump is
+    # surfaced here; every displayed line is from the Fix Phase
+    # C3 plain-English display map. The panel refreshes ONLY on
+    # the explicit Choose-PRD gesture and on Choose-Folder
+    # transitions (no poll-tick refresh, no cross-session cache;
+    # per the Fix Phase C1 source-of-truth preservation rule).
+    fix_phase_c3_prd_frame = tk.LabelFrame(
+        control_frame,
+        text="PRD",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c3_prd_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c3_choose_button = tk.Button(
+        fix_phase_c3_prd_frame,
+        text="Choose PRD file",
+    )
+    fix_phase_c3_choose_button.pack(
+        fill=tk.X, padx=4, pady=(4, 2),
+    )
+    fix_phase_c3_path_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text="No PRD file selected",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9),
+        fg="#666666",
+    )
+    fix_phase_c3_path_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_state_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            FIX_PHASE_C3_EMPTY_STATE_PAYLOAD["display_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c3_state_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_summary_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            FIX_PHASE_C3_EMPTY_STATE_PAYLOAD[
+                "plain_english_summary"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c3_summary_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_preview_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c3_preview_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c3_next_action_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            "Next: "
+            + FIX_PHASE_C3_EMPTY_STATE_PAYLOAD[
+                "next_action_label"
+            ]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c3_next_action_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c3_next_action_help_label = tk.Label(
+        fix_phase_c3_prd_frame,
+        text=(
+            FIX_PHASE_C3_EMPTY_STATE_PAYLOAD["next_action_help"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c3_next_action_help_label.pack(
+        fill=tk.X, padx=4, pady=(2, 4),
+    )
+    fix_phase_c3_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+    # Fix Phase C3 fix cycle Issue 1: mutable single-element
+    # holder that tracks the currently-rendered C3 state_id so
+    # the Fix Phase C2 folder-selection callback can transition
+    # `no_prd_selected` -> `prd_missing_after_project` without
+    # clobbering a `prd_ready` selection. Session-scoped only;
+    # never persisted (no cross-session cache per the Fix Phase
+    # C1 source-of-truth preservation rule).
+    fix_phase_c3_current_state_holder = [
+        FIX_PHASE_C3_STATE_NO_PRD_SELECTED,
+    ]
+
+    def _fix_phase_c3_render_payload(payload: dict) -> None:
+        # Fix Phase C3 fix cycle Issue 2: default surface MUST NOT
+        # expose the resolved absolute PRD path per the shipped
+        # Fix Phase C1 `## Advanced Detail Hiding Rules` (raw
+        # canonical / absolute paths belong behind Advanced or in
+        # the audit evidence path). Render the operator-facing
+        # label using the filename component only.
+        prd_path = payload.get("prd_path")
+        if prd_path:
+            filename_only = Path(prd_path).name or prd_path
+            path_label_text = f"File: {filename_only}"
+        else:
+            path_label_text = "No PRD file selected"
+        fix_phase_c3_path_label.config(text=path_label_text)
+        fix_phase_c3_state_label.config(
+            text=payload["display_label"],
+        )
+        # Fix Phase C3 fix cycle Issue 1: remember the current
+        # rendered C3 state so a subsequent Fix Phase C2
+        # folder-selection gesture can decide whether to
+        # transition the PRD panel to `prd_missing_after_project`
+        # (from `no_prd_selected`) or preserve an already-ready
+        # PRD selection.
+        fix_phase_c3_current_state_holder[0] = payload["state_id"]
+        fix_phase_c3_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        title = payload.get("prd_title")
+        preview = payload.get("prd_summary_preview")
+        if title and preview:
+            fix_phase_c3_preview_label.config(
+                text=f"Title: {title}\nSummary: {preview}",
+            )
+        elif title:
+            fix_phase_c3_preview_label.config(
+                text=f"Title: {title}",
+            )
+        else:
+            fix_phase_c3_preview_label.config(text="")
+        fix_phase_c3_next_action_label.config(
+            text=f"Next: {payload['next_action_label']}",
+        )
+        fix_phase_c3_next_action_help_label.config(
+            text=payload["next_action_help"],
+        )
+
+    def _fix_phase_c3_emit_audit(
+        *, state_id, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c3_format_audit_line(
+                state_id=state_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c3_audit_log_path, line)
+
+    def _fix_phase_c3_choose_prd_click() -> None:
+        chosen = _filedialog.askopenfilename(
+            title="Choose PRD file",
+        )
+        if not chosen:
+            # Fix Phase C1 contract auditability: emit the
+            # `cancelled_prd_picker` line so cancellation is
+            # visible in `.agent-loop/orchestrator.log`. Do NOT
+            # touch the current display Labels (mirrors the Fix
+            # Phase C2 cancellation-preserves-payload invariant).
+            _fix_phase_c3_emit_audit(
+                state_id=None,
+                refusal_category=(
+                    FIX_PHASE_C3_CANCELLATION_PICKER
+                ),
+            )
+            return
+        try:
+            payload = (
+                _fix_phase_c3_format_prd_display_payload(
+                    prd_path=chosen,
+                )
+            )
+        except HaltError:
+            # Fix Phase C3 fix cycle Issue 2: swallow the raw
+            # Phase 9B HaltError.reason (it can contain absolute
+            # paths and parser vocabulary). Classify path-vs-
+            # content refusal category ONCE and let the payload
+            # formatter select bounded plain-English copy. The
+            # raw reason remains attached to the underlying
+            # HaltError object and available via any shipped
+            # traceback / debugging surface if operators enable
+            # verbose logging separately; the desktop default
+            # surface never renders it.
+            if not Path(chosen).is_file():
+                refusal = FIX_PHASE_C3_REFUSAL_INVALID_PATH
+            else:
+                refusal = (
+                    FIX_PHASE_C3_REFUSAL_INVALID_CONTENT
+                )
+            payload = _fix_phase_c3_format_invalid_payload(
+                prd_path=chosen,
+                reason_category=refusal,
+            )
+            _fix_phase_c3_render_payload(payload)
+            _fix_phase_c3_emit_audit(
+                state_id=(
+                    FIX_PHASE_C3_STATE_PRD_INVALID
+                ),
+                refusal_category=refusal,
+            )
+            return
+        _fix_phase_c3_render_payload(payload)
+        _fix_phase_c3_emit_audit(state_id=payload["state_id"])
+
+    fix_phase_c3_choose_button.config(
+        command=_fix_phase_c3_choose_prd_click,
+    )
+
+    # Fix Phase C4: bounded guided Run Mode section (visible by
+    # default per the shipped Fix Phase C1 ordered top-level
+    # section vocabulary: `Run Mode` appears third, after
+    # `Project` and `PRD` and before `Run`). Presents three
+    # plain-English radio buttons that map onto the shipped
+    # Phase 5A approval-mode contract values via the closed
+    # `FIX_PHASE_C4_CHOICE_TO_APPROVAL_MODE_MAP`. Selecting a
+    # choice copies the shipped Phase 10Q affordance's clipboard
+    # payload (the shipped `plan -> proposed-phase.md edit ->
+    # activate` recipe) so the operator applies the change
+    # through the existing canonical persistence path
+    # (`.agent-loop/loop-state.json`); the selector NEVER writes
+    # canonical artifacts directly, NEVER starts a background
+    # thread, NEVER polls, and NEVER auto-attaches, bootstraps,
+    # starts, or advances the agent. Raw approval-mode names
+    # (`review` / `strict` / `autonomous`) and raw shipped CLI
+    # subcommand names remain hidden here and reachable ONLY
+    # through the shipped Phase 10Q Advanced surface per the
+    # shipped Fix Phase C1 `## Advanced Detail Hiding Rules`.
+    fix_phase_c4_run_mode_frame = tk.LabelFrame(
+        control_frame,
+        text="Run Mode",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c4_run_mode_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c4_current_mode_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text="Currently active: Not available",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9),
+        fg="#666666",
+    )
+    fix_phase_c4_current_mode_label.pack(
+        fill=tk.X, padx=4, pady=(4, 2),
+    )
+    fix_phase_c4_choice_var = tk.StringVar(value="")
+    fix_phase_c4_choice_buttons: list = []
+    fix_phase_c4_audit_log_path = (
+        controller_root
+        / ".agent-loop"
+        / "orchestrator.log"
+    )
+
+    def _fix_phase_c4_read_current_canonical_mode():
+        # Read the shipped canonical approval-mode from the
+        # shipped Phase 10Q view (which itself reads
+        # `.agent-loop/loop-state.json`). Soft-fails to
+        # (None, None) if the view is unavailable so the
+        # unavailable-payload branch can render fresh copy.
+        try:
+            view = build_desktop_run_profiles_view(
+                controller_root,
+            )
+        except Exception:  # noqa: BLE001 - defensive soft-fail
+            return None, None
+        if not isinstance(view, dict):
+            return None, None
+        mirror = view.get("mirror")
+        if not isinstance(mirror, dict):
+            return view, None
+        canonical = mirror.get("approval_mode")
+        if canonical is None:
+            return view, None
+        if canonical not in ALLOWED_APPROVAL_MODES:
+            return view, None
+        return view, canonical
+
+    def _fix_phase_c4_render_payload(payload: dict) -> None:
+        # Renders the current-canonical + state labels. Raw
+        # shipped approval-mode names never leak: the
+        # canonical-mode label carries the shipped C4 plain-
+        # English display name via
+        # `_fix_phase_c4_derive_plain_english_current_mode`.
+        current_display = payload.get(
+            "current_canonical_mode_display",
+        )
+        if current_display is None:
+            current_display = "Not available"
+        fix_phase_c4_current_mode_label.config(
+            text=f"Currently active: {current_display}",
+        )
+        fix_phase_c4_state_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c4_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c4_next_action_label.config(
+            text=f"Next: {payload['next_action_label']}",
+        )
+        fix_phase_c4_next_action_help_label.config(
+            text=payload["next_action_help"],
+        )
+        selected_choice = payload.get("selected_choice_id")
+        if selected_choice is None:
+            fix_phase_c4_choice_var.set("")
+        else:
+            fix_phase_c4_choice_var.set(selected_choice)
+
+    def _fix_phase_c4_emit_audit(
+        *, state_id, choice_id=None, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c4_format_audit_line(
+                state_id=state_id,
+                choice_id=choice_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c4_audit_log_path, line)
+
+    def _fix_phase_c4_on_choice_click(choice_id: str) -> None:
+        # Fail-closed on any choice_id outside the shipped
+        # closed C4 vocabulary. Session-scoped only: nothing
+        # here writes a canonical artifact, spawns a
+        # subprocess, opens a socket, or advances loop-state.
+        if choice_id not in FIX_PHASE_C4_CHOICE_IDS:
+            _fix_phase_c4_emit_audit(
+                state_id=None,
+                choice_id=None,
+                refusal_category=(
+                    FIX_PHASE_C4_REFUSAL_INVALID_CHOICE
+                ),
+            )
+            return
+        view, canonical = (
+            _fix_phase_c4_read_current_canonical_mode()
+        )
+        if view is None:
+            unavailable_payload = (
+                _fix_phase_c4_format_canonical_source_unavailable_payload()
+            )
+            _fix_phase_c4_render_payload(unavailable_payload)
+            _fix_phase_c4_emit_audit(
+                state_id=unavailable_payload["state_id"],
+                choice_id=choice_id,
+                refusal_category=(
+                    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE
+                ),
+            )
+            return
+        try:
+            clipboard_payload = (
+                _fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id=choice_id,
+                    run_profiles_view=view,
+                )
+            )
+        except HaltError:
+            unavailable_payload = (
+                _fix_phase_c4_format_canonical_source_unavailable_payload()
+            )
+            _fix_phase_c4_render_payload(unavailable_payload)
+            _fix_phase_c4_emit_audit(
+                state_id=unavailable_payload["state_id"],
+                choice_id=choice_id,
+                refusal_category=(
+                    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE
+                ),
+            )
+            return
+        # Copy the shipped clipboard payload verbatim. This
+        # matches the shipped Phase 10Q `copy_paste` dispatch
+        # convention: the desktop shell NEVER executes the
+        # payload as a subprocess and NEVER opens a network
+        # socket. The operator pastes into their terminal to
+        # apply the change through the shipped CLI recipe.
+        try:
+            root.clipboard_clear()
+            root.clipboard_append(clipboard_payload)
+        except Exception:  # noqa: BLE001 - clipboard is
+            # best-effort; the audit line still fires so the
+            # operator sees the selection in the log.
+            pass
+        selected_payload = (
+            _fix_phase_c4_format_selected_payload(
+                choice_id=choice_id,
+                current_canonical_mode=canonical,
+            )
+        )
+        _fix_phase_c4_render_payload(selected_payload)
+        _fix_phase_c4_emit_audit(
+            state_id=selected_payload["state_id"],
+            choice_id=choice_id,
+        )
+
+    for _c4_choice_id in FIX_PHASE_C4_CHOICE_IDS:
+        _c4_entry = FIX_PHASE_C4_CHOICE_DISPLAY_MAP[
+            _c4_choice_id
+        ]
+        _c4_button_frame = tk.Frame(
+            fix_phase_c4_run_mode_frame,
+        )
+        _c4_button_frame.pack(
+            fill=tk.X, padx=4, pady=(2, 0),
+        )
+        _c4_radio = tk.Radiobutton(
+            _c4_button_frame,
+            text=_c4_entry["display_label"],
+            variable=fix_phase_c4_choice_var,
+            value=_c4_choice_id,
+            command=(
+                lambda cid=_c4_choice_id: (
+                    _fix_phase_c4_on_choice_click(cid)
+                )
+            ),
+            anchor=tk.W,
+            font=("TkDefaultFont", 10, "bold"),
+        )
+        _c4_radio.pack(fill=tk.X)
+        _c4_help = tk.Label(
+            _c4_button_frame,
+            text=_c4_entry["plain_english_summary"],
+            anchor=tk.W, justify=tk.LEFT, wraplength=320,
+            fg="#333333",
+        )
+        _c4_help.pack(fill=tk.X, padx=(24, 0), pady=(0, 2))
+        fix_phase_c4_choice_buttons.append(_c4_radio)
+    fix_phase_c4_state_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["display_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c4_state_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c4_summary_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["plain_english_summary"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c4_summary_label.pack(
+        fill=tk.X, padx=4, pady=(2, 0),
+    )
+    fix_phase_c4_next_action_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            "Next: "
+            + FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["next_action_label"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c4_next_action_label.pack(
+        fill=tk.X, padx=4, pady=(4, 0),
+    )
+    fix_phase_c4_next_action_help_label = tk.Label(
+        fix_phase_c4_run_mode_frame,
+        text=(
+            FIX_PHASE_C4_STATE_DISPLAY_MAP[
+                FIX_PHASE_C4_STATE_INITIAL_NO_SELECTION
+            ]["next_action_help"]
+        ),
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c4_next_action_help_label.pack(
+        fill=tk.X, padx=4, pady=(2, 4),
+    )
+    # Render the initial payload once at panel construction
+    # time so the current-canonical-mode label reflects the
+    # actual canonical value even before any operator click.
+    _c4_view, _c4_canonical = (
+        _fix_phase_c4_read_current_canonical_mode()
+    )
+    if _c4_view is None:
+        _fix_phase_c4_render_payload(
+            _fix_phase_c4_format_canonical_source_unavailable_payload()
+        )
+    else:
+        _fix_phase_c4_render_payload(
+            _fix_phase_c4_format_initial_payload(
+                current_canonical_mode=_c4_canonical,
+            )
+        )
+
+    # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
+    # (registered above and below) are tracked so the toggle can
+    # hide/show them as a group. The simplified UI hides them by
+    # default so the main window is no longer dominated by a
+    # scrolling stack of copy-paste buttons. `advanced_visible_
+    # holder` and `advanced_frames_holder` were hoisted earlier
+    # in this function so the Fix Phase C2 fix cycle can
+    # register the legacy `Select Project Folder` +
+    # `attached_target_label` widgets behind this same toggle.
 
     def _toggle_advanced_click() -> None:
         show = not advanced_visible_holder[0]

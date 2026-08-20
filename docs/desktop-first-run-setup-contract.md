@@ -323,6 +323,24 @@ anchor citation matching the Phase 10AE auditability
 convention), and the closed refusal category the future runtime
 MUST expose.
 
+Additionally, non-refusal operator cancellation gestures MUST
+route through a bounded closed cancellation-category vocabulary
+so every first-run operator gesture remains auditable through
+`.agent-loop/orchestrator.log`. The Fix Phase C2 initial slice
+ships one such category:
+
+- operator closed the OS-native folder picker without choosing
+  a folder (audited as `cancelled_folder_picker` via the shipped
+  `_fix_phase_c2_format_audit_line(...)` writer; the audit line
+  MUST NOT re-classify the current folder payload, MUST NOT
+  clear the current classification / next-action display, and
+  MUST NOT dispatch any attach / bootstrap / run action)
+
+Future Fix Phase C runtime slices adding new cancellation
+gestures MUST extend this closed vocabulary in the shipped
+runtime constants (e.g. `FIX_PHASE_C2_REFUSAL_CATEGORIES` for
+the Project section) rather than emitting an unaudited no-op.
+
 ## Approval Gates
 
 The desktop first-run setup surface MUST preserve every shipped

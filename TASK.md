@@ -24,7 +24,7 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Active Sub-Phase
 
-Fix Phase C1 - First-Run Setup Contract
+Fix Phase C4 - Run Mode Selector
 
 ## Phase Status
 
@@ -32,39 +32,31 @@ Active and ready for implementation.
 
 ## Active Task
 
-Define the non-technical desktop UX contract for selecting a project folder,
-loading a PRD, choosing run behavior, starting/stopping the agent, and
-understanding plain-English progress without terminal knowledge.
+Add the desktop run-mode selector with plain-English choices mapped to existing shipped runtime modes.
 
 ## Phase Outcome Required Now
 
-- `TASK.md`, `.agent-loop/current-task.md`, `.agent-loop/current-phase.md`, and
-  `.agent-loop/loop-state.json` identify `Fix Phase C1` as the active
-  sub-phase
-- `.agent-loop/phase-plan.md` records the Fix Phase C track and the concrete
-  `Fix Phase C1` through `Fix Phase C8` slices
-- `.agent-loop/claude-prompt.md` contains a scoped implementation prompt for
-  the `Fix Phase C1` contract slice
+- TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md, and .agent-loop/loop-state.json identify Fix Phase C3 as the active sub-phase
+- .agent-loop/phase-plan.md records the Fix Phase C track and the concrete Fix Phase C1 through Fix Phase C8 slices
+- .agent-loop/claude-prompt.md contains a scoped implementation prompt for the Fix Phase C3 PRD intake slice
 
 ## Next-Phase Gate
 
-Do not mark this phase complete until:
-
-- the repository defines a clear desktop UX contract for the single-user
-  "pick a folder, load a PRD, choose run behavior, and run" workflow
-- the contract defines the required setup, ready, running, waiting, blocked,
-  and complete states in plain English
-- the contract defines what technical details are hidden by default versus what
-  is available under advanced views
-- the contract is concrete enough that later Fix Phase C runtime slices can
-  implement it without relying on chat context
+- the desktop app lets the operator choose a PRD without terminal commands
+- the UI distinguishes project ready / PRD missing, invalid PRD, and PRD ready states
+- the selected PRD is shown in a bounded preview
+- invalid or missing input has plain-English actionable guidance
+- the flow does not create a hidden PRD cache or redesign PRD decomposition
 
 ## Out Of Scope For Current Phase
 
-- runtime implementation of the folder picker, PRD picker, or run console
-- any automatic next-phase activation behavior that bypasses or rewrites the
-  shipped Phase 4 planner / activation separation
-- rewriting contracts in `AGENTS.md` or `CLAUDE.md`
+- run-mode selection, Start/Stop controls, and run-console work
+- any automatic next-phase activation behavior that bypasses or rewrites the shipped Phase 4 planner / activation separation
+- rewriting contracts in AGENTS.md or CLAUDE.md
 - introducing a hidden UI-only state store or second orchestration plane
-- fabrication of `.agent-loop/codex-review.md` content (Codex-owned)
+- fabrication of .agent-loop/codex-review.md content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
+
+
+
+

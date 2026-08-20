@@ -2,7 +2,7 @@
 
 ## Active Phase
 
-Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C1 - First-Run Setup Contract)
+Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX (sub-phase: Fix Phase C3 - PRD Intake UX)
 
 ## Phase 0 - Instruction Foundation
 
@@ -3333,7 +3333,7 @@ capabilities, or alternate sources of truth.
 
 ### Status
 
-Active.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3370,7 +3370,7 @@ understanding plain-English progress without terminal knowledge.
 
 ### Status
 
-Queued for later implementation after Fix Phase C1.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3399,7 +3399,7 @@ with plain-English next-step messaging instead of raw CLI refusal copy.
 
 ### Status
 
-Queued for later implementation after Fix Phase C2.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3425,7 +3425,7 @@ selected for the run.
 
 ### Status
 
-Queued for later implementation after Fix Phase C3.
+Active.
 
 ### Objective
 
@@ -3911,7 +3911,7 @@ README alignment were all verified in the current repo state.
 Implement the Long-Run Continuation And Completion Heuristics slice for the
 agent loop. This slice should extend the shipped Phase 6 continuation
 primitives and the Phase 9B/9C/9D autonomous runtime so the orchestrator can
-continue across longer product-building runs, detect bounded “done enough”
+continue across longer product-building runs, detect bounded ???done enough???
 completion states from canonical artifacts, and stop or continue
 deterministically without silently widening autonomy, while preserving the
 shipped planner/activation boundary, artifact source-of-truth model, and
@@ -3927,7 +3927,7 @@ hard-stop behavior.
 - the repository ships a bounded long-run continuation layer that can extend
   the autonomous Phase 9 runtime across multiple continuation hops using
   canonical repo artifacts and the shipped Phase 6 continuation primitives
-- the runtime can detect bounded completion / “done enough” terminal states
+- the runtime can detect bounded completion / ???done enough??? terminal states
   from canonical artifacts and explicit review signals rather than relying on
   transcript-only judgment
 - the new surface preserves the shipped artifact/source-of-truth boundary:
@@ -6350,3 +6350,5 @@ state plane.
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
 - no Git automation
+
+
