@@ -6321,8 +6321,10 @@ class FixPhaseC4TkWiringTests(unittest.TestCase):
       - drops the audit-line emit on success or refusal
       - starts a background thread / timer / watcher
       - persists the selection to a UI-only settings file
-      - directly writes the canonical loop-state.json
+      - bypasses the shipped canonical-apply dispatch with a
+        raw file open / a second writer
       - auto-attaches / bootstraps / starts / advances the agent
+      - stops applying the selection to canonical runtime state
     """
 
     def setUp(self) -> None:
@@ -6377,12 +6379,10 @@ class FixPhaseC4TkWiringTests(unittest.TestCase):
     def test_run_mode_reads_shipped_run_profiles_view(
         self,
     ) -> None:
-        # Regression pin per the fix-prompt "make the selected
-        # mode observable through the existing canonical
-        # runtime configuration/state path" requirement: the
-        # C4 section MUST route through the shipped Phase 10Q
-        # view (which itself reads `.agent-loop/loop-state.
-        # json`), NOT a UI-only settings file.
+        # The C4 section still routes its best-effort clipboard-
+        # recipe convenience through the shipped Phase 10Q view
+        # (which itself reads `.agent-loop/loop-state.json`),
+        # NOT a UI-only settings file.
         self.assertIn(
             "build_desktop_run_profiles_view(",
             self._c4_section,
@@ -6405,14 +6405,33 @@ class FixPhaseC4TkWiringTests(unittest.TestCase):
                 forbidden, self._c4_section, forbidden,
             )
 
-    def test_run_mode_does_not_directly_write_canonical(
+    def test_run_mode_applies_selection_via_canonical_dispatch(
         self,
     ) -> None:
-        # Regression pin: the C4 selector MUST NOT write
+        # Fix Phase C4 fix cycle Issue 1: the click handler MUST
+        # apply the selection to canonical runtime state through
+        # the shipped `_fix_phase_c4_apply_approval_mode_to_
+        # canonical_state(...)` dispatch (itself routed through
+        # the shipped Phase 5B `save_loop_state(...)` writer).
+        self.assertIn(
+            "_fix_phase_c4_apply_approval_mode_to_canonical_"
+            "state(",
+            self._c4_section,
+        )
+
+    def test_run_mode_does_not_bypass_canonical_writer(
+        self,
+    ) -> None:
+        # Regression pin: the C4 selector MUST NEVER write
         # `.agent-loop/loop-state.json` or
-        # `.agent-loop/proposed-phase.md` directly. The
-        # operator applies the change through the shipped
-        # affordance recipe.
+        # `.agent-loop/proposed-phase.md` via a raw file open,
+        # a second/parallel writer, or the shipped bootstrap /
+        # attach runtime. The ONLY canonical-mutation path is
+        # the shipped `save_loop_state(...)` writer, reached
+        # exclusively through
+        # `_fix_phase_c4_apply_approval_mode_to_canonical_
+        # state(...)` (defined outside this Tk section, so it
+        # never appears as a raw call inside the section body).
         for forbidden in (
             "write_loop_state(",
             "write_text(loop_state",
@@ -6497,6 +6516,217 @@ class FixPhaseC4RunModeSectionOrderTests(unittest.TestCase):
         self.assertGreater(idx_run_mode, -1)
         self.assertGreater(idx_advanced, -1)
         self.assertLess(idx_run_mode, idx_advanced)
+
+
+class FixPhaseC4ApplyApprovalModeTests(unittest.TestCase):
+    """Fix Phase C4 fix cycle Issue 1: pin
+    `_fix_phase_c4_apply_approval_mode_to_canonical_state(...)`
+    - the canonical-owned dispatch a Run Mode selection now
+    routes through. Proves the selection ACTUALLY changes
+    canonical state (the Codex finding) and that it never
+    bypasses an in-flight human-approval gate, never advances a
+    cycle, and never touches any field but `approval_mode`.
+    """
+
+    def _read_state(self, controller: Path) -> dict:
+        return json.loads(
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).read_text(encoding="utf-8"),
+        )
+
+    def test_apply_writes_approval_mode_to_loop_state(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            applied = (
+                agent_loop
+                ._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller,
+                    approval_mode=(
+                        agent_loop.APPROVAL_MODE_STRICT
+                    ),
+                )
+            )
+            on_disk = self._read_state(controller)
+        self.assertEqual(
+            applied, agent_loop.APPROVAL_MODE_STRICT,
+        )
+        self.assertEqual(
+            on_disk["approval_mode"],
+            agent_loop.APPROVAL_MODE_STRICT,
+        )
+
+    def test_apply_returns_the_rereread_value_not_the_request(
+        self,
+    ) -> None:
+        # The function must return what is ACTUALLY on disk
+        # after the write, not merely echo the caller's input.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop, "load_loop_state",
+                wraps=agent_loop.load_loop_state,
+            ) as spy:
+                applied = (
+                    agent_loop
+                    ._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                        controller,
+                        approval_mode=(
+                            agent_loop.APPROVAL_MODE_AUTONOMOUS
+                        ),
+                    )
+                )
+        # load_loop_state is called at least twice: once to
+        # read `current` before the write, once to re-read the
+        # applied value after the write.
+        self.assertGreaterEqual(spy.call_count, 2)
+        self.assertEqual(
+            applied, agent_loop.APPROVAL_MODE_AUTONOMOUS,
+        )
+
+    def test_apply_preserves_every_other_field_verbatim(
+        self,
+    ) -> None:
+        # Regression pin proving the selection NEVER bypasses an
+        # in-flight human-approval gate: a strict-mode halt with
+        # a pending `awaiting_human_for` gate survives a Run
+        # Mode selection unchanged in every field except
+        # `approval_mode`.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c",
+                status=(
+                    agent_loop.HALTED_PRE_CODEX_REVIEW_NORMAL
+                ),
+            )
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            before = json.loads(
+                state_path.read_text(encoding="utf-8"),
+            )
+            before["awaiting_human_for"] = (
+                agent_loop.AWAITING_HUMAN_FOR_PRE_CODEX_REVIEW
+            )
+            before["approval_mode"] = (
+                agent_loop.APPROVAL_MODE_STRICT
+            )
+            before["cycle_count"] = 2
+            state_path.write_text(
+                json.dumps(before), encoding="utf-8",
+            )
+            agent_loop._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                controller,
+                approval_mode=agent_loop.APPROVAL_MODE_AUTONOMOUS,
+            )
+            after = self._read_state(controller)
+        self.assertEqual(
+            after["approval_mode"],
+            agent_loop.APPROVAL_MODE_AUTONOMOUS,
+        )
+        for field in (
+            "status", "awaiting_human_for", "cycle_count",
+            "phase", "sub_phase", "task", "max_cycles",
+            "last_verdict", "last_verdict_phase",
+            "contract_version",
+        ):
+            self.assertEqual(
+                after[field], before[field],
+                f"field {field!r} MUST be preserved verbatim "
+                f"by a Run Mode selection",
+            )
+
+    def test_apply_calls_save_loop_state_with_only_approval_mode(
+        self,
+    ) -> None:
+        # Defensive: assert the shipped writer is invoked with
+        # an `updates` dict containing exactly one key. This
+        # pins that the C4 dispatch can never smuggle a second
+        # field (e.g. `status`) into the same write.
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with mock.patch.object(
+                agent_loop, "save_loop_state",
+                wraps=agent_loop.save_loop_state,
+            ) as spy:
+                agent_loop._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller,
+                    approval_mode=agent_loop.APPROVAL_MODE_REVIEW,
+                )
+        spy.assert_called_once()
+        _args, kwargs = spy.call_args
+        called_args = spy.call_args.args
+        updates_arg = (
+            kwargs.get("updates")
+            if "updates" in kwargs
+            else called_args[2]
+        )
+        self.assertEqual(
+            set(updates_arg.keys()), {"approval_mode"},
+        )
+
+    def test_apply_refuses_invalid_approval_mode(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(Path(td) / "c")
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller, approval_mode="bogus_mode",
+                )
+            # The canonical file MUST be untouched on refusal.
+            on_disk = self._read_state(controller)
+        self.assertEqual(on_disk["approval_mode"], "review")
+
+    def test_apply_refuses_missing_loop_state(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "empty"
+            controller.mkdir()
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller,
+                    approval_mode=agent_loop.APPROVAL_MODE_REVIEW,
+                )
+
+    def test_apply_refuses_malformed_loop_state(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "c"
+            (controller / ".agent-loop").mkdir(parents=True)
+            (
+                controller / ".agent-loop" / "loop-state.json"
+            ).write_text("not json", encoding="utf-8")
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller,
+                    approval_mode=agent_loop.APPROVAL_MODE_REVIEW,
+                )
+
+    def test_apply_never_starts_or_advances_a_cycle(
+        self,
+    ) -> None:
+        # Source-inspection pin over the function BODY only
+        # (the docstring legitimately discusses `status` /
+        # `cycle_count` / `run_activation` in prose to explain
+        # what the dispatch must NOT do): the executable code
+        # must never reference cycle-advancing / activation /
+        # attach / subprocess machinery, and must never name any
+        # loop-state field but `approval_mode` in an `updates`
+        # dict literal.
+        import inspect
+        full_source = inspect.getsource(
+            agent_loop
+            ._fix_phase_c4_apply_approval_mode_to_canonical_state,
+        )
+        body = full_source.split('"""', 2)[2]
+        for forbidden in (
+            "run_activation(",
+            "_run_normal_cycle_from_increment(",
+            "attach_external_target(",
+            "subprocess.",
+            '"status"', "'status'",
+            '"cycle_count"', "'cycle_count'",
+        ):
+            self.assertNotIn(forbidden, body, forbidden)
 
 
 if __name__ == "__main__":

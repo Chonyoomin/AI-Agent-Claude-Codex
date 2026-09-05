@@ -16574,6 +16574,68 @@ def _fix_phase_c4_derive_clipboard_payload_from_view(
     )
 
 
+def _fix_phase_c4_apply_approval_mode_to_canonical_state(
+    controller_root: Path, *, approval_mode: str,
+) -> str:
+    """Fix Phase C4 fix cycle Issue 1: apply a C4 selection to
+    the canonical runtime state by writing `approval_mode`
+    through the shipped Phase 5B `save_loop_state(...)` writer -
+    the SOLE authority over which fields may be written to
+    `.agent-loop/loop-state.json`. This is the "existing
+    canonical library/runtime dispatch" the selector routes
+    through; no parallel writer, no second state store, and no
+    duplicated write-validation logic is introduced here.
+
+    Only `approval_mode` is ever included in the `updates` dict
+    passed to `save_loop_state(...)`. Every other field
+    (`status`, `awaiting_human_for`, `cycle_count`, `phase`,
+    `sub_phase`, `task`, ...) is carried forward from the
+    current on-disk state verbatim via `save_loop_state`'s own
+    merge behavior, so an in-flight human-approval gate (a
+    `halted_awaiting_human_*` status, a pending
+    `awaiting_human_for` name) is NEVER cleared, advanced, or
+    bypassed by a Run Mode selection. This function never
+    starts a cycle, never advances `status`, never invokes
+    `run_activation(...)` / `_run_normal_cycle_from_increment(
+    ...)` / `attach_external_target(...)`, and never spawns a
+    subprocess.
+
+    Refuses fail-closed via `HaltError("halted_input_missing",
+    ...)` when:
+      - `approval_mode` is outside the shipped Phase 5A closed
+        enumeration `ALLOWED_APPROVAL_MODES`
+      - `.agent-loop/loop-state.json` does not exist or is not
+        valid JSON (via the shipped `load_loop_state(...)`)
+      - the loaded state fails the shipped
+        `validate_loop_state(...)` structural check
+
+    Returns the applied `approval_mode` RE-READ from the
+    freshly written canonical file (never the in-memory value
+    the caller asked for) so the caller renders what is
+    ACTUALLY on disk, not merely what it hoped to write.
+    """
+    if approval_mode not in ALLOWED_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: "
+                f"approval_mode {approval_mode!r} is not in "
+                f"the shipped Phase 5A vocabulary "
+                f"{sorted(ALLOWED_APPROVAL_MODES)!r}"
+            ),
+        )
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    current = load_loop_state(state_path)
+    validate_loop_state(current)
+    save_loop_state(
+        state_path, current, {"approval_mode": approval_mode},
+    )
+    applied = load_loop_state(state_path)
+    return applied.get("approval_mode")
+
+
 def _fix_phase_c4_format_audit_line(
     *,
     state_id,
@@ -18163,9 +18225,13 @@ def _launch_desktop_app_window(
 
     def _fix_phase_c4_on_choice_click(choice_id: str) -> None:
         # Fail-closed on any choice_id outside the shipped
-        # closed C4 vocabulary. Session-scoped only: nothing
-        # here writes a canonical artifact, spawns a
-        # subprocess, opens a socket, or advances loop-state.
+        # closed C4 vocabulary. Nothing here spawns a
+        # subprocess, opens a socket, starts a cycle, or
+        # advances `status` / `awaiting_human_for` - the ONLY
+        # canonical field this callback ever changes is
+        # `approval_mode`, applied via the shipped Phase 5B
+        # `save_loop_state(...)` writer (see
+        # `_fix_phase_c4_apply_approval_mode_to_canonical_state`).
         if choice_id not in FIX_PHASE_C4_CHOICE_IDS:
             _fix_phase_c4_emit_audit(
                 state_id=None,
@@ -18175,27 +18241,25 @@ def _launch_desktop_app_window(
                 ),
             )
             return
-        view, canonical = (
-            _fix_phase_c4_read_current_canonical_mode()
+        target_approval_mode = (
+            _fix_phase_c4_map_choice_to_approval_mode(choice_id)
         )
-        if view is None:
-            unavailable_payload = (
-                _fix_phase_c4_format_canonical_source_unavailable_payload()
-            )
-            _fix_phase_c4_render_payload(unavailable_payload)
-            _fix_phase_c4_emit_audit(
-                state_id=unavailable_payload["state_id"],
-                choice_id=choice_id,
-                refusal_category=(
-                    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE
-                ),
-            )
-            return
+        # Fix Phase C4 fix cycle Issue 1: apply the selection to
+        # the canonical runtime state THROUGH the shipped
+        # Phase 5B writer before rendering anything. On any
+        # refusal (missing / malformed loop-state.json, or an
+        # approval_mode outside the shipped Phase 5A
+        # enumeration) render the bounded unavailable/refused
+        # state and emit the existing
+        # `refused_canonical_source_unreadable` audit category;
+        # the canonical file is left untouched (`load_loop_state
+        # -> validate_loop_state -> save_loop_state` either
+        # completes as a whole or raises before any write).
         try:
-            clipboard_payload = (
-                _fix_phase_c4_derive_clipboard_payload_from_view(
-                    choice_id=choice_id,
-                    run_profiles_view=view,
+            applied_mode = (
+                _fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller_root,
+                    approval_mode=target_approval_mode,
                 )
             )
         except HaltError:
@@ -18211,23 +18275,39 @@ def _launch_desktop_app_window(
                 ),
             )
             return
-        # Copy the shipped clipboard payload verbatim. This
-        # matches the shipped Phase 10Q `copy_paste` dispatch
-        # convention: the desktop shell NEVER executes the
-        # payload as a subprocess and NEVER opens a network
-        # socket. The operator pastes into their terminal to
-        # apply the change through the shipped CLI recipe.
+        # Best-effort convenience only: also copy the shipped
+        # Phase 10Q affordance's clipboard recipe for operators
+        # who want the CLI-equivalent text (e.g. for a support
+        # note or to mirror the change into a future `plan ->
+        # activate` proposal). This is NEVER the mechanism that
+        # applies the selection - the canonical write above
+        # already happened - so a clipboard failure or a
+        # missing/stale Phase 10Q view must NEVER surface as a
+        # refusal or block rendering the already-applied state.
         try:
+            clipboard_view, _clipboard_canonical = (
+                _fix_phase_c4_read_current_canonical_mode()
+            )
+            clipboard_payload = (
+                _fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id=choice_id,
+                    run_profiles_view=clipboard_view,
+                )
+            )
             root.clipboard_clear()
             root.clipboard_append(clipboard_payload)
-        except Exception:  # noqa: BLE001 - clipboard is
-            # best-effort; the audit line still fires so the
-            # operator sees the selection in the log.
+        except Exception:  # noqa: BLE001 - best-effort only;
+            # the canonical apply above already succeeded and
+            # the audit line below still fires regardless.
             pass
+        # Reread canonical state (via the applied_mode returned
+        # above, itself re-read from disk by the apply helper)
+        # and render the ACTUAL applied plain-English mode -
+        # never the value the operator merely requested.
         selected_payload = (
             _fix_phase_c4_format_selected_payload(
                 choice_id=choice_id,
-                current_canonical_mode=canonical,
+                current_canonical_mode=applied_mode,
             )
         )
         _fix_phase_c4_render_payload(selected_payload)

@@ -9,7 +9,7 @@ Fix Phase C4 - Run Mode Selector
 
 ## Status
 
-Active and ready for implementation.
+Active; Codex review found a Claude-owned fix required.
 
 ## Task
 
@@ -21,6 +21,7 @@ Add the desktop run-mode selector with plain-English choices mapped to existing 
 - the default experience should optimize for one local operator who dislikes terminals
 - the shipped desktop app must remain canonical-artifact-first and must not invent a second UI-only orchestration plane
 - run-mode selection, Start/Stop controls, and run-console behavior remain deferred to C4 through C8
+
 
 
 

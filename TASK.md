@@ -28,7 +28,7 @@ Fix Phase C4 - Run Mode Selector
 
 ## Phase Status
 
-Active and ready for implementation.
+Active; Codex review found a Claude-owned fix required.
 
 ## Active Task
 
@@ -56,6 +56,7 @@ Add the desktop run-mode selector with plain-English choices mapped to existing 
 - introducing a hidden UI-only state store or second orchestration plane
 - fabrication of .agent-loop/codex-review.md content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
+
 
 
 
