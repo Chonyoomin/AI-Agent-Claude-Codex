@@ -24,29 +24,28 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Active Sub-Phase
 
-Fix Phase C4 - Run Mode Selector
+Fix Phase C5 - Start / Stop Agent Control Surface
 
 ## Phase Status
 
-Active; Codex review found a Claude-owned fix required.
+Active and ready for implementation.
 
 ## Active Task
 
-Add the desktop run-mode selector with plain-English choices mapped to existing shipped runtime modes.
+Add one primary desktop Start Agent control that becomes a Stop Agent surface while active, with prerequisite and refusal guidance.
 
 ## Phase Outcome Required Now
 
-- TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md, and .agent-loop/loop-state.json identify Fix Phase C3 as the active sub-phase
-- .agent-loop/phase-plan.md records the Fix Phase C track and the concrete Fix Phase C1 through Fix Phase C8 slices
-- .agent-loop/claude-prompt.md contains a scoped implementation prompt for the Fix Phase C3 PRD intake slice
+- TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md, and .agent-loop/loop-state.json identify Fix Phase C5 as the active sub-phase
+- .agent-loop/phase-plan.md records Fix Phase C5 as active
+- .agent-loop/claude-prompt.md contains the scoped C5 implementation prompt
 
 ## Next-Phase Gate
 
-- the desktop app lets the operator choose a PRD without terminal commands
-- the UI distinguishes project ready / PRD missing, invalid PRD, and PRD ready states
-- the selected PRD is shown in a bounded preview
-- invalid or missing input has plain-English actionable guidance
-- the flow does not create a hidden PRD cache or redesign PRD decomposition
+- the desktop app exposes one clear Start Agent control
+- prerequisites disable Start with plain-English guidance
+- active execution switches the control to Stop Agent or pause
+- start/stop use canonical runtime ownership without bypassing gates
 
 ## Out Of Scope For Current Phase
 
@@ -56,6 +55,8 @@ Add the desktop run-mode selector with plain-English choices mapped to existing 
 - introducing a hidden UI-only state store or second orchestration plane
 - fabrication of .agent-loop/codex-review.md content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
+
+
 
 
 

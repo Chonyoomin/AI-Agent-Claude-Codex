@@ -3425,7 +3425,7 @@ selected for the run.
 
 ### Status
 
-Active.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3450,7 +3450,7 @@ the shipped runtime modes without creating hidden UI-only settings.
 
 ### Status
 
-Queued for later implementation after Fix Phase C4.
+Active.
 
 ### Objective
 
@@ -6350,5 +6350,7 @@ state plane.
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
 - no Git automation
+
+
 
 

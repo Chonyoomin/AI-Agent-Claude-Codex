@@ -5,15 +5,15 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Sub-Phase
 
-Fix Phase C4 - Run Mode Selector
+Fix Phase C5 - Start / Stop Agent Control Surface
 
 ## Status
 
-Active; Codex review found a Claude-owned fix required.
+Active and ready for implementation.
 
 ## Task
 
-Add the desktop run-mode selector with plain-English choices mapped to existing shipped runtime modes.
+Add one primary desktop Start Agent control that becomes a Stop Agent surface while active, with prerequisite and refusal guidance.
 
 ## Notes
 
@@ -21,6 +21,8 @@ Add the desktop run-mode selector with plain-English choices mapped to existing 
 - the default experience should optimize for one local operator who dislikes terminals
 - the shipped desktop app must remain canonical-artifact-first and must not invent a second UI-only orchestration plane
 - run-mode selection, Start/Stop controls, and run-console behavior remain deferred to C4 through C8
+
+
 
 
 

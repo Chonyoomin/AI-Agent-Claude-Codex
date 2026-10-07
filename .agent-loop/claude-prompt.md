@@ -1,51 +1,54 @@
 # Claude Code Task
 
 ## Phase
-Fix Phase C4 - Run Mode Selector
+Fix Phase C5 - Start / Stop Agent Control Surface
 
 ## Objective
-Add a plain-English desktop run-mode selector that lets a non-technical
-operator choose among the already-shipped runtime approval modes without
-exposing internal jargon or creating a second UI-only settings plane.
+Add one clear primary desktop control that starts the workflow when all
+prerequisites are satisfied and changes to a Stop Agent or pause surface while
+the workflow is active. Keep all existing runtime gates and canonical
+artifact ownership intact.
 
 ## Context
-Fix Phase C1 defines the guided desktop section order:
+Fix Phase C1 defines the guided desktop order:
 Project, PRD, Run Mode, Run, Progress. Fix Phase C2 delivered the Project
-folder surface and C3 delivered the PRD picker, state mapping, and bounded
-preview. Read docs/desktop-first-run-setup-contract.md, inspect the actual
-repository state, and follow the shipped Phase 5A approval-mode contract and
-Phase 10Q run-profile behavior. Do not rely on prior chat context.
+surface, C3 delivered PRD intake, and C4 delivered the plain-English Run Mode
+selector with canonical approval-mode persistence. Read
+docs/desktop-first-run-setup-contract.md and inspect the actual repository state
+before editing. Do not rely on prior chat context.
 
 ## Required work
-- add the visible default Run Mode section after PRD and before Run
-- present plain-English choices such as Guided, Review Each Phase, and More
-  Autonomous, with one-sentence explanations
-- map each choice to the existing shipped runtime mode/profile values
-- preserve canonical artifact ownership and existing approval gates
-- make the selected mode observable through the existing canonical runtime
-  configuration/state path rather than a UI-only settings file
-- define clear initial, selected, and unavailable/refused states
-- preserve cancellation and invalid-selection behavior without changing runtime
-  semantics
-- keep raw approval-mode names, CLI commands, canonical paths, and raw state
-  vocabulary behind the existing Advanced surface
-- add focused tests for section order, option copy, mapping, persistence/source
-  of truth, refusal behavior, and no-automation invariants
+- add one primary visible Start Agent control in the Run section after Run Mode
+- enable it only when the existing Project, PRD, and Run Mode prerequisites are
+  satisfied
+- provide plain-English disabled-state guidance identifying the missing
+  prerequisite
+- route start through the existing canonical runtime/library owner; do not
+  duplicate orchestration or create a second controller
+- when the workflow is active, change the primary control to Stop Agent or a
+  clearly labeled pause/stop surface
+- route stop through an existing safe halt/stop owner and preserve canonical
+  loop-state evidence
+- define bounded plain-English states for unavailable, ready, starting,
+  active, stopping, and refused/blocked
+- preserve the C1 section order and keep raw runtime vocabulary behind Advanced
+- add focused tests for prerequisite gating, start dispatch, active-control
+  switching, stop dispatch, refusal behavior, audit output, and no-background
+  automation invariants
 - update README.md and .agent-loop/claude-summary.md with the shipped behavior
   and validation performed
 
 ## Constraints
 - Follow CLAUDE.md.
 - Do not modify AGENTS.md or CLAUDE.md.
-- Do not invent new approval semantics or widen autonomy.
-- Do not add Start/Stop controls, run-console behavior, automatic execution,
-  or progress rendering; those belong to C5-C8.
-- Do not create a UI-only settings file, preference cache, recent-mode list,
-  hidden session state, background watcher, or second orchestration plane.
-- Selecting a mode must not auto-start, attach, bootstrap, advance, or dispatch
-  the agent.
-- Preserve explicit operator gestures, shipped polling/audit cadence, and
-  existing human approval gates.
+- Do not invent approval semantics or widen autonomy.
+- Do not add a progress console, automatic continuation, token polling, or
+  background watcher; those belong to C6-C8 and existing cadence contracts.
+- Do not create a UI-only settings/state file, recent-action cache, or second
+  orchestration plane.
+- Start and stop must be explicit operator gestures.
+- Do not bypass human approval, strict-mode, review, token, or recovery gates.
+- Preserve existing canonical state and audit ownership.
 - Do not add Git automation, network endpoints, or unrelated refactors.
 
 ## Required output
