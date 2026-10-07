@@ -8151,7 +8151,7 @@ class FixPhaseC7TkWiringTests(unittest.TestCase):
         )
         self._c7 = self._source.split(
             "# Fix Phase C7: plain-English Review section", 1,
-        )[1].split("# Advanced panels toggle.", 1)[0]
+        )[1].split("# Fix Phase C8: plain-English Completion section", 1)[0]
 
     def test_review_section_packed_after_progress_only_when_active(
         self,
@@ -8213,6 +8213,375 @@ class FixPhaseC7TkWiringTests(unittest.TestCase):
     def test_approve_reuses_c5_process_tracker(self) -> None:
         self.assertIn("run_popen_holder[0] = proc", self._c7)
         self.assertIn("fix_phase_c5_process_holder.update(", self._c7)
+
+
+def _c8_view(*, status, verdict="APPROVED_FOR_HUMAN_REVIEW",
+             category="in_progress", human_gate=False, overlap=None):
+    view = _c6_view(
+        status=status, human_gate=human_gate, category=category,
+        overlap=overlap, last_verdict=verdict,
+    )
+    return view
+
+
+def _c8_format(
+    *, view, signal=agent_loop.FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+    proposal=False, identity="Test Operator", process="idle",
+):
+    return agent_loop._fix_phase_c8_format_payload(
+        view=view,
+        acceptance_signal=signal,
+        next_proposal_present=proposal,
+        identity_text=identity,
+        process_state=process,
+    )
+
+
+class FixPhaseC8ConstantsTests(unittest.TestCase):
+
+    def test_signal_version_and_closed_vocabularies(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C8_SIGNAL_VERSION, "fix-phase-c8-v1",
+        )
+        self.assertEqual(
+            set(agent_loop.FIX_PHASE_C8_STATE_DISPLAY_MAP),
+            set(agent_loop.FIX_PHASE_C8_STATE_IDS)
+            - {agent_loop.FIX_PHASE_C8_STATE_ABSENT},
+        )
+        for category in agent_loop.FIX_PHASE_C8_REFUSAL_CATEGORIES:
+            self.assertTrue(category.startswith("refused_"), category)
+            self.assertIn(category, agent_loop.FIX_PHASE_C8_REFUSAL_COPY)
+
+    def test_plain_english_copy_has_no_raw_runtime_tokens(self) -> None:
+        strings = []
+        for entry in agent_loop.FIX_PHASE_C8_STATE_DISPLAY_MAP.values():
+            strings.extend(entry.values())
+        strings.extend(agent_loop.FIX_PHASE_C8_REFUSAL_COPY.values())
+        strings.append(agent_loop.FIX_PHASE_C8_ACCEPT_LABEL)
+        for text in strings:
+            for marker in agent_loop.FIX_PHASE_C6_REDACTION_MARKERS:
+                self.assertNotIn(marker, text, (marker, text))
+
+
+class FixPhaseC8StateMappingTests(unittest.TestCase):
+
+    def test_finished_work_awaiting_acceptance(self) -> None:
+        payload = _c8_format(view=_c8_view(
+            status="phase_complete_awaiting_human_approval",
+            human_gate=True,
+        ))
+        self.assertEqual(
+            payload["state_id"],
+            agent_loop.FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE,
+        )
+        self.assertTrue(payload["section_active"])
+        self.assertEqual(
+            payload["display_label"],
+            "Finished. Your acceptance is needed.",
+        )
+
+    def test_recorded_acceptance_is_accepted_next_step(self) -> None:
+        payload = _c8_format(
+            view=_c8_view(
+                status=agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+            ),
+            signal=agent_loop.FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+        )
+        self.assertEqual(
+            payload["state_id"], agent_loop.FIX_PHASE_C8_STATE_ACCEPTED,
+        )
+        self.assertIsNone(payload["action"])
+
+    def test_halted_run_is_blocked_with_no_action(self) -> None:
+        payload = _c8_format(
+            view=_c8_view(
+                status="halted_human_stop", category="halted",
+            ),
+            signal=None,
+        )
+        self.assertEqual(
+            payload["state_id"], agent_loop.FIX_PHASE_C8_STATE_BLOCKED,
+        )
+        self.assertIsNone(payload["action"])
+
+    def test_disagreeing_records_fail_closed_as_contradictory(self) -> None:
+        cases = (
+            (
+                _c8_view(
+                    status="phase_complete_awaiting_human_approval",
+                    human_gate=True,
+                ),
+                agent_loop.FINAL_ACCEPTANCE_SIGNAL_NOT_READY,
+            ),
+            (
+                _c8_view(
+                    status="phase_complete_awaiting_human_approval",
+                    verdict="NEEDS_FIXES", human_gate=True,
+                ),
+                agent_loop.FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+            ),
+            (
+                _c8_view(
+                    status=agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+                ),
+                agent_loop.FINAL_ACCEPTANCE_SIGNAL_AWAITING,
+            ),
+            (
+                _c8_view(
+                    status=agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+                ),
+                None,
+            ),
+        )
+        for view, signal in cases:
+            payload = _c8_format(view=view, signal=signal)
+            self.assertEqual(
+                payload["state_id"],
+                agent_loop.FIX_PHASE_C8_STATE_CONTRADICTORY,
+                (view["nodes"][0], signal),
+            )
+            self.assertIsNone(payload["action"])
+
+    def test_strict_and_other_gates_stay_with_c7(self) -> None:
+        strict = _c8_format(view=_c8_view(
+            status="halted_awaiting_human_pre_claude_prompt",
+            category="halted", human_gate=True,
+        ))
+        other = _c8_format(view=_c8_view(
+            status="halted_human_stop", human_gate=True,
+        ))
+        for payload in (strict, other):
+            self.assertFalse(payload["section_active"])
+
+    def test_in_progress_and_waiting_states_keep_section_absent(self) -> None:
+        running = _c8_format(view=_c8_view(status="evidence_capture"))
+        waiting = _c8_format(view=_c8_view(
+            status="halted_capacity_unavailable", category="halted",
+        ))
+        overlap = _c8_format(view=_c8_view(
+            status="evidence_capture", overlap="refused_pending_recovery",
+        ))
+        for payload in (running, waiting, overlap):
+            self.assertFalse(payload["section_active"])
+
+    def test_missing_view_keeps_section_absent(self) -> None:
+        payload = _c8_format(view=None, signal=None)
+        self.assertFalse(payload["section_active"])
+
+    def test_missing_artifacts_soft_fail_to_absent(self) -> None:
+        with TemporaryDirectory() as tmp:
+            payload = agent_loop._fix_phase_c8_build_payload(
+                Path(tmp), identity_text="", process_state="idle",
+            )
+        self.assertFalse(payload["section_active"])
+
+
+class FixPhaseC8ActionRoutingTests(unittest.TestCase):
+
+    def _awaiting(self):
+        return _c8_view(
+            status="phase_complete_awaiting_human_approval",
+            human_gate=True,
+        )
+
+    def test_awaiting_offers_enabled_acceptance_with_typed_name(self) -> None:
+        action = _c8_format(view=self._awaiting())["action"]
+        self.assertEqual(action["label"], "Record my acceptance")
+        self.assertTrue(action["enabled"])
+        self.assertIsNone(action["refusal_category"])
+
+    def test_blank_identity_is_refused_and_never_filled(self) -> None:
+        for identity in ("", "   "):
+            action = _c8_format(
+                view=self._awaiting(), identity=identity,
+            )["action"]
+            self.assertFalse(action["enabled"])
+            self.assertEqual(
+                action["refusal_category"],
+                agent_loop.FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING,
+            )
+
+    def test_in_flight_process_blocks_acceptance(self) -> None:
+        for process_state in agent_loop.FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+            action = _c8_format(
+                view=self._awaiting(), process=process_state,
+            )["action"]
+            self.assertFalse(action["enabled"], process_state)
+            self.assertEqual(
+                action["refusal_category"],
+                agent_loop.FIX_PHASE_C8_REFUSAL_PROCESS_BUSY,
+            )
+
+    def test_identity_refusal_takes_precedence_over_busy(self) -> None:
+        action = _c8_format(
+            view=self._awaiting(), identity="", process="active",
+        )["action"]
+        self.assertEqual(
+            action["refusal_category"],
+            agent_loop.FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING,
+        )
+
+    def test_no_action_outside_awaiting_acceptance(self) -> None:
+        accepted = _c8_format(
+            view=_c8_view(
+                status=agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+            ),
+            signal=agent_loop.FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+        )
+        blocked = _c8_format(view=_c8_view(
+            status="halted_human_stop", category="halted",
+        ), signal=None)
+        self.assertIsNone(accepted["action"])
+        self.assertIsNone(blocked["action"])
+
+
+class FixPhaseC8CopyTests(unittest.TestCase):
+
+    def test_finished_line_is_canonical_and_redacted(self) -> None:
+        payload = _c8_format(view=_c8_view(
+            status="phase_complete_awaiting_human_approval",
+            human_gate=True,
+        ))
+        self.assertTrue(payload["finished_text"].startswith(
+            "Finished so far: ",
+        ))
+        self.assertIn("Phase 10", payload["finished_text"])
+
+    def test_accepted_copy_keeps_next_phase_as_operator_decision(self) -> None:
+        payload = _c8_format(
+            view=_c8_view(
+                status=agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+            ),
+            signal=agent_loop.FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+        )
+        self.assertIn("go-ahead", payload["display_label"])
+        self.assertIn("separate decision", payload["reason_text"])
+
+    def test_advisory_note_labels_proposal_presence(self) -> None:
+        accepted_view = _c8_view(
+            status=agent_loop.FINAL_ACCEPTANCE_ACCEPTED_STATUS,
+        )
+        with_proposal = _c8_format(
+            view=accepted_view,
+            signal=agent_loop.FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+            proposal=True,
+        )
+        without = _c8_format(
+            view=accepted_view,
+            signal=agent_loop.FINAL_ACCEPTANCE_SIGNAL_RECORDED,
+            proposal=False,
+        )
+        self.assertTrue(
+            with_proposal["advisory_note"].startswith("Advisory:"),
+        )
+        self.assertNotEqual(
+            with_proposal["advisory_note"], without["advisory_note"],
+        )
+
+    def test_c7_phase_complete_copy_points_to_completion(self) -> None:
+        payload = agent_loop._fix_phase_c7_format_payload(
+            view=_c7_view(
+                status="phase_complete_awaiting_human_approval",
+                human_gate=True,
+            ),
+            approval_mode="strict",
+            prerequisite_missing=None,
+            process_state="idle",
+        )
+        self.assertIn("Completion section", payload["after_action_text"])
+
+
+class FixPhaseC8BuildTests(unittest.TestCase):
+
+    def test_build_reads_canonical_artifacts_only(self) -> None:
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / ".agent-loop").mkdir()
+            payload = agent_loop._fix_phase_c8_build_payload(
+                root, identity_text="x", process_state="idle",
+            )
+            self.assertFalse((root / ".agent-loop" / "final-acceptance.json").exists())
+        self.assertEqual(payload["signal_version"], "fix-phase-c8-v1")
+
+
+class FixPhaseC8TkWiringTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._c8 = self._source.split(
+            "# Fix Phase C8: plain-English Completion section", 1,
+        )[1].split("# Advanced panels toggle.", 1)[0]
+
+    def test_completion_section_after_review_and_before_advanced(
+        self,
+    ) -> None:
+        self.assertIn('text="Completion"', self._c8)
+        idx_review = self._source.find("fix_phase_c7_frame = tk.LabelFrame(")
+        idx_completion = self._source.find(
+            "fix_phase_c8_frame = tk.LabelFrame(",
+        )
+        idx_advanced = self._source.find("# Advanced panels toggle.")
+        self.assertLess(idx_review, idx_completion)
+        self.assertLess(idx_completion, idx_advanced)
+        self.assertIn("after=(", self._c8)
+        self.assertIn(
+            "fix_phase_c7_frame\n                    if "
+            "fix_phase_c7_visible_holder[0]",
+            self._c8,
+        )
+
+    def test_completion_detail_lives_behind_advanced_toggle(self) -> None:
+        self.assertIn(
+            "advanced_frames_holder.append(fix_phase_c8_advanced_frame)",
+            self._source,
+        )
+
+    def test_refresh_polls_c8_after_c7(self) -> None:
+        self.assertIn(
+            "        _fix_phase_c7_refresh()\n"
+            "        _fix_phase_c8_refresh()\n",
+            self._source,
+        )
+
+    def test_refresh_never_accepts(self) -> None:
+        refresh_body = self._c8.split(
+            "def _fix_phase_c8_refresh() -> None:", 1,
+        )[1].split("def _fix_phase_c8_accept_click() -> None:", 1)[0]
+        self.assertNotIn("record_final_acceptance", refresh_body)
+        self.assertNotIn("_fix_phase_c8_accept_click", refresh_body)
+        self.assertNotIn("Popen", refresh_body)
+
+    def test_only_explicit_click_calls_the_shipped_owner(self) -> None:
+        self.assertEqual(self._c8.count("record_final_acceptance("), 1)
+        accept_body = self._c8.split(
+            "def _fix_phase_c8_accept_click() -> None:", 1,
+        )[1].split("fix_phase_c8_button.config(command=", 1)[0]
+        gate = accept_body.index(
+            'if action is None or not action["enabled"]:',
+        )
+        owner = accept_body.index("record_final_acceptance(")
+        self.assertLess(gate, owner)
+        self.assertIn(
+            "accepted_by=fix_phase_c8_identity_entry.get()", accept_body,
+        )
+
+    def test_block_writes_no_state_and_fills_no_identity(self) -> None:
+        self.assertNotIn("save_loop_state", self._c8)
+        self.assertNotIn("subprocess.Popen", self._c8)
+        self.assertNotIn("_log_note", self._c8)
+        self.assertNotIn("getpass", self._c8)
+        self.assertNotIn("getlogin", self._c8)
+        self.assertNotIn("getuser", self._c8)
+        self.assertNotIn("identity_entry.insert", self._c8)
+        self.assertNotIn("set_final_acceptance", self._c8)
+
+    def test_no_auto_activation_or_planner_in_completion_block(self) -> None:
+        self.assertNotIn("activate", self._c8)
+        self.assertNotIn("plan_phase", self._c8)
+        self.assertNotIn("APPROVED_FOR_ACTIVATION", self._c8)
 
 
 if __name__ == "__main__":

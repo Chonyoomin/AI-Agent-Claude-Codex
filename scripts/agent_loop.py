@@ -17369,8 +17369,7 @@ FIX_PHASE_C7_GATE_DISPLAY_MAP = {
             "whether it is good enough."
         ),
         "after_action_text": (
-            "Final sign-off is handled in the completion step, which "
-            "this window does not offer yet."
+            "Final sign-off is in the Completion section below."
         ),
     },
     FIX_PHASE_C7_GATE_OTHER: {
@@ -17544,6 +17543,271 @@ def _fix_phase_c7_format_audit_line(
 
 def _fix_phase_c7_build_resume_command() -> list:
     return [sys.executable, str(Path(__file__).resolve()), "resume"]
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C8: plain-English completion and handoff summary.
+#
+# Presents canonical end-of-run state and offers at most one explicit
+# action: recording final human acceptance through the shipped Phase 9G
+# owner `record_final_acceptance(...)`, with the operator's own typed
+# name. Next-phase planning and activation stay with the shipped planner
+# and the human-authored APPROVED_FOR_ACTIVATION token. Refreshes only on
+# the shipped `_refresh` poll; nothing is cached or auto-accepted here.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C8_SIGNAL_VERSION = "fix-phase-c8-v1"
+
+FIX_PHASE_C8_STATE_ABSENT = "absent"
+FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE = "awaiting_acceptance"
+FIX_PHASE_C8_STATE_ACCEPTED = "accepted"
+FIX_PHASE_C8_STATE_BLOCKED = "blocked"
+FIX_PHASE_C8_STATE_CONTRADICTORY = "contradictory"
+FIX_PHASE_C8_STATE_IDS = (
+    FIX_PHASE_C8_STATE_ABSENT,
+    FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE,
+    FIX_PHASE_C8_STATE_ACCEPTED,
+    FIX_PHASE_C8_STATE_BLOCKED,
+    FIX_PHASE_C8_STATE_CONTRADICTORY,
+)
+
+FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING = "refused_acceptance_identity_missing"
+FIX_PHASE_C8_REFUSAL_PROCESS_BUSY = "refused_acceptance_process_busy"
+FIX_PHASE_C8_REFUSAL_OWNER_REFUSED = "refused_acceptance_owner_refused"
+FIX_PHASE_C8_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING,
+    FIX_PHASE_C8_REFUSAL_PROCESS_BUSY,
+    FIX_PHASE_C8_REFUSAL_OWNER_REFUSED,
+)
+
+FIX_PHASE_C8_ACCEPT_LABEL = "Record my acceptance"
+FIX_PHASE_C8_WAITING_STATUSES = (
+    HALTED_OVERLAP_UNSAFE_CONTEXT,
+    HALTED_CAPACITY_UNAVAILABLE,
+)
+
+FIX_PHASE_C8_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE: {
+        "display_label": "Finished. Your acceptance is needed.",
+        "plain_english_summary": (
+            "The agent finished this phase and the result passed its "
+            "automated review."
+        ),
+        "remaining_text": (
+            "Your acceptance is the last step before this phase counts "
+            "as done."
+        ),
+        "reason_text": (
+            "Nothing is accepted until you record it here, under your "
+            "own name."
+        ),
+        "recommended_text": (
+            "Review the result, type your name, then press Record my "
+            "acceptance."
+        ),
+        "after_action_text": (
+            "The phase is marked accepted. The next phase still needs "
+            "your go-ahead."
+        ),
+    },
+    FIX_PHASE_C8_STATE_ACCEPTED: {
+        "display_label": "Accepted. Next phase needs your go-ahead.",
+        "plain_english_summary": "This phase is accepted and recorded.",
+        "remaining_text": "The next phase has not started.",
+        "reason_text": (
+            "Starting another phase is a separate decision, so nothing "
+            "starts on its own."
+        ),
+        "recommended_text": (
+            "Decide whether to plan the next phase. Planning is not run "
+            "from this window."
+        ),
+        "after_action_text": (
+            "Nothing changes until you take the next step outside this "
+            "window."
+        ),
+    },
+    FIX_PHASE_C8_STATE_BLOCKED: {
+        "display_label": "Stopped. Needs help to continue.",
+        "plain_english_summary": (
+            "The agent stopped before this phase finished."
+        ),
+        "remaining_text": "This phase is not finished yet.",
+        "reason_text": (
+            "The agent cannot move on from its current point without a "
+            "fix."
+        ),
+        "recommended_text": (
+            "Open Advanced to see the stop reason, then fix it or ask "
+            "for help."
+        ),
+        "after_action_text": (
+            "The agent stays stopped until the problem is cleared."
+        ),
+    },
+    FIX_PHASE_C8_STATE_CONTRADICTORY: {
+        "display_label": "The saved records do not match.",
+        "plain_english_summary": (
+            "The run records disagree, so this window will not offer "
+            "acceptance."
+        ),
+        "remaining_text": (
+            "The phase cannot be confirmed as finished from the records."
+        ),
+        "reason_text": (
+            "Acceptance is held back so an unclear record is not signed "
+            "off."
+        ),
+        "recommended_text": (
+            "Open Advanced for the saved values, then ask for help "
+            "before continuing."
+        ),
+        "after_action_text": "Nothing is changed by this window.",
+    },
+}
+
+FIX_PHASE_C8_REFUSAL_COPY = {
+    FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING: (
+        "Type your name first. The app will not fill it in for you."
+    ),
+    FIX_PHASE_C8_REFUSAL_PROCESS_BUSY: (
+        "The agent is still working. Wait for it to pause, then record "
+        "your acceptance."
+    ),
+    FIX_PHASE_C8_REFUSAL_OWNER_REFUSED: (
+        "The records did not allow acceptance. Open Advanced for the "
+        "reason, then ask for help."
+    ),
+}
+
+
+def _fix_phase_c8_derive_state_id(*, view, acceptance_signal) -> str:
+    if not isinstance(view, dict):
+        return FIX_PHASE_C8_STATE_ABSENT
+    values = _fix_phase_c6_node_values(view)
+    status = values.get("loop_state_status")
+    verdict = values.get("last_verdict")
+    if status == FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS:
+        if (
+            verdict == FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT
+            and acceptance_signal == FINAL_ACCEPTANCE_SIGNAL_AWAITING
+        ):
+            return FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE
+        return FIX_PHASE_C8_STATE_CONTRADICTORY
+    if status == FINAL_ACCEPTANCE_ACCEPTED_STATUS:
+        if (
+            verdict == FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT
+            and acceptance_signal == FINAL_ACCEPTANCE_SIGNAL_RECORDED
+        ):
+            return FIX_PHASE_C8_STATE_ACCEPTED
+        return FIX_PHASE_C8_STATE_CONTRADICTORY
+    if not isinstance(status, str) or not status:
+        return FIX_PHASE_C8_STATE_ABSENT
+    if status in STRICT_GATE_HALT_STATUSES:
+        return FIX_PHASE_C8_STATE_ABSENT
+    if values.get("human_gate_pending") is True:
+        return FIX_PHASE_C8_STATE_ABSENT
+    if (
+        status in FIX_PHASE_C8_WAITING_STATUSES
+        or view.get("overlap_state") == "refused_pending_recovery"
+    ):
+        return FIX_PHASE_C8_STATE_ABSENT
+    if view.get("status_category") == "halted":
+        return FIX_PHASE_C8_STATE_BLOCKED
+    return FIX_PHASE_C8_STATE_ABSENT
+
+
+def _fix_phase_c8_derive_action(*, state_id, identity_text, process_state):
+    if state_id != FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE:
+        return None
+    refusal_category = None
+    if not identity_text.strip():
+        refusal_category = FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING
+    elif process_state in FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+        refusal_category = FIX_PHASE_C8_REFUSAL_PROCESS_BUSY
+    return {
+        "label": FIX_PHASE_C8_ACCEPT_LABEL,
+        "enabled": refusal_category is None,
+        "refusal_category": refusal_category,
+        "refusal_copy": (
+            FIX_PHASE_C8_REFUSAL_COPY[refusal_category]
+            if refusal_category is not None else None
+        ),
+    }
+
+
+def _fix_phase_c8_format_payload(
+    *, view, acceptance_signal, next_proposal_present, identity_text,
+    process_state,
+) -> dict:
+    state_id = _fix_phase_c8_derive_state_id(
+        view=view, acceptance_signal=acceptance_signal,
+    )
+    values = _fix_phase_c6_node_values(view)
+    payload = {
+        "signal_version": FIX_PHASE_C8_SIGNAL_VERSION,
+        "state_id": state_id,
+        "section_active": state_id != FIX_PHASE_C8_STATE_ABSENT,
+        "action": _fix_phase_c8_derive_action(
+            state_id=state_id,
+            identity_text=identity_text,
+            process_state=process_state,
+        ),
+        "advanced": {
+            "raw_status": values.get("loop_state_status"),
+            "raw_last_verdict": values.get("last_verdict"),
+            "raw_acceptance_signal": acceptance_signal,
+            "raw_status_category": (
+                view.get("status_category")
+                if isinstance(view, dict) else None
+            ),
+        },
+    }
+    if state_id == FIX_PHASE_C8_STATE_ABSENT:
+        return payload
+    entry = FIX_PHASE_C8_STATE_DISPLAY_MAP[state_id]
+    payload.update(entry)
+    payload["finished_text"] = (
+        f"Finished so far: "
+        f"{_fix_phase_c6_redact_text(values.get('phase'))} - "
+        f"{_fix_phase_c6_redact_text(values.get('sub_phase'))}: "
+        f"{_fix_phase_c6_redact_text(values.get('task'))}"
+    )
+    if state_id == FIX_PHASE_C8_STATE_ACCEPTED:
+        payload["advisory_note"] = (
+            "Advisory: a next-phase proposal file is on disk."
+            if next_proposal_present
+            else "Advisory: no next-phase proposal file yet."
+        )
+    else:
+        payload["advisory_note"] = ""
+    return payload
+
+
+def _fix_phase_c8_build_payload(
+    controller_root: Path, *, identity_text, process_state,
+) -> dict:
+    try:
+        view = build_desktop_orchestration_visualization_view(
+            controller_root,
+        )
+    except (HaltError, OSError):
+        view = None
+    try:
+        acceptance_signal = evaluate_final_acceptance(
+            controller_root,
+        )["acceptance_signal"]
+    except (HaltError, OSError):
+        acceptance_signal = None
+    return _fix_phase_c8_format_payload(
+        view=view,
+        acceptance_signal=acceptance_signal,
+        next_proposal_present=(
+            controller_root / ".agent-loop" / "proposed-phase.md"
+        ).exists(),
+        identity_text=identity_text,
+        process_state=process_state,
+    )
 
 
 def _primary_desktop_validate_bootstrap_form(
@@ -19746,6 +20010,217 @@ def _launch_desktop_app_window(
     fix_phase_c7_button.config(command=_fix_phase_c7_approve_click)
     _fix_phase_c7_refresh()
 
+    # Fix Phase C8: plain-English Completion section after Review. The
+    # operator types their own name; the shipped Phase 9G owner records
+    # the acceptance on an explicit click. Refresh never accepts.
+    fix_phase_c8_frame = tk.LabelFrame(
+        control_frame,
+        text="Completion",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c8_state_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c8_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c8_summary_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_finished_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_finished_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c8_remaining_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_remaining_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_reason_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_reason_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_recommend_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c8_recommend_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c8_after_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c8_after_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_advisory_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#555555",
+    )
+    fix_phase_c8_advisory_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_refusal_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#8a1c1c",
+    )
+    fix_phase_c8_refusal_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_identity_label = tk.Label(
+        fix_phase_c8_frame,
+        text="Your name (typed by you):",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_identity_entry = tk.Entry(fix_phase_c8_frame)
+    fix_phase_c8_button = tk.Button(
+        fix_phase_c8_frame,
+        text=FIX_PHASE_C8_ACCEPT_LABEL,
+    )
+    fix_phase_c8_visible_holder = [False]
+    fix_phase_c8_action_visible_holder = [False]
+    fix_phase_c8_owner_refusal_holder: list = [None]
+
+    fix_phase_c8_advanced_frame = tk.Frame(control_frame)
+    advanced_frames_holder.append(fix_phase_c8_advanced_frame)
+    fix_phase_c8_advanced_label = tk.Label(
+        fix_phase_c8_advanced_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#666666",
+        font=("TkDefaultFont", 9),
+    )
+    fix_phase_c8_advanced_label.pack(fill=tk.X, padx=4, pady=(4, 4))
+
+    def _fix_phase_c8_current_payload() -> dict:
+        return _fix_phase_c8_build_payload(
+            controller_root,
+            identity_text=fix_phase_c8_identity_entry.get(),
+            process_state=_fix_phase_c5_current_process_state(),
+        )
+
+    def _fix_phase_c8_set_section_visible(visible: bool) -> None:
+        if visible == fix_phase_c8_visible_holder[0]:
+            return
+        if visible:
+            fix_phase_c8_frame.pack(
+                side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+                after=(
+                    fix_phase_c7_frame
+                    if fix_phase_c7_visible_holder[0]
+                    else fix_phase_c6_progress_frame
+                ),
+            )
+        else:
+            fix_phase_c8_frame.pack_forget()
+        fix_phase_c8_visible_holder[0] = visible
+
+    def _fix_phase_c8_set_action_visible(visible: bool) -> None:
+        if visible == fix_phase_c8_action_visible_holder[0]:
+            return
+        if visible:
+            fix_phase_c8_identity_label.pack(
+                fill=tk.X, padx=4, pady=(4, 0),
+            )
+            fix_phase_c8_identity_entry.pack(
+                fill=tk.X, padx=4, pady=(2, 0),
+            )
+            fix_phase_c8_button.pack(fill=tk.X, padx=4, pady=(4, 4))
+        else:
+            fix_phase_c8_identity_label.pack_forget()
+            fix_phase_c8_identity_entry.pack_forget()
+            fix_phase_c8_button.pack_forget()
+        fix_phase_c8_action_visible_holder[0] = visible
+
+    def _fix_phase_c8_render(payload: dict) -> None:
+        _fix_phase_c8_set_section_visible(payload["section_active"])
+        if not payload["section_active"]:
+            fix_phase_c8_advanced_label.config(text="")
+            return
+        fix_phase_c8_state_label.config(text=payload["display_label"])
+        fix_phase_c8_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c8_finished_label.config(text=payload["finished_text"])
+        fix_phase_c8_remaining_label.config(
+            text=f"Still open: {payload['remaining_text']}",
+        )
+        fix_phase_c8_reason_label.config(
+            text=f"Why: {payload['reason_text']}",
+        )
+        fix_phase_c8_recommend_label.config(
+            text=f"Recommended: {payload['recommended_text']}",
+        )
+        fix_phase_c8_after_label.config(
+            text=f"After you act: {payload['after_action_text']}",
+        )
+        fix_phase_c8_advisory_label.config(text=payload["advisory_note"])
+        action = payload["action"]
+        _fix_phase_c8_set_action_visible(action is not None)
+        refusal_text = fix_phase_c8_owner_refusal_holder[0] or ""
+        if action is not None:
+            fix_phase_c8_button.config(
+                text=action["label"],
+                state=(
+                    tk.NORMAL if action["enabled"] else tk.DISABLED
+                ),
+            )
+            if not action["enabled"]:
+                refusal_text = action["refusal_copy"]
+        fix_phase_c8_refusal_label.config(text=refusal_text)
+        advanced = payload["advanced"]
+        fix_phase_c8_advanced_label.config(
+            text=(
+                "Completion detail (technical): "
+                f"state={payload['state_id']!r}, "
+                f"status={advanced['raw_status']!r}, "
+                f"last_verdict={advanced['raw_last_verdict']!r}, "
+                f"acceptance_signal="
+                f"{advanced['raw_acceptance_signal']!r}, "
+                f"category={advanced['raw_status_category']!r}"
+            ),
+        )
+
+    def _fix_phase_c8_refresh() -> None:
+        _fix_phase_c8_render(_fix_phase_c8_current_payload())
+
+    def _fix_phase_c8_accept_click() -> None:
+        payload = _fix_phase_c8_current_payload()
+        action = payload["action"]
+        if action is None or not action["enabled"]:
+            _fix_phase_c8_render(payload)
+            return
+        try:
+            record_final_acceptance(
+                controller_root,
+                accepted_by=fix_phase_c8_identity_entry.get(),
+                log_path=fix_phase_c5_audit_log_path,
+            )
+        except (HaltError, OSError):
+            fix_phase_c8_owner_refusal_holder[0] = (
+                FIX_PHASE_C8_REFUSAL_COPY[
+                    FIX_PHASE_C8_REFUSAL_OWNER_REFUSED
+                ]
+            )
+            _fix_phase_c8_render(_fix_phase_c8_current_payload())
+            return
+        fix_phase_c8_owner_refusal_holder[0] = None
+        fix_phase_c8_identity_entry.delete(0, tk.END)
+        _fix_phase_c8_render(_fix_phase_c8_current_payload())
+
+    fix_phase_c8_button.config(command=_fix_phase_c8_accept_click)
+    _fix_phase_c8_refresh()
+
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
     # (registered above and below) are tracked so the toggle can
     # hide/show them as a group. The simplified UI hides them by
@@ -20461,6 +20936,7 @@ def _launch_desktop_app_window(
         _fix_phase_c5_poll_process()
         _fix_phase_c6_refresh()
         _fix_phase_c7_refresh()
+        _fix_phase_c8_refresh()
         # Simplified UI: keep the approval-mode dropdown in sync with
         # loop-state.json in case another tool wrote the field
         # between polls.
