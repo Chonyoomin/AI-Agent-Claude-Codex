@@ -17150,7 +17150,16 @@ def _fix_phase_c6_node_values(view) -> dict:
     }
 
 
-def _fix_phase_c6_derive_state_id(*, view) -> str:
+FIX_PHASE_C6_PROCESS_IN_FLIGHT = (
+    FIX_PHASE_C5_PROCESS_STARTING,
+    FIX_PHASE_C5_PROCESS_ACTIVE,
+    FIX_PHASE_C5_PROCESS_STOPPING,
+)
+
+
+def _fix_phase_c6_derive_state_id(
+    *, view, prerequisite_missing, process_state,
+) -> str:
     if not isinstance(view, dict):
         return FIX_PHASE_C6_STATE_SETUP
     values = _fix_phase_c6_node_values(view)
@@ -17173,6 +17182,10 @@ def _fix_phase_c6_derive_state_id(*, view) -> str:
         status in ALLOWED_NORMAL_CYCLE_START_STATUSES
         and values.get("cycle_count") == 0
     ):
+        if process_state in FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+            return FIX_PHASE_C6_STATE_RUNNING
+        if prerequisite_missing is not None:
+            return FIX_PHASE_C6_STATE_SETUP
         return FIX_PHASE_C6_STATE_READY
     return FIX_PHASE_C6_STATE_RUNNING
 
@@ -17187,11 +17200,29 @@ def _fix_phase_c6_derive_latest_activity(view) -> str:
     )
 
 
-def _fix_phase_c6_format_payload(*, view) -> dict:
-    state_id = _fix_phase_c6_derive_state_id(view=view)
+def _fix_phase_c6_format_payload(
+    *, view, prerequisite_missing, process_state,
+) -> dict:
+    state_id = _fix_phase_c6_derive_state_id(
+        view=view,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
     entry = FIX_PHASE_C6_STATE_DISPLAY_MAP[state_id]
+    next_step_help = entry["next_step_help"]
     values = _fix_phase_c6_node_values(view)
     advisory_notes = []
+    if prerequisite_missing is not None:
+        missing_copy = FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+            prerequisite_missing
+        ]
+        if state_id == FIX_PHASE_C6_STATE_SETUP:
+            next_step_help = missing_copy
+        else:
+            advisory_notes.append(
+                "Project, PRD, or Run Mode is not set in this "
+                "window. " + missing_copy
+            )
     if values.get("review_branch_active") is True:
         advisory_notes.append(
             "The shipped review step is the current focus."
@@ -17217,7 +17248,7 @@ def _fix_phase_c6_format_payload(*, view) -> dict:
         "display_label": entry["display_label"],
         "plain_english_summary": entry["plain_english_summary"],
         "next_step_label": entry["next_step_label"],
-        "next_step_help": entry["next_step_help"],
+        "next_step_help": next_step_help,
         "current_phase": _fix_phase_c6_redact_text(
             values.get("phase"),
         ),
@@ -17249,14 +17280,20 @@ def _fix_phase_c6_format_payload(*, view) -> dict:
     }
 
 
-def _fix_phase_c6_build_payload(controller_root: Path) -> dict:
+def _fix_phase_c6_build_payload(
+    controller_root: Path, *, prerequisite_missing, process_state,
+) -> dict:
     try:
         view = build_desktop_orchestration_visualization_view(
             controller_root,
         )
     except (HaltError, OSError):
         view = None
-    return _fix_phase_c6_format_payload(view=view)
+    return _fix_phase_c6_format_payload(
+        view=view,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
 
 
 def _primary_desktop_validate_bootstrap_form(
@@ -19208,7 +19245,13 @@ def _launch_desktop_app_window(
     fix_phase_c6_advanced_label.pack(fill=tk.X, padx=4, pady=(4, 4))
 
     def _fix_phase_c6_refresh() -> None:
-        payload = _fix_phase_c6_build_payload(controller_root)
+        payload = _fix_phase_c6_build_payload(
+            controller_root,
+            prerequisite_missing=(
+                _fix_phase_c5_current_missing_prerequisite()
+            ),
+            process_state=_fix_phase_c5_current_process_state(),
+        )
         fix_phase_c6_state_label.config(text=payload["display_label"])
         fix_phase_c6_summary_label.config(
             text=payload["plain_english_summary"],

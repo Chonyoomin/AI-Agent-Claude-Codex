@@ -7278,6 +7278,26 @@ class FixPhaseC5TkWiringTests(unittest.TestCase):
         )
 
 
+def _c6_format(
+    *, view, prerequisite_missing=None, process_state="idle",
+):
+    return agent_loop._fix_phase_c6_format_payload(
+        view=view,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
+
+
+def _c6_build(
+    controller, *, prerequisite_missing=None, process_state="idle",
+):
+    return agent_loop._fix_phase_c6_build_payload(
+        controller,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
+
+
 def _c6_view(
     *,
     status="awaiting_claude_implementation",
@@ -7376,8 +7396,12 @@ class FixPhaseC6ConstantsTests(unittest.TestCase):
 
 class FixPhaseC6StateMappingTests(unittest.TestCase):
 
-    def _state(self, view):
-        return agent_loop._fix_phase_c6_derive_state_id(view=view)
+    def _state(self, view, missing=None, process="idle"):
+        return agent_loop._fix_phase_c6_derive_state_id(
+            view=view,
+            prerequisite_missing=missing,
+            process_state=process,
+        )
 
     def test_missing_view_is_setup(self) -> None:
         self.assertEqual(self._state(None), "setup")
@@ -7454,6 +7478,172 @@ class FixPhaseC6StateMappingTests(unittest.TestCase):
         )
 
 
+class FixPhaseC6ReadinessPrerequisiteTests(unittest.TestCase):
+    """Fix Phase C6 readiness fix: `ready` only when every C5
+    prerequisite is satisfied and the runtime is startable; setup
+    guidance otherwise, using the same copy C5 shows.
+    """
+
+    def _start_view(self):
+        return _c6_view(
+            status="awaiting_claude_implementation", cycle=0,
+        )
+
+    def test_missing_project_renders_setup_with_c5_copy(self) -> None:
+        payload = _c6_format(
+            view=self._start_view(),
+            prerequisite_missing="project",
+        )
+        self.assertEqual(payload["state_id"], "setup")
+        self.assertEqual(
+            payload["next_step_help"],
+            agent_loop.FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+                "project"
+            ],
+        )
+
+    def test_partial_prerequisites_render_setup_for_missing_step(
+        self,
+    ) -> None:
+        for missing in ("prd", "run_mode"):
+            payload = _c6_format(
+                view=self._start_view(),
+                prerequisite_missing=missing,
+            )
+            self.assertEqual(payload["state_id"], "setup", missing)
+            self.assertEqual(
+                payload["next_step_help"],
+                agent_loop.FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+                    missing
+                ],
+            )
+
+    def test_fully_satisfied_startable_renders_ready(self) -> None:
+        payload = _c6_format(
+            view=self._start_view(),
+            prerequisite_missing=None,
+        )
+        self.assertEqual(payload["state_id"], "ready")
+        self.assertEqual(
+            payload["next_step_label"], "Press Start Agent",
+        )
+
+    def test_ready_matches_c5_start_ready_for_every_combination(
+        self,
+    ) -> None:
+        import itertools
+        for project, prd, run_mode in itertools.product(
+            (False, True), repeat=3,
+        ):
+            missing = (
+                agent_loop._fix_phase_c5_derive_missing_prerequisite(
+                    project_ready=project,
+                    prd_ready=prd,
+                    run_mode_selected=run_mode,
+                )
+            )
+            c5_state = agent_loop._fix_phase_c5_derive_state_id(
+                missing_prerequisite=missing,
+                process_state="idle",
+            )
+            c6_state = agent_loop._fix_phase_c6_derive_state_id(
+                view=self._start_view(),
+                prerequisite_missing=missing,
+                process_state="idle",
+            )
+            self.assertEqual(
+                c6_state == "ready",
+                c5_state == "start_ready",
+                (project, prd, run_mode),
+            )
+
+    def test_running_child_at_cycle_zero_is_running_not_ready(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop._fix_phase_c6_derive_state_id(
+                view=self._start_view(),
+                prerequisite_missing=None,
+                process_state="active",
+            ),
+            "running",
+        )
+
+    def test_in_flight_mappings_are_preserved_with_missing_prereq(
+        self,
+    ) -> None:
+        cases = (
+            (_c6_view(status="awaiting_codex_review", cycle=1),
+             "running"),
+            (_c6_view(
+                status="halted_awaiting_human_pre_codex_review_normal",
+                category="awaiting_human", human_gate=True,
+            ), "approval_required"),
+            (_c6_view(
+                status="halted_overlap_unsafe_context",
+                category="halted", blocked=True,
+            ), "waiting"),
+            (_c6_view(
+                status="halted_human_stop",
+                category="halted", blocked=True,
+            ), "blocked"),
+            (_c6_view(
+                status="phase_complete_awaiting_human_approval",
+                category="complete",
+            ), "complete"),
+        )
+        for view, expected in cases:
+            self.assertEqual(
+                agent_loop._fix_phase_c6_derive_state_id(
+                    view=view,
+                    prerequisite_missing="project",
+                    process_state="idle",
+                ),
+                expected,
+            )
+
+    def test_in_flight_state_with_missing_prereq_adds_advisory(
+        self,
+    ) -> None:
+        payload = _c6_format(
+            view=_c6_view(status="awaiting_codex_review", cycle=1),
+            prerequisite_missing="prd",
+        )
+        self.assertEqual(payload["state_id"], "running")
+        self.assertTrue(any(
+            "Project, PRD, or Run Mode is not set" in note
+            for note in payload["advisory_notes"]
+        ))
+
+    def test_missing_prerequisite_copy_has_no_raw_tokens(self) -> None:
+        for step in agent_loop.FIX_PHASE_C5_PREREQUISITE_ORDER:
+            payload = _c6_format(
+                view=self._start_view(),
+                prerequisite_missing=step,
+            )
+            for marker in agent_loop.FIX_PHASE_C6_REDACTION_MARKERS:
+                self.assertNotIn(
+                    marker, payload["next_step_help"],
+                )
+
+    def test_progress_refresh_passes_c5_prerequisite_state(
+        self,
+    ) -> None:
+        import inspect
+        source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        refresh = source.split(
+            "    def _fix_phase_c6_refresh() -> None:", 1,
+        )[1].split("    _fix_phase_c6_refresh()", 1)[0]
+        self.assertIn(
+            "_fix_phase_c5_current_missing_prerequisite()", refresh,
+        )
+        self.assertIn(
+            "_fix_phase_c5_current_process_state()", refresh,
+        )
+
+
 class FixPhaseC6ActivityTests(unittest.TestCase):
 
     def test_verdict_mapping(self) -> None:
@@ -7492,7 +7682,7 @@ class FixPhaseC6ActivityTests(unittest.TestCase):
 class FixPhaseC6RedactionTests(unittest.TestCase):
 
     def test_absolute_path_in_task_is_redacted(self) -> None:
-        payload = agent_loop._fix_phase_c6_format_payload(
+        payload = _c6_format(
             view=_c6_view(task="C:/Users/me/secret/task"),
         )
         self.assertEqual(
@@ -7524,7 +7714,7 @@ class FixPhaseC6RedactionTests(unittest.TestCase):
     def test_default_fields_expose_no_raw_tokens(self) -> None:
         with TemporaryDirectory() as td:
             controller = _make_controller(Path(td) / "c")
-            payload = agent_loop._fix_phase_c6_build_payload(
+            payload = _c6_build(
                 controller,
             )
         default_text = [
@@ -7547,7 +7737,7 @@ class FixPhaseC6RedactionTests(unittest.TestCase):
         )
 
     def test_raw_status_only_under_advanced(self) -> None:
-        payload = agent_loop._fix_phase_c6_format_payload(
+        payload = _c6_format(
             view=_c6_view(status="halted_human_stop",
                           category="halted", blocked=True),
         )
@@ -7564,7 +7754,7 @@ class FixPhaseC6StaleAndMissingArtifactTests(unittest.TestCase):
 
     def test_missing_controller_files_fall_back_to_setup(self) -> None:
         with TemporaryDirectory() as td:
-            payload = agent_loop._fix_phase_c6_build_payload(
+            payload = _c6_build(
                 Path(td),
             )
         self.assertEqual(payload["state_id"], "setup")
@@ -7572,7 +7762,7 @@ class FixPhaseC6StaleAndMissingArtifactTests(unittest.TestCase):
     def test_missing_expected_files_produce_advisory_note(
         self,
     ) -> None:
-        payload = agent_loop._fix_phase_c6_format_payload(
+        payload = _c6_format(
             view=_c6_view(progress={
                 ".agent-loop/claude-summary.md": {
                     "present": False, "size": None,
@@ -7600,7 +7790,7 @@ class FixPhaseC6StaleAndMissingArtifactTests(unittest.TestCase):
             fix.write_text("new\n", encoding="utf-8")
             os.utime(summary, (1_000_000_000, 1_000_000_000))
             os.utime(fix, (2_000_000_000, 2_000_000_000))
-            payload = agent_loop._fix_phase_c6_build_payload(
+            payload = _c6_build(
                 controller,
             )
         self.assertEqual(
@@ -7623,7 +7813,7 @@ class FixPhaseC6NoMutationTests(unittest.TestCase):
             ) as save_spy, mock.patch.object(
                 agent_loop, "_log_note",
             ) as log_spy:
-                agent_loop._fix_phase_c6_build_payload(controller)
+                _c6_build(controller)
             after = {
                 p.relative_to(controller).as_posix(): p.read_bytes()
                 for p in controller.rglob("*") if p.is_file()
