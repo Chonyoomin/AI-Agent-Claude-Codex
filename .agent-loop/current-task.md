@@ -1,13 +1,13 @@
 ﻿# Current Task
 
 ## Active Phase
-Fix Phase C7 - Review And Approval Surface
+Fix Phase C8 - Completion And Handoff Summary
 
 ## Active Task
-Add a plain-English desktop review and approval surface for approval-required pauses with explicit gated actions.
+Add the end-of-run summary surface so the desktop app can explain what finished, what remains blocked, whether next-phase planning is possible, and the recommended next action.
 
 ## Status
 Active and ready for Claude implementation.
 
 ## Required Outcome
-The desktop app must explain approval-required pauses in plain English and route explicit operator responses through the existing canonical gate owners without weakening human-gate rules or adding auto-approval.
+The desktop app must present a canonical, plain-English completion and handoff summary without creating a hidden ledger, auto-accepting work, auto-activating a phase, or bypassing existing identity and human-gate contracts.

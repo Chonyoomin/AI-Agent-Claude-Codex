@@ -3501,7 +3501,7 @@ artifact-centric or terminal-centric wording.
 
 ### Status
 
-Active and ready for Claude implementation.
+Complete and approved by Codex; awaiting human approval to activate Fix Phase C8.
 
 ### Objective
 
@@ -3525,7 +3525,7 @@ optional advanced-detail panels rather than manual artifact inspection.
 
 ### Status
 
-Queued for later implementation after Fix Phase C7.
+Active and ready for Claude implementation.
 
 ### Objective
 
@@ -6350,6 +6350,8 @@ state plane.
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
 - no Git automation
+
+
 
 
 
