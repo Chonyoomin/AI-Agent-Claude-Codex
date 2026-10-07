@@ -16574,6 +16574,68 @@ def _fix_phase_c4_derive_clipboard_payload_from_view(
     )
 
 
+def _fix_phase_c4_apply_approval_mode_to_canonical_state(
+    controller_root: Path, *, approval_mode: str,
+) -> str:
+    """Fix Phase C4 fix cycle Issue 1: apply a C4 selection to
+    the canonical runtime state by writing `approval_mode`
+    through the shipped Phase 5B `save_loop_state(...)` writer -
+    the SOLE authority over which fields may be written to
+    `.agent-loop/loop-state.json`. This is the "existing
+    canonical library/runtime dispatch" the selector routes
+    through; no parallel writer, no second state store, and no
+    duplicated write-validation logic is introduced here.
+
+    Only `approval_mode` is ever included in the `updates` dict
+    passed to `save_loop_state(...)`. Every other field
+    (`status`, `awaiting_human_for`, `cycle_count`, `phase`,
+    `sub_phase`, `task`, ...) is carried forward from the
+    current on-disk state verbatim via `save_loop_state`'s own
+    merge behavior, so an in-flight human-approval gate (a
+    `halted_awaiting_human_*` status, a pending
+    `awaiting_human_for` name) is NEVER cleared, advanced, or
+    bypassed by a Run Mode selection. This function never
+    starts a cycle, never advances `status`, never invokes
+    `run_activation(...)` / `_run_normal_cycle_from_increment(
+    ...)` / `attach_external_target(...)`, and never spawns a
+    subprocess.
+
+    Refuses fail-closed via `HaltError("halted_input_missing",
+    ...)` when:
+      - `approval_mode` is outside the shipped Phase 5A closed
+        enumeration `ALLOWED_APPROVAL_MODES`
+      - `.agent-loop/loop-state.json` does not exist or is not
+        valid JSON (via the shipped `load_loop_state(...)`)
+      - the loaded state fails the shipped
+        `validate_loop_state(...)` structural check
+
+    Returns the applied `approval_mode` RE-READ from the
+    freshly written canonical file (never the in-memory value
+    the caller asked for) so the caller renders what is
+    ACTUALLY on disk, not merely what it hoped to write.
+    """
+    if approval_mode not in ALLOWED_APPROVAL_MODES:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-mode selector refused: "
+                f"approval_mode {approval_mode!r} is not in "
+                f"the shipped Phase 5A vocabulary "
+                f"{sorted(ALLOWED_APPROVAL_MODES)!r}"
+            ),
+        )
+    state_path = (
+        controller_root / ".agent-loop" / "loop-state.json"
+    )
+    current = load_loop_state(state_path)
+    validate_loop_state(current)
+    save_loop_state(
+        state_path, current, {"approval_mode": approval_mode},
+    )
+    applied = load_loop_state(state_path)
+    return applied.get("approval_mode")
+
+
 def _fix_phase_c4_format_audit_line(
     *,
     state_id,
@@ -16646,6 +16708,1105 @@ def _fix_phase_c4_format_audit_line(
         f"{state_id!r} choice_id={choice_id!r} "
         f"refusal_category={refusal_category!r} "
         f"epoch_seconds={epoch_seconds!r}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C5: Start / Stop Agent control surface.
+#
+# One primary control in the Run section that starts the shipped `run`
+# CLI owner (`_primary_desktop_build_run_command(...)`, a child process
+# of this same script) once the Project, PRD, and Run Mode prerequisites
+# are satisfied, and flips to Stop Agent while that child is active.
+# Stop routes through the shipped human-stop halt: after the child exits
+# the shipped `halted_human_stop` status is persisted through
+# `save_loop_state(...)` with the same orchestrator.log note the CLI
+# KeyboardInterrupt path writes. No new orchestration, no background
+# watcher (state refreshes on the shipped `_refresh` poll cadence), no
+# UI-only state file.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C5_SIGNAL_VERSION = "fix-phase-c5-v1"
+
+FIX_PHASE_C5_STATE_UNAVAILABLE = "start_unavailable"
+FIX_PHASE_C5_STATE_READY = "start_ready"
+FIX_PHASE_C5_STATE_STARTING = "start_starting"
+FIX_PHASE_C5_STATE_ACTIVE = "start_active"
+FIX_PHASE_C5_STATE_STOPPING = "start_stopping"
+FIX_PHASE_C5_STATE_BLOCKED = "start_blocked"
+FIX_PHASE_C5_STATE_IDS = (
+    FIX_PHASE_C5_STATE_UNAVAILABLE,
+    FIX_PHASE_C5_STATE_READY,
+    FIX_PHASE_C5_STATE_STARTING,
+    FIX_PHASE_C5_STATE_ACTIVE,
+    FIX_PHASE_C5_STATE_STOPPING,
+    FIX_PHASE_C5_STATE_BLOCKED,
+)
+
+FIX_PHASE_C5_PROCESS_IDLE = "idle"
+FIX_PHASE_C5_PROCESS_STARTING = "starting"
+FIX_PHASE_C5_PROCESS_ACTIVE = "active"
+FIX_PHASE_C5_PROCESS_STOPPING = "stopping"
+FIX_PHASE_C5_PROCESS_BLOCKED = "blocked"
+
+FIX_PHASE_C5_PREREQUISITE_PROJECT = "project"
+FIX_PHASE_C5_PREREQUISITE_PRD = "prd"
+FIX_PHASE_C5_PREREQUISITE_RUN_MODE = "run_mode"
+FIX_PHASE_C5_PREREQUISITE_ORDER = (
+    FIX_PHASE_C5_PREREQUISITE_PROJECT,
+    FIX_PHASE_C5_PREREQUISITE_PRD,
+    FIX_PHASE_C5_PREREQUISITE_RUN_MODE,
+)
+
+FIX_PHASE_C5_MISSING_PREREQUISITE_COPY = {
+    FIX_PHASE_C5_PREREQUISITE_PROJECT: (
+        "Pick a project folder in the Project section above first."
+    ),
+    FIX_PHASE_C5_PREREQUISITE_PRD: (
+        "Pick a PRD file in the PRD section above first."
+    ),
+    FIX_PHASE_C5_PREREQUISITE_RUN_MODE: (
+        "Pick a run mode in the Run Mode section above first."
+    ),
+}
+
+FIX_PHASE_C5_PRIMARY_LABEL_START = "Start Agent"
+FIX_PHASE_C5_PRIMARY_LABEL_STOP = "Stop Agent"
+FIX_PHASE_C5_ACTION_START = "start"
+FIX_PHASE_C5_ACTION_STOP = "stop"
+
+FIX_PHASE_C5_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C5_STATE_UNAVAILABLE: {
+        "display_label": "Start is not available yet",
+        "plain_english_summary": (
+            "Finish the steps above before starting the agent."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": None,
+        "primary_enabled": False,
+    },
+    FIX_PHASE_C5_STATE_READY: {
+        "display_label": "Ready to start",
+        "plain_english_summary": (
+            "Everything is set. Press Start Agent to begin."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": FIX_PHASE_C5_ACTION_START,
+        "primary_enabled": True,
+    },
+    FIX_PHASE_C5_STATE_STARTING: {
+        "display_label": "Starting the agent",
+        "plain_english_summary": "The agent is starting. Please wait.",
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": None,
+        "primary_enabled": False,
+    },
+    FIX_PHASE_C5_STATE_ACTIVE: {
+        "display_label": "Working on your project",
+        "plain_english_summary": (
+            "The agent is running. Press Stop Agent to halt it."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_STOP,
+        "primary_action": FIX_PHASE_C5_ACTION_STOP,
+        "primary_enabled": True,
+    },
+    FIX_PHASE_C5_STATE_STOPPING: {
+        "display_label": "Stopping the agent",
+        "plain_english_summary": (
+            "Stop requested. Waiting for the agent to finish "
+            "its current step."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_STOP,
+        "primary_action": None,
+        "primary_enabled": False,
+    },
+    FIX_PHASE_C5_STATE_BLOCKED: {
+        "display_label": "Stopped. Needs help to continue",
+        "plain_english_summary": (
+            "The agent could not continue. Check the project files, "
+            "then press Start Agent to try again."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": FIX_PHASE_C5_ACTION_START,
+        "primary_enabled": True,
+    },
+}
+
+FIX_PHASE_C5_REFUSAL_PREREQUISITE_MISSING = (
+    "refused_start_prerequisite_missing"
+)
+FIX_PHASE_C5_REFUSAL_SPAWN_FAILED = "refused_start_spawn_failed"
+FIX_PHASE_C5_REFUSAL_AGENT_EXITED = "refused_start_agent_exited"
+FIX_PHASE_C5_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C5_REFUSAL_PREREQUISITE_MISSING,
+    FIX_PHASE_C5_REFUSAL_SPAWN_FAILED,
+    FIX_PHASE_C5_REFUSAL_AGENT_EXITED,
+)
+
+FIX_PHASE_C5_ATTRIBUTION = "[run-start-control]"
+
+
+def _fix_phase_c5_derive_missing_prerequisite(
+    *, project_ready, prd_ready, run_mode_selected,
+):
+    satisfied = {
+        FIX_PHASE_C5_PREREQUISITE_PROJECT: bool(project_ready),
+        FIX_PHASE_C5_PREREQUISITE_PRD: bool(prd_ready),
+        FIX_PHASE_C5_PREREQUISITE_RUN_MODE: bool(run_mode_selected),
+    }
+    for prerequisite_id in FIX_PHASE_C5_PREREQUISITE_ORDER:
+        if not satisfied[prerequisite_id]:
+            return prerequisite_id
+    return None
+
+
+def _fix_phase_c5_derive_state_id(
+    *, missing_prerequisite, process_state,
+):
+    if process_state == FIX_PHASE_C5_PROCESS_STARTING:
+        return FIX_PHASE_C5_STATE_STARTING
+    if process_state == FIX_PHASE_C5_PROCESS_ACTIVE:
+        return FIX_PHASE_C5_STATE_ACTIVE
+    if process_state == FIX_PHASE_C5_PROCESS_STOPPING:
+        return FIX_PHASE_C5_STATE_STOPPING
+    if missing_prerequisite is not None:
+        return FIX_PHASE_C5_STATE_UNAVAILABLE
+    if process_state == FIX_PHASE_C5_PROCESS_BLOCKED:
+        return FIX_PHASE_C5_STATE_BLOCKED
+    return FIX_PHASE_C5_STATE_READY
+
+
+def _fix_phase_c5_format_payload(
+    *, state_id, missing_prerequisite=None,
+):
+    if state_id not in FIX_PHASE_C5_STATE_IDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control refused: state_id "
+                f"{state_id!r} is not in the shipped closed Fix "
+                f"Phase C5 state vocabulary "
+                f"{FIX_PHASE_C5_STATE_IDS!r}"
+            ),
+        )
+    entry = FIX_PHASE_C5_STATE_DISPLAY_MAP[state_id]
+    summary = entry["plain_english_summary"]
+    if state_id == FIX_PHASE_C5_STATE_UNAVAILABLE:
+        if missing_prerequisite not in (
+            FIX_PHASE_C5_MISSING_PREREQUISITE_COPY
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-start control refused: missing "
+                    f"prerequisite {missing_prerequisite!r} is not "
+                    f"in the shipped Fix Phase C5 vocabulary"
+                ),
+            )
+        summary = FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+            missing_prerequisite
+        ]
+    return {
+        "state_id": state_id,
+        "display_label": entry["display_label"],
+        "plain_english_summary": summary,
+        "primary_label": entry["primary_label"],
+        "primary_action": entry["primary_action"],
+        "primary_enabled": entry["primary_enabled"],
+        "attribution_tag": FIX_PHASE_C5_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c5_project_matches_controller(
+    target_path, controller_root,
+) -> bool:
+    if not target_path:
+        return False
+    try:
+        return (
+            Path(target_path).resolve()
+            == Path(controller_root).resolve()
+        )
+    except OSError:
+        return False
+
+
+def _fix_phase_c5_format_audit_line(
+    *, state_id, epoch_seconds, refusal_category=None,
+):
+    if refusal_category is not None and (
+        refusal_category not in FIX_PHASE_C5_REFUSAL_CATEGORIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control audit refused: "
+                f"refusal_category {refusal_category!r} is not in "
+                f"the shipped closed Fix Phase C5 refusal "
+                f"vocabulary {FIX_PHASE_C5_REFUSAL_CATEGORIES!r}"
+            ),
+        )
+    if state_id is not None and state_id not in (
+        FIX_PHASE_C5_STATE_IDS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control audit refused: "
+                f"state_id {state_id!r} is not in the shipped "
+                f"closed Fix Phase C5 state vocabulary "
+                f"{FIX_PHASE_C5_STATE_IDS!r}"
+            ),
+        )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-run-start] signal_version="
+        f"{FIX_PHASE_C5_SIGNAL_VERSION!r} state_id={state_id!r} "
+        f"refusal_category={refusal_category!r} "
+        f"epoch_seconds={epoch_seconds!r}"
+    )
+
+
+def _fix_phase_c5_persist_operator_stop(controller_root: Path) -> None:
+    state_path = controller_root / ".agent-loop" / "loop-state.json"
+    data = load_loop_state(state_path)
+    save_loop_state(state_path, data, {"status": "halted_human_stop"})
+    _log_note(
+        controller_root / ".agent-loop" / "orchestrator.log",
+        (
+            "HALT halted_human_stop: operator stopped the agent "
+            "from the desktop Start / Stop control"
+        ),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C6: plain-English Progress / Run Console.
+#
+# Read-only plain-English projection of the shipped Phase 10AI
+# orchestration visualization view (itself a read of the canonical
+# loop-state mirrors plus the Phase 10AC overlap aggregate and Phase
+# 7B-style artifact stats). Canonical values are attributed
+# `[canonical mirror]`; computed interpretations are attributed
+# `[visualization-advisory]`. Refreshes only on the shipped `_refresh`
+# poll; nothing is cached, written, or dispatched from here.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C6_SIGNAL_VERSION = "fix-phase-c6-v1"
+
+FIX_PHASE_C6_STATE_SETUP = "setup"
+FIX_PHASE_C6_STATE_READY = "ready"
+FIX_PHASE_C6_STATE_RUNNING = "running"
+FIX_PHASE_C6_STATE_WAITING = "waiting"
+FIX_PHASE_C6_STATE_BLOCKED = "blocked"
+FIX_PHASE_C6_STATE_APPROVAL_REQUIRED = "approval_required"
+FIX_PHASE_C6_STATE_COMPLETE = "complete"
+FIX_PHASE_C6_STATE_IDS = (
+    FIX_PHASE_C6_STATE_SETUP,
+    FIX_PHASE_C6_STATE_READY,
+    FIX_PHASE_C6_STATE_RUNNING,
+    FIX_PHASE_C6_STATE_WAITING,
+    FIX_PHASE_C6_STATE_BLOCKED,
+    FIX_PHASE_C6_STATE_APPROVAL_REQUIRED,
+    FIX_PHASE_C6_STATE_COMPLETE,
+)
+
+FIX_PHASE_C6_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C6_STATE_SETUP: {
+        "display_label": "Set up your project",
+        "plain_english_summary": (
+            "Choose a project folder, a PRD file, and a run mode "
+            "above. Nothing has run yet."
+        ),
+        "next_step_label": "Finish the steps above",
+        "next_step_help": (
+            "Start Agent unlocks when all three steps are done."
+        ),
+    },
+    FIX_PHASE_C6_STATE_READY: {
+        "display_label": "Ready to run",
+        "plain_english_summary": (
+            "The agent has not started yet."
+        ),
+        "next_step_label": "Press Start Agent",
+        "next_step_help": (
+            "The agent works in small steps and pauses where it "
+            "needs your decision."
+        ),
+    },
+    FIX_PHASE_C6_STATE_RUNNING: {
+        "display_label": "Working on your project",
+        "plain_english_summary": (
+            "The agent is working through the current task."
+        ),
+        "next_step_label": "Wait for the next step",
+        "next_step_help": (
+            "You do not need to do anything right now."
+        ),
+    },
+    FIX_PHASE_C6_STATE_WAITING: {
+        "display_label": "Waiting a moment before continuing",
+        "plain_english_summary": (
+            "The agent is waiting on a condition that should clear "
+            "on its own."
+        ),
+        "next_step_label": "Wait, then check again",
+        "next_step_help": (
+            "No action is needed. This panel refreshes on its own."
+        ),
+    },
+    FIX_PHASE_C6_STATE_BLOCKED: {
+        "display_label": "Stopped. Needs help to continue",
+        "plain_english_summary": (
+            "The agent stopped and cannot continue without help."
+        ),
+        "next_step_label": (
+            "Check the project files, then press Start Agent"
+        ),
+        "next_step_help": (
+            "The detailed reason is available under Advanced."
+        ),
+    },
+    FIX_PHASE_C6_STATE_APPROVAL_REQUIRED: {
+        "display_label": "Waiting for your approval to continue",
+        "plain_english_summary": (
+            "The agent paused at a checkpoint that needs your "
+            "approval."
+        ),
+        "next_step_label": "Review the work before approving",
+        "next_step_help": (
+            "The agent will not continue past this checkpoint "
+            "until you approve it."
+        ),
+    },
+    FIX_PHASE_C6_STATE_COMPLETE: {
+        "display_label": "Done. Review the result",
+        "plain_english_summary": (
+            "The current phase is finished and waiting for your "
+            "final check."
+        ),
+        "next_step_label": "Review the result",
+        "next_step_help": (
+            "Final acceptance is handled in a later step."
+        ),
+    },
+}
+
+FIX_PHASE_C6_VERDICT_ACTIVITY_MAP = {
+    "APPROVED_FOR_HUMAN_REVIEW": (
+        "The reviewer approved the last pass. Your check is next."
+    ),
+    "NEEDS_FIXES": (
+        "The reviewer asked for fixes on the last pass."
+    ),
+    "FAILED_REQUIRES_HUMAN": (
+        "The reviewer could not finish and needs your help."
+    ),
+}
+FIX_PHASE_C6_ACTIVITY_NONE = "No review has finished yet."
+FIX_PHASE_C6_ACTIVITY_FIX_IN_PROGRESS = (
+    "A fix pass is in progress."
+)
+
+FIX_PHASE_C6_REDACTED_COPY = "Details are available under Advanced."
+FIX_PHASE_C6_MISSING_VALUE_COPY = "Not recorded yet."
+FIX_PHASE_C6_TEXT_MAX_CHARS = 160
+FIX_PHASE_C6_REDACTION_MARKERS = (
+    "/", "\\", ".agent-loop", "loop-state", "halted_",
+    "awaiting_", "APPROVED_FOR_", "NEEDS_FIXES", "FAILED_REQUIRES_",
+    "approval_mode", "python ", "agent_loop.py",
+)
+
+FIX_PHASE_C6_ATTRIBUTION_CANONICAL = "[canonical mirror]"
+FIX_PHASE_C6_ATTRIBUTION_ADVISORY = "[visualization-advisory]"
+
+
+def _fix_phase_c6_redact_text(value) -> str:
+    if value is None or value == "":
+        return FIX_PHASE_C6_MISSING_VALUE_COPY
+    text = str(value)
+    if any(marker in text for marker in FIX_PHASE_C6_REDACTION_MARKERS):
+        return FIX_PHASE_C6_REDACTED_COPY
+    if len(text) > FIX_PHASE_C6_TEXT_MAX_CHARS:
+        return text[: FIX_PHASE_C6_TEXT_MAX_CHARS - 3] + "..."
+    return text
+
+
+def _fix_phase_c6_node_values(view) -> dict:
+    if not isinstance(view, dict):
+        return {}
+    return {
+        node["id"]: node.get("current_value")
+        for node in view.get("nodes", [])
+        if isinstance(node, dict) and "id" in node
+    }
+
+
+FIX_PHASE_C6_PROCESS_IN_FLIGHT = (
+    FIX_PHASE_C5_PROCESS_STARTING,
+    FIX_PHASE_C5_PROCESS_ACTIVE,
+    FIX_PHASE_C5_PROCESS_STOPPING,
+)
+
+
+def _fix_phase_c6_derive_state_id(
+    *, view, prerequisite_missing, process_state,
+) -> str:
+    if not isinstance(view, dict):
+        return FIX_PHASE_C6_STATE_SETUP
+    values = _fix_phase_c6_node_values(view)
+    status = values.get("loop_state_status")
+    if not isinstance(status, str) or not status:
+        return FIX_PHASE_C6_STATE_SETUP
+    if status == "phase_complete_awaiting_human_approval":
+        return FIX_PHASE_C6_STATE_COMPLETE
+    if values.get("human_gate_pending") is True:
+        return FIX_PHASE_C6_STATE_APPROVAL_REQUIRED
+    if (
+        status == HALTED_OVERLAP_UNSAFE_CONTEXT
+        or status == HALTED_CAPACITY_UNAVAILABLE
+        or view.get("overlap_state") == "refused_pending_recovery"
+    ):
+        return FIX_PHASE_C6_STATE_WAITING
+    if view.get("status_category") == "halted":
+        return FIX_PHASE_C6_STATE_BLOCKED
+    if (
+        status in ALLOWED_NORMAL_CYCLE_START_STATUSES
+        and values.get("cycle_count") == 0
+    ):
+        if process_state in FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+            return FIX_PHASE_C6_STATE_RUNNING
+        if prerequisite_missing is not None:
+            return FIX_PHASE_C6_STATE_SETUP
+        return FIX_PHASE_C6_STATE_READY
+    return FIX_PHASE_C6_STATE_RUNNING
+
+
+def _fix_phase_c6_derive_latest_activity(view) -> str:
+    values = _fix_phase_c6_node_values(view)
+    if values.get("fix_branch_active") is True:
+        return FIX_PHASE_C6_ACTIVITY_FIX_IN_PROGRESS
+    verdict = values.get("last_verdict")
+    return FIX_PHASE_C6_VERDICT_ACTIVITY_MAP.get(
+        verdict, FIX_PHASE_C6_ACTIVITY_NONE,
+    )
+
+
+def _fix_phase_c6_format_payload(
+    *, view, prerequisite_missing, process_state,
+) -> dict:
+    state_id = _fix_phase_c6_derive_state_id(
+        view=view,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
+    entry = FIX_PHASE_C6_STATE_DISPLAY_MAP[state_id]
+    next_step_help = entry["next_step_help"]
+    values = _fix_phase_c6_node_values(view)
+    advisory_notes = []
+    if prerequisite_missing is not None:
+        missing_copy = FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+            prerequisite_missing
+        ]
+        if state_id == FIX_PHASE_C6_STATE_SETUP:
+            next_step_help = missing_copy
+        else:
+            advisory_notes.append(
+                "Project, PRD, or Run Mode is not set in this "
+                "window. " + missing_copy
+            )
+    if values.get("review_branch_active") is True:
+        advisory_notes.append(
+            "The shipped review step is the current focus."
+        )
+    if values.get("blocked_or_halted") is True:
+        advisory_notes.append(
+            "The agent cannot move forward until the stop is cleared."
+        )
+    progress = values.get("artifact_backed_progress")
+    if isinstance(progress, dict):
+        missing = [
+            rel for rel, info in progress.items()
+            if isinstance(info, dict) and not info.get("present")
+        ]
+        if missing:
+            advisory_notes.append(
+                f"{len(missing)} expected project file(s) are "
+                f"missing, so this view may be out of date."
+            )
+    return {
+        "signal_version": FIX_PHASE_C6_SIGNAL_VERSION,
+        "state_id": state_id,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry["plain_english_summary"],
+        "next_step_label": entry["next_step_label"],
+        "next_step_help": next_step_help,
+        "current_phase": _fix_phase_c6_redact_text(
+            values.get("phase"),
+        ),
+        "current_sub_phase": _fix_phase_c6_redact_text(
+            values.get("sub_phase"),
+        ),
+        "current_task": _fix_phase_c6_redact_text(
+            values.get("task"),
+        ),
+        "latest_activity": _fix_phase_c6_derive_latest_activity(view),
+        "advisory_notes": advisory_notes,
+        "attribution": {
+            "state": FIX_PHASE_C6_ATTRIBUTION_CANONICAL,
+            "activity": FIX_PHASE_C6_ATTRIBUTION_ADVISORY,
+            "notes": FIX_PHASE_C6_ATTRIBUTION_ADVISORY,
+        },
+        "advanced": {
+            "raw_status": values.get("loop_state_status"),
+            "raw_awaiting_human_for": values.get(
+                "awaiting_human_for",
+            ),
+            "raw_cycle_count": values.get("cycle_count"),
+            "raw_max_cycles": values.get("max_cycles"),
+            "raw_overlap_state": view.get("overlap_state")
+            if isinstance(view, dict) else None,
+            "raw_status_category": view.get("status_category")
+            if isinstance(view, dict) else None,
+        },
+    }
+
+
+def _fix_phase_c6_build_payload(
+    controller_root: Path, *, prerequisite_missing, process_state,
+) -> dict:
+    try:
+        view = build_desktop_orchestration_visualization_view(
+            controller_root,
+        )
+    except (HaltError, OSError):
+        view = None
+    return _fix_phase_c6_format_payload(
+        view=view,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C7: plain-English review and approval surface.
+#
+# Shows an approval-required pause and offers at most one explicit
+# operator action. The only action is the shipped strict-gate `resume`
+# owner, spawned on a click through the Fix Phase C5 process tracker.
+# Gate rules stay in the runtime owners; this surface never approves on
+# refresh, never supplies operator identity, and never writes loop-state.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C7_SIGNAL_VERSION = "fix-phase-c7-v1"
+
+FIX_PHASE_C7_GATE_NONE = "none"
+FIX_PHASE_C7_GATE_STRICT = "strict_gate"
+FIX_PHASE_C7_GATE_PHASE_COMPLETE = "phase_complete"
+FIX_PHASE_C7_GATE_OTHER = "other_pause"
+FIX_PHASE_C7_GATE_IDS = (
+    FIX_PHASE_C7_GATE_NONE,
+    FIX_PHASE_C7_GATE_STRICT,
+    FIX_PHASE_C7_GATE_PHASE_COMPLETE,
+    FIX_PHASE_C7_GATE_OTHER,
+)
+
+FIX_PHASE_C7_OUTCOME_ACCEPTED = "accepted"
+FIX_PHASE_C7_OUTCOME_REFUSED = "refused"
+
+FIX_PHASE_C7_REFUSAL_PREREQUISITE_MISSING = (
+    "refused_approval_prerequisite_missing"
+)
+FIX_PHASE_C7_REFUSAL_PROCESS_BUSY = "refused_approval_process_busy"
+FIX_PHASE_C7_REFUSAL_NOT_STRICT_MODE = "refused_approval_not_strict_mode"
+FIX_PHASE_C7_REFUSAL_SPAWN_FAILED = "refused_approval_spawn_failed"
+FIX_PHASE_C7_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C7_REFUSAL_PREREQUISITE_MISSING,
+    FIX_PHASE_C7_REFUSAL_PROCESS_BUSY,
+    FIX_PHASE_C7_REFUSAL_NOT_STRICT_MODE,
+    FIX_PHASE_C7_REFUSAL_SPAWN_FAILED,
+)
+
+FIX_PHASE_C7_APPROVE_LABEL = "Approve and continue"
+
+FIX_PHASE_C7_GATE_DISPLAY_MAP = {
+    FIX_PHASE_C7_GATE_STRICT: {
+        "display_label": "Waiting for your approval to continue",
+        "plain_english_summary": (
+            "The agent paused before a step that needs your approval."
+        ),
+        "why_text": (
+            "Guided mode checks with you before each step, so nothing "
+            "moves forward without your OK."
+        ),
+        "recommended_text": (
+            "Review the progress above, then press Approve and continue."
+        ),
+        "after_action_text": (
+            "The agent continues from the paused step. Progress above "
+            "updates as it works."
+        ),
+    },
+    FIX_PHASE_C7_GATE_PHASE_COMPLETE: {
+        "display_label": "Done. Review the result.",
+        "plain_english_summary": (
+            "The agent finished this phase and is waiting for your "
+            "review."
+        ),
+        "why_text": (
+            "A finished phase is not accepted until you have reviewed it."
+        ),
+        "recommended_text": (
+            "Review the result in your project files, then decide "
+            "whether it is good enough."
+        ),
+        "after_action_text": (
+            "Final sign-off is in the Completion section below."
+        ),
+    },
+    FIX_PHASE_C7_GATE_OTHER: {
+        "display_label": "Waiting for your decision",
+        "plain_english_summary": (
+            "The agent paused at a point that needs a decision this "
+            "window cannot make for you."
+        ),
+        "why_text": (
+            "This pause needs a response that this window does not "
+            "offer yet."
+        ),
+        "recommended_text": (
+            "Open Advanced to see the technical reason, then decide "
+            "what to do."
+        ),
+        "after_action_text": (
+            "Nothing changes until you act outside this window."
+        ),
+    },
+}
+
+FIX_PHASE_C7_REFUSAL_COPY = {
+    FIX_PHASE_C7_REFUSAL_PROCESS_BUSY: (
+        "The agent is already working. Wait for it to pause, then "
+        "approve."
+    ),
+    FIX_PHASE_C7_REFUSAL_NOT_STRICT_MODE: (
+        "This pause was set up in a different run mode. Choose "
+        "Guided (recommended) in Run Mode to continue."
+    ),
+    FIX_PHASE_C7_REFUSAL_SPAWN_FAILED: (
+        "The agent could not start. Try Approve and continue again."
+    ),
+}
+
+
+def _fix_phase_c7_derive_gate_id(*, view) -> str:
+    if not isinstance(view, dict):
+        return FIX_PHASE_C7_GATE_NONE
+    values = _fix_phase_c6_node_values(view)
+    status = values.get("loop_state_status")
+    if status in STRICT_GATE_HALT_STATUSES:
+        return FIX_PHASE_C7_GATE_STRICT
+    if status == "phase_complete_awaiting_human_approval":
+        return FIX_PHASE_C7_GATE_PHASE_COMPLETE
+    if values.get("human_gate_pending") is True:
+        return FIX_PHASE_C7_GATE_OTHER
+    return FIX_PHASE_C7_GATE_NONE
+
+
+def _fix_phase_c7_derive_action(
+    *, gate_id, approval_mode, prerequisite_missing, process_state,
+):
+    if gate_id != FIX_PHASE_C7_GATE_STRICT:
+        return None
+    refusal_category = None
+    refusal_copy = None
+    if prerequisite_missing is not None:
+        refusal_category = FIX_PHASE_C7_REFUSAL_PREREQUISITE_MISSING
+        refusal_copy = FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+            prerequisite_missing
+        ]
+    elif process_state in FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+        refusal_category = FIX_PHASE_C7_REFUSAL_PROCESS_BUSY
+    elif approval_mode != APPROVAL_MODE_STRICT:
+        refusal_category = FIX_PHASE_C7_REFUSAL_NOT_STRICT_MODE
+    if refusal_category is not None and refusal_copy is None:
+        refusal_copy = FIX_PHASE_C7_REFUSAL_COPY[refusal_category]
+    return {
+        "label": FIX_PHASE_C7_APPROVE_LABEL,
+        "enabled": refusal_category is None,
+        "refusal_category": refusal_category,
+        "refusal_copy": refusal_copy,
+    }
+
+
+def _fix_phase_c7_format_payload(
+    *, view, approval_mode, prerequisite_missing, process_state,
+) -> dict:
+    gate_id = _fix_phase_c7_derive_gate_id(view=view)
+    values = _fix_phase_c6_node_values(view)
+    payload = {
+        "signal_version": FIX_PHASE_C7_SIGNAL_VERSION,
+        "gate_id": gate_id,
+        "section_active": gate_id != FIX_PHASE_C7_GATE_NONE,
+        "action": _fix_phase_c7_derive_action(
+            gate_id=gate_id,
+            approval_mode=approval_mode,
+            prerequisite_missing=prerequisite_missing,
+            process_state=process_state,
+        ),
+        "advanced": {
+            "raw_status": values.get("loop_state_status"),
+            "raw_awaiting_human_for": values.get("awaiting_human_for"),
+            "raw_approval_mode": approval_mode,
+        },
+    }
+    if gate_id != FIX_PHASE_C7_GATE_NONE:
+        payload.update(FIX_PHASE_C7_GATE_DISPLAY_MAP[gate_id])
+    return payload
+
+
+def _fix_phase_c7_build_payload(
+    controller_root: Path, *, approval_mode, prerequisite_missing,
+    process_state,
+) -> dict:
+    try:
+        view = build_desktop_orchestration_visualization_view(
+            controller_root,
+        )
+    except (HaltError, OSError):
+        view = None
+    return _fix_phase_c7_format_payload(
+        view=view,
+        approval_mode=approval_mode,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
+
+
+def _fix_phase_c7_format_audit_line(
+    *, gate_id, outcome, epoch_seconds, refusal_category=None,
+):
+    if gate_id not in FIX_PHASE_C7_GATE_IDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop review-approval audit refused: gate_id "
+                f"{gate_id!r} is not in the shipped closed Fix Phase "
+                f"C7 gate vocabulary {FIX_PHASE_C7_GATE_IDS!r}"
+            ),
+        )
+    if outcome not in (
+        FIX_PHASE_C7_OUTCOME_ACCEPTED, FIX_PHASE_C7_OUTCOME_REFUSED,
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop review-approval audit refused: outcome "
+                f"{outcome!r} is outside the closed Fix Phase C7 "
+                f"outcome vocabulary"
+            ),
+        )
+    if refusal_category is not None and (
+        refusal_category not in FIX_PHASE_C7_REFUSAL_CATEGORIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop review-approval audit refused: "
+                f"refusal_category {refusal_category!r} is not in the "
+                f"shipped closed Fix Phase C7 refusal vocabulary"
+            ),
+        )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop review-approval audit refused: epoch_seconds "
+                f"must be an int, got {epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-review-approval] signal_version="
+        f"{FIX_PHASE_C7_SIGNAL_VERSION!r} gate_id={gate_id!r} "
+        f"outcome={outcome!r} refusal_category={refusal_category!r} "
+        f"epoch_seconds={epoch_seconds!r}"
+    )
+
+
+def _fix_phase_c7_build_resume_command() -> list:
+    return [sys.executable, str(Path(__file__).resolve()), "resume"]
+
+
+# ---------------------------------------------------------------------------
+# Fix Phase C8: plain-English completion and handoff summary.
+#
+# Presents canonical end-of-run state and offers at most one explicit
+# action: recording final human acceptance through the shipped Phase 9G
+# owner `record_final_acceptance(...)`, with the operator's own typed
+# name. Next-phase planning and activation stay with the shipped planner
+# and the human-authored APPROVED_FOR_ACTIVATION token. Refreshes only on
+# the shipped `_refresh` poll; nothing is cached or auto-accepted here.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C8_SIGNAL_VERSION = "fix-phase-c8-v1"
+
+FIX_PHASE_C8_STATE_ABSENT = "absent"
+FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE = "awaiting_acceptance"
+FIX_PHASE_C8_STATE_ACCEPTED = "accepted"
+FIX_PHASE_C8_STATE_BLOCKED = "blocked"
+FIX_PHASE_C8_STATE_CONTRADICTORY = "contradictory"
+FIX_PHASE_C8_STATE_IDS = (
+    FIX_PHASE_C8_STATE_ABSENT,
+    FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE,
+    FIX_PHASE_C8_STATE_ACCEPTED,
+    FIX_PHASE_C8_STATE_BLOCKED,
+    FIX_PHASE_C8_STATE_CONTRADICTORY,
+)
+
+FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING = "refused_acceptance_identity_missing"
+FIX_PHASE_C8_REFUSAL_PROCESS_BUSY = "refused_acceptance_process_busy"
+FIX_PHASE_C8_REFUSAL_OWNER_REFUSED = "refused_acceptance_owner_refused"
+FIX_PHASE_C8_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING,
+    FIX_PHASE_C8_REFUSAL_PROCESS_BUSY,
+    FIX_PHASE_C8_REFUSAL_OWNER_REFUSED,
+)
+
+FIX_PHASE_C8_ACCEPT_LABEL = "Record my acceptance"
+FIX_PHASE_C8_WAITING_STATUSES = (
+    HALTED_OVERLAP_UNSAFE_CONTEXT,
+    HALTED_CAPACITY_UNAVAILABLE,
+)
+
+FIX_PHASE_C8_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE: {
+        "display_label": "Finished. Your acceptance is needed.",
+        "plain_english_summary": (
+            "The agent finished this phase and the result passed its "
+            "automated review."
+        ),
+        "remaining_text": (
+            "Your acceptance is the last step before this phase counts "
+            "as done."
+        ),
+        "reason_text": (
+            "Nothing is accepted until you record it here, under your "
+            "own name."
+        ),
+        "recommended_text": (
+            "Review the result, type your name, then press Record my "
+            "acceptance."
+        ),
+        "after_action_text": (
+            "The phase is marked accepted. The next phase still needs "
+            "your go-ahead."
+        ),
+    },
+    FIX_PHASE_C8_STATE_ACCEPTED: {
+        "display_label": "Accepted. Next phase needs your go-ahead.",
+        "plain_english_summary": "This phase is accepted and recorded.",
+        "remaining_text": "The next phase has not started.",
+        "reason_text": (
+            "Starting another phase is a separate decision, so nothing "
+            "starts on its own."
+        ),
+        "recommended_text": (
+            "Decide whether to plan the next phase. Planning is not run "
+            "from this window."
+        ),
+        "after_action_text": (
+            "Nothing changes until you take the next step outside this "
+            "window."
+        ),
+    },
+    FIX_PHASE_C8_STATE_BLOCKED: {
+        "display_label": "Stopped. Needs help to continue.",
+        "plain_english_summary": (
+            "The agent stopped before this phase finished."
+        ),
+        "remaining_text": "This phase is not finished yet.",
+        "reason_text": (
+            "The agent cannot move on from its current point without a "
+            "fix."
+        ),
+        "recommended_text": (
+            "Open Advanced to see the stop reason, then fix it or ask "
+            "for help."
+        ),
+        "after_action_text": (
+            "The agent stays stopped until the problem is cleared."
+        ),
+    },
+    FIX_PHASE_C8_STATE_CONTRADICTORY: {
+        "display_label": "The saved records do not match.",
+        "plain_english_summary": (
+            "The run records disagree, so this window will not offer "
+            "acceptance."
+        ),
+        "remaining_text": (
+            "The phase cannot be confirmed as finished from the records."
+        ),
+        "reason_text": (
+            "Acceptance is held back so an unclear record is not signed "
+            "off."
+        ),
+        "recommended_text": (
+            "Open Advanced for the saved values, then ask for help "
+            "before continuing."
+        ),
+        "after_action_text": "Nothing is changed by this window.",
+    },
+}
+
+FIX_PHASE_C8_REFUSAL_COPY = {
+    FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING: (
+        "Type your name first. The app will not fill it in for you."
+    ),
+    FIX_PHASE_C8_REFUSAL_PROCESS_BUSY: (
+        "The agent is still working. Wait for it to pause, then record "
+        "your acceptance."
+    ),
+    FIX_PHASE_C8_REFUSAL_OWNER_REFUSED: (
+        "The records did not allow acceptance. Open Advanced for the "
+        "reason, then ask for help."
+    ),
+}
+
+
+def _fix_phase_c8_derive_state_id(*, view, acceptance_signal) -> str:
+    if not isinstance(view, dict):
+        return FIX_PHASE_C8_STATE_ABSENT
+    values = _fix_phase_c6_node_values(view)
+    status = values.get("loop_state_status")
+    verdict = values.get("last_verdict")
+    if status == FINAL_ACCEPTANCE_REQUIRED_TERMINAL_STATUS:
+        if (
+            verdict == FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT
+            and acceptance_signal == FINAL_ACCEPTANCE_SIGNAL_AWAITING
+        ):
+            return FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE
+        return FIX_PHASE_C8_STATE_CONTRADICTORY
+    if status == FINAL_ACCEPTANCE_ACCEPTED_STATUS:
+        if (
+            verdict == FINAL_ACCEPTANCE_REQUIRED_LAST_VERDICT
+            and acceptance_signal == FINAL_ACCEPTANCE_SIGNAL_RECORDED
+        ):
+            return FIX_PHASE_C8_STATE_ACCEPTED
+        return FIX_PHASE_C8_STATE_CONTRADICTORY
+    if not isinstance(status, str) or not status:
+        return FIX_PHASE_C8_STATE_ABSENT
+    if status in STRICT_GATE_HALT_STATUSES:
+        return FIX_PHASE_C8_STATE_ABSENT
+    if values.get("human_gate_pending") is True:
+        return FIX_PHASE_C8_STATE_ABSENT
+    if (
+        status in FIX_PHASE_C8_WAITING_STATUSES
+        or view.get("overlap_state") == "refused_pending_recovery"
+    ):
+        return FIX_PHASE_C8_STATE_ABSENT
+    if view.get("status_category") == "halted":
+        return FIX_PHASE_C8_STATE_BLOCKED
+    return FIX_PHASE_C8_STATE_ABSENT
+
+
+def _fix_phase_c8_derive_action(*, state_id, identity_text, process_state):
+    if state_id != FIX_PHASE_C8_STATE_AWAITING_ACCEPTANCE:
+        return None
+    refusal_category = None
+    if not identity_text.strip():
+        refusal_category = FIX_PHASE_C8_REFUSAL_IDENTITY_MISSING
+    elif process_state in FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+        refusal_category = FIX_PHASE_C8_REFUSAL_PROCESS_BUSY
+    return {
+        "label": FIX_PHASE_C8_ACCEPT_LABEL,
+        "enabled": refusal_category is None,
+        "refusal_category": refusal_category,
+        "refusal_copy": (
+            FIX_PHASE_C8_REFUSAL_COPY[refusal_category]
+            if refusal_category is not None else None
+        ),
+    }
+
+
+def _fix_phase_c8_format_payload(
+    *, view, acceptance_signal, next_proposal_present, identity_text,
+    process_state,
+) -> dict:
+    state_id = _fix_phase_c8_derive_state_id(
+        view=view, acceptance_signal=acceptance_signal,
+    )
+    values = _fix_phase_c6_node_values(view)
+    payload = {
+        "signal_version": FIX_PHASE_C8_SIGNAL_VERSION,
+        "state_id": state_id,
+        "section_active": state_id != FIX_PHASE_C8_STATE_ABSENT,
+        "action": _fix_phase_c8_derive_action(
+            state_id=state_id,
+            identity_text=identity_text,
+            process_state=process_state,
+        ),
+        "advanced": {
+            "raw_status": values.get("loop_state_status"),
+            "raw_last_verdict": values.get("last_verdict"),
+            "raw_acceptance_signal": acceptance_signal,
+            "raw_status_category": (
+                view.get("status_category")
+                if isinstance(view, dict) else None
+            ),
+        },
+    }
+    if state_id == FIX_PHASE_C8_STATE_ABSENT:
+        return payload
+    entry = FIX_PHASE_C8_STATE_DISPLAY_MAP[state_id]
+    payload.update(entry)
+    payload["finished_text"] = (
+        f"Finished so far: "
+        f"{_fix_phase_c6_redact_text(values.get('phase'))} - "
+        f"{_fix_phase_c6_redact_text(values.get('sub_phase'))}: "
+        f"{_fix_phase_c6_redact_text(values.get('task'))}"
+    )
+    if state_id == FIX_PHASE_C8_STATE_ACCEPTED:
+        payload["advisory_note"] = (
+            "Advisory: a next-phase proposal file is on disk."
+            if next_proposal_present
+            else "Advisory: no next-phase proposal file yet."
+        )
+    else:
+        payload["advisory_note"] = ""
+    return payload
+
+
+def _fix_phase_c8_build_payload(
+    controller_root: Path, *, identity_text, process_state,
+) -> dict:
+    try:
+        view = build_desktop_orchestration_visualization_view(
+            controller_root,
+        )
+    except (HaltError, OSError):
+        view = None
+    try:
+        acceptance_signal = evaluate_final_acceptance(
+            controller_root,
+        )["acceptance_signal"]
+    except (HaltError, OSError):
+        acceptance_signal = None
+    return _fix_phase_c8_format_payload(
+        view=view,
+        acceptance_signal=acceptance_signal,
+        next_proposal_present=(
+            controller_root / ".agent-loop" / "proposed-phase.md"
+        ).exists(),
+        identity_text=identity_text,
+        process_state=process_state,
     )
 
 
@@ -17130,48 +18291,6 @@ def _launch_desktop_app_window(
     approval_mode_combo.pack(fill=tk.X, padx=4, pady=(0, 6))
 
     run_popen_holder: list = [None]
-    run_stop_label_var = tk.StringVar(value="Run")
-
-    def _run_button_click() -> None:
-        current = run_popen_holder[0]
-        if current is not None and current.poll() is None:
-            try:
-                current.terminate()
-            except OSError:
-                pass
-            run_popen_holder[0] = None
-            run_stop_label_var.set(
-                _primary_desktop_run_button_label(False),
-            )
-            status_caption.config(
-                text="Run stopped: agent loop subprocess terminated.",
-            )
-            return
-        cmd = _primary_desktop_build_run_command(controller_root)
-        try:
-            proc = subprocess.Popen(cmd, cwd=str(controller_root))
-        except OSError as exc:
-            status_caption.config(
-                text=f"Run refused: could not spawn subprocess ({exc!r}).",
-            )
-            return
-        run_popen_holder[0] = proc
-        run_stop_label_var.set(
-            _primary_desktop_run_button_label(True),
-        )
-        status_caption.config(
-            text=(
-                f"Run started: PID {proc.pid}. The button flips back "
-                f"to `Run` when the subprocess exits."
-            ),
-        )
-
-    run_stop_button = tk.Button(
-        primary_controls_frame,
-        textvariable=run_stop_label_var,
-        command=_run_button_click,
-    )
-    run_stop_button.pack(fill=tk.X, padx=4, pady=(0, 4))
 
     def _code_review_button_click() -> None:
         cmd = _primary_desktop_build_code_review_command(
@@ -17695,8 +18814,16 @@ def _launch_desktop_app_window(
         / "orchestrator.log"
     )
 
+    fix_phase_c5_project_ready_holder: list = [False]
+    fix_phase_c5_run_mode_selected_holder: list = [False]
+
     def _fix_phase_c2_render_payload(payload: dict) -> None:
         folder_text = payload.get("target_path")
+        fix_phase_c5_project_ready_holder[0] = bool(
+            payload.get("ready_to_run")
+        ) and _fix_phase_c5_project_matches_controller(
+            folder_text, controller_root,
+        )
         fix_phase_c2_folder_label.config(
             text=(
                 f"Folder: {folder_text}"
@@ -18163,9 +19290,13 @@ def _launch_desktop_app_window(
 
     def _fix_phase_c4_on_choice_click(choice_id: str) -> None:
         # Fail-closed on any choice_id outside the shipped
-        # closed C4 vocabulary. Session-scoped only: nothing
-        # here writes a canonical artifact, spawns a
-        # subprocess, opens a socket, or advances loop-state.
+        # closed C4 vocabulary. Nothing here spawns a
+        # subprocess, opens a socket, starts a cycle, or
+        # advances `status` / `awaiting_human_for` - the ONLY
+        # canonical field this callback ever changes is
+        # `approval_mode`, applied via the shipped Phase 5B
+        # `save_loop_state(...)` writer (see
+        # `_fix_phase_c4_apply_approval_mode_to_canonical_state`).
         if choice_id not in FIX_PHASE_C4_CHOICE_IDS:
             _fix_phase_c4_emit_audit(
                 state_id=None,
@@ -18175,27 +19306,25 @@ def _launch_desktop_app_window(
                 ),
             )
             return
-        view, canonical = (
-            _fix_phase_c4_read_current_canonical_mode()
+        target_approval_mode = (
+            _fix_phase_c4_map_choice_to_approval_mode(choice_id)
         )
-        if view is None:
-            unavailable_payload = (
-                _fix_phase_c4_format_canonical_source_unavailable_payload()
-            )
-            _fix_phase_c4_render_payload(unavailable_payload)
-            _fix_phase_c4_emit_audit(
-                state_id=unavailable_payload["state_id"],
-                choice_id=choice_id,
-                refusal_category=(
-                    FIX_PHASE_C4_REFUSAL_CANONICAL_SOURCE_UNREADABLE
-                ),
-            )
-            return
+        # Fix Phase C4 fix cycle Issue 1: apply the selection to
+        # the canonical runtime state THROUGH the shipped
+        # Phase 5B writer before rendering anything. On any
+        # refusal (missing / malformed loop-state.json, or an
+        # approval_mode outside the shipped Phase 5A
+        # enumeration) render the bounded unavailable/refused
+        # state and emit the existing
+        # `refused_canonical_source_unreadable` audit category;
+        # the canonical file is left untouched (`load_loop_state
+        # -> validate_loop_state -> save_loop_state` either
+        # completes as a whole or raises before any write).
         try:
-            clipboard_payload = (
-                _fix_phase_c4_derive_clipboard_payload_from_view(
-                    choice_id=choice_id,
-                    run_profiles_view=view,
+            applied_mode = (
+                _fix_phase_c4_apply_approval_mode_to_canonical_state(
+                    controller_root,
+                    approval_mode=target_approval_mode,
                 )
             )
         except HaltError:
@@ -18211,25 +19340,42 @@ def _launch_desktop_app_window(
                 ),
             )
             return
-        # Copy the shipped clipboard payload verbatim. This
-        # matches the shipped Phase 10Q `copy_paste` dispatch
-        # convention: the desktop shell NEVER executes the
-        # payload as a subprocess and NEVER opens a network
-        # socket. The operator pastes into their terminal to
-        # apply the change through the shipped CLI recipe.
+        # Best-effort convenience only: also copy the shipped
+        # Phase 10Q affordance's clipboard recipe for operators
+        # who want the CLI-equivalent text (e.g. for a support
+        # note or to mirror the change into a future `plan ->
+        # activate` proposal). This is NEVER the mechanism that
+        # applies the selection - the canonical write above
+        # already happened - so a clipboard failure or a
+        # missing/stale Phase 10Q view must NEVER surface as a
+        # refusal or block rendering the already-applied state.
         try:
+            clipboard_view, _clipboard_canonical = (
+                _fix_phase_c4_read_current_canonical_mode()
+            )
+            clipboard_payload = (
+                _fix_phase_c4_derive_clipboard_payload_from_view(
+                    choice_id=choice_id,
+                    run_profiles_view=clipboard_view,
+                )
+            )
             root.clipboard_clear()
             root.clipboard_append(clipboard_payload)
-        except Exception:  # noqa: BLE001 - clipboard is
-            # best-effort; the audit line still fires so the
-            # operator sees the selection in the log.
+        except Exception:  # noqa: BLE001 - best-effort only;
+            # the canonical apply above already succeeded and
+            # the audit line below still fires regardless.
             pass
+        # Reread canonical state (via the applied_mode returned
+        # above, itself re-read from disk by the apply helper)
+        # and render the ACTUAL applied plain-English mode -
+        # never the value the operator merely requested.
         selected_payload = (
             _fix_phase_c4_format_selected_payload(
                 choice_id=choice_id,
-                current_canonical_mode=canonical,
+                current_canonical_mode=applied_mode,
             )
         )
+        fix_phase_c5_run_mode_selected_holder[0] = True
         _fix_phase_c4_render_payload(selected_payload)
         _fix_phase_c4_emit_audit(
             state_id=selected_payload["state_id"],
@@ -18336,6 +19482,744 @@ def _launch_desktop_app_window(
                 current_canonical_mode=_c4_canonical,
             )
         )
+
+    # Fix Phase C5: primary Start Agent / Stop Agent control in the Run
+    # section (fourth section after Project, PRD, Run Mode). Start is
+    # enabled only when every prerequisite holder is satisfied; state is
+    # re-derived on each shipped `_refresh` poll and on each gesture.
+    fix_phase_c5_run_frame = tk.LabelFrame(
+        control_frame,
+        text="Run",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c5_run_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c5_state_label = tk.Label(
+        fix_phase_c5_run_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c5_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c5_summary_label = tk.Label(
+        fix_phase_c5_run_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c5_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c5_primary_button = tk.Button(
+        fix_phase_c5_run_frame,
+        text=FIX_PHASE_C5_PRIMARY_LABEL_START,
+    )
+    fix_phase_c5_primary_button.pack(fill=tk.X, padx=4, pady=(4, 4))
+    fix_phase_c5_audit_log_path = (
+        controller_root / ".agent-loop" / "orchestrator.log"
+    )
+    fix_phase_c5_process_holder: dict = {
+        "starting": False,
+        "stop_requested": False,
+        "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+    }
+
+    def _fix_phase_c5_current_process_state() -> str:
+        if fix_phase_c5_process_holder["starting"]:
+            return FIX_PHASE_C5_PROCESS_STARTING
+        proc = run_popen_holder[0]
+        if proc is not None and proc.poll() is None:
+            if fix_phase_c5_process_holder["stop_requested"]:
+                return FIX_PHASE_C5_PROCESS_STOPPING
+            return FIX_PHASE_C5_PROCESS_ACTIVE
+        return fix_phase_c5_process_holder["last_outcome"]
+
+    def _fix_phase_c5_current_missing_prerequisite():
+        return _fix_phase_c5_derive_missing_prerequisite(
+            project_ready=fix_phase_c5_project_ready_holder[0],
+            prd_ready=(
+                fix_phase_c3_current_state_holder[0]
+                == FIX_PHASE_C3_STATE_PRD_READY
+            ),
+            run_mode_selected=(
+                fix_phase_c5_run_mode_selected_holder[0]
+            ),
+        )
+
+    def _fix_phase_c5_render_current() -> None:
+        process_state = _fix_phase_c5_current_process_state()
+        missing = _fix_phase_c5_current_missing_prerequisite()
+        state_id = _fix_phase_c5_derive_state_id(
+            missing_prerequisite=missing,
+            process_state=process_state,
+        )
+        payload = _fix_phase_c5_format_payload(
+            state_id=state_id,
+            missing_prerequisite=missing,
+        )
+        fix_phase_c5_state_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c5_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c5_primary_button.config(
+            text=payload["primary_label"],
+            state=(
+                tk.NORMAL
+                if payload["primary_enabled"]
+                else tk.DISABLED
+            ),
+        )
+
+    def _fix_phase_c5_emit_audit(
+        *, state_id, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c5_format_audit_line(
+                state_id=state_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c5_audit_log_path, line)
+
+    def _fix_phase_c5_stop_click() -> None:
+        proc = run_popen_holder[0]
+        if proc is None or proc.poll() is not None:
+            _fix_phase_c5_render_current()
+            return
+        fix_phase_c5_process_holder["stop_requested"] = True
+        _fix_phase_c5_emit_audit(
+            state_id=FIX_PHASE_C5_STATE_STOPPING,
+        )
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        _fix_phase_c5_render_current()
+
+    def _fix_phase_c5_primary_click() -> None:
+        proc = run_popen_holder[0]
+        if proc is not None and proc.poll() is None:
+            _fix_phase_c5_stop_click()
+            return
+        missing = _fix_phase_c5_current_missing_prerequisite()
+        if missing is not None:
+            _fix_phase_c5_emit_audit(
+                state_id=FIX_PHASE_C5_STATE_UNAVAILABLE,
+                refusal_category=(
+                    FIX_PHASE_C5_REFUSAL_PREREQUISITE_MISSING
+                ),
+            )
+            _fix_phase_c5_render_current()
+            return
+        fix_phase_c5_process_holder["starting"] = True
+        _fix_phase_c5_render_current()
+        root.update_idletasks()
+        try:
+            proc = subprocess.Popen(
+                _primary_desktop_build_run_command(controller_root),
+                cwd=str(controller_root),
+            )
+        except OSError:
+            fix_phase_c5_process_holder["starting"] = False
+            fix_phase_c5_process_holder["last_outcome"] = (
+                FIX_PHASE_C5_PROCESS_BLOCKED
+            )
+            _fix_phase_c5_emit_audit(
+                state_id=FIX_PHASE_C5_STATE_BLOCKED,
+                refusal_category=FIX_PHASE_C5_REFUSAL_SPAWN_FAILED,
+            )
+            _fix_phase_c5_render_current()
+            return
+        run_popen_holder[0] = proc
+        fix_phase_c5_process_holder.update({
+            "starting": False,
+            "stop_requested": False,
+            "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+        })
+        _fix_phase_c5_emit_audit(state_id=FIX_PHASE_C5_STATE_ACTIVE)
+        _fix_phase_c5_render_current()
+
+    def _fix_phase_c5_poll_process() -> None:
+        proc = run_popen_holder[0]
+        if proc is not None and proc.poll() is not None:
+            run_popen_holder[0] = None
+            if fix_phase_c5_process_holder["stop_requested"]:
+                fix_phase_c5_process_holder.update({
+                    "stop_requested": False,
+                    "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+                })
+                try:
+                    _fix_phase_c5_persist_operator_stop(
+                        controller_root,
+                    )
+                except (HaltError, OSError):
+                    pass
+                _fix_phase_c5_emit_audit(
+                    state_id=FIX_PHASE_C5_STATE_READY,
+                )
+            elif proc.returncode != 0:
+                fix_phase_c5_process_holder["last_outcome"] = (
+                    FIX_PHASE_C5_PROCESS_BLOCKED
+                )
+                _fix_phase_c5_emit_audit(
+                    state_id=FIX_PHASE_C5_STATE_BLOCKED,
+                    refusal_category=(
+                        FIX_PHASE_C5_REFUSAL_AGENT_EXITED
+                    ),
+                )
+            else:
+                fix_phase_c5_process_holder["last_outcome"] = (
+                    FIX_PHASE_C5_PROCESS_IDLE
+                )
+                _fix_phase_c5_emit_audit(
+                    state_id=FIX_PHASE_C5_STATE_READY,
+                )
+        _fix_phase_c5_render_current()
+
+    fix_phase_c5_primary_button.config(
+        command=_fix_phase_c5_primary_click,
+    )
+    _fix_phase_c5_render_current()
+
+    # Fix Phase C6: plain-English Progress section after Run. Refreshes
+    # only through the shipped `_refresh` poll; raw status tokens and
+    # paths are kept in the Advanced frame below.
+    fix_phase_c6_progress_frame = tk.LabelFrame(
+        control_frame,
+        text="Progress",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c6_progress_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c6_state_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c6_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_summary_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c6_phase_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_phase_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_task_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_task_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c6_activity_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_activity_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_notes_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#555555",
+    )
+    fix_phase_c6_notes_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c6_next_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c6_next_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_next_help_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c6_next_help_label.pack(fill=tk.X, padx=4, pady=(2, 4))
+
+    fix_phase_c6_advanced_frame = tk.Frame(control_frame)
+    advanced_frames_holder.append(fix_phase_c6_advanced_frame)
+    fix_phase_c6_advanced_label = tk.Label(
+        fix_phase_c6_advanced_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#666666",
+        font=("TkDefaultFont", 9),
+    )
+    fix_phase_c6_advanced_label.pack(fill=tk.X, padx=4, pady=(4, 4))
+
+    def _fix_phase_c6_refresh() -> None:
+        payload = _fix_phase_c6_build_payload(
+            controller_root,
+            prerequisite_missing=(
+                _fix_phase_c5_current_missing_prerequisite()
+            ),
+            process_state=_fix_phase_c5_current_process_state(),
+        )
+        fix_phase_c6_state_label.config(text=payload["display_label"])
+        fix_phase_c6_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c6_phase_label.config(
+            text=(
+                f"Phase: {payload['current_phase']}"
+                f" - {payload['current_sub_phase']}"
+            ),
+        )
+        fix_phase_c6_task_label.config(
+            text=f"Current task: {payload['current_task']}",
+        )
+        fix_phase_c6_activity_label.config(
+            text=(
+                f"Latest activity (advisory): "
+                f"{payload['latest_activity']}"
+            ),
+        )
+        fix_phase_c6_notes_label.config(
+            text="\n".join(payload["advisory_notes"]),
+        )
+        fix_phase_c6_next_label.config(
+            text=f"Next: {payload['next_step_label']}",
+        )
+        fix_phase_c6_next_help_label.config(
+            text=payload["next_step_help"],
+        )
+        advanced = payload["advanced"]
+        fix_phase_c6_advanced_label.config(
+            text=(
+                "Advanced detail (technical): "
+                f"status={advanced['raw_status']!r}, "
+                f"awaiting_human_for="
+                f"{advanced['raw_awaiting_human_for']!r}, "
+                f"cycle={advanced['raw_cycle_count']!r}/"
+                f"{advanced['raw_max_cycles']!r}, "
+                f"overlap={advanced['raw_overlap_state']!r}, "
+                f"category={advanced['raw_status_category']!r}"
+            ),
+        )
+
+    _fix_phase_c6_refresh()
+
+    # Fix Phase C7: plain-English Review section after Progress. Packed
+    # only while the canonical state is paused at a human gate; the one
+    # action runs on an explicit click, and refresh never acts.
+    fix_phase_c7_frame = tk.LabelFrame(
+        control_frame,
+        text="Review",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c7_state_label = tk.Label(
+        fix_phase_c7_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c7_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c7_summary_label = tk.Label(
+        fix_phase_c7_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c7_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c7_why_label = tk.Label(
+        fix_phase_c7_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c7_why_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c7_recommend_label = tk.Label(
+        fix_phase_c7_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c7_recommend_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c7_after_label = tk.Label(
+        fix_phase_c7_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c7_after_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c7_refusal_label = tk.Label(
+        fix_phase_c7_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#8a1c1c",
+    )
+    fix_phase_c7_refusal_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c7_button = tk.Button(
+        fix_phase_c7_frame,
+        text=FIX_PHASE_C7_APPROVE_LABEL,
+    )
+    fix_phase_c7_visible_holder = [False]
+    fix_phase_c7_button_visible_holder = [False]
+
+    fix_phase_c7_advanced_frame = tk.Frame(control_frame)
+    advanced_frames_holder.append(fix_phase_c7_advanced_frame)
+    fix_phase_c7_advanced_label = tk.Label(
+        fix_phase_c7_advanced_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#666666",
+        font=("TkDefaultFont", 9),
+    )
+    fix_phase_c7_advanced_label.pack(fill=tk.X, padx=4, pady=(4, 4))
+
+    def _fix_phase_c7_current_payload() -> dict:
+        return _fix_phase_c7_build_payload(
+            controller_root,
+            approval_mode=_primary_desktop_read_approval_mode(
+                controller_root,
+            ),
+            prerequisite_missing=(
+                _fix_phase_c5_current_missing_prerequisite()
+            ),
+            process_state=_fix_phase_c5_current_process_state(),
+        )
+
+    def _fix_phase_c7_set_section_visible(visible: bool) -> None:
+        if visible == fix_phase_c7_visible_holder[0]:
+            return
+        if visible:
+            fix_phase_c7_frame.pack(
+                side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+                after=fix_phase_c6_progress_frame,
+            )
+        else:
+            fix_phase_c7_frame.pack_forget()
+        fix_phase_c7_visible_holder[0] = visible
+
+    def _fix_phase_c7_render(payload: dict) -> None:
+        _fix_phase_c7_set_section_visible(payload["section_active"])
+        if not payload["section_active"]:
+            fix_phase_c7_advanced_label.config(text="")
+            return
+        fix_phase_c7_state_label.config(text=payload["display_label"])
+        fix_phase_c7_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c7_why_label.config(
+            text=f"Why: {payload['why_text']}",
+        )
+        fix_phase_c7_recommend_label.config(
+            text=f"Recommended: {payload['recommended_text']}",
+        )
+        fix_phase_c7_after_label.config(
+            text=f"After you act: {payload['after_action_text']}",
+        )
+        action = payload["action"]
+        button_visible = action is not None
+        if button_visible != fix_phase_c7_button_visible_holder[0]:
+            if button_visible:
+                fix_phase_c7_button.pack(
+                    fill=tk.X, padx=4, pady=(4, 4),
+                )
+            else:
+                fix_phase_c7_button.pack_forget()
+            fix_phase_c7_button_visible_holder[0] = button_visible
+        refusal_text = ""
+        if action is not None:
+            fix_phase_c7_button.config(
+                text=action["label"],
+                state=(
+                    tk.NORMAL if action["enabled"] else tk.DISABLED
+                ),
+            )
+            if not action["enabled"]:
+                refusal_text = action["refusal_copy"]
+        fix_phase_c7_refusal_label.config(text=refusal_text)
+        advanced = payload["advanced"]
+        fix_phase_c7_advanced_label.config(
+            text=(
+                "Review detail (technical): "
+                f"gate={payload['gate_id']!r}, "
+                f"status={advanced['raw_status']!r}, "
+                f"awaiting_human_for="
+                f"{advanced['raw_awaiting_human_for']!r}, "
+                f"approval_mode={advanced['raw_approval_mode']!r}"
+            ),
+        )
+
+    def _fix_phase_c7_refresh() -> None:
+        _fix_phase_c7_render(_fix_phase_c7_current_payload())
+
+    def _fix_phase_c7_emit_audit(
+        *, gate_id, outcome, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c7_format_audit_line(
+                gate_id=gate_id,
+                outcome=outcome,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c5_audit_log_path, line)
+
+    def _fix_phase_c7_approve_click() -> None:
+        payload = _fix_phase_c7_current_payload()
+        action = payload["action"]
+        if action is None or not action["enabled"]:
+            if action is not None:
+                _fix_phase_c7_emit_audit(
+                    gate_id=payload["gate_id"],
+                    outcome=FIX_PHASE_C7_OUTCOME_REFUSED,
+                    refusal_category=action["refusal_category"],
+                )
+            _fix_phase_c7_render(payload)
+            return
+        fix_phase_c5_process_holder["starting"] = True
+        try:
+            proc = subprocess.Popen(
+                _fix_phase_c7_build_resume_command(),
+                cwd=str(controller_root),
+            )
+        except OSError:
+            fix_phase_c5_process_holder["starting"] = False
+            _fix_phase_c7_emit_audit(
+                gate_id=payload["gate_id"],
+                outcome=FIX_PHASE_C7_OUTCOME_REFUSED,
+                refusal_category=FIX_PHASE_C7_REFUSAL_SPAWN_FAILED,
+            )
+            _fix_phase_c7_refresh()
+            return
+        run_popen_holder[0] = proc
+        fix_phase_c5_process_holder.update({
+            "starting": False,
+            "stop_requested": False,
+            "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+        })
+        _fix_phase_c7_emit_audit(
+            gate_id=payload["gate_id"],
+            outcome=FIX_PHASE_C7_OUTCOME_ACCEPTED,
+        )
+        _fix_phase_c7_refresh()
+
+    fix_phase_c7_button.config(command=_fix_phase_c7_approve_click)
+    _fix_phase_c7_refresh()
+
+    # Fix Phase C8: plain-English Completion section after Review. The
+    # operator types their own name; the shipped Phase 9G owner records
+    # the acceptance on an explicit click. Refresh never accepts.
+    fix_phase_c8_frame = tk.LabelFrame(
+        control_frame,
+        text="Completion",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c8_state_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c8_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c8_summary_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_finished_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_finished_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c8_remaining_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_remaining_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_reason_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_reason_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_recommend_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c8_recommend_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c8_after_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c8_after_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_advisory_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#555555",
+    )
+    fix_phase_c8_advisory_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_refusal_label = tk.Label(
+        fix_phase_c8_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#8a1c1c",
+    )
+    fix_phase_c8_refusal_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c8_identity_label = tk.Label(
+        fix_phase_c8_frame,
+        text="Your name (typed by you):",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c8_identity_entry = tk.Entry(fix_phase_c8_frame)
+    fix_phase_c8_button = tk.Button(
+        fix_phase_c8_frame,
+        text=FIX_PHASE_C8_ACCEPT_LABEL,
+    )
+    fix_phase_c8_visible_holder = [False]
+    fix_phase_c8_action_visible_holder = [False]
+    fix_phase_c8_owner_refusal_holder: list = [None]
+
+    fix_phase_c8_advanced_frame = tk.Frame(control_frame)
+    advanced_frames_holder.append(fix_phase_c8_advanced_frame)
+    fix_phase_c8_advanced_label = tk.Label(
+        fix_phase_c8_advanced_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#666666",
+        font=("TkDefaultFont", 9),
+    )
+    fix_phase_c8_advanced_label.pack(fill=tk.X, padx=4, pady=(4, 4))
+
+    def _fix_phase_c8_current_payload() -> dict:
+        return _fix_phase_c8_build_payload(
+            controller_root,
+            identity_text=fix_phase_c8_identity_entry.get(),
+            process_state=_fix_phase_c5_current_process_state(),
+        )
+
+    def _fix_phase_c8_set_section_visible(visible: bool) -> None:
+        if visible == fix_phase_c8_visible_holder[0]:
+            return
+        if visible:
+            fix_phase_c8_frame.pack(
+                side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+                after=(
+                    fix_phase_c7_frame
+                    if fix_phase_c7_visible_holder[0]
+                    else fix_phase_c6_progress_frame
+                ),
+            )
+        else:
+            fix_phase_c8_frame.pack_forget()
+        fix_phase_c8_visible_holder[0] = visible
+
+    def _fix_phase_c8_set_action_visible(visible: bool) -> None:
+        if visible == fix_phase_c8_action_visible_holder[0]:
+            return
+        if visible:
+            fix_phase_c8_identity_label.pack(
+                fill=tk.X, padx=4, pady=(4, 0),
+            )
+            fix_phase_c8_identity_entry.pack(
+                fill=tk.X, padx=4, pady=(2, 0),
+            )
+            fix_phase_c8_button.pack(fill=tk.X, padx=4, pady=(4, 4))
+        else:
+            fix_phase_c8_identity_label.pack_forget()
+            fix_phase_c8_identity_entry.pack_forget()
+            fix_phase_c8_button.pack_forget()
+        fix_phase_c8_action_visible_holder[0] = visible
+
+    def _fix_phase_c8_render(payload: dict) -> None:
+        _fix_phase_c8_set_section_visible(payload["section_active"])
+        if not payload["section_active"]:
+            fix_phase_c8_advanced_label.config(text="")
+            return
+        fix_phase_c8_state_label.config(text=payload["display_label"])
+        fix_phase_c8_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c8_finished_label.config(text=payload["finished_text"])
+        fix_phase_c8_remaining_label.config(
+            text=f"Still open: {payload['remaining_text']}",
+        )
+        fix_phase_c8_reason_label.config(
+            text=f"Why: {payload['reason_text']}",
+        )
+        fix_phase_c8_recommend_label.config(
+            text=f"Recommended: {payload['recommended_text']}",
+        )
+        fix_phase_c8_after_label.config(
+            text=f"After you act: {payload['after_action_text']}",
+        )
+        fix_phase_c8_advisory_label.config(text=payload["advisory_note"])
+        action = payload["action"]
+        _fix_phase_c8_set_action_visible(action is not None)
+        refusal_text = fix_phase_c8_owner_refusal_holder[0] or ""
+        if action is not None:
+            fix_phase_c8_button.config(
+                text=action["label"],
+                state=(
+                    tk.NORMAL if action["enabled"] else tk.DISABLED
+                ),
+            )
+            if not action["enabled"]:
+                refusal_text = action["refusal_copy"]
+        fix_phase_c8_refusal_label.config(text=refusal_text)
+        advanced = payload["advanced"]
+        fix_phase_c8_advanced_label.config(
+            text=(
+                "Completion detail (technical): "
+                f"state={payload['state_id']!r}, "
+                f"status={advanced['raw_status']!r}, "
+                f"last_verdict={advanced['raw_last_verdict']!r}, "
+                f"acceptance_signal="
+                f"{advanced['raw_acceptance_signal']!r}, "
+                f"category={advanced['raw_status_category']!r}"
+            ),
+        )
+
+    def _fix_phase_c8_refresh() -> None:
+        _fix_phase_c8_render(_fix_phase_c8_current_payload())
+
+    def _fix_phase_c8_accept_click() -> None:
+        payload = _fix_phase_c8_current_payload()
+        action = payload["action"]
+        if action is None or not action["enabled"]:
+            _fix_phase_c8_render(payload)
+            return
+        try:
+            record_final_acceptance(
+                controller_root,
+                accepted_by=fix_phase_c8_identity_entry.get(),
+                log_path=fix_phase_c5_audit_log_path,
+            )
+        except (HaltError, OSError):
+            fix_phase_c8_owner_refusal_holder[0] = (
+                FIX_PHASE_C8_REFUSAL_COPY[
+                    FIX_PHASE_C8_REFUSAL_OWNER_REFUSED
+                ]
+            )
+            _fix_phase_c8_render(_fix_phase_c8_current_payload())
+            return
+        fix_phase_c8_owner_refusal_holder[0] = None
+        fix_phase_c8_identity_entry.delete(0, tk.END)
+        _fix_phase_c8_render(_fix_phase_c8_current_payload())
+
+    fix_phase_c8_button.config(command=_fix_phase_c8_accept_click)
+    _fix_phase_c8_refresh()
 
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
     # (registered above and below) are tracked so the toggle can
@@ -19049,15 +20933,10 @@ def _launch_desktop_app_window(
         nonlocal mcp_ack_signature
         nonlocal mcp_action_ack_signature
         nonlocal rag_source_ack_signature
-        # Simplified UI Run/Stop watchdog: if the tracked subprocess
-        # has exited, flip the label back to `Run` so the operator
-        # sees the button rest state without having to click Stop.
-        current_run = run_popen_holder[0]
-        if current_run is not None and current_run.poll() is not None:
-            run_popen_holder[0] = None
-            run_stop_label_var.set(
-                _primary_desktop_run_button_label(False),
-            )
+        _fix_phase_c5_poll_process()
+        _fix_phase_c6_refresh()
+        _fix_phase_c7_refresh()
+        _fix_phase_c8_refresh()
         # Simplified UI: keep the approval-mode dropdown in sync with
         # loop-state.json in case another tool wrote the field
         # between polls.

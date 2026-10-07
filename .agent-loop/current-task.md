@@ -1,27 +1,13 @@
-# Current Task
+﻿# Current Task
 
-## Phase
-Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
+## Active Phase
+Fix Phase C8 - Completion And Handoff Summary
 
-## Sub-Phase
-
-Fix Phase C4 - Run Mode Selector
+## Active Task
+Add the end-of-run summary surface so the desktop app can explain what finished, what remains blocked, whether next-phase planning is possible, and the recommended next action.
 
 ## Status
+Active and ready for Claude implementation.
 
-Active and ready for implementation.
-
-## Task
-
-Add the desktop run-mode selector with plain-English choices mapped to existing shipped runtime modes.
-
-## Notes
-
-- this slice implements only PRD intake on top of the completed C1 contract and C2 Project folder surface
-- the default experience should optimize for one local operator who dislikes terminals
-- the shipped desktop app must remain canonical-artifact-first and must not invent a second UI-only orchestration plane
-- run-mode selection, Start/Stop controls, and run-console behavior remain deferred to C4 through C8
-
-
-
-
+## Required Outcome
+The desktop app must present a canonical, plain-English completion and handoff summary without creating a hidden ledger, auto-accepting work, auto-activating a phase, or bypassing existing identity and human-gate contracts.

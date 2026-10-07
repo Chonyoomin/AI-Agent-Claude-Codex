@@ -1,54 +1,40 @@
-# Claude Code Task
+﻿# Claude Code Task
 
 ## Phase
-Fix Phase C4 - Run Mode Selector
+Fix Phase C8 - Completion And Handoff Summary
 
 ## Objective
-Add a plain-English desktop run-mode selector that lets a non-technical
-operator choose among the already-shipped runtime approval modes without
-exposing internal jargon or creating a second UI-only settings plane.
+Add the end-of-run summary surface for the desktop app so the operator can understand what finished, what remains blocked, whether the next planning step is possible, and what action is recommended next. The summary must remain a faithful presentation of shipped canonical artifacts and state.
 
 ## Context
-Fix Phase C1 defines the guided desktop section order:
-Project, PRD, Run Mode, Run, Progress. Fix Phase C2 delivered the Project
-folder surface and C3 delivered the PRD picker, state mapping, and bounded
-preview. Read docs/desktop-first-run-setup-contract.md, inspect the actual
-repository state, and follow the shipped Phase 5A approval-mode contract and
-Phase 10Q run-profile behavior. Do not rely on prior chat context.
+Fix Phase C1 established the desktop-first setup flow. C2 through C6 provide project, PRD, run-mode, Start/Stop, and plain-English Progress surfaces. C7 provides the Review and Approval Surface. Read TASK.md, README.md, ROADMAP.md, and all active .agent-loop artifacts before editing. Read docs/desktop-first-run-setup-contract.md and inspect the actual repository state. Do not rely on prior chat context.
 
-## Required work
-- add the visible default Run Mode section after PRD and before Run
-- present plain-English choices such as Guided, Review Each Phase, and More
-  Autonomous, with one-sentence explanations
-- map each choice to the existing shipped runtime mode/profile values
-- preserve canonical artifact ownership and existing approval gates
-- make the selected mode observable through the existing canonical runtime
-  configuration/state path rather than a UI-only settings file
-- define clear initial, selected, and unavailable/refused states
-- preserve cancellation and invalid-selection behavior without changing runtime
-  semantics
-- keep raw approval-mode names, CLI commands, canonical paths, and raw state
-  vocabulary behind the existing Advanced surface
-- add focused tests for section order, option copy, mapping, persistence/source
-  of truth, refusal behavior, and no-automation invariants
-- update README.md and .agent-loop/claude-summary.md with the shipped behavior
-  and validation performed
+Reuse the shipped completion, acceptance, planner, handoff, and runtime-owner contracts. The desktop UI is a presentation and explicit-operator-action surface over canonical artifacts; it must not become a second controller or completion ledger.
+
+## Required Work
+
+1. Add a visible Completion or Handoff Summary section in the established desktop section order, using plain English and the existing refresh cadence.
+2. Distinguish at minimum these canonical situations: work complete and awaiting final acceptance, blocked or failed and requiring intervention, and complete/approved with the next planning step available or awaiting the operator's next phase decision.
+3. For each supported situation, show what finished, what remains, the reason for any block or wait, and one recommended next action in plain English.
+4. Route any explicit final acceptance or next-phase action through the existing shipped owner and identity/gate contract. Do not write loop-state directly from the new UI, auto-accept work, auto-activate a phase, or bypass Phase 9G acceptance requirements.
+5. Keep raw status, verdict, paths, and command details behind the existing Advanced disclosure. Advisory interpretations must be labeled as advisory and canonical values must remain identifiable.
+6. Add focused tests for canonical-state mapping, complete/blocked/awaiting-planning copy, recommendation routing, refusal and missing-identity behavior, section ordering, refresh-only behavior, no-auto-acceptance, and no-hidden-ledger guarantees.
+7. Update README.md and .agent-loop/claude-summary.md with implementation and validation evidence only after the implementation is complete.
 
 ## Constraints
-- Follow CLAUDE.md.
-- Do not modify AGENTS.md or CLAUDE.md.
-- Do not invent new approval semantics or widen autonomy.
-- Do not add Start/Stop controls, run-console behavior, automatic execution,
-  or progress rendering; those belong to C5-C8.
-- Do not create a UI-only settings file, preference cache, recent-mode list,
-  hidden session state, background watcher, or second orchestration plane.
-- Selecting a mode must not auto-start, attach, bootstrap, advance, or dispatch
-  the agent.
-- Preserve explicit operator gestures, shipped polling/audit cadence, and
-  existing human approval gates.
-- Do not add Git automation, network endpoints, or unrelated refactors.
 
-## Required output
-After implementation, write .agent-loop/claude-summary.md using the required
-Claude Implementation Summary format and include the validation you ran.
+- Do not add new planner behavior in this slice.
+- Do not create a hidden completion ledger or a second orchestration plane.
+- Do not auto-accept, auto-activate, auto-approve, or silently advance phases.
+- Do not add Git automation, network endpoints, or unrelated UI redesigns.
+- Preserve all completed C2-C7 behavior and existing human-gate rules.
+- Preserve explicit operator identity requirements and fail closed on unreadable or contradictory canonical artifacts.
+- Do not modify .agent-loop/codex-review.md or claim Codex approval.
 
+## Validation
+
+Run focused desktop and documentation tests first, then the full test suite. Inspect the resulting diff and canonical artifacts. Record the implementation, validation commands, and residual limitations in .agent-loop/claude-summary.md. Do not claim completion without evidence.
+
+## Completion Signal
+
+When this implementation prompt is complete, leave the repository ready for Codex review according to the repository handoff contract. Do not modify .agent-loop/codex-review.md or fabricate a review verdict.

@@ -1,5 +1,5 @@
-# Claude Code Fix Task
+﻿# Claude Fix Task
 
-No active Claude-owned fix task for Fix Phase C4. This phase is awaiting its
-initial implementation review. Claude should use .agent-loop/claude-prompt.md.
+No active Claude fix task is currently assigned.
 
+The active phase is Fix Phase C8 - Completion And Handoff Summary. Codex must review the implementation and write any Claude-owned findings here before another fix cycle begins.
