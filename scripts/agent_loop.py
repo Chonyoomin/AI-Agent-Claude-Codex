@@ -17469,21 +17469,6 @@ def _launch_desktop_app_window(
     approval_mode_combo.pack(fill=tk.X, padx=4, pady=(0, 6))
 
     run_popen_holder: list = [None]
-    run_stop_label_var = tk.StringVar(value="Run")
-
-    def _run_button_click() -> None:
-        # Fix Phase C5: the legacy Run/Stop toggle shares the single
-        # Start/Stop controller so there is one run owner and one
-        # human-stop evidence path, and its start is gated by the same
-        # Project / PRD / Run Mode prerequisites.
-        _fix_phase_c5_primary_click()
-
-    run_stop_button = tk.Button(
-        primary_controls_frame,
-        textvariable=run_stop_label_var,
-        command=_run_button_click,
-    )
-    run_stop_button.pack(fill=tk.X, padx=4, pady=(0, 4))
 
     def _code_review_button_click() -> None:
         cmd = _primary_desktop_build_code_review_command(
@@ -18760,14 +18745,6 @@ def _launch_desktop_app_window(
                 tk.NORMAL
                 if payload["primary_enabled"]
                 else tk.DISABLED
-            ),
-        )
-        run_stop_label_var.set(
-            _primary_desktop_run_button_label(
-                process_state in (
-                    FIX_PHASE_C5_PROCESS_ACTIVE,
-                    FIX_PHASE_C5_PROCESS_STOPPING,
-                ),
             ),
         )
 

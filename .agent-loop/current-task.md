@@ -5,7 +5,7 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Sub-Phase
 
-Fix Phase C5 - Start / Stop Agent Control Surface
+Fix Phase C6 - Plain-English Run Console
 
 ## Status
 
@@ -13,7 +13,7 @@ Active and ready for implementation.
 
 ## Task
 
-Add one primary desktop Start Agent control that becomes a Stop Agent surface while active, with prerequisite and refusal guidance.
+Add a plain-English desktop Run Console showing current phase, task, status, latest activity, waiting reason, and next action.
 
 ## Notes
 
@@ -21,6 +21,8 @@ Add one primary desktop Start Agent control that becomes a Stop Agent surface wh
 - the default experience should optimize for one local operator who dislikes terminals
 - the shipped desktop app must remain canonical-artifact-first and must not invent a second UI-only orchestration plane
 - run-mode selection, Start/Stop controls, and run-console behavior remain deferred to C4 through C8
+
+
 
 
 

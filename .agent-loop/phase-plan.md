@@ -3450,7 +3450,7 @@ the shipped runtime modes without creating hidden UI-only settings.
 
 ### Status
 
-Active.
+Complete and approved for human review.
 
 ### Objective
 
@@ -3476,7 +3476,7 @@ why the agent cannot start yet.
 
 ### Status
 
-Queued for later implementation after Fix Phase C5.
+Active.
 
 ### Objective
 
@@ -6350,6 +6350,8 @@ state plane.
 - no change to the Phase 4A Planning Contract body
 - no change to `scripts/run_checks.sh`
 - no Git automation
+
+
 
 
 

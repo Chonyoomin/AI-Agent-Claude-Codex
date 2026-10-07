@@ -24,7 +24,7 @@ Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
 
 ## Active Sub-Phase
 
-Fix Phase C5 - Start / Stop Agent Control Surface
+Fix Phase C6 - Plain-English Run Console
 
 ## Phase Status
 
@@ -32,20 +32,20 @@ Active and ready for implementation.
 
 ## Active Task
 
-Add one primary desktop Start Agent control that becomes a Stop Agent surface while active, with prerequisite and refusal guidance.
+Add a plain-English desktop Run Console showing current phase, task, status, latest activity, waiting reason, and next action.
 
 ## Phase Outcome Required Now
 
-- TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md, and .agent-loop/loop-state.json identify Fix Phase C5 as the active sub-phase
-- .agent-loop/phase-plan.md records Fix Phase C5 as active
-- .agent-loop/claude-prompt.md contains the scoped C5 implementation prompt
+- TASK.md, .agent-loop/current-task.md, .agent-loop/current-phase.md, and .agent-loop/loop-state.json identify Fix Phase C6 as the active sub-phase
+- .agent-loop/phase-plan.md records Fix Phase C6 as active
+- .agent-loop/claude-prompt.md contains the scoped C6 implementation prompt
 
 ## Next-Phase Gate
 
-- the desktop app exposes one clear Start Agent control
-- prerequisites disable Start with plain-English guidance
-- active execution switches the control to Stop Agent or pause
-- start/stop use canonical runtime ownership without bypassing gates
+- the desktop app explains current phase, task, status, latest activity, and next action in plain English
+- waiting, blocked, approval-required, and recovery states are understandable without repository files
+- console values come from canonical artifacts and existing refresh cadence
+- the console does not write state or create a second progress store
 
 ## Out Of Scope For Current Phase
 
@@ -55,6 +55,8 @@ Add one primary desktop Start Agent control that becomes a Stop Agent surface wh
 - introducing a hidden UI-only state store or second orchestration plane
 - fabrication of .agent-loop/codex-review.md content (Codex-owned)
 - Git automation (no commit, push, branch, stash, reset, checkout, tag)
+
+
 
 
 

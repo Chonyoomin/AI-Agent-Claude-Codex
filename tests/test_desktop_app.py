@@ -7219,14 +7219,45 @@ class FixPhaseC5TkWiringTests(unittest.TestCase):
         self.assertIn("_fix_phase_c5_poll_process()", refresh)
         self.assertNotIn("current_run = run_popen_holder[0]", refresh)
 
-    def test_legacy_run_button_delegates_to_c5_controller(
+    def test_only_one_default_start_stop_control_is_exposed(
         self,
     ) -> None:
-        legacy = self._source.split(
-            "    def _run_button_click() -> None:", 1,
-        )[1].split("    run_stop_button = tk.Button(", 1)[0]
-        self.assertIn("_fix_phase_c5_primary_click()", legacy)
-        self.assertNotIn("subprocess.Popen(", legacy)
+        self.assertEqual(
+            self._source.count(
+                "fix_phase_c5_primary_button = tk.Button(",
+            ),
+            1,
+        )
+        self.assertEqual(
+            self._source.count(
+                "command=_fix_phase_c5_primary_click",
+            ),
+            1,
+        )
+        for legacy in (
+            "run_stop_button", "run_stop_label_var",
+            "_run_button_click",
+        ):
+            self.assertNotIn(legacy, self._source, legacy)
+
+    def test_single_canonical_process_owner_is_used(self) -> None:
+        self.assertEqual(
+            self._source.count(
+                "_primary_desktop_build_run_command(",
+            ),
+            1,
+        )
+        self.assertEqual(
+            self._source.count("subprocess.Popen(\n                _primary_desktop_build_run_command("),
+            1,
+        )
+        self.assertEqual(
+            self._source.count("run_popen_holder: list = [None]"),
+            1,
+        )
+        self.assertNotIn(
+            "_primary_desktop_run_button_label(", self._c5,
+        )
 
     def test_primary_button_is_wired_to_c5_click(self) -> None:
         self.assertIn(
