@@ -1,32 +1,13 @@
-# Current Task
+﻿# Current Task
 
-## Phase
-Fix Phase C - Guided Non-Technical Desktop PRD-To-Run UX
+## Active Phase
+Fix Phase C7 - Review And Approval Surface
 
-## Sub-Phase
-
-Fix Phase C6 - Plain-English Run Console
+## Active Task
+Add a plain-English desktop review and approval surface for approval-required pauses with explicit gated actions.
 
 ## Status
+Active and ready for Claude implementation.
 
-Active and ready for implementation.
-
-## Task
-
-Add a plain-English desktop Run Console showing current phase, task, status, latest activity, waiting reason, and next action.
-
-## Notes
-
-- this slice implements only PRD intake on top of the completed C1 contract and C2 Project folder surface
-- the default experience should optimize for one local operator who dislikes terminals
-- the shipped desktop app must remain canonical-artifact-first and must not invent a second UI-only orchestration plane
-- run-mode selection, Start/Stop controls, and run-console behavior remain deferred to C4 through C8
-
-
-
-
-
-
-
-
-
+## Required Outcome
+The desktop app must explain approval-required pauses in plain English and route explicit operator responses through the existing canonical gate owners without weakening human-gate rules or adding auto-approval.
