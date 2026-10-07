@@ -16988,6 +16988,277 @@ def _fix_phase_c5_persist_operator_stop(controller_root: Path) -> None:
     )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase C6: plain-English Progress / Run Console.
+#
+# Read-only plain-English projection of the shipped Phase 10AI
+# orchestration visualization view (itself a read of the canonical
+# loop-state mirrors plus the Phase 10AC overlap aggregate and Phase
+# 7B-style artifact stats). Canonical values are attributed
+# `[canonical mirror]`; computed interpretations are attributed
+# `[visualization-advisory]`. Refreshes only on the shipped `_refresh`
+# poll; nothing is cached, written, or dispatched from here.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C6_SIGNAL_VERSION = "fix-phase-c6-v1"
+
+FIX_PHASE_C6_STATE_SETUP = "setup"
+FIX_PHASE_C6_STATE_READY = "ready"
+FIX_PHASE_C6_STATE_RUNNING = "running"
+FIX_PHASE_C6_STATE_WAITING = "waiting"
+FIX_PHASE_C6_STATE_BLOCKED = "blocked"
+FIX_PHASE_C6_STATE_APPROVAL_REQUIRED = "approval_required"
+FIX_PHASE_C6_STATE_COMPLETE = "complete"
+FIX_PHASE_C6_STATE_IDS = (
+    FIX_PHASE_C6_STATE_SETUP,
+    FIX_PHASE_C6_STATE_READY,
+    FIX_PHASE_C6_STATE_RUNNING,
+    FIX_PHASE_C6_STATE_WAITING,
+    FIX_PHASE_C6_STATE_BLOCKED,
+    FIX_PHASE_C6_STATE_APPROVAL_REQUIRED,
+    FIX_PHASE_C6_STATE_COMPLETE,
+)
+
+FIX_PHASE_C6_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C6_STATE_SETUP: {
+        "display_label": "Set up your project",
+        "plain_english_summary": (
+            "Choose a project folder, a PRD file, and a run mode "
+            "above. Nothing has run yet."
+        ),
+        "next_step_label": "Finish the steps above",
+        "next_step_help": (
+            "Start Agent unlocks when all three steps are done."
+        ),
+    },
+    FIX_PHASE_C6_STATE_READY: {
+        "display_label": "Ready to run",
+        "plain_english_summary": (
+            "The agent has not started yet."
+        ),
+        "next_step_label": "Press Start Agent",
+        "next_step_help": (
+            "The agent works in small steps and pauses where it "
+            "needs your decision."
+        ),
+    },
+    FIX_PHASE_C6_STATE_RUNNING: {
+        "display_label": "Working on your project",
+        "plain_english_summary": (
+            "The agent is working through the current task."
+        ),
+        "next_step_label": "Wait for the next step",
+        "next_step_help": (
+            "You do not need to do anything right now."
+        ),
+    },
+    FIX_PHASE_C6_STATE_WAITING: {
+        "display_label": "Waiting a moment before continuing",
+        "plain_english_summary": (
+            "The agent is waiting on a condition that should clear "
+            "on its own."
+        ),
+        "next_step_label": "Wait, then check again",
+        "next_step_help": (
+            "No action is needed. This panel refreshes on its own."
+        ),
+    },
+    FIX_PHASE_C6_STATE_BLOCKED: {
+        "display_label": "Stopped. Needs help to continue",
+        "plain_english_summary": (
+            "The agent stopped and cannot continue without help."
+        ),
+        "next_step_label": (
+            "Check the project files, then press Start Agent"
+        ),
+        "next_step_help": (
+            "The detailed reason is available under Advanced."
+        ),
+    },
+    FIX_PHASE_C6_STATE_APPROVAL_REQUIRED: {
+        "display_label": "Waiting for your approval to continue",
+        "plain_english_summary": (
+            "The agent paused at a checkpoint that needs your "
+            "approval."
+        ),
+        "next_step_label": "Review the work before approving",
+        "next_step_help": (
+            "The agent will not continue past this checkpoint "
+            "until you approve it."
+        ),
+    },
+    FIX_PHASE_C6_STATE_COMPLETE: {
+        "display_label": "Done. Review the result",
+        "plain_english_summary": (
+            "The current phase is finished and waiting for your "
+            "final check."
+        ),
+        "next_step_label": "Review the result",
+        "next_step_help": (
+            "Final acceptance is handled in a later step."
+        ),
+    },
+}
+
+FIX_PHASE_C6_VERDICT_ACTIVITY_MAP = {
+    "APPROVED_FOR_HUMAN_REVIEW": (
+        "The reviewer approved the last pass. Your check is next."
+    ),
+    "NEEDS_FIXES": (
+        "The reviewer asked for fixes on the last pass."
+    ),
+    "FAILED_REQUIRES_HUMAN": (
+        "The reviewer could not finish and needs your help."
+    ),
+}
+FIX_PHASE_C6_ACTIVITY_NONE = "No review has finished yet."
+FIX_PHASE_C6_ACTIVITY_FIX_IN_PROGRESS = (
+    "A fix pass is in progress."
+)
+
+FIX_PHASE_C6_REDACTED_COPY = "Details are available under Advanced."
+FIX_PHASE_C6_MISSING_VALUE_COPY = "Not recorded yet."
+FIX_PHASE_C6_TEXT_MAX_CHARS = 160
+FIX_PHASE_C6_REDACTION_MARKERS = (
+    "/", "\\", ".agent-loop", "loop-state", "halted_",
+    "awaiting_", "APPROVED_FOR_", "NEEDS_FIXES", "FAILED_REQUIRES_",
+    "approval_mode", "python ", "agent_loop.py",
+)
+
+FIX_PHASE_C6_ATTRIBUTION_CANONICAL = "[canonical mirror]"
+FIX_PHASE_C6_ATTRIBUTION_ADVISORY = "[visualization-advisory]"
+
+
+def _fix_phase_c6_redact_text(value) -> str:
+    if value is None or value == "":
+        return FIX_PHASE_C6_MISSING_VALUE_COPY
+    text = str(value)
+    if any(marker in text for marker in FIX_PHASE_C6_REDACTION_MARKERS):
+        return FIX_PHASE_C6_REDACTED_COPY
+    if len(text) > FIX_PHASE_C6_TEXT_MAX_CHARS:
+        return text[: FIX_PHASE_C6_TEXT_MAX_CHARS - 3] + "..."
+    return text
+
+
+def _fix_phase_c6_node_values(view) -> dict:
+    if not isinstance(view, dict):
+        return {}
+    return {
+        node["id"]: node.get("current_value")
+        for node in view.get("nodes", [])
+        if isinstance(node, dict) and "id" in node
+    }
+
+
+def _fix_phase_c6_derive_state_id(*, view) -> str:
+    if not isinstance(view, dict):
+        return FIX_PHASE_C6_STATE_SETUP
+    values = _fix_phase_c6_node_values(view)
+    status = values.get("loop_state_status")
+    if not isinstance(status, str) or not status:
+        return FIX_PHASE_C6_STATE_SETUP
+    if status == "phase_complete_awaiting_human_approval":
+        return FIX_PHASE_C6_STATE_COMPLETE
+    if values.get("human_gate_pending") is True:
+        return FIX_PHASE_C6_STATE_APPROVAL_REQUIRED
+    if (
+        status == HALTED_OVERLAP_UNSAFE_CONTEXT
+        or status == HALTED_CAPACITY_UNAVAILABLE
+        or view.get("overlap_state") == "refused_pending_recovery"
+    ):
+        return FIX_PHASE_C6_STATE_WAITING
+    if view.get("status_category") == "halted":
+        return FIX_PHASE_C6_STATE_BLOCKED
+    if (
+        status in ALLOWED_NORMAL_CYCLE_START_STATUSES
+        and values.get("cycle_count") == 0
+    ):
+        return FIX_PHASE_C6_STATE_READY
+    return FIX_PHASE_C6_STATE_RUNNING
+
+
+def _fix_phase_c6_derive_latest_activity(view) -> str:
+    values = _fix_phase_c6_node_values(view)
+    if values.get("fix_branch_active") is True:
+        return FIX_PHASE_C6_ACTIVITY_FIX_IN_PROGRESS
+    verdict = values.get("last_verdict")
+    return FIX_PHASE_C6_VERDICT_ACTIVITY_MAP.get(
+        verdict, FIX_PHASE_C6_ACTIVITY_NONE,
+    )
+
+
+def _fix_phase_c6_format_payload(*, view) -> dict:
+    state_id = _fix_phase_c6_derive_state_id(view=view)
+    entry = FIX_PHASE_C6_STATE_DISPLAY_MAP[state_id]
+    values = _fix_phase_c6_node_values(view)
+    advisory_notes = []
+    if values.get("review_branch_active") is True:
+        advisory_notes.append(
+            "The shipped review step is the current focus."
+        )
+    if values.get("blocked_or_halted") is True:
+        advisory_notes.append(
+            "The agent cannot move forward until the stop is cleared."
+        )
+    progress = values.get("artifact_backed_progress")
+    if isinstance(progress, dict):
+        missing = [
+            rel for rel, info in progress.items()
+            if isinstance(info, dict) and not info.get("present")
+        ]
+        if missing:
+            advisory_notes.append(
+                f"{len(missing)} expected project file(s) are "
+                f"missing, so this view may be out of date."
+            )
+    return {
+        "signal_version": FIX_PHASE_C6_SIGNAL_VERSION,
+        "state_id": state_id,
+        "display_label": entry["display_label"],
+        "plain_english_summary": entry["plain_english_summary"],
+        "next_step_label": entry["next_step_label"],
+        "next_step_help": entry["next_step_help"],
+        "current_phase": _fix_phase_c6_redact_text(
+            values.get("phase"),
+        ),
+        "current_sub_phase": _fix_phase_c6_redact_text(
+            values.get("sub_phase"),
+        ),
+        "current_task": _fix_phase_c6_redact_text(
+            values.get("task"),
+        ),
+        "latest_activity": _fix_phase_c6_derive_latest_activity(view),
+        "advisory_notes": advisory_notes,
+        "attribution": {
+            "state": FIX_PHASE_C6_ATTRIBUTION_CANONICAL,
+            "activity": FIX_PHASE_C6_ATTRIBUTION_ADVISORY,
+            "notes": FIX_PHASE_C6_ATTRIBUTION_ADVISORY,
+        },
+        "advanced": {
+            "raw_status": values.get("loop_state_status"),
+            "raw_awaiting_human_for": values.get(
+                "awaiting_human_for",
+            ),
+            "raw_cycle_count": values.get("cycle_count"),
+            "raw_max_cycles": values.get("max_cycles"),
+            "raw_overlap_state": view.get("overlap_state")
+            if isinstance(view, dict) else None,
+            "raw_status_category": view.get("status_category")
+            if isinstance(view, dict) else None,
+        },
+    }
+
+
+def _fix_phase_c6_build_payload(controller_root: Path) -> dict:
+    try:
+        view = build_desktop_orchestration_visualization_view(
+            controller_root,
+        )
+    except (HaltError, OSError):
+        view = None
+    return _fix_phase_c6_format_payload(view=view)
+
+
 def _primary_desktop_validate_bootstrap_form(
     fields,
 ) -> None:
@@ -18861,6 +19132,127 @@ def _launch_desktop_app_window(
     )
     _fix_phase_c5_render_current()
 
+    # Fix Phase C6: plain-English Progress section after Run. Refreshes
+    # only through the shipped `_refresh` poll; raw status tokens and
+    # paths are kept in the Advanced frame below.
+    fix_phase_c6_progress_frame = tk.LabelFrame(
+        control_frame,
+        text="Progress",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c6_progress_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c6_state_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c6_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_summary_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c6_phase_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_phase_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_task_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_task_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c6_activity_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c6_activity_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_notes_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#555555",
+    )
+    fix_phase_c6_notes_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c6_next_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 9, "bold"),
+    )
+    fix_phase_c6_next_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c6_next_help_label = tk.Label(
+        fix_phase_c6_progress_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#333333",
+    )
+    fix_phase_c6_next_help_label.pack(fill=tk.X, padx=4, pady=(2, 4))
+
+    fix_phase_c6_advanced_frame = tk.Frame(control_frame)
+    advanced_frames_holder.append(fix_phase_c6_advanced_frame)
+    fix_phase_c6_advanced_label = tk.Label(
+        fix_phase_c6_advanced_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        fg="#666666",
+        font=("TkDefaultFont", 9),
+    )
+    fix_phase_c6_advanced_label.pack(fill=tk.X, padx=4, pady=(4, 4))
+
+    def _fix_phase_c6_refresh() -> None:
+        payload = _fix_phase_c6_build_payload(controller_root)
+        fix_phase_c6_state_label.config(text=payload["display_label"])
+        fix_phase_c6_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c6_phase_label.config(
+            text=(
+                f"Phase: {payload['current_phase']}"
+                f" - {payload['current_sub_phase']}"
+            ),
+        )
+        fix_phase_c6_task_label.config(
+            text=f"Current task: {payload['current_task']}",
+        )
+        fix_phase_c6_activity_label.config(
+            text=(
+                f"Latest activity (advisory): "
+                f"{payload['latest_activity']}"
+            ),
+        )
+        fix_phase_c6_notes_label.config(
+            text="\n".join(payload["advisory_notes"]),
+        )
+        fix_phase_c6_next_label.config(
+            text=f"Next: {payload['next_step_label']}",
+        )
+        fix_phase_c6_next_help_label.config(
+            text=payload["next_step_help"],
+        )
+        advanced = payload["advanced"]
+        fix_phase_c6_advanced_label.config(
+            text=(
+                "Advanced detail (technical): "
+                f"status={advanced['raw_status']!r}, "
+                f"awaiting_human_for="
+                f"{advanced['raw_awaiting_human_for']!r}, "
+                f"cycle={advanced['raw_cycle_count']!r}/"
+                f"{advanced['raw_max_cycles']!r}, "
+                f"overlap={advanced['raw_overlap_state']!r}, "
+                f"category={advanced['raw_status_category']!r}"
+            ),
+        )
+
+    _fix_phase_c6_refresh()
+
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
     # (registered above and below) are tracked so the toggle can
     # hide/show them as a group. The simplified UI hides them by
@@ -19574,6 +19966,7 @@ def _launch_desktop_app_window(
         nonlocal mcp_action_ack_signature
         nonlocal rag_source_ack_signature
         _fix_phase_c5_poll_process()
+        _fix_phase_c6_refresh()
         # Simplified UI: keep the approval-mode dropdown in sync with
         # loop-state.json in case another tool wrote the field
         # between polls.
