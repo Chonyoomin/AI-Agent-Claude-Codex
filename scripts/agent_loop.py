@@ -16711,6 +16711,283 @@ def _fix_phase_c4_format_audit_line(
     )
 
 
+# ---------------------------------------------------------------------------
+# Fix Phase C5: Start / Stop Agent control surface.
+#
+# One primary control in the Run section that starts the shipped `run`
+# CLI owner (`_primary_desktop_build_run_command(...)`, a child process
+# of this same script) once the Project, PRD, and Run Mode prerequisites
+# are satisfied, and flips to Stop Agent while that child is active.
+# Stop routes through the shipped human-stop halt: after the child exits
+# the shipped `halted_human_stop` status is persisted through
+# `save_loop_state(...)` with the same orchestrator.log note the CLI
+# KeyboardInterrupt path writes. No new orchestration, no background
+# watcher (state refreshes on the shipped `_refresh` poll cadence), no
+# UI-only state file.
+# ---------------------------------------------------------------------------
+
+FIX_PHASE_C5_SIGNAL_VERSION = "fix-phase-c5-v1"
+
+FIX_PHASE_C5_STATE_UNAVAILABLE = "start_unavailable"
+FIX_PHASE_C5_STATE_READY = "start_ready"
+FIX_PHASE_C5_STATE_STARTING = "start_starting"
+FIX_PHASE_C5_STATE_ACTIVE = "start_active"
+FIX_PHASE_C5_STATE_STOPPING = "start_stopping"
+FIX_PHASE_C5_STATE_BLOCKED = "start_blocked"
+FIX_PHASE_C5_STATE_IDS = (
+    FIX_PHASE_C5_STATE_UNAVAILABLE,
+    FIX_PHASE_C5_STATE_READY,
+    FIX_PHASE_C5_STATE_STARTING,
+    FIX_PHASE_C5_STATE_ACTIVE,
+    FIX_PHASE_C5_STATE_STOPPING,
+    FIX_PHASE_C5_STATE_BLOCKED,
+)
+
+FIX_PHASE_C5_PROCESS_IDLE = "idle"
+FIX_PHASE_C5_PROCESS_STARTING = "starting"
+FIX_PHASE_C5_PROCESS_ACTIVE = "active"
+FIX_PHASE_C5_PROCESS_STOPPING = "stopping"
+FIX_PHASE_C5_PROCESS_BLOCKED = "blocked"
+
+FIX_PHASE_C5_PREREQUISITE_PROJECT = "project"
+FIX_PHASE_C5_PREREQUISITE_PRD = "prd"
+FIX_PHASE_C5_PREREQUISITE_RUN_MODE = "run_mode"
+FIX_PHASE_C5_PREREQUISITE_ORDER = (
+    FIX_PHASE_C5_PREREQUISITE_PROJECT,
+    FIX_PHASE_C5_PREREQUISITE_PRD,
+    FIX_PHASE_C5_PREREQUISITE_RUN_MODE,
+)
+
+FIX_PHASE_C5_MISSING_PREREQUISITE_COPY = {
+    FIX_PHASE_C5_PREREQUISITE_PROJECT: (
+        "Pick a project folder in the Project section above first."
+    ),
+    FIX_PHASE_C5_PREREQUISITE_PRD: (
+        "Pick a PRD file in the PRD section above first."
+    ),
+    FIX_PHASE_C5_PREREQUISITE_RUN_MODE: (
+        "Pick a run mode in the Run Mode section above first."
+    ),
+}
+
+FIX_PHASE_C5_PRIMARY_LABEL_START = "Start Agent"
+FIX_PHASE_C5_PRIMARY_LABEL_STOP = "Stop Agent"
+FIX_PHASE_C5_ACTION_START = "start"
+FIX_PHASE_C5_ACTION_STOP = "stop"
+
+FIX_PHASE_C5_STATE_DISPLAY_MAP = {
+    FIX_PHASE_C5_STATE_UNAVAILABLE: {
+        "display_label": "Start is not available yet",
+        "plain_english_summary": (
+            "Finish the steps above before starting the agent."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": None,
+        "primary_enabled": False,
+    },
+    FIX_PHASE_C5_STATE_READY: {
+        "display_label": "Ready to start",
+        "plain_english_summary": (
+            "Everything is set. Press Start Agent to begin."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": FIX_PHASE_C5_ACTION_START,
+        "primary_enabled": True,
+    },
+    FIX_PHASE_C5_STATE_STARTING: {
+        "display_label": "Starting the agent",
+        "plain_english_summary": "The agent is starting. Please wait.",
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": None,
+        "primary_enabled": False,
+    },
+    FIX_PHASE_C5_STATE_ACTIVE: {
+        "display_label": "Working on your project",
+        "plain_english_summary": (
+            "The agent is running. Press Stop Agent to halt it."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_STOP,
+        "primary_action": FIX_PHASE_C5_ACTION_STOP,
+        "primary_enabled": True,
+    },
+    FIX_PHASE_C5_STATE_STOPPING: {
+        "display_label": "Stopping the agent",
+        "plain_english_summary": (
+            "Stop requested. Waiting for the agent to finish "
+            "its current step."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_STOP,
+        "primary_action": None,
+        "primary_enabled": False,
+    },
+    FIX_PHASE_C5_STATE_BLOCKED: {
+        "display_label": "Stopped. Needs help to continue",
+        "plain_english_summary": (
+            "The agent could not continue. Check the project files, "
+            "then press Start Agent to try again."
+        ),
+        "primary_label": FIX_PHASE_C5_PRIMARY_LABEL_START,
+        "primary_action": FIX_PHASE_C5_ACTION_START,
+        "primary_enabled": True,
+    },
+}
+
+FIX_PHASE_C5_REFUSAL_PREREQUISITE_MISSING = (
+    "refused_start_prerequisite_missing"
+)
+FIX_PHASE_C5_REFUSAL_SPAWN_FAILED = "refused_start_spawn_failed"
+FIX_PHASE_C5_REFUSAL_AGENT_EXITED = "refused_start_agent_exited"
+FIX_PHASE_C5_REFUSAL_CATEGORIES = (
+    FIX_PHASE_C5_REFUSAL_PREREQUISITE_MISSING,
+    FIX_PHASE_C5_REFUSAL_SPAWN_FAILED,
+    FIX_PHASE_C5_REFUSAL_AGENT_EXITED,
+)
+
+FIX_PHASE_C5_ATTRIBUTION = "[run-start-control]"
+
+
+def _fix_phase_c5_derive_missing_prerequisite(
+    *, project_ready, prd_ready, run_mode_selected,
+):
+    satisfied = {
+        FIX_PHASE_C5_PREREQUISITE_PROJECT: bool(project_ready),
+        FIX_PHASE_C5_PREREQUISITE_PRD: bool(prd_ready),
+        FIX_PHASE_C5_PREREQUISITE_RUN_MODE: bool(run_mode_selected),
+    }
+    for prerequisite_id in FIX_PHASE_C5_PREREQUISITE_ORDER:
+        if not satisfied[prerequisite_id]:
+            return prerequisite_id
+    return None
+
+
+def _fix_phase_c5_derive_state_id(
+    *, missing_prerequisite, process_state,
+):
+    if process_state == FIX_PHASE_C5_PROCESS_STARTING:
+        return FIX_PHASE_C5_STATE_STARTING
+    if process_state == FIX_PHASE_C5_PROCESS_ACTIVE:
+        return FIX_PHASE_C5_STATE_ACTIVE
+    if process_state == FIX_PHASE_C5_PROCESS_STOPPING:
+        return FIX_PHASE_C5_STATE_STOPPING
+    if missing_prerequisite is not None:
+        return FIX_PHASE_C5_STATE_UNAVAILABLE
+    if process_state == FIX_PHASE_C5_PROCESS_BLOCKED:
+        return FIX_PHASE_C5_STATE_BLOCKED
+    return FIX_PHASE_C5_STATE_READY
+
+
+def _fix_phase_c5_format_payload(
+    *, state_id, missing_prerequisite=None,
+):
+    if state_id not in FIX_PHASE_C5_STATE_IDS:
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control refused: state_id "
+                f"{state_id!r} is not in the shipped closed Fix "
+                f"Phase C5 state vocabulary "
+                f"{FIX_PHASE_C5_STATE_IDS!r}"
+            ),
+        )
+    entry = FIX_PHASE_C5_STATE_DISPLAY_MAP[state_id]
+    summary = entry["plain_english_summary"]
+    if state_id == FIX_PHASE_C5_STATE_UNAVAILABLE:
+        if missing_prerequisite not in (
+            FIX_PHASE_C5_MISSING_PREREQUISITE_COPY
+        ):
+            raise HaltError(
+                "halted_input_missing",
+                (
+                    f"desktop run-start control refused: missing "
+                    f"prerequisite {missing_prerequisite!r} is not "
+                    f"in the shipped Fix Phase C5 vocabulary"
+                ),
+            )
+        summary = FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[
+            missing_prerequisite
+        ]
+    return {
+        "state_id": state_id,
+        "display_label": entry["display_label"],
+        "plain_english_summary": summary,
+        "primary_label": entry["primary_label"],
+        "primary_action": entry["primary_action"],
+        "primary_enabled": entry["primary_enabled"],
+        "attribution_tag": FIX_PHASE_C5_ATTRIBUTION,
+    }
+
+
+def _fix_phase_c5_project_matches_controller(
+    target_path, controller_root,
+) -> bool:
+    if not target_path:
+        return False
+    try:
+        return (
+            Path(target_path).resolve()
+            == Path(controller_root).resolve()
+        )
+    except OSError:
+        return False
+
+
+def _fix_phase_c5_format_audit_line(
+    *, state_id, epoch_seconds, refusal_category=None,
+):
+    if refusal_category is not None and (
+        refusal_category not in FIX_PHASE_C5_REFUSAL_CATEGORIES
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control audit refused: "
+                f"refusal_category {refusal_category!r} is not in "
+                f"the shipped closed Fix Phase C5 refusal "
+                f"vocabulary {FIX_PHASE_C5_REFUSAL_CATEGORIES!r}"
+            ),
+        )
+    if state_id is not None and state_id not in (
+        FIX_PHASE_C5_STATE_IDS
+    ):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control audit refused: "
+                f"state_id {state_id!r} is not in the shipped "
+                f"closed Fix Phase C5 state vocabulary "
+                f"{FIX_PHASE_C5_STATE_IDS!r}"
+            ),
+        )
+    if not isinstance(epoch_seconds, int):
+        raise HaltError(
+            "halted_input_missing",
+            (
+                f"desktop run-start control audit refused: "
+                f"epoch_seconds must be an int, got "
+                f"{epoch_seconds!r}"
+            ),
+        )
+    return (
+        f"[desktop-run-start] signal_version="
+        f"{FIX_PHASE_C5_SIGNAL_VERSION!r} state_id={state_id!r} "
+        f"refusal_category={refusal_category!r} "
+        f"epoch_seconds={epoch_seconds!r}"
+    )
+
+
+def _fix_phase_c5_persist_operator_stop(controller_root: Path) -> None:
+    state_path = controller_root / ".agent-loop" / "loop-state.json"
+    data = load_loop_state(state_path)
+    save_loop_state(state_path, data, {"status": "halted_human_stop"})
+    _log_note(
+        controller_root / ".agent-loop" / "orchestrator.log",
+        (
+            "HALT halted_human_stop: operator stopped the agent "
+            "from the desktop Start / Stop control"
+        ),
+    )
+
+
 def _primary_desktop_validate_bootstrap_form(
     fields,
 ) -> None:
@@ -17195,38 +17472,11 @@ def _launch_desktop_app_window(
     run_stop_label_var = tk.StringVar(value="Run")
 
     def _run_button_click() -> None:
-        current = run_popen_holder[0]
-        if current is not None and current.poll() is None:
-            try:
-                current.terminate()
-            except OSError:
-                pass
-            run_popen_holder[0] = None
-            run_stop_label_var.set(
-                _primary_desktop_run_button_label(False),
-            )
-            status_caption.config(
-                text="Run stopped: agent loop subprocess terminated.",
-            )
-            return
-        cmd = _primary_desktop_build_run_command(controller_root)
-        try:
-            proc = subprocess.Popen(cmd, cwd=str(controller_root))
-        except OSError as exc:
-            status_caption.config(
-                text=f"Run refused: could not spawn subprocess ({exc!r}).",
-            )
-            return
-        run_popen_holder[0] = proc
-        run_stop_label_var.set(
-            _primary_desktop_run_button_label(True),
-        )
-        status_caption.config(
-            text=(
-                f"Run started: PID {proc.pid}. The button flips back "
-                f"to `Run` when the subprocess exits."
-            ),
-        )
+        # Fix Phase C5: the legacy Run/Stop toggle shares the single
+        # Start/Stop controller so there is one run owner and one
+        # human-stop evidence path, and its start is gated by the same
+        # Project / PRD / Run Mode prerequisites.
+        _fix_phase_c5_primary_click()
 
     run_stop_button = tk.Button(
         primary_controls_frame,
@@ -17757,8 +18007,16 @@ def _launch_desktop_app_window(
         / "orchestrator.log"
     )
 
+    fix_phase_c5_project_ready_holder: list = [False]
+    fix_phase_c5_run_mode_selected_holder: list = [False]
+
     def _fix_phase_c2_render_payload(payload: dict) -> None:
         folder_text = payload.get("target_path")
+        fix_phase_c5_project_ready_holder[0] = bool(
+            payload.get("ready_to_run")
+        ) and _fix_phase_c5_project_matches_controller(
+            folder_text, controller_root,
+        )
         fix_phase_c2_folder_label.config(
             text=(
                 f"Folder: {folder_text}"
@@ -18310,6 +18568,7 @@ def _launch_desktop_app_window(
                 current_canonical_mode=applied_mode,
             )
         )
+        fix_phase_c5_run_mode_selected_holder[0] = True
         _fix_phase_c4_render_payload(selected_payload)
         _fix_phase_c4_emit_audit(
             state_id=selected_payload["state_id"],
@@ -18416,6 +18675,214 @@ def _launch_desktop_app_window(
                 current_canonical_mode=_c4_canonical,
             )
         )
+
+    # Fix Phase C5: primary Start Agent / Stop Agent control in the Run
+    # section (fourth section after Project, PRD, Run Mode). Start is
+    # enabled only when every prerequisite holder is satisfied; state is
+    # re-derived on each shipped `_refresh` poll and on each gesture.
+    fix_phase_c5_run_frame = tk.LabelFrame(
+        control_frame,
+        text="Run",
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c5_run_frame.pack(
+        side=tk.TOP, fill=tk.X, padx=4, pady=(4, 4),
+    )
+    fix_phase_c5_state_label = tk.Label(
+        fix_phase_c5_run_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+        font=("TkDefaultFont", 10, "bold"),
+    )
+    fix_phase_c5_state_label.pack(fill=tk.X, padx=4, pady=(4, 0))
+    fix_phase_c5_summary_label = tk.Label(
+        fix_phase_c5_run_frame,
+        text="",
+        anchor=tk.W, justify=tk.LEFT, wraplength=340,
+    )
+    fix_phase_c5_summary_label.pack(fill=tk.X, padx=4, pady=(2, 0))
+    fix_phase_c5_primary_button = tk.Button(
+        fix_phase_c5_run_frame,
+        text=FIX_PHASE_C5_PRIMARY_LABEL_START,
+    )
+    fix_phase_c5_primary_button.pack(fill=tk.X, padx=4, pady=(4, 4))
+    fix_phase_c5_audit_log_path = (
+        controller_root / ".agent-loop" / "orchestrator.log"
+    )
+    fix_phase_c5_process_holder: dict = {
+        "starting": False,
+        "stop_requested": False,
+        "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+    }
+
+    def _fix_phase_c5_current_process_state() -> str:
+        if fix_phase_c5_process_holder["starting"]:
+            return FIX_PHASE_C5_PROCESS_STARTING
+        proc = run_popen_holder[0]
+        if proc is not None and proc.poll() is None:
+            if fix_phase_c5_process_holder["stop_requested"]:
+                return FIX_PHASE_C5_PROCESS_STOPPING
+            return FIX_PHASE_C5_PROCESS_ACTIVE
+        return fix_phase_c5_process_holder["last_outcome"]
+
+    def _fix_phase_c5_current_missing_prerequisite():
+        return _fix_phase_c5_derive_missing_prerequisite(
+            project_ready=fix_phase_c5_project_ready_holder[0],
+            prd_ready=(
+                fix_phase_c3_current_state_holder[0]
+                == FIX_PHASE_C3_STATE_PRD_READY
+            ),
+            run_mode_selected=(
+                fix_phase_c5_run_mode_selected_holder[0]
+            ),
+        )
+
+    def _fix_phase_c5_render_current() -> None:
+        process_state = _fix_phase_c5_current_process_state()
+        missing = _fix_phase_c5_current_missing_prerequisite()
+        state_id = _fix_phase_c5_derive_state_id(
+            missing_prerequisite=missing,
+            process_state=process_state,
+        )
+        payload = _fix_phase_c5_format_payload(
+            state_id=state_id,
+            missing_prerequisite=missing,
+        )
+        fix_phase_c5_state_label.config(
+            text=payload["display_label"],
+        )
+        fix_phase_c5_summary_label.config(
+            text=payload["plain_english_summary"],
+        )
+        fix_phase_c5_primary_button.config(
+            text=payload["primary_label"],
+            state=(
+                tk.NORMAL
+                if payload["primary_enabled"]
+                else tk.DISABLED
+            ),
+        )
+        run_stop_label_var.set(
+            _primary_desktop_run_button_label(
+                process_state in (
+                    FIX_PHASE_C5_PROCESS_ACTIVE,
+                    FIX_PHASE_C5_PROCESS_STOPPING,
+                ),
+            ),
+        )
+
+    def _fix_phase_c5_emit_audit(
+        *, state_id, refusal_category=None,
+    ) -> None:
+        try:
+            line = _fix_phase_c5_format_audit_line(
+                state_id=state_id,
+                epoch_seconds=int(time.time()),
+                refusal_category=refusal_category,
+            )
+        except HaltError:
+            return
+        _log_note(fix_phase_c5_audit_log_path, line)
+
+    def _fix_phase_c5_stop_click() -> None:
+        proc = run_popen_holder[0]
+        if proc is None or proc.poll() is not None:
+            _fix_phase_c5_render_current()
+            return
+        fix_phase_c5_process_holder["stop_requested"] = True
+        _fix_phase_c5_emit_audit(
+            state_id=FIX_PHASE_C5_STATE_STOPPING,
+        )
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+        _fix_phase_c5_render_current()
+
+    def _fix_phase_c5_primary_click() -> None:
+        proc = run_popen_holder[0]
+        if proc is not None and proc.poll() is None:
+            _fix_phase_c5_stop_click()
+            return
+        missing = _fix_phase_c5_current_missing_prerequisite()
+        if missing is not None:
+            _fix_phase_c5_emit_audit(
+                state_id=FIX_PHASE_C5_STATE_UNAVAILABLE,
+                refusal_category=(
+                    FIX_PHASE_C5_REFUSAL_PREREQUISITE_MISSING
+                ),
+            )
+            _fix_phase_c5_render_current()
+            return
+        fix_phase_c5_process_holder["starting"] = True
+        _fix_phase_c5_render_current()
+        root.update_idletasks()
+        try:
+            proc = subprocess.Popen(
+                _primary_desktop_build_run_command(controller_root),
+                cwd=str(controller_root),
+            )
+        except OSError:
+            fix_phase_c5_process_holder["starting"] = False
+            fix_phase_c5_process_holder["last_outcome"] = (
+                FIX_PHASE_C5_PROCESS_BLOCKED
+            )
+            _fix_phase_c5_emit_audit(
+                state_id=FIX_PHASE_C5_STATE_BLOCKED,
+                refusal_category=FIX_PHASE_C5_REFUSAL_SPAWN_FAILED,
+            )
+            _fix_phase_c5_render_current()
+            return
+        run_popen_holder[0] = proc
+        fix_phase_c5_process_holder.update({
+            "starting": False,
+            "stop_requested": False,
+            "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+        })
+        _fix_phase_c5_emit_audit(state_id=FIX_PHASE_C5_STATE_ACTIVE)
+        _fix_phase_c5_render_current()
+
+    def _fix_phase_c5_poll_process() -> None:
+        proc = run_popen_holder[0]
+        if proc is not None and proc.poll() is not None:
+            run_popen_holder[0] = None
+            if fix_phase_c5_process_holder["stop_requested"]:
+                fix_phase_c5_process_holder.update({
+                    "stop_requested": False,
+                    "last_outcome": FIX_PHASE_C5_PROCESS_IDLE,
+                })
+                try:
+                    _fix_phase_c5_persist_operator_stop(
+                        controller_root,
+                    )
+                except (HaltError, OSError):
+                    pass
+                _fix_phase_c5_emit_audit(
+                    state_id=FIX_PHASE_C5_STATE_READY,
+                )
+            elif proc.returncode != 0:
+                fix_phase_c5_process_holder["last_outcome"] = (
+                    FIX_PHASE_C5_PROCESS_BLOCKED
+                )
+                _fix_phase_c5_emit_audit(
+                    state_id=FIX_PHASE_C5_STATE_BLOCKED,
+                    refusal_category=(
+                        FIX_PHASE_C5_REFUSAL_AGENT_EXITED
+                    ),
+                )
+            else:
+                fix_phase_c5_process_holder["last_outcome"] = (
+                    FIX_PHASE_C5_PROCESS_IDLE
+                )
+                _fix_phase_c5_emit_audit(
+                    state_id=FIX_PHASE_C5_STATE_READY,
+                )
+        _fix_phase_c5_render_current()
+
+    fix_phase_c5_primary_button.config(
+        command=_fix_phase_c5_primary_click,
+    )
+    _fix_phase_c5_render_current()
 
     # Advanced panels toggle. The Phase 10Q-10AE sub-view frames
     # (registered above and below) are tracked so the toggle can
@@ -19129,15 +19596,7 @@ def _launch_desktop_app_window(
         nonlocal mcp_ack_signature
         nonlocal mcp_action_ack_signature
         nonlocal rag_source_ack_signature
-        # Simplified UI Run/Stop watchdog: if the tracked subprocess
-        # has exited, flip the label back to `Run` so the operator
-        # sees the button rest state without having to click Stop.
-        current_run = run_popen_holder[0]
-        if current_run is not None and current_run.poll() is not None:
-            run_popen_holder[0] = None
-            run_stop_label_var.set(
-                _primary_desktop_run_button_label(False),
-            )
+        _fix_phase_c5_poll_process()
         # Simplified UI: keep the approval-mode dropdown in sync with
         # loop-state.json in case another tool wrote the field
         # between polls.

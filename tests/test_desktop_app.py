@@ -6336,7 +6336,8 @@ class FixPhaseC4TkWiringTests(unittest.TestCase):
             "# Fix Phase C4: bounded guided Run Mode section",
             1,
         )[1].split(
-            "# Advanced panels toggle.", 1,
+            "# Fix Phase C5: primary Start Agent / Stop Agent",
+            1,
         )[0]
 
     def test_run_mode_labelframe_is_visible_by_default(
@@ -6727,6 +6728,522 @@ class FixPhaseC4ApplyApprovalModeTests(unittest.TestCase):
             '"cycle_count"', "'cycle_count'",
         ):
             self.assertNotIn(forbidden, body, forbidden)
+
+
+class FixPhaseC5ConstantsTests(unittest.TestCase):
+
+    def test_signal_version(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C5_SIGNAL_VERSION,
+            "fix-phase-c5-v1",
+        )
+
+    def test_six_state_ids(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C5_STATE_IDS,
+            (
+                "start_unavailable",
+                "start_ready",
+                "start_starting",
+                "start_active",
+                "start_stopping",
+                "start_blocked",
+            ),
+        )
+
+    def test_prerequisite_order_is_project_prd_run_mode(
+        self,
+    ) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C5_PREREQUISITE_ORDER,
+            ("project", "prd", "run_mode"),
+        )
+
+    def test_three_refusal_categories(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C5_REFUSAL_CATEGORIES,
+            (
+                "refused_start_prerequisite_missing",
+                "refused_start_spawn_failed",
+                "refused_start_agent_exited",
+            ),
+        )
+
+    def test_display_map_covers_every_state(self) -> None:
+        self.assertEqual(
+            set(agent_loop.FIX_PHASE_C5_STATE_DISPLAY_MAP),
+            set(agent_loop.FIX_PHASE_C5_STATE_IDS),
+        )
+
+    def test_only_ready_active_and_blocked_are_enabled(self) -> None:
+        enabled = {
+            sid
+            for sid, entry in (
+                agent_loop.FIX_PHASE_C5_STATE_DISPLAY_MAP.items()
+            )
+            if entry["primary_enabled"]
+        }
+        self.assertEqual(
+            enabled,
+            {
+                "start_ready",
+                "start_active",
+                "start_blocked",
+            },
+        )
+
+    def test_active_state_switches_primary_to_stop(self) -> None:
+        entry = agent_loop.FIX_PHASE_C5_STATE_DISPLAY_MAP[
+            "start_active"
+        ]
+        self.assertEqual(entry["primary_label"], "Stop Agent")
+        self.assertEqual(entry["primary_action"], "stop")
+
+    def test_non_active_states_show_start(self) -> None:
+        for sid in (
+            "start_unavailable", "start_ready", "start_blocked",
+        ):
+            entry = agent_loop.FIX_PHASE_C5_STATE_DISPLAY_MAP[sid]
+            self.assertEqual(entry["primary_label"], "Start Agent")
+            self.assertIn(entry["primary_action"], (None, "start"), sid)
+
+    def test_attribution_tag(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C5_ATTRIBUTION,
+            "[run-start-control]",
+        )
+
+
+class FixPhaseC5PrerequisiteGatingTests(unittest.TestCase):
+
+    def _missing(self, **flags):
+        base = {
+            "project_ready": False,
+            "prd_ready": False,
+            "run_mode_selected": False,
+        }
+        base.update(flags)
+        return agent_loop._fix_phase_c5_derive_missing_prerequisite(
+            **base,
+        )
+
+    def test_first_missing_prerequisite_is_project(self) -> None:
+        self.assertEqual(self._missing(), "project")
+
+    def test_project_satisfied_then_prd_missing(self) -> None:
+        self.assertEqual(
+            self._missing(project_ready=True), "prd",
+        )
+
+    def test_project_and_prd_satisfied_then_run_mode_missing(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._missing(project_ready=True, prd_ready=True),
+            "run_mode",
+        )
+
+    def test_all_satisfied_returns_none(self) -> None:
+        self.assertIsNone(
+            self._missing(
+                project_ready=True,
+                prd_ready=True,
+                run_mode_selected=True,
+            ),
+        )
+
+    def test_run_mode_alone_does_not_satisfy_project(self) -> None:
+        self.assertEqual(
+            self._missing(run_mode_selected=True), "project",
+        )
+
+
+class FixPhaseC5StateDerivationTests(unittest.TestCase):
+
+    def _state(self, missing, process):
+        return agent_loop._fix_phase_c5_derive_state_id(
+            missing_prerequisite=missing,
+            process_state=process,
+        )
+
+    def test_missing_prerequisite_is_unavailable(self) -> None:
+        self.assertEqual(
+            self._state("prd", "idle"), "start_unavailable",
+        )
+
+    def test_satisfied_idle_is_ready(self) -> None:
+        self.assertEqual(self._state(None, "idle"), "start_ready")
+
+    def test_satisfied_blocked_is_blocked(self) -> None:
+        self.assertEqual(
+            self._state(None, "blocked"), "start_blocked",
+        )
+
+    def test_running_process_is_active(self) -> None:
+        self.assertEqual(
+            self._state(None, "active"), "start_active",
+        )
+
+    def test_starting_process_is_starting(self) -> None:
+        self.assertEqual(
+            self._state(None, "starting"), "start_starting",
+        )
+
+    def test_stop_requested_process_is_stopping(self) -> None:
+        self.assertEqual(
+            self._state(None, "stopping"), "start_stopping",
+        )
+
+    def test_running_state_wins_over_missing_prerequisite(
+        self,
+    ) -> None:
+        self.assertEqual(
+            self._state("project", "active"), "start_active",
+        )
+
+
+class FixPhaseC5PayloadTests(unittest.TestCase):
+
+    def test_unavailable_names_missing_project(self) -> None:
+        payload = agent_loop._fix_phase_c5_format_payload(
+            state_id="start_unavailable",
+            missing_prerequisite="project",
+        )
+        self.assertIn("project folder", payload[
+            "plain_english_summary"
+        ])
+        self.assertFalse(payload["primary_enabled"])
+
+    def test_unavailable_names_missing_prd(self) -> None:
+        payload = agent_loop._fix_phase_c5_format_payload(
+            state_id="start_unavailable",
+            missing_prerequisite="prd",
+        )
+        self.assertIn("PRD file", payload["plain_english_summary"])
+
+    def test_unavailable_names_missing_run_mode(self) -> None:
+        payload = agent_loop._fix_phase_c5_format_payload(
+            state_id="start_unavailable",
+            missing_prerequisite="run_mode",
+        )
+        self.assertIn("run mode", payload["plain_english_summary"])
+
+    def test_unavailable_refuses_unknown_prerequisite(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c5_format_payload(
+                state_id="start_unavailable",
+                missing_prerequisite="invented",
+            )
+
+    def test_refuses_unknown_state(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c5_format_payload(
+                state_id="invented",
+            )
+
+    def test_ready_payload_is_enabled_start(self) -> None:
+        payload = agent_loop._fix_phase_c5_format_payload(
+            state_id="start_ready",
+        )
+        self.assertTrue(payload["primary_enabled"])
+        self.assertEqual(payload["primary_action"], "start")
+        self.assertEqual(
+            payload["attribution_tag"], "[run-start-control]",
+        )
+
+    def test_display_copy_never_leaks_raw_runtime_tokens(
+        self,
+    ) -> None:
+        forbidden = (
+            "halted_", "awaiting_", "loop-state", "agent_loop.py",
+            "subprocess", "Popen", "approval_mode", "PID",
+            "APPROVED_FOR_", "NEEDS_FIXES",
+        )
+        texts = []
+        for entry in (
+            agent_loop.FIX_PHASE_C5_STATE_DISPLAY_MAP.values()
+        ):
+            texts.append(entry["display_label"])
+            texts.append(entry["plain_english_summary"])
+        texts.extend(
+            agent_loop.FIX_PHASE_C5_MISSING_PREREQUISITE_COPY.values()
+        )
+        for text in texts:
+            for token in forbidden:
+                self.assertNotIn(token, text, text)
+
+
+class FixPhaseC5ProjectMatchTests(unittest.TestCase):
+
+    def test_same_folder_matches(self) -> None:
+        with TemporaryDirectory() as td:
+            self.assertTrue(
+                agent_loop._fix_phase_c5_project_matches_controller(
+                    td, td,
+                ),
+            )
+
+    def test_different_folder_does_not_match(self) -> None:
+        with TemporaryDirectory() as a, TemporaryDirectory() as b:
+            self.assertFalse(
+                agent_loop._fix_phase_c5_project_matches_controller(
+                    a, b,
+                ),
+            )
+
+    def test_empty_target_does_not_match(self) -> None:
+        with TemporaryDirectory() as td:
+            self.assertFalse(
+                agent_loop._fix_phase_c5_project_matches_controller(
+                    None, td,
+                ),
+            )
+
+
+class FixPhaseC5AuditLineTests(unittest.TestCase):
+
+    def test_line_shape(self) -> None:
+        line = agent_loop._fix_phase_c5_format_audit_line(
+            state_id="start_active",
+            epoch_seconds=1700000000,
+        )
+        self.assertTrue(line.startswith("[desktop-run-start] "))
+        self.assertIn("signal_version='fix-phase-c5-v1'", line)
+        self.assertIn("state_id='start_active'", line)
+        self.assertIn("refusal_category=None", line)
+        self.assertIn("epoch_seconds=1700000000", line)
+
+    def test_refusal_line_carries_category(self) -> None:
+        line = agent_loop._fix_phase_c5_format_audit_line(
+            state_id="start_unavailable",
+            epoch_seconds=1700000000,
+            refusal_category=(
+                "refused_start_prerequisite_missing"
+            ),
+        )
+        self.assertIn(
+            "refusal_category='refused_start_prerequisite_missing'",
+            line,
+        )
+
+    def test_refuses_unknown_refusal(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c5_format_audit_line(
+                state_id=None,
+                epoch_seconds=1700000000,
+                refusal_category="invented",
+            )
+
+    def test_refuses_unknown_state(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c5_format_audit_line(
+                state_id="invented",
+                epoch_seconds=1700000000,
+            )
+
+    def test_refuses_non_int_epoch(self) -> None:
+        with self.assertRaises(agent_loop.HaltError):
+            agent_loop._fix_phase_c5_format_audit_line(
+                state_id="start_ready",
+                epoch_seconds="now",
+            )
+
+
+class FixPhaseC5StopPersistenceTests(unittest.TestCase):
+    """Stop routes through the shipped human-stop halt: the
+    `halted_human_stop` status is persisted through the shipped
+    `save_loop_state` writer, every other canonical field is
+    preserved, and the orchestrator.log note is appended.
+    """
+
+    def test_persists_human_stop_and_preserves_other_fields(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as td:
+            controller = _make_controller(
+                Path(td) / "c",
+                status="awaiting_claude_implementation",
+            )
+            state_path = (
+                controller / ".agent-loop" / "loop-state.json"
+            )
+            before = json.loads(
+                state_path.read_text(encoding="utf-8"),
+            )
+            agent_loop._fix_phase_c5_persist_operator_stop(
+                controller,
+            )
+            after = json.loads(
+                state_path.read_text(encoding="utf-8"),
+            )
+            log_text = (
+                controller / ".agent-loop" / "orchestrator.log"
+            ).read_text(encoding="utf-8")
+        self.assertEqual(after["status"], "halted_human_stop")
+        for field in (
+            "phase", "sub_phase", "task", "cycle_count",
+            "max_cycles", "approval_mode", "awaiting_human_for",
+            "contract_version",
+        ):
+            self.assertEqual(after[field], before[field], field)
+        self.assertIn("halted_human_stop", log_text)
+
+    def test_refuses_missing_loop_state(self) -> None:
+        with TemporaryDirectory() as td:
+            controller = Path(td) / "empty"
+            controller.mkdir()
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._fix_phase_c5_persist_operator_stop(
+                    controller,
+                )
+
+
+class FixPhaseC5DispatchTests(unittest.TestCase):
+
+    def test_start_argv_routes_through_shipped_run_owner(
+        self,
+    ) -> None:
+        argv = agent_loop._primary_desktop_build_run_command(
+            Path("."),
+        )
+        self.assertEqual(argv[-1], "run")
+        self.assertEqual(
+            Path(argv[1]).name, "agent_loop.py",
+        )
+
+
+class FixPhaseC5TkWiringTests(unittest.TestCase):
+    """Source-inspection pins for the Fix Phase C5 Start / Stop
+    control wired into `_launch_desktop_app_window(...)`.
+    """
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._c5 = self._source.split(
+            "# Fix Phase C5: primary Start Agent / Stop Agent", 1,
+        )[1].split("# Advanced panels toggle.", 1)[0]
+
+    def test_run_frame_visible_by_default_after_run_mode(
+        self,
+    ) -> None:
+        self.assertIn(
+            'fix_phase_c5_run_frame = tk.LabelFrame(', self._source,
+        )
+        self.assertIn('text="Run"', self._c5)
+        self.assertNotIn(
+            "advanced_frames_holder.append(fix_phase_c5_run_frame",
+            self._source,
+        )
+        idx_run_mode = self._source.find(
+            "fix_phase_c4_run_mode_frame = tk.LabelFrame(",
+        )
+        idx_run = self._source.find(
+            "fix_phase_c5_run_frame = tk.LabelFrame(",
+        )
+        idx_advanced = self._source.find(
+            "# Advanced panels toggle.",
+        )
+        self.assertLess(idx_run_mode, idx_run)
+        self.assertLess(idx_run, idx_advanced)
+
+    def test_start_uses_shipped_run_command_and_popen(self) -> None:
+        self.assertIn(
+            "_primary_desktop_build_run_command(", self._c5,
+        )
+        self.assertIn("subprocess.Popen(", self._c5)
+        self.assertIn("cwd=str(controller_root)", self._c5)
+
+    def test_start_refuses_on_spawn_failure(self) -> None:
+        self.assertIn("except OSError:", self._c5)
+        self.assertIn(
+            "FIX_PHASE_C5_REFUSAL_SPAWN_FAILED", self._c5,
+        )
+
+    def test_start_is_gated_by_prerequisites(self) -> None:
+        click = self._c5.split(
+            "def _fix_phase_c5_primary_click", 1,
+        )[1].split("def _fix_phase_c5_poll_process", 1)[0]
+        self.assertIn(
+            "_fix_phase_c5_current_missing_prerequisite()", click,
+        )
+        self.assertLess(
+            click.find("missing is not None"),
+            click.find("subprocess.Popen("),
+        )
+
+    def test_stop_terminates_and_does_not_persist_before_exit(
+        self,
+    ) -> None:
+        stop = self._c5.split(
+            "def _fix_phase_c5_stop_click", 1,
+        )[1].split("def _fix_phase_c5_primary_click", 1)[0]
+        self.assertIn("proc.terminate()", stop)
+        self.assertNotIn("_fix_phase_c5_persist_operator_stop(", stop)
+
+    def test_human_stop_persists_only_after_operator_stop(
+        self,
+    ) -> None:
+        poll = self._c5.split(
+            "def _fix_phase_c5_poll_process", 1,
+        )[1]
+        guard = poll.find(
+            'if fix_phase_c5_process_holder["stop_requested"]:',
+        )
+        persist = poll.find("_fix_phase_c5_persist_operator_stop(")
+        self.assertGreater(guard, -1)
+        self.assertGreater(persist, guard)
+
+    def test_no_background_thread_or_timer(self) -> None:
+        for forbidden in (
+            "threading", "Timer(", "asyncio.", "root.after(",
+            "shell=True", "os.system",
+        ):
+            self.assertNotIn(forbidden, self._c5, forbidden)
+
+    def test_no_auto_attach_bootstrap_or_activation(self) -> None:
+        for forbidden in (
+            "attach_external_target(", "bootstrap=True",
+            "run_activation(", "_run_normal_cycle_from_increment(",
+        ):
+            self.assertNotIn(forbidden, self._c5, forbidden)
+
+    def test_refresh_polls_c5_and_legacy_watchdog_removed(
+        self,
+    ) -> None:
+        refresh = self._source.split(
+            "    def _refresh() -> None:", 1,
+        )[1].split("root.after(", 1)[0]
+        self.assertIn("_fix_phase_c5_poll_process()", refresh)
+        self.assertNotIn("current_run = run_popen_holder[0]", refresh)
+
+    def test_legacy_run_button_delegates_to_c5_controller(
+        self,
+    ) -> None:
+        legacy = self._source.split(
+            "    def _run_button_click() -> None:", 1,
+        )[1].split("    run_stop_button = tk.Button(", 1)[0]
+        self.assertIn("_fix_phase_c5_primary_click()", legacy)
+        self.assertNotIn("subprocess.Popen(", legacy)
+
+    def test_primary_button_is_wired_to_c5_click(self) -> None:
+        self.assertIn(
+            "fix_phase_c5_primary_button.config(\n"
+            "        command=_fix_phase_c5_primary_click,",
+            self._c5,
+        )
+
+    def test_project_and_run_mode_holders_are_set(self) -> None:
+        self.assertIn(
+            "_fix_phase_c5_project_matches_controller(",
+            self._source,
+        )
+        self.assertIn(
+            "fix_phase_c5_run_mode_selected_holder[0] = True",
+            self._source,
+        )
 
 
 if __name__ == "__main__":
