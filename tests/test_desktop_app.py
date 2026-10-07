@@ -7851,7 +7851,7 @@ class FixPhaseC6TkWiringTests(unittest.TestCase):
         )
         self._c6 = self._source.split(
             "# Fix Phase C6: plain-English Progress", 1,
-        )[1].split("# Advanced panels toggle.", 1)[0]
+        )[1].split("# Fix Phase C7: plain-English Review section", 1)[0]
 
     def test_progress_frame_visible_and_after_run(self) -> None:
         self.assertIn(
@@ -7918,6 +7918,301 @@ class FixPhaseC6TkWiringTests(unittest.TestCase):
             "Popen(", "write_text(",
         ):
             self.assertNotIn(forbidden, self._c6, forbidden)
+
+
+def _c7_view(*, status, human_gate=False):
+    return _c6_view(status=status, human_gate=human_gate)
+
+
+def _c7_format(
+    *, view, approval_mode="strict", prerequisite_missing=None,
+    process_state="idle",
+):
+    return agent_loop._fix_phase_c7_format_payload(
+        view=view,
+        approval_mode=approval_mode,
+        prerequisite_missing=prerequisite_missing,
+        process_state=process_state,
+    )
+
+
+class FixPhaseC7ConstantsTests(unittest.TestCase):
+
+    def test_closed_gate_and_refusal_vocabularies(self) -> None:
+        self.assertEqual(
+            agent_loop.FIX_PHASE_C7_SIGNAL_VERSION, "fix-phase-c7-v1",
+        )
+        self.assertEqual(
+            set(agent_loop.FIX_PHASE_C7_GATE_DISPLAY_MAP),
+            {
+                agent_loop.FIX_PHASE_C7_GATE_STRICT,
+                agent_loop.FIX_PHASE_C7_GATE_PHASE_COMPLETE,
+                agent_loop.FIX_PHASE_C7_GATE_OTHER,
+            },
+        )
+        for category in agent_loop.FIX_PHASE_C7_REFUSAL_CATEGORIES:
+            self.assertTrue(category.startswith("refused_"), category)
+        self.assertEqual(
+            set(agent_loop.FIX_PHASE_C7_REFUSAL_COPY),
+            set(agent_loop.FIX_PHASE_C7_REFUSAL_CATEGORIES)
+            - {agent_loop.FIX_PHASE_C7_REFUSAL_PREREQUISITE_MISSING},
+        )
+
+    def test_plain_english_copy_has_no_raw_runtime_tokens(self) -> None:
+        strings = []
+        for entry in agent_loop.FIX_PHASE_C7_GATE_DISPLAY_MAP.values():
+            strings.extend(entry.values())
+        strings.extend(agent_loop.FIX_PHASE_C7_REFUSAL_COPY.values())
+        strings.append(agent_loop.FIX_PHASE_C7_APPROVE_LABEL)
+        for text in strings:
+            for marker in agent_loop.FIX_PHASE_C6_REDACTION_MARKERS:
+                self.assertNotIn(marker, text, (marker, text))
+
+
+class FixPhaseC7GateDetectionTests(unittest.TestCase):
+
+    def test_every_strict_gate_status_is_a_strict_gate(self) -> None:
+        for status in agent_loop.STRICT_GATE_HALT_STATUSES:
+            payload = _c7_format(view=_c7_view(status=status))
+            self.assertEqual(
+                payload["gate_id"], agent_loop.FIX_PHASE_C7_GATE_STRICT,
+                status,
+            )
+            self.assertTrue(payload["section_active"])
+
+    def test_phase_complete_is_review_only(self) -> None:
+        payload = _c7_format(view=_c7_view(
+            status="phase_complete_awaiting_human_approval",
+            human_gate=True,
+        ))
+        self.assertEqual(
+            payload["gate_id"],
+            agent_loop.FIX_PHASE_C7_GATE_PHASE_COMPLETE,
+        )
+        self.assertIsNone(payload["action"])
+        self.assertEqual(
+            payload["display_label"], "Done. Review the result.",
+        )
+
+    def test_other_human_gate_has_no_in_app_action(self) -> None:
+        payload = _c7_format(view=_c7_view(
+            status="halted_human_stop", human_gate=True,
+        ))
+        self.assertEqual(
+            payload["gate_id"], agent_loop.FIX_PHASE_C7_GATE_OTHER,
+        )
+        self.assertTrue(payload["section_active"])
+        self.assertIsNone(payload["action"])
+
+    def test_normal_running_state_keeps_section_absent(self) -> None:
+        payload = _c7_format(view=_c7_view(
+            status="evidence_capture", human_gate=False,
+        ))
+        self.assertEqual(
+            payload["gate_id"], agent_loop.FIX_PHASE_C7_GATE_NONE,
+        )
+        self.assertFalse(payload["section_active"])
+        self.assertIsNone(payload["action"])
+
+    def test_missing_view_keeps_section_absent(self) -> None:
+        payload = _c7_format(view=None)
+        self.assertFalse(payload["section_active"])
+        self.assertIsNone(payload["action"])
+
+    def test_missing_loop_state_artifact_soft_fails_to_absent(self) -> None:
+        with TemporaryDirectory() as tmp:
+            payload = agent_loop._fix_phase_c7_build_payload(
+                Path(tmp),
+                approval_mode="strict",
+                prerequisite_missing=None,
+                process_state="idle",
+            )
+        self.assertFalse(payload["section_active"])
+
+
+class FixPhaseC7ActionRoutingTests(unittest.TestCase):
+
+    def _strict_view(self):
+        return _c7_view(
+            status="halted_awaiting_human_pre_claude_prompt",
+        )
+
+    def test_strict_gate_offers_enabled_approve_when_ready(self) -> None:
+        action = _c7_format(view=self._strict_view())["action"]
+        self.assertEqual(action["label"], "Approve and continue")
+        self.assertTrue(action["enabled"])
+        self.assertIsNone(action["refusal_category"])
+        self.assertIsNone(action["refusal_copy"])
+
+    def test_non_strict_mode_refuses_with_run_mode_guidance(self) -> None:
+        action = _c7_format(
+            view=self._strict_view(), approval_mode="review",
+        )["action"]
+        self.assertFalse(action["enabled"])
+        self.assertEqual(
+            action["refusal_category"],
+            agent_loop.FIX_PHASE_C7_REFUSAL_NOT_STRICT_MODE,
+        )
+        self.assertIn("Guided (recommended)", action["refusal_copy"])
+
+    def test_missing_prerequisite_refuses_with_c5_copy(self) -> None:
+        for missing in agent_loop.FIX_PHASE_C5_PREREQUISITE_ORDER:
+            action = _c7_format(
+                view=self._strict_view(), prerequisite_missing=missing,
+            )["action"]
+            self.assertFalse(action["enabled"])
+            self.assertEqual(
+                action["refusal_category"],
+                agent_loop.FIX_PHASE_C7_REFUSAL_PREREQUISITE_MISSING,
+            )
+            self.assertEqual(
+                action["refusal_copy"],
+                agent_loop.FIX_PHASE_C5_MISSING_PREREQUISITE_COPY[missing],
+            )
+
+    def test_in_flight_process_refuses_as_busy(self) -> None:
+        for process_state in agent_loop.FIX_PHASE_C6_PROCESS_IN_FLIGHT:
+            action = _c7_format(
+                view=self._strict_view(), process_state=process_state,
+            )["action"]
+            self.assertFalse(action["enabled"], process_state)
+            self.assertEqual(
+                action["refusal_category"],
+                agent_loop.FIX_PHASE_C7_REFUSAL_PROCESS_BUSY,
+            )
+
+    def test_prerequisite_refusal_takes_precedence_over_busy(self) -> None:
+        action = _c7_format(
+            view=self._strict_view(),
+            prerequisite_missing="prd",
+            process_state="active",
+        )["action"]
+        self.assertEqual(
+            action["refusal_category"],
+            agent_loop.FIX_PHASE_C7_REFUSAL_PREREQUISITE_MISSING,
+        )
+
+    def test_strict_continue_never_asks_for_identity(self) -> None:
+        payload = _c7_format(view=self._strict_view())
+        self.assertNotIn("accepted", repr(payload))
+        self.assertNotIn("accepted-by", repr(payload))
+
+
+class FixPhaseC7AuditTests(unittest.TestCase):
+
+    def test_accepted_and_refused_audit_lines_are_bracketed(self) -> None:
+        line = agent_loop._fix_phase_c7_format_audit_line(
+            gate_id=agent_loop.FIX_PHASE_C7_GATE_STRICT,
+            outcome=agent_loop.FIX_PHASE_C7_OUTCOME_ACCEPTED,
+            epoch_seconds=1700000000,
+        )
+        self.assertTrue(line.startswith("[desktop-review-approval] "))
+        self.assertIn("outcome='accepted'", line)
+        refused = agent_loop._fix_phase_c7_format_audit_line(
+            gate_id=agent_loop.FIX_PHASE_C7_GATE_STRICT,
+            outcome=agent_loop.FIX_PHASE_C7_OUTCOME_REFUSED,
+            epoch_seconds=1700000000,
+            refusal_category=(
+                agent_loop.FIX_PHASE_C7_REFUSAL_PROCESS_BUSY
+            ),
+        )
+        self.assertIn(
+            "refusal_category='refused_approval_process_busy'", refused,
+        )
+
+    def test_audit_refuses_values_outside_closed_vocabulary(self) -> None:
+        base = dict(
+            gate_id=agent_loop.FIX_PHASE_C7_GATE_STRICT,
+            outcome=agent_loop.FIX_PHASE_C7_OUTCOME_ACCEPTED,
+            epoch_seconds=1,
+        )
+        bad_cases = (
+            dict(base, gate_id="made_up"),
+            dict(base, outcome="approved"),
+            dict(base, refusal_category="refused_made_up"),
+            dict(base, epoch_seconds="now"),
+        )
+        for case in bad_cases:
+            with self.assertRaises(agent_loop.HaltError):
+                agent_loop._fix_phase_c7_format_audit_line(**case)
+
+    def test_resume_command_targets_shipped_resume_owner(self) -> None:
+        argv = agent_loop._fix_phase_c7_build_resume_command()
+        self.assertEqual(argv[-1], "resume")
+        self.assertNotIn("record-final-acceptance", argv)
+
+
+class FixPhaseC7TkWiringTests(unittest.TestCase):
+
+    def setUp(self) -> None:
+        import inspect
+        self._source = inspect.getsource(
+            agent_loop._launch_desktop_app_window,
+        )
+        self._c7 = self._source.split(
+            "# Fix Phase C7: plain-English Review section", 1,
+        )[1].split("# Advanced panels toggle.", 1)[0]
+
+    def test_review_section_packed_after_progress_only_when_active(
+        self,
+    ) -> None:
+        self.assertIn('text="Review"', self._c7)
+        self.assertIn("after=fix_phase_c6_progress_frame", self._c7)
+        self.assertIn("fix_phase_c7_frame.pack_forget()", self._c7)
+        idx_progress = self._source.find(
+            "fix_phase_c6_progress_frame = tk.LabelFrame(",
+        )
+        idx_review = self._source.find(
+            "fix_phase_c7_frame = tk.LabelFrame(",
+        )
+        idx_advanced = self._source.find("# Advanced panels toggle.")
+        self.assertLess(idx_progress, idx_review)
+        self.assertLess(idx_review, idx_advanced)
+
+    def test_review_detail_lives_behind_advanced_toggle(self) -> None:
+        self.assertIn(
+            "advanced_frames_holder.append(fix_phase_c7_advanced_frame)",
+            self._source,
+        )
+
+    def test_refresh_polls_c7_after_c6(self) -> None:
+        self.assertIn(
+            "        _fix_phase_c6_refresh()\n"
+            "        _fix_phase_c7_refresh()\n",
+            self._source,
+        )
+
+    def test_refresh_never_spawns_or_approves(self) -> None:
+        refresh_body = self._c7.split(
+            "def _fix_phase_c7_refresh() -> None:", 1,
+        )[1].split("def _fix_phase_c7_emit_audit(", 1)[0]
+        self.assertNotIn("Popen", refresh_body)
+        self.assertNotIn("_fix_phase_c7_approve_click", refresh_body)
+        self.assertNotIn("_log_note", refresh_body)
+
+    def test_only_explicit_click_spawns_the_resume_owner(self) -> None:
+        self.assertEqual(self._c7.count("subprocess.Popen("), 1)
+        approve_body = self._c7.split(
+            "def _fix_phase_c7_approve_click() -> None:", 1,
+        )[1].split("fix_phase_c7_button.config(command=", 1)[0]
+        refusal_gate = approve_body.index(
+            'if action is None or not action["enabled"]:',
+        )
+        spawn = approve_body.index("subprocess.Popen(")
+        self.assertLess(refusal_gate, spawn)
+        self.assertIn("_fix_phase_c7_build_resume_command()", approve_body)
+
+    def test_review_block_never_writes_canonical_state_or_identity(
+        self,
+    ) -> None:
+        self.assertNotIn("save_loop_state", self._c7)
+        self.assertNotIn("record_final_acceptance", self._c7)
+        self.assertNotIn("accepted_by", self._c7)
+        self.assertNotIn("--accepted-by", self._c7)
+
+    def test_approve_reuses_c5_process_tracker(self) -> None:
+        self.assertIn("run_popen_holder[0] = proc", self._c7)
+        self.assertIn("fix_phase_c5_process_holder.update(", self._c7)
 
 
 if __name__ == "__main__":
